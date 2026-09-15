@@ -1,0 +1,20 @@
+.term {
+  display: inline;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
+  cursor: help;
+  padding: 0;
+  font: inherit;
+}
+.term:hover { color: var(--accent); }
+
+.term__short {
+  font-size: 1.02rem;
+  color: var(--text);
+  border-left: 3px solid var(--accent);
+  padding-left: var(--space-3);
+  margin: 0;
+}

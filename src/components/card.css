@@ -1,0 +1,147 @@
+/* A Magic card rendered from data. Proportions follow the real card
+   (63mm x 88mm, so 1:1.396) so a hand of these reads as a hand of cards. */
+
+.cardface {
+  --frame: var(--mtg-c);
+  --frame-dim: var(--mtg-c-dim);
+  display: flex;
+  flex-direction: column;
+  aspect-ratio: 63 / 88;
+  border-radius: 10px;
+  background: linear-gradient(160deg, var(--bg-overlay), var(--bg-raised));
+  border: 1px solid var(--frame-dim);
+  box-shadow: var(--shadow), inset 0 0 0 1px #ffffff08;
+  padding: 6px;
+  gap: 4px;
+  overflow: hidden;
+  text-align: left;
+  position: relative;
+  width: 100%;
+}
+
+.cardface--w { --frame: var(--mtg-w); --frame-dim: var(--mtg-w-dim); }
+.cardface--u { --frame: var(--mtg-u); --frame-dim: var(--mtg-u-dim); }
+.cardface--b { --frame: var(--mtg-b); --frame-dim: var(--mtg-b-dim); }
+.cardface--r { --frame: var(--mtg-r); --frame-dim: var(--mtg-r-dim); }
+.cardface--g { --frame: var(--mtg-g); --frame-dim: var(--mtg-g-dim); }
+.cardface--m { --frame: var(--accent);  --frame-dim: var(--accent-soft); }
+.cardface--l { --frame: #8a7a5c; --frame-dim: #8a7a5c33; }
+
+button.cardface { cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; }
+button.cardface:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+
+.cardface__titlebar,
+.cardface__typebar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--frame-dim);
+  border: 1px solid var(--frame-dim);
+  border-radius: 4px;
+  padding: 3px 6px;
+  min-height: 22px;
+}
+
+.cardface__name {
+  flex: 1;
+  font-weight: 600;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardface__art {
+  flex: 1 1 38%;
+  min-height: 0;
+  border-radius: 4px;
+  background:
+    radial-gradient(120% 90% at 50% 20%, var(--frame-dim), transparent 70%),
+    linear-gradient(180deg, #0d1219, #070a0f);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+}
+
+.cardface__art-glyph {
+  font-size: clamp(1.2rem, 14cqw, 2.4rem);
+  color: var(--frame);
+  opacity: 0.4;
+}
+
+.cardface__type {
+  flex: 1;
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardface__rarity {
+  width: 8px; height: 8px;
+  border-radius: 2px;
+  transform: rotate(45deg);
+  flex-shrink: 0;
+  background: var(--text-faint);
+}
+.cardface__rarity--common   { background: #cfd6e4; }
+.cardface__rarity--uncommon { background: #a9b6c6; }
+.cardface__rarity--rare     { background: #d8bc63; }
+.cardface__rarity--mythic   { background: #e07a3c; }
+
+.cardface__text {
+  flex: 1 1 34%;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 0.68rem;
+  padding: 2px 4px;
+}
+.cardface__text .oracle { font-size: 0.68rem; line-height: 1.4; }
+.cardface__text .mana { width: 1em; height: 1em; }
+
+.cardface__flavor {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  font-style: italic;
+  color: var(--text-faint);
+}
+
+.cardface__stats {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--frame-dim);
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-weight: 700;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.cardface--sm { padding: 4px; border-radius: 7px; }
+.cardface--sm .cardface__name { font-size: 0.66rem; }
+.cardface--sm .cardface__text { display: none; }
+.cardface--sm .cardface__art { flex: 1; }
+
+.cardface--lg .cardface__name { font-size: 0.95rem; }
+.cardface--lg .cardface__text { font-size: 0.8rem; }
+.cardface--lg .cardface__text .oracle { font-size: 0.8rem; }
+.cardface--lg .cardface__type { font-size: 0.75rem; }
+
+.cardimage {
+  display: block;
+  width: 100%;
+  aspect-ratio: 63 / 88;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-overlay);
+  border: none;
+  padding: 0;
+}
+.cardimage img { width: 100%; height: 100%; display: block; object-fit: cover; }
+button.cardimage { cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; }
+button.cardimage:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }

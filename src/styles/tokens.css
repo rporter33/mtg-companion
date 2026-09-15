@@ -1,0 +1,75 @@
+/* Design tokens.
+   Dark neutral base with Magic's five colours as the accent system. Deck and
+   card chrome pulls its colour from actual colour identity, so the interface
+   is tinted by what you are looking at rather than by a fixed brand palette. */
+
+:root {
+  /* Neutrals — cool, slightly blue-shifted so the colour pie reads warm against it. */
+  --bg:            #0b0e14;
+  --bg-raised:     #131822;
+  --bg-overlay:    #1a2130;
+  --bg-input:      #0e131c;
+  --border:        #242c3b;
+  --border-strong: #35405480;
+
+  --text:          #e6eaf2;
+  --text-muted:    #98a3b8;
+  --text-faint:    #64708a;
+
+  --accent:        #c9a227;   /* aged gold — the card frame, not a logo colour */
+  --accent-soft:   #c9a22722;
+
+  /* The colour pie. Chosen to stay legible on a dark field rather than to match
+     the printed mana symbols exactly, which are far too pale for this. */
+  --mtg-w: #f0e3c2;
+  --mtg-u: #5aa9e6;
+  --mtg-b: #9b7fc4;   /* black mana rendered as violet; true black is invisible here */
+  --mtg-r: #e8695c;
+  --mtg-g: #5fb87a;
+  --mtg-c: #9aa5b8;
+
+  --mtg-w-dim: #f0e3c233;
+  --mtg-u-dim: #5aa9e633;
+  --mtg-b-dim: #9b7fc433;
+  --mtg-r-dim: #e8695c33;
+  --mtg-g-dim: #5fb87a33;
+  --mtg-c-dim: #9aa5b833;
+
+  --ok:    #4ea87a;
+  --warn:  #d9a441;
+  --error: #e06c5f;
+
+  --radius:    10px;
+  --radius-sm: 6px;
+  --radius-lg: 16px;
+
+  --shadow: 0 2px 8px #00000066;
+  --shadow-lg: 0 12px 36px #000000aa;
+
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* Safe-area insets so the play companion's buttons clear a phone's home bar. */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+
+/* Colour-identity helpers. An element carrying data-identity gets its accent
+   from the deck or card it represents; multicolour falls back to gold, which is
+   what the game itself does. */
+[data-identity="W"] { --identity: var(--mtg-w); --identity-dim: var(--mtg-w-dim); }
+[data-identity="U"] { --identity: var(--mtg-u); --identity-dim: var(--mtg-u-dim); }
+[data-identity="B"] { --identity: var(--mtg-b); --identity-dim: var(--mtg-b-dim); }
+[data-identity="R"] { --identity: var(--mtg-r); --identity-dim: var(--mtg-r-dim); }
+[data-identity="G"] { --identity: var(--mtg-g); --identity-dim: var(--mtg-g-dim); }
+[data-identity="C"] { --identity: var(--mtg-c); --identity-dim: var(--mtg-c-dim); }
+[data-identity="M"] { --identity: var(--accent); --identity-dim: var(--accent-soft); }
