@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MTG Companion</title>
+    <style>
+      body { background:#0b0e14; color:#98a3b8; font-family:system-ui,sans-serif;
+             display:grid; place-items:center; height:100vh; margin:0; text-align:center; padding:24px; }
+      a { color:#5aa9e6; }
+    </style>
+    <script>
+      // GitHub Pages serves this for any unknown path under the site. The app
+      // is a single-page app with no client-side router, so an unknown path is
+      // a genuinely wrong URL — send it back to the app root.
+      //
+      // Guarded against a redirect loop: if we are already at the root and
+      // still got a 404, the app is not deployed, and bouncing forever would
+      // be worse than saying so. The fallback text below covers that case and
+      // covers a deployment at a different base path.
+      (function () {
+        var target = '/mtg-companion/'
+        if (location.pathname !== target) location.replace(target)
+      })()
+    </script>
+  </head>
+  <body>
+    <div>
+      <p>That page does not exist.</p>
+      <p><a href="/mtg-companion/">Open MTG Companion</a></p>
+    </div>
+  </body>
+</html>
