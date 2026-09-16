@@ -143,6 +143,38 @@ so no set can render illegibly on the dark base.
 
 *Revisit if:* Scryfall ever exposes set colour metadata, which would beat a hash.
 
+### The card explainer reads templating, not a card list
+
+Magic's rules text is templated far more regularly than beginners realise, and
+that regularity is the teachable thing:
+
+    A line beginning When, Whenever or At is a triggered ability.
+    A line shaped "cost: effect" is an activated ability.
+    Anything else on a permanent is simply true while it is there.
+
+`lib/explain.js` reads those patterns, so it explains every card in Magic
+including ones printed next week — no card list to maintain and nothing to go
+stale. It reports what kind of ability each line is, what sets it off, and
+whether the player gets a choice.
+
+Two cases are worth the extra code. **Ability words** (landfall, raid,
+delirium) have no rules meaning at all; the card behaves identically with the
+word deleted, and saying so out loud heads off a common misunderstanding.
+**Reflexive triggers** — "you may sacrifice a creature. When you do, draw two
+cards" — sit in the *second sentence* of a line whose first sentence reads like
+an ordinary instruction, so they are detected independently of how the line as
+a whole classifies. The first implementation missed them entirely for exactly
+that reason.
+
+**Deliberate limit:** it explains structure, never strategy or interactions. It
+will say a line is a mandatory trigger and what fires it. It will not say
+whether the card is good or how it behaves alongside another card, because
+being subtly wrong about that is worse than saying nothing — the same reasoning
+that keeps a synergy engine out of the app.
+
+*Revisit if:* Wizards changes templating conventions, which happens rarely and
+visibly. The parser degrades to "static ability" rather than to nonsense.
+
 ### Set mechanics are the one hand-written exception
 
 Everything else in this app is fetched, because it changes: legality, prices,

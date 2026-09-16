@@ -186,6 +186,142 @@ export const GLOSSARY = {
     long: 'Ward is a tax, not a prohibition. Your opponent can still kill the creature, but it costs them more than they planned.',
   },
 
+
+  // --- the rest of the evergreen keywords ---
+  defender: {
+    term: 'Defender',
+    short: 'Cannot attack. That is the whole downside.',
+    long: 'Defenders block and never attack, so they are usually much bigger than their cost would otherwise allow. A 0/6 wall stops almost anything on the ground for two mana.',
+  },
+  doubleStrike: {
+    term: 'Double strike',
+    short: 'Deals its combat damage twice — once early, once normally.',
+    long: 'A double striker deals first-strike damage and then regular damage, so a 3/3 with double strike deals 6 in a turn. Combined with lifelink or trample it gets out of hand quickly, which is why it is rare and expensive.',
+    seeAlso: ['firstStrike', 'trample', 'lifelink'],
+  },
+  flash: {
+    term: 'Flash',
+    short: 'You may cast it any time you could cast an instant.',
+    long: 'Flash turns a creature into something you can deploy at the end of your opponent\u2019s turn, or in the middle of combat as a surprise blocker. It does not make the creature able to attack immediately — that is haste.',
+    seeAlso: ['instant', 'haste', 'stack'],
+  },
+  hexproof: {
+    term: 'Hexproof',
+    short: 'Your opponents cannot target it. You still can.',
+    long: 'Hexproof stops targeted removal and targeted effects from opponents. It does not stop everything: a board wipe that destroys all creatures does not target, so hexproof will not save you from it.',
+    seeAlso: ['ward', 'removal'],
+  },
+  indestructible: {
+    term: 'Indestructible',
+    short: 'Cannot be destroyed by damage or by "destroy" effects.',
+    long: 'Indestructible turns off the two most common ways things die. It does not stop exile, sacrifice, or a creature\u2019s toughness being reduced to zero — which is exactly how experienced players answer it.',
+    seeAlso: ['exile', 'stateBasedActions'],
+  },
+  menace: {
+    term: 'Menace',
+    short: 'Cannot be blocked by only one creature.',
+    long: 'Blocking a creature with menace takes two blockers or none. Against an opponent with a small board it is close to unblockable, and it makes attacking far safer.',
+  },
+  protection: {
+    term: 'Protection',
+    short: 'Cannot be damaged, enchanted, blocked or targeted by that quality.',
+    long: 'Protection from red means: damage from red sources is prevented, red auras and equipment fall off, red creatures cannot block it, and red spells cannot target it. The memory aid is DEBT — Damage, Enchant/Equip, Block, Target. It does not stop a red board wipe that destroys without targeting.',
+    seeAlso: ['hexproof', 'indestructible'],
+  },
+  reach: {
+    term: 'Reach',
+    short: 'Can block creatures with flying.',
+    long: 'Reach does not let a creature fly — it only lets it block fliers. It is how green, which gets very few fliers, answers them.',
+    seeAlso: ['flying'],
+  },
+
+  // --- how a card is written ---
+  triggeredAbility: {
+    term: 'Triggered ability',
+    short: 'Starts with When, Whenever, or At. Happens by itself.',
+    long: 'If a line of rules text begins with When, Whenever, or At, it is a triggered ability — it fires on its own when its condition is met, and nobody has to choose to use it. The shape is always the same: [When/Whenever/At] [something happens], [effect]. It is not optional unless the text says "may".',
+    seeAlso: ['stack', 'activatedAbility', 'staticAbility'],
+  },
+  activatedAbility: {
+    term: 'Activated ability',
+    short: 'Written cost, then a colon, then what it does.',
+    long: 'Anything of the form "cost: effect" is an activated ability, and you choose when to use it. The cost might be mana, tapping, sacrificing something, or a mix. If you can pay it you may activate it, as often as you can afford unless the card says otherwise.',
+    seeAlso: ['triggeredAbility', 'tapped', 'stack'],
+  },
+  staticAbility: {
+    term: 'Static ability',
+    short: 'Just true, all the time. No trigger, no cost.',
+    long: 'A static ability is simply a fact about the game while the card is on the battlefield — "creatures you control get +1/+1", or a keyword like flying. It never uses the stack and cannot be responded to.',
+    seeAlso: ['triggeredAbility', 'stack'],
+  },
+  reflexiveTrigger: {
+    term: '"When you do"',
+    short: 'A second trigger that only happens if you took the optional action.',
+    long: 'You will see text like "You may sacrifice a creature. When you do, draw two cards." The second sentence is a reflexive trigger: it only fires if you actually did the optional thing. If you decline, nothing else happens. It is written this way so the reward cannot be taken without the cost.',
+    seeAlso: ['triggeredAbility', 'mayKeyword'],
+  },
+  mayKeyword: {
+    term: '"May"',
+    short: 'The one word that makes an ability optional.',
+    long: 'Triggered abilities are mandatory by default — if the condition happens, the effect happens, whether or not you want it to. "May" is the only thing that gives you a choice. This matters: "whenever a creature dies, you lose 1 life" will kill you if you are not careful.',
+    seeAlso: ['triggeredAbility'],
+  },
+  abilityWord: {
+    term: 'Ability word',
+    short: 'An italic label with no rules meaning at all.',
+    long: 'Landfall, raid, delirium, constellation and the like are ability words. They do nothing. Delete the word from the card and it behaves identically — the actual rule is the text that follows it. They exist to group cards that share a theme and to make them easier to talk about. This is the opposite of a keyword like flying, which really is a rule.',
+    seeAlso: ['landfall', 'triggeredAbility'],
+  },
+  landfall: {
+    term: 'Landfall',
+    short: 'Shorthand for "whenever a land enters the battlefield under your control".',
+    long: 'Every landfall card is a triggered ability with that condition. The word itself does nothing — it is an ability word, and the real rule is always written out after it. Because you may play a land every turn, landfall is a reward you can count on rather than one you have to build toward.',
+    seeAlso: ['abilityWord', 'triggeredAbility', 'land'],
+  },
+
+  // --- mechanics you will meet early, beyond the evergreen set ---
+  scry: {
+    term: 'Scry',
+    short: 'Look at the top card or cards, and leave them or bin them.',
+    long: 'Scry 2 means look at the top two cards of your library and put any number of them on the bottom, the rest back on top in any order. It does not draw you anything — it improves what you are about to draw.',
+    seeAlso: ['library'],
+  },
+  surveil: {
+    term: 'Surveil',
+    short: 'Like scry, but the cards you reject go to your graveyard.',
+    long: 'Surveil 2 looks at the top two cards and puts any number into your graveyard instead of the bottom of your library. In a deck that wants cards in its graveyard, that is an upside rather than a cost.',
+    seeAlso: ['scry', 'graveyard'],
+  },
+  cycling: {
+    term: 'Cycling',
+    short: 'Pay the cost, discard it, draw a card.',
+    long: 'Cycling is an activated ability you use from your hand. It turns a card you do not need right now into a fresh one, which is why cards with cycling are much easier to include — the worst case is that you paid a little to draw something else.',
+    seeAlso: ['activatedAbility', 'hand'],
+  },
+  kicker: {
+    term: 'Kicker',
+    short: 'An optional extra cost for a bigger effect.',
+    long: 'You may pay the kicker cost as you cast the spell for an additional or improved effect. It makes a card useful early and still useful late, which is exactly what you want from a deck that has to function across a whole game.',
+  },
+  flashback: {
+    term: 'Flashback',
+    short: 'Cast it once more from your graveyard, then it is exiled.',
+    long: 'After the spell has resolved and gone to your graveyard, you may cast it again for its flashback cost. Then it is exiled rather than returning. Effectively two cards in one.',
+    seeAlso: ['graveyard', 'exile'],
+  },
+  convoke: {
+    term: 'Convoke',
+    short: 'Tap your creatures to help pay for it.',
+    long: 'Each creature you tap pays for one generic mana, or one mana of that creature\u2019s colour. It lets a board full of small creatures cast something far above your land count.',
+    seeAlso: ['tapped', 'mana'],
+  },
+  prowess: {
+    term: 'Prowess',
+    short: 'Gets +1/+1 until end of turn whenever you cast a noncreature spell.',
+    long: 'A triggered ability, so it fires on its own and it stacks — two spells in a turn means +2/+2. It rewards decks full of cheap instants and sorceries.',
+    seeAlso: ['triggeredAbility'],
+  },
+
   // --- game concepts ---
   mulligan: {
     term: 'Mulligan',
@@ -257,7 +393,9 @@ export const GLOSSARY_SECTIONS = [
   { title: 'Mana', keys: ['mana', 'land', 'manaValue', 'colorIdentity', 'tapped', 'ramp'] },
   { title: 'The turn', keys: ['untapStep', 'upkeep', 'drawStep', 'mainPhase', 'combat', 'endStep', 'priority'] },
   { title: 'Card types', keys: ['creature', 'instant', 'sorcery', 'artifact', 'enchantment', 'planeswalker'] },
-  { title: 'Keywords', keys: ['flying', 'trample', 'firstStrike', 'deathtouch', 'lifelink', 'vigilance', 'haste', 'ward', 'summoningSickness'] },
+  { title: 'Keywords — in almost every set', keys: ['flying', 'trample', 'firstStrike', 'doubleStrike', 'deathtouch', 'lifelink', 'vigilance', 'haste', 'reach', 'menace', 'defender', 'flash', 'hexproof', 'indestructible', 'protection', 'ward', 'summoningSickness'] },
+  { title: 'How a card is written', keys: ['triggeredAbility', 'activatedAbility', 'staticAbility', 'reflexiveTrigger', 'mayKeyword', 'abilityWord', 'landfall'] },
+  { title: 'Mechanics you will meet early', keys: ['scry', 'surveil', 'cycling', 'kicker', 'flashback', 'convoke', 'prowess'] },
   { title: 'Playing and building', keys: ['mulligan', 'curve', 'removal', 'sideboard', 'singleton', 'stateBasedActions', 'legendRule'] },
   { title: 'Commander', keys: ['commander', 'commanderDamage'] },
 ]

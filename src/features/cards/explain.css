@@ -1,0 +1,79 @@
+.explain__intro { color: var(--text); font-size: 1rem; margin: 0; }
+
+.explain__label {
+  display: block;
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-faint);
+  margin-bottom: 3px;
+}
+
+.explain__text { margin: 0; font-size: 0.9rem; line-height: 1.55; }
+.explain__note { margin: 4px 0 0; }
+
+.explain__row {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.explain__row .explain__label { margin-top: 2px; }
+
+.explain__line {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Each kind of ability gets its own edge colour, so a card with several lines
+   reads as several different things at a glance. */
+.explain__line--triggered   { border-left-color: var(--mtg-u); }
+.explain__line--activated   { border-left-color: var(--mtg-g); }
+.explain__line--static      { border-left-color: var(--mtg-w); }
+.explain__line--keywords    { border-left-color: var(--accent); }
+.explain__line--instruction { border-left-color: var(--mtg-r); }
+
+.chip--triggered   { color: var(--mtg-u); border-color: #5aa9e655; }
+.chip--activated   { color: var(--mtg-g); border-color: #5fb87a55; }
+.chip--static      { color: var(--mtg-w); border-color: #f0e3c255; }
+.chip--keywords    { color: var(--accent); border-color: var(--accent); }
+.chip--instruction { color: var(--mtg-r); border-color: #e8695c55; }
+
+.explain__quote {
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.88rem;
+}
+
+.explain__ability-word {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  border: 1px dashed var(--accent);
+  font-size: 0.82rem;
+  color: var(--text);
+}
+
+.explain__split {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: 1fr;
+}
+@media (min-width: 560px) {
+  .explain__split { grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+}
+.explain__split > div {
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}

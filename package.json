@@ -12,7 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "validate:live": "node scripts/validate-live.mjs",
-    "test:browser": "node tests/browser/zoom.spec.mjs && node tests/browser/search.spec.mjs"
+    "test:browser": "node tests/browser/zoom.spec.mjs && node tests/browser/search.spec.mjs && node tests/browser/explain.spec.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

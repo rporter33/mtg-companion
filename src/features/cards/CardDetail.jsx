@@ -5,6 +5,7 @@ import CardZoom from '../../components/CardZoom.jsx'
 import ManaCost, { OracleText } from '../../components/ManaCost.jsx'
 import Term from '../../components/Term.jsx'
 import AddToDeck from '../decks/AddToDeck.jsx'
+import ExplainCard from './ExplainCard.jsx'
 import { getRulings, getPrintings } from '../../lib/scryfall.js'
 import { FORMATS, FORMAT_IDS, typeLineOf, oracleTextOf } from '../../lib/formats.js'
 import { describeColors } from '../../lib/mana.js'
@@ -24,11 +25,13 @@ export default function CardDetail({ card, onClose, onOpenCard }) {
 
 function CardDetailBody({ card, onOpenCard }) {
   const [face, setFace] = useState(0)
-  const [tab, setTab] = useState('card')
+  // Explain leads, because the app is built for people who cannot yet read a
+  // card. Legality is one tap away for anyone who already can.
+  const [tab, setTab] = useState('explain')
   const [zoomed, setZoomed] = useState(false)
 
   // Reset when a different card is opened into the same sheet.
-  useEffect(() => { setFace(0); setTab('card'); setZoomed(false) }, [card.id])
+  useEffect(() => { setFace(0); setTab('explain'); setZoomed(false) }, [card.id])
 
   const activeFace = card.card_faces?.[face] ?? card
   const cost = activeFace.mana_cost ?? card.mana_cost ?? ''
@@ -65,6 +68,35 @@ function CardDetailBody({ card, onOpenCard }) {
             <p className="muted tiny" style={{ marginTop: 4 }}>{type}</p>
           </div>
 
+          {/* Tabs sit directly under the card rather than below every fact
+              about it. Explain is the default and is what a new player needs
+              first, so it must not be a scroll away on a phone. */}
+          <nav className="row row--wrap" role="tablist">
+            {[
+              ['explain', 'Explain'],
+              ['details', 'Details'],
+              ['legality', 'Legality'],
+              ['rulings', 'Rulings'],
+              ['printings', 'Printings'],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                role="tab"
+                aria-selected={tab === id}
+                className={`chip ${tab === id ? 'chip--active' : ''}`}
+                onClick={() => setTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        </div>
+      </div>
+
+      {tab === 'explain' && <ExplainCard card={card} />}
+
+      {tab === 'details' && (
+        <div className="stack">
           <div className="panel">
             <OracleText text={text} />
             {(activeFace.power != null || activeFace.loyalty != null) && (
@@ -86,27 +118,9 @@ function CardDetailBody({ card, onOpenCard }) {
 
           <Prices card={card} />
         </div>
-      </div>
+      )}
 
-      <nav className="row" role="tablist">
-        {[
-          ['card', 'Legality'],
-          ['rulings', 'Rulings'],
-          ['printings', 'Printings'],
-        ].map(([id, label]) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={tab === id}
-            className={`chip ${tab === id ? 'chip--active' : ''}`}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
-
-      {tab === 'card' && <Legality card={card} />}
+      {tab === 'legality' && <Legality card={card} />}
       {tab === 'rulings' && <Rulings card={card} />}
       {tab === 'printings' && <Printings card={card} onOpenCard={onOpenCard} />}
 
