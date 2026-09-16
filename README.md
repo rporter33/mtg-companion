@@ -49,7 +49,7 @@ npm run build
 npm run preview
 ```
 
-Node 20 or newer.
+Node 22 or newer.
 
 Hosting somewhere other than a `/mtg-companion/` path:
 
