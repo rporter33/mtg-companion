@@ -1,16 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// The base path is baked into the bundle at build time, so it must be the same
-// for `dev`, `preview` and `build`. Setting it only for `build` (the obvious
-// thing) breaks `vite preview`, which runs as a serve command and would host at
-// `/` while the built HTML points at `/mtg-companion/` — leaving the production
-// build impossible to check locally.
+// Relative base, so the same build runs at any path — GitHub Pages under
+// /mtg-companion/, a Cloudflare Pages root, or a file:// open — with no config
+// change and no redeploy.
 //
-// Override with VITE_BASE when hosting somewhere other than GitHub Pages:
-//   VITE_BASE=/ npm run build
+// The previous absolute base caused two separate bugs: `vite preview` runs as a
+// serve command and hosted at / while the built HTML pointed elsewhere, and the
+// 404 fallback had to hardcode the deploy path. Relative base removes the class.
+//
+// Set VITE_BASE to force an absolute base if a host ever needs one.
 export default defineConfig({
-  base: process.env.VITE_BASE ?? '/mtg-companion/',
+  base: process.env.VITE_BASE ?? './',
   plugins: [react()],
   test: {
     environment: 'jsdom',

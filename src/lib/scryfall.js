@@ -13,7 +13,13 @@ import { getCard, getCards, putCards, getQuery, putQuery } from './cache.js'
 
 const API = 'https://api.scryfall.com'
 const MIN_INTERVAL_MS = 100
-const MAX_RETRIES = 3
+// Four attempts backing off 2s / 4s / 8s / 16s — the same shape used by the
+// Socrata pipelines, so retry behaviour is consistent across projects.
+//
+// The base is mutable so tests can exercise the real retry *logic* without
+// sleeping thirty seconds to do it. Production never changes it.
+const MAX_RETRIES = 4
+let backoffBaseMs = 2000
 
 export class ScryfallError extends Error {
   constructor(message, { status, code, warnings } = {}) {
@@ -81,7 +87,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
             { status: response.status },
           )
           if (attempt < MAX_RETRIES) {
-            await sleep(2 ** attempt * 500)
+            await sleep(2 ** attempt * backoffBaseMs)
             continue
           }
           throw lastError
@@ -102,7 +108,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
           if (error.status === 429 || (error.status ?? 0) >= 500) {
             lastError = error
             if (attempt < MAX_RETRIES) {
-              await sleep(2 ** attempt * 500)
+              await sleep(2 ** attempt * backoffBaseMs)
               continue
             }
           }
@@ -111,7 +117,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
         // Network-level failure: the fetch never landed.
         lastError = new OfflineError('Could not reach Scryfall. Showing cached cards only.')
         if (attempt < MAX_RETRIES) {
-          await sleep(2 ** attempt * 500)
+          await sleep(2 ** attempt * backoffBaseMs)
           continue
         }
         throw lastError
@@ -286,4 +292,15 @@ export async function randomCard({ query, signal } = {}) {
   return card
 }
 
-export const __internals = { request, enqueue, MIN_INTERVAL_MS }
+export const __internals = {
+  request,
+  enqueue,
+  MIN_INTERVAL_MS,
+  MAX_RETRIES,
+  /** Test seam: shrink the backoff so retry paths are testable in milliseconds. */
+  setBackoffBase(ms) {
+    const previous = backoffBaseMs
+    backoffBaseMs = ms
+    return previous
+  },
+}

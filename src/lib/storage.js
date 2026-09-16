@@ -5,7 +5,23 @@
 // exportable. Everything lives under one versioned key so "export my data"
 // is one JSON file the user owns, matching the no-accounts promise.
 
+import { defaultBackend, memoryBackend } from './storage-backend.js'
+
 const KEY = 'mtg-companion:v1'
+
+// The backend is swappable: `useBackend()` lets tests run against memory and
+// lets a future IndexedDB backend drop in without touching anything below.
+let backend = null
+const store = () => (backend ??= defaultBackend(KEY))
+
+export function useBackend(next) {
+  backend = next ?? memoryBackend()
+  return backend
+}
+
+export function backendName() {
+  return store().name
+}
 
 const EMPTY = {
   version: 1,
@@ -19,8 +35,8 @@ let memoryFallback = null
 
 function read() {
   try {
-    const raw = localStorage.getItem(KEY)
-    if (!raw) return { ...EMPTY }
+    const raw = store().read()
+    if (!raw) return memoryFallback ?? { ...EMPTY }
     const parsed = JSON.parse(raw)
     // Merge against EMPTY so a state file written by an older build still loads
     // with any newly added sections present.
@@ -38,13 +54,10 @@ function read() {
 }
 
 function write(state) {
+  // The in-memory copy is updated first and unconditionally, so a failed
+  // persist costs durability across a reload rather than the current session.
   memoryFallback = state
-  try {
-    localStorage.setItem(KEY, JSON.stringify(state))
-    return true
-  } catch {
-    return false
-  }
+  return store().write(JSON.stringify(state))
 }
 
 export function loadState() {
@@ -195,7 +208,7 @@ export function importAll(json, { replace = false } = {}) {
 
 export function clearAll() {
   memoryFallback = { ...EMPTY }
-  try { localStorage.removeItem(KEY) } catch { /* nothing to do */ }
+  store().remove()
   return { ...EMPTY }
 }
 

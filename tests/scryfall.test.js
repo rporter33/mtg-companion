@@ -20,6 +20,9 @@ const searchPayload = (cards, extra = {}) => ok({
 beforeEach(async () => {
   await clearCache()
   vi.stubGlobal('navigator', { onLine: true })
+  // Real backoff is 2s/4s/8s/16s. Shrink it so the retry paths are exercised
+  // in milliseconds — the logic under test is the retry decision, not the wait.
+  __internals.setBackoffBase(1)
 })
 
 afterEach(() => {
@@ -89,8 +92,22 @@ describe('retry behaviour', () => {
     const fetchMock = vi.fn().mockResolvedValue(fail(429))
     vi.stubGlobal('fetch', fetchMock)
     await expect(searchCards('bears')).rejects.toThrow(ScryfallError)
-    expect(fetchMock).toHaveBeenCalledTimes(4) // initial + 3 retries
-  }, 15000)
+    expect(fetchMock).toHaveBeenCalledTimes(__internals.MAX_RETRIES + 1)
+  })
+
+  it('backs off exponentially rather than hammering', async () => {
+    const previous = __internals.setBackoffBase(20)
+    const times = []
+    vi.stubGlobal('fetch', vi.fn(async () => { times.push(Date.now()); return fail(503) }))
+    await expect(searchCards('bears')).rejects.toThrow()
+    __internals.setBackoffBase(previous)
+
+    const gaps = times.slice(1).map((t, i) => t - times[i])
+    // Each wait should be meaningfully longer than the one before it.
+    for (let i = 1; i < gaps.length; i++) {
+      expect(gaps[i]).toBeGreaterThan(gaps[i - 1])
+    }
+  }, 10000)
 
   it('does not retry a 400 — it is a real answer', async () => {
     const fetchMock = vi.fn().mockResolvedValue(fail(400, { details: 'bad query' }))

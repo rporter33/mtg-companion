@@ -10,24 +10,24 @@
       a { color:#5aa9e6; }
     </style>
     <script>
-      // GitHub Pages serves this for any unknown path under the site. The app
-      // is a single-page app with no client-side router, so an unknown path is
-      // a genuinely wrong URL — send it back to the app root.
+      // GitHub Pages serves this for any unknown path under the site. The app is
+      // a single-page app with no client-side router, so an unknown path is a
+      // genuinely wrong URL — bounce to the app root.
       //
-      // Guarded against a redirect loop: if we are already at the root and
-      // still got a 404, the app is not deployed, and bouncing forever would
-      // be worse than saying so. The fallback text below covers that case and
-      // covers a deployment at a different base path.
+      // The root is derived from where this file is being served rather than
+      // hardcoded, so it follows the deploy wherever it lands. Guarded against a
+      // loop: if we are already at the root and still got a 404, the app is not
+      // deployed and bouncing forever is worse than saying so.
       (function () {
-        var target = '/mtg-companion/'
-        if (location.pathname !== target) location.replace(target)
+        var root = location.pathname.replace(/[^/]*$/, '')
+        if (location.pathname !== root) location.replace(root)
       })()
     </script>
   </head>
   <body>
     <div>
       <p>That page does not exist.</p>
-      <p><a href="/mtg-companion/">Open MTG Companion</a></p>
+      <p><a href="./">Open MTG Companion</a></p>
     </div>
   </body>
 </html>
