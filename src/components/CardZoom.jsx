@@ -34,6 +34,10 @@ export default function CardZoom({ card, open, onClose, initialFace = 0 }) {
   const offsetRef = useRef({ x: 0, y: 0 })
   const pointers = useRef(new Map())
   const backdropRef = useRef(false)
+  // A pinch clears the drag state, so it ends with `moved` false and would
+  // otherwise read as a clean tap — closing the viewer on every pinch. Track
+  // whether the gesture ever had two pointers and never dismiss on those.
+  const multiTouchRef = useRef(false)
   const pinchRef = useRef(null)
   const dragRef = useRef(null)
   const lastTapRef = useRef(0)
@@ -157,7 +161,8 @@ export default function CardZoom({ card, open, onClose, initialFace = 0 }) {
       /* capture unavailable; dragging still works within the frame */
     }
 
-    if (pointers.current.size === 2) {
+    if (pointers.current.size >= 2) {
+      multiTouchRef.current = true
       const [a, b] = [...pointers.current.values()]
       pinchRef.current = { startDistance: distance(a, b), startScale: scaleRef.current }
       dragRef.current = null
@@ -210,9 +215,13 @@ export default function CardZoom({ card, open, onClose, initialFace = 0 }) {
           || Math.abs(event.clientY - dragRef.current.startY) > 6)
       dragRef.current = null
 
-      if (!moved) {
-        // A clean tap on the empty space around the card dismisses the viewer.
-        // Guarded on `moved` so releasing a pan outside the card never closes.
+      const wasPinch = multiTouchRef.current
+      multiTouchRef.current = false
+
+      if (!moved && !wasPinch) {
+        // A clean single-pointer tap on the empty space around the card
+        // dismisses. Guarded on `moved` so releasing a pan outside the card
+        // never closes, and on `wasPinch` so ending a pinch never does either.
         if (backdropRef.current) {
           onClose()
           return

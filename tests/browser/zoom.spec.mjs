@@ -53,7 +53,14 @@ const frame = await page.locator('.zoom__frame').boundingBox()
 const centre = { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 }
 const reset = async () => { await page.keyboard.press('0'); await page.waitForTimeout(120) }
 
-const pinch = (spread) => page.locator('.zoom__frame').evaluate((el, spread) => {
+/**
+ * Synthesises a two-finger pinch from `from` to `to` half-spread.
+ *
+ * Both ends are explicit: a helper that always starts from the same spread can
+ * only ever zoom in, which is how an earlier version of this file "passed" a
+ * pinch-in check it was never actually performing.
+ */
+const pinch = (from, to) => page.locator('.zoom__frame').evaluate((el, [from, to]) => {
   const rect = el.getBoundingClientRect()
   const cx = rect.left + rect.width / 2
   const cy = rect.top + rect.height / 2
@@ -61,21 +68,22 @@ const pinch = (spread) => page.locator('.zoom__frame').evaluate((el, spread) => 
     pointerId: p.id, clientX: p.x, clientY: p.y, pointerType: 'touch',
     bubbles: true, isPrimary: p.id === 1,
   })))
-  send('pointerdown', [{ id: 1, x: cx - 40, y: cy }, { id: 2, x: cx + 40, y: cy }])
+  send('pointerdown', [{ id: 1, x: cx - from, y: cy }, { id: 2, x: cx + from, y: cy }])
   for (let i = 1; i <= 8; i++) {
-    const d = 40 + (spread - 40) * (i / 8)
+    const d = from + (to - from) * (i / 8)
     send('pointermove', [{ id: 1, x: cx - d, y: cy }, { id: 2, x: cx + d, y: cy }])
   }
-  send('pointerup', [{ id: 1, x: cx - spread, y: cy }, { id: 2, x: cx + spread, y: cy }])
-}, spread)
+  send('pointerup', [{ id: 1, x: cx - to, y: cy }, { id: 2, x: cx + to, y: cy }])
+}, [from, to])
 
 console.log('\nGestures')
 check('opens at fit', (await level()) === '100%', await level())
 
-await pinch(160); await page.waitForTimeout(250)
+await pinch(40, 160); await page.waitForTimeout(250)
 check('pinch out magnifies', parseInt(await level(), 10) > 150, await level())
-await pinch(45); await page.waitForTimeout(250)
-check('pinch in returns toward fit', parseInt(await level(), 10) <= 120, await level())
+await pinch(160, 40); await page.waitForTimeout(250)
+check('pinch in shrinks back toward fit', parseInt(await level(), 10) <= 120, await level())
+check('pinching never dismisses the viewer', (await page.locator('.zoom').count()) === 1)
 
 await reset()
 await page.mouse.move(centre.x, centre.y)
