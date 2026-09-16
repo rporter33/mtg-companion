@@ -2,7 +2,7 @@
 // land recommendation, price totals, and draw odds.
 
 import { COLORS, aggregatePips, faceManaCost } from './mana.js'
-import { typeLineOf, getFormat } from './formats.js'
+import { typeLineOf, getFormat, frontTypeLine, isModalLand } from './formats.js'
 import { isLandCard, isBasicLand } from './deck.js'
 import {
   recommendedSourceCount, minimumSourcesFor, landDropOdds, openingHandOdds,
@@ -24,6 +24,8 @@ export function resolveEntries(entries, lookup) {
 }
 
 export function manaValueOf(card) {
+  // Scryfall reports a single cmc for the whole card. For a modal double-faced
+  // card that is the front face's value, which is the one you pay from hand.
   if (typeof card?.cmc === 'number') return card.cmc
   const face = card?.card_faces?.[0]
   return typeof face?.cmc === 'number' ? face.cmc : 0
@@ -58,7 +60,9 @@ export function typeBreakdown(resolved) {
   const counts = Object.fromEntries(CARD_TYPES.map((t) => [t, 0]))
   let other = 0
   for (const { card, quantity } of resolved) {
-    const line = typeLineOf(card)
+    // Front face only: a "Sorcery // Land" is a sorcery you may instead play as
+    // a land, and filing it under Land hides it from the spell counts.
+    const line = frontTypeLine(card) || typeLineOf(card)
     // A card can be more than one type (Artifact Creature). Count it under the
     // most specific type present, scanning in priority order, so totals still sum
     // to the deck size rather than double-counting.
@@ -130,7 +134,7 @@ export function colorConsistency(resolved, deckSize) {
 }
 
 export function landAdvice(resolved, deckSize, formatId) {
-  const { landCount, sources } = { ...colorSources(resolved) }
+  const { landCount } = colorSources(resolved)
   const curve = manaCurve(resolved)
   const format = getFormat(formatId)
 
@@ -138,6 +142,7 @@ export function landAdvice(resolved, deckSize, formatId) {
   // deck's rocks and dorks are a real part of its mana base, and judging such a
   // deck on land count alone always reads as "you are short on lands".
   const totalSources = countManaSources(resolved)
+  const modalLands = resolved.reduce((n, e) => n + (isModalLand(e.card) ? e.quantity : 0), 0)
   const recommended = recommendedSourceCount({
     deckSize,
     averageManaValue: curve.averageManaValue,
@@ -147,6 +152,7 @@ export function landAdvice(resolved, deckSize, formatId) {
 
   return {
     landCount,
+    modalLands,
     nonLandSources: totalSources - landCount,
     totalSources,
     recommended,
@@ -157,45 +163,84 @@ export function landAdvice(resolved, deckSize, formatId) {
   }
 }
 
-/** Any card that can produce mana counts as a source, land or not. */
+/**
+ * Anything that can produce mana counts as a source: lands, mana rocks, dorks,
+ * and modal cards whose back face is a land.
+ *
+ * Modal lands are counted at full weight here even though playing one as a land
+ * means giving up a spell. That is the same conservative direction as the pip
+ * counting — we would rather advise a mana base that works than one that is
+ * technically minimal.
+ */
 export function countManaSources(resolved) {
   let n = 0
   for (const { card, quantity } of resolved) {
-    if (isLandCard(card) || (card.produced_mana?.length ?? 0) > 0) n += quantity
+    if (isLandCard(card) || isModalLand(card) || (card.produced_mana?.length ?? 0) > 0) {
+      n += quantity
+    }
   }
   return n
 }
 
 /**
+ * Reads a usable price off a printing.
+ *
+ * Some printings exist only in foil — live validation turned up a $199 card
+ * whose `prices.usd` is null — and reporting those as unpriced made a deck
+ * containing one look free. Falling back to the foil price is far closer to the
+ * truth than zero, but it is a different number, so the fallback is reported
+ * rather than folded in silently.
+ */
+export function priceOf(card, currency = 'usd') {
+  // Number(null) is 0, not NaN, so a null price passes a bare isFinite check and
+  // reads as free. Absence has to be tested before conversion.
+  const read = (key) => {
+    const raw = card?.prices?.[key]
+    if (raw === null || raw === undefined || raw === '') return null
+    const value = Number(raw)
+    return Number.isFinite(value) ? value : null
+  }
+
+  const direct = read(currency)
+  if (direct !== null) return { value: direct, foil: false }
+
+  const foil = read(currency === 'usd' ? 'usd_foil' : `${currency}_foil`)
+  if (foil !== null) return { value: foil, foil: true }
+
+  return { value: null, foil: false }
+}
+
+/**
  * Deck price. Scryfall's prices are a daily aggregate from market data, not a
- * live quote, and are absent for some printings — cards without a price are
- * reported separately rather than silently treated as free.
+ * live quote, and are absent for some printings — cards with no price at all
+ * are reported separately rather than silently treated as free, and cards
+ * priced only in foil are counted but flagged.
  */
 export function deckPrice(resolved, currency = 'usd') {
   let total = 0
   let missing = 0
   let priced = 0
+  let foilOnly = 0
   for (const { card, quantity } of resolved) {
-    const raw = card.prices?.[currency]
-    const value = raw == null ? null : Number(raw)
-    if (value === null || Number.isNaN(value)) {
+    const { value, foil } = priceOf(card, currency)
+    if (value === null) {
       missing += quantity
       continue
     }
     total += value * quantity
     priced += quantity
+    if (foil) foilOnly += quantity
   }
-  return { total, missing, priced, currency }
+  return { total, missing, priced, foilOnly, currency }
 }
 
 /** The most expensive cards in the deck, for the "what's driving the cost" list. */
 export function priciestCards(resolved, currency = 'usd', limit = 5) {
   return resolved
-    .map(({ card, quantity }) => ({
-      card,
-      quantity,
-      unit: Number(card.prices?.[currency] ?? 0),
-    }))
+    .map(({ card, quantity }) => {
+      const { value, foil } = priceOf(card, currency)
+      return { card, quantity, unit: value ?? 0, foil }
+    })
     .filter((e) => e.unit > 0)
     .map((e) => ({ ...e, total: e.unit * e.quantity }))
     .sort((a, b) => b.total - a.total)

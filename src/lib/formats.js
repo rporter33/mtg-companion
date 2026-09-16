@@ -148,8 +148,42 @@ export function typeLineOf(card) {
   return ''
 }
 
+/**
+ * The type line of the face you cast from hand.
+ *
+ * This matters for modal double-faced cards. Agadeem's Awakening is
+ * "Sorcery // Land": the flattened line contains "Land", so a naive check
+ * classifies a six-mana sorcery as a land and drops it out of the mana curve.
+ * The front face is what you pay for, so the front face is what the curve and
+ * the type breakdown should see.
+ */
+export function frontTypeLine(card) {
+  if (!card) return ''
+  if (Array.isArray(card.card_faces) && card.card_faces.length) {
+    return card.card_faces[0].type_line ?? ''
+  }
+  return card.type_line ?? ''
+}
+
+/** A land you play from hand — the front face is a land. */
+export function isTrueLand(card) {
+  return /\bLand\b/.test(frontTypeLine(card))
+}
+
+/**
+ * A spell whose *back* is a land: you choose, on the way down, whether this is
+ * a spell or a land. It is not a land for curve purposes and it is not a land
+ * you can count on, but it is a mana source you may deploy.
+ */
+export function isModalLand(card) {
+  if (!Array.isArray(card?.card_faces) || card.card_faces.length < 2) return false
+  if (isTrueLand(card)) return false
+  return card.card_faces.some((face) => /\bLand\b/.test(face.type_line ?? ''))
+}
+
 export function isBasicLand(card) {
-  return /\bBasic\b/.test(typeLineOf(card)) && /\bLand\b/.test(typeLineOf(card))
+  const front = frontTypeLine(card)
+  return /\bBasic\b/.test(front) && /\bLand\b/.test(front)
 }
 
 /** Basic lands are exempt from both the copy limit and singleton rules. */

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   findSeason, daysBetween, accentForSet, describeCountdown, buildSeasonTheme,
+  accentFromColorProfile,
 } from '../src/lib/season.js'
 
 const set = (code, releasedAt, over = {}) => ({
@@ -154,5 +155,52 @@ describe('buildSeasonTheme', () => {
     const theme = buildSeasonTheme(SETS, TODAY)
     expect(theme.accent).toMatch(/^hsl\(/)
     expect(theme.accentDim).toMatch(/^hsl\(/)
+  })
+})
+
+describe('accentFromColorProfile', () => {
+  const profile = (counts) => ({ counts, total: Object.values(counts).reduce((a, b) => a + b, 0) })
+
+  it('tints toward the colour a set actually leans on', () => {
+    const blue = accentFromColorProfile(profile({ W: 10, U: 90, B: 10, R: 5, G: 5 }))
+    // Blue sits near 205 on the wheel.
+    expect(Math.abs(blue.hue - 205)).toBeLessThan(25)
+    expect(blue.derivedFrom).toBe('colors')
+  })
+
+  it('averages hues circularly, not arithmetically', () => {
+    // Red is 5 and black is 267. A naive mean is 136 — green — which is the
+    // classic bug that makes colour averaging look broken.
+    const both = accentFromColorProfile(profile({ B: 50, R: 50 }))
+    expect(both.hue).toBeGreaterThan(280)
+    expect(both.hue).toBeLessThan(360)
+  })
+
+  it('desaturates an evenly spread set instead of asserting a hue', () => {
+    const even = accentFromColorProfile(profile({ W: 40, U: 40, B: 40, R: 40, G: 40 }))
+    const lopsided = accentFromColorProfile(profile({ W: 2, U: 96, B: 2, R: 0, G: 0 }))
+    expect(even.balance).toBeLessThan(0.1)
+    expect(even.accent).toMatch(/ 3\d% /)          // low saturation
+    expect(lopsided.accent).toMatch(/ [67]\d% /)   // high saturation
+  })
+
+  it('returns null when there is nothing to derive from', () => {
+    expect(accentFromColorProfile(null)).toBeNull()
+    expect(accentFromColorProfile({ counts: {}, total: 0 })).toBeNull()
+    expect(accentFromColorProfile({ counts: { W: 0, U: 0 }, total: 0 })).toBeNull()
+  })
+})
+
+describe('buildSeasonTheme with a colour profile', () => {
+  it('prefers real colour data over the code hash', () => {
+    const withProfile = buildSeasonTheme(SETS, TODAY,
+      { counts: { W: 0, U: 100, B: 0, R: 0, G: 0 }, total: 100 })
+    expect(withProfile.derivedFrom).toBe('colors')
+    expect(Math.abs(withProfile.hue - 205)).toBeLessThan(25)
+  })
+
+  it('falls back to the code hash when no profile is available', () => {
+    expect(buildSeasonTheme(SETS, TODAY).derivedFrom).toBe('code')
+    expect(buildSeasonTheme(SETS, TODAY, null).derivedFrom).toBe('code')
   })
 })

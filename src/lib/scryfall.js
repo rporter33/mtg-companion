@@ -307,6 +307,41 @@ export async function getSets({ signal } = {}) {
   return sets
 }
 
+/**
+ * The colour distribution of a set, used to tint the season banner.
+ *
+ * Scryfall's search API reports `total_cards` for any query, so five cheap
+ * queries give the set's colour breakdown without downloading the set. During
+ * spoiler season this reflects what has been previewed so far and shifts as
+ * more is revealed, which is the honest thing for it to do.
+ */
+export async function getSetColorProfile(setCode, { signal } = {}) {
+  if (!setCode) return null
+  const key = `setcolors:${setCode}`
+  const cached = await getQuery(key)
+  if (cached) return cached
+
+  const counts = {}
+  for (const color of ['w', 'u', 'b', 'r', 'g']) {
+    const params = new URLSearchParams({ q: `set:${setCode} color:${color}`, unique: 'cards' })
+    try {
+      const payload = await request(`/cards/search?${params}`, { signal })
+      counts[color.toUpperCase()] = payload.total_cards ?? 0
+    } catch (error) {
+      if (error.name === 'AbortError') throw error
+      // A colour with no cards is a 404 from Scryfall, which is a real answer.
+      counts[color.toUpperCase()] = 0
+    }
+  }
+
+  const total = Object.values(counts).reduce((a, b) => a + b, 0)
+  if (!total) return null
+
+  const profile = { counts, total }
+  await putQuery(key, profile)
+  return profile
+}
+
 /** Scryfall's random card endpoint, used by the guide's "show me a card" button. */
 export async function randomCard({ query, signal } = {}) {
   const params = query ? `?q=${encodeURIComponent(query)}` : ''

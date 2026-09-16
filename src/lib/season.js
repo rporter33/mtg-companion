@@ -56,6 +56,54 @@ export function daysBetween(from, to) {
   return Math.round((b - a) / 86400000)
 }
 
+// Where each colour sits on the hue wheel, matched to the app's existing
+// WUBRG tokens so a set-tinted banner sits beside the rest of the interface
+// rather than fighting it.
+const COLOR_HUES = { W: 44, U: 205, B: 267, R: 5, G: 140 }
+
+/**
+ * Derives an accent from a set's actual colour distribution.
+ *
+ * This is strictly better than hashing the set code, because it is real
+ * information: a set that skews blue gets a blue banner. Hues are averaged as
+ * unit vectors rather than as numbers, because hue is circular and a naive mean
+ * of red (5) and white (44) is fine while a naive mean of red (5) and black
+ * (267) gives green — the exact bug that makes colour-averaging look broken.
+ *
+ * Returns null when there is nothing to derive from, so the caller can fall
+ * back to the code hash.
+ */
+export function accentFromColorProfile(profile) {
+  if (!profile?.total) return null
+
+  let x = 0
+  let y = 0
+  for (const [color, count] of Object.entries(profile.counts)) {
+    const hue = COLOR_HUES[color]
+    if (hue === undefined || !count) continue
+    const radians = (hue * Math.PI) / 180
+    x += Math.cos(radians) * count
+    y += Math.sin(radians) * count
+  }
+
+  if (x === 0 && y === 0) return null
+  const hue = ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360
+
+  // How lopsided the set is. An evenly-spread set produces a short resultant
+  // vector, and leaning on a near-arbitrary hue there would be false precision,
+  // so saturation drops toward neutral instead.
+  const magnitude = Math.hypot(x, y) / profile.total
+  const saturation = Math.round(38 + magnitude * 34)
+
+  return {
+    hue: Math.round(hue),
+    accent: `hsl(${hue.toFixed(1)} ${saturation}% 62%)`,
+    accentDim: `hsl(${hue.toFixed(1)} ${saturation}% 62% / 0.13)`,
+    derivedFrom: 'colors',
+    balance: Number(magnitude.toFixed(3)),
+  }
+}
+
 /**
  * A stable accent hue for a set code.
  *
@@ -96,10 +144,16 @@ export function describeCountdown(days) {
  * Builds the theme. Returns null when there is nothing worth showing, so the
  * caller renders nothing rather than an empty shell.
  */
-export function buildSeasonTheme(sets, now = today()) {
+export function buildSeasonTheme(sets, now = undefined, colorProfile = null) {
+  now = now ?? today()
   const season = findSeason(sets, now)
   const focus = season.next ?? season.current
   if (!focus) return null
+
+  // Prefer the set's real colour distribution; fall back to the code hash,
+  // which is stable but carries no information about the set itself.
+  const accent = accentFromColorProfile(colorProfile)
+    ?? { ...accentForSet(focus.code), derivedFrom: 'code' }
 
   const isUpcoming = focus === season.next
   return {
@@ -107,7 +161,7 @@ export function buildSeasonTheme(sets, now = today()) {
     isUpcoming,
     countdown: isUpcoming ? describeCountdown(season.daysUntilNext) : null,
     daysSinceRelease: isUpcoming ? null : season.daysSinceCurrent,
-    ...accentForSet(focus.code),
+    ...accent,
     // A set-legality query, so the caller can ask "what is new for my deck"
     // without knowing anything about Scryfall syntax.
     searchQuery: `set:${focus.code}`,

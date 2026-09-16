@@ -71,3 +71,24 @@ describe('faceManaCost', () => {
     expect(faceManaCost({ mana_cost: '{G}', card_faces: [{ mana_cost: '{U}' }] })).toBe('{G}')
   })
 })
+
+
+describe('un-set symbols (found by live validation)', () => {
+  it('classifies half and infinite mana rather than dropping them', () => {
+    expect(classifySymbol('½')).toMatchObject({ kind: 'half-generic' })
+    expect(classifySymbol('∞')).toMatchObject({ kind: 'infinite' })
+  })
+
+  it('counts half-coloured mana toward its colour', () => {
+    // Half a white pip still means the deck needs white.
+    expect(classifySymbol('HW')).toMatchObject({ kind: 'half-colored', colors: ['W'] })
+    expect(countPips('{HW}{HR}')).toMatchObject({ W: 1, R: 1 })
+  })
+
+  it('leaves genuinely unknown symbols as other rather than guessing', () => {
+    // {H} and {L} are silver-border only and we do not know what they mean.
+    // A labelled fallback beats an invented meaning.
+    expect(classifySymbol('H')).toMatchObject({ kind: 'other' })
+    expect(classifySymbol('L')).toMatchObject({ kind: 'other' })
+  })
+})

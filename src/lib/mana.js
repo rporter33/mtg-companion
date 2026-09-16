@@ -38,6 +38,18 @@ export function classifySymbol(body) {
   if (sym === 'C') return { kind: 'colorless', colors: [], generic: 0 }
   if (sym === 'S') return { kind: 'snow', colors: [], generic: 0 }
 
+  // Un-set and joke symbols. None are legal in any format this app supports,
+  // but Scryfall serves them and they used to fall through to 'other', which
+  // renders a grey circle with raw text. Live validation surfaced six of them:
+  // {½} {∞} {H} {HW} {HR} {L}.
+  if (sym === '½') return { kind: 'half-generic', colors: [], generic: 0.5 }
+  if (sym === '∞') return { kind: 'infinite', colors: [], generic: Infinity }
+  // {HW} and {HR} are half-coloured mana. They count toward their colour: half
+  // a white pip still means the deck needs white.
+  if (/^H[WUBRG]$/.test(sym)) {
+    return { kind: 'half-colored', colors: [sym[1]], generic: 0 }
+  }
+
   if (COLORS.includes(sym)) return { kind: 'colored', colors: [sym], generic: 0 }
 
   if (sym.includes('/')) {
@@ -73,7 +85,8 @@ export function countPips(cost) {
   const pips = { W: 0, U: 0, B: 0, R: 0, G: 0 }
   for (const body of parseManaCost(cost)) {
     const { kind, colors } = classifySymbol(body)
-    if (kind === 'colored' || kind === 'hybrid' || kind === 'phyrexian' || kind === 'monocolor-hybrid') {
+    if (kind === 'colored' || kind === 'hybrid' || kind === 'phyrexian'
+      || kind === 'monocolor-hybrid' || kind === 'half-colored') {
       for (const c of colors) pips[c] += 1
     }
   }

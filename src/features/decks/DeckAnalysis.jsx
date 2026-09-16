@@ -200,11 +200,21 @@ function Price({ price, priciest }) {
           {price.missing === 1 ? ' is' : ' are'} not counted — the real total is higher.
         </p>
       )}
+      {price.foilOnly > 0 && (
+        <p className="faint tiny">
+          {price.foilOnly} card{price.foilOnly === 1 ? '' : 's'} exist only in foil, so
+          {price.foilOnly === 1 ? ' its' : ' their'} foil price is used. A nonfoil printing,
+          if one appears later, will be cheaper.
+        </p>
+      )}
       {priciest.length > 0 && (
         <div className="stack" style={{ gap: 'var(--space-1)', marginTop: 'var(--space-2)' }}>
-          {priciest.map(({ card, quantity, total }) => (
+          {priciest.map(({ card, quantity, total, foil }) => (
             <div className="row tiny" key={card.id}>
-              <span style={{ flex: 1 }}>{quantity > 1 && `${quantity}× `}{card.name}</span>
+              <span style={{ flex: 1 }}>
+                {quantity > 1 && `${quantity}× `}{card.name}
+                {foil && <span className="faint"> · foil only</span>}
+              </span>
               <span className="mono faint">${total.toFixed(2)}</span>
             </div>
           ))}

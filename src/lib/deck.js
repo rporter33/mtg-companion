@@ -6,7 +6,7 @@
 
 import {
   getFormat, cardLegality, canBeCommander, effectiveCopyLimit,
-  typeLineOf, isBasicLand,
+  typeLineOf, isBasicLand, isTrueLand, isModalLand, frontTypeLine,
 } from './formats.js'
 
 export function createDeck({ name = 'Untitled deck', formatId = 'commander' } = {}) {
@@ -242,8 +242,15 @@ export function expandToCards(entries, lookup) {
   return out
 }
 
+/**
+ * A land for curve and type-breakdown purposes: the front face is a land.
+ *
+ * Deliberately excludes modal spell // land cards — see isModalLand. Use
+ * `countManaSources` when you want "things that can produce mana", which does
+ * include them.
+ */
 export function isLandCard(card) {
-  return /\bLand\b/.test(typeLineOf(card))
+  return isTrueLand(card)
 }
 
-export { isBasicLand }
+export { isBasicLand, isModalLand, isTrueLand, frontTypeLine }

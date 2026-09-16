@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getSets } from '../../lib/scryfall.js'
+import { getSets, getSetColorProfile } from '../../lib/scryfall.js'
 import { buildSeasonTheme } from '../../lib/season.js'
 import './season.css'
 
@@ -17,13 +17,30 @@ import './season.css'
  */
 export default function SeasonBanner({ onExplore }) {
   const [theme, setTheme] = useState(null)
+  const [iconFailed, setIconFailed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     const controller = new AbortController()
-    getSets({ signal: controller.signal })
-      .then((sets) => { if (!cancelled) setTheme(buildSeasonTheme(sets)) })
-      .catch(() => { /* offline, or Scryfall unreachable — show nothing */ })
+
+    ;(async () => {
+      try {
+        const sets = await getSets({ signal: controller.signal })
+        // Render immediately from the code-hash accent, then refine once the
+        // set's real colour distribution arrives. Five extra queries should not
+        // hold up a banner.
+        const initial = buildSeasonTheme(sets)
+        if (cancelled || !initial) return
+        setTheme(initial)
+
+        const profile = await getSetColorProfile(initial.set.code, { signal: controller.signal })
+        if (cancelled || !profile) return
+        setTheme(buildSeasonTheme(sets, undefined, profile))
+      } catch {
+        // Offline, or Scryfall unreachable. Show nothing rather than a shell.
+      }
+    })()
+
     return () => { cancelled = true; controller.abort() }
   }, [])
 
@@ -35,8 +52,17 @@ export default function SeasonBanner({ onExplore }) {
       className="season"
       style={{ '--season-accent': accent, '--season-dim': accentDim }}
     >
-      {set.iconSvgUri && (
-        <img className="season__icon" src={set.iconSvgUri} alt="" aria-hidden="true" loading="lazy" />
+      {set.iconSvgUri && !iconFailed && (
+        // A broken-image glyph is worse than no icon at all, and a set icon is
+        // decoration — the banner reads perfectly without one.
+        <img
+          className="season__icon"
+          src={set.iconSvgUri}
+          alt=""
+          aria-hidden="true"
+          loading="lazy"
+          onError={() => setIconFailed(true)}
+        />
       )}
 
       <div className="season__body">

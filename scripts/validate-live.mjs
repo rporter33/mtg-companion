@@ -334,10 +334,23 @@ async function probeManaSymbols() {
     if (kind === 'other') unknown.push(symbol.symbol)
   }
 
-  check(`All ${costSymbols.length} mana-producing symbols classify`,
-    unknown.length === 0,
-    unknown.length ? `Unclassified: ${unknown.join(' ')} — these render as grey circles ` +
-      `with raw text and contribute no pips.` : '')
+  // Symbols we have looked at and deliberately do not model. They appear only
+  // on silver-border cards, are legal in no format this app supports, and fall
+  // back to a labelled circle. Anything OUTSIDE this list is a real surprise.
+  const ACCEPTED_UNKNOWN = new Set(['{H}', '{L}'])
+  const surprises = unknown.filter((sym) => !ACCEPTED_UNKNOWN.has(sym))
+
+  check(`All ${costSymbols.length} mana-producing symbols are accounted for`,
+    surprises.length === 0,
+    surprises.length ? `Unhandled and unexpected: ${surprises.join(' ')} — these render as ` +
+      `grey circles with raw text and contribute no pips. Decide what they mean.` : '')
+
+  const accepted = unknown.filter((sym) => ACCEPTED_UNKNOWN.has(sym))
+  if (accepted.length) {
+    note(`${accepted.length} symbol(s) deliberately unmodelled: ${accepted.join(' ')}`,
+      'Silver-border only, legal in no supported format. They render as a labelled ' +
+      'circle rather than being given a meaning we are not sure of.')
+  }
 
   // Spot-check pip counting on a genuinely awkward cost.
   try {

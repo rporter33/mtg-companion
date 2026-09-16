@@ -48,6 +48,19 @@ function Symbol({ body }) {
     )
   }
 
+  if (kind === 'half-colored') {
+    return (
+      <span
+        className="mana"
+        style={{ '--symbol-bg': COLOR_VAR[colors[0]] }}
+        role="img"
+        aria-label={label}
+      >
+        <span className="mana__glyph">½{colors[0]}</span>
+      </span>
+    )
+  }
+
   if (kind === 'phyrexian') {
     return (
       <span
@@ -62,7 +75,10 @@ function Symbol({ body }) {
   }
 
   const background = kind === 'colored' ? COLOR_VAR[colors[0]] : 'var(--mtg-c)'
-  const glyph = kind === 'generic' ? String(generic) : body.toUpperCase()
+  const glyph = kind === 'generic' ? String(generic)
+    : kind === 'half-generic' ? '½'
+      : kind === 'infinite' ? '∞'
+        : body.toUpperCase()
 
   return (
     <span className="mana" style={{ '--symbol-bg': background }} role="img" aria-label={label}>
@@ -77,6 +93,9 @@ function describe(body, kind, colors, generic) {
   if (kind === 'hybrid') return `${SPOKEN[colors[0]]} or ${SPOKEN[colors[1]]} mana`
   if (kind === 'monocolor-hybrid') return `${generic} generic or one ${SPOKEN[colors[0]]} mana`
   if (kind === 'phyrexian') return `phyrexian ${colors.map((c) => SPOKEN[c]).join(' or ')} mana`
+  if (kind === 'half-colored') return `half a ${SPOKEN[colors[0]]} mana`
+  if (kind === 'half-generic') return 'half a generic mana'
+  if (kind === 'infinite') return 'infinite mana'
   return `${SPOKEN[sym] ?? sym} mana`
 }
 

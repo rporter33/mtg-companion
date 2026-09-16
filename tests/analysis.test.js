@@ -4,7 +4,22 @@ import {
   colorConsistency, landAdvice, deckPrice, priciestCards, analyzeDeck, countManaSources,
 } from '../src/lib/analysis.js'
 import { createDeck, addCard, setCommanders } from '../src/lib/deck.js'
+import { priceOf } from '../src/lib/analysis.js'
+import { isModalLand, isTrueLand } from '../src/lib/formats.js'
 import { card, legalEverywhere, FOREST, ISLAND, BEAR, COUNTERSPELL, COMMANDER_BEAR } from './fixtures.js'
+
+/**
+ * The exact card live validation flagged: a six-mana sorcery whose back face is
+ * a land, so the flattened type line contains "Land".
+ */
+const MDFC = card({
+  id: 'mdfc', name: "Agadeem's Awakening", cmc: 6, type_line: 'Sorcery // Land',
+  color_identity: ['B'],
+  card_faces: [
+    { type_line: 'Sorcery', mana_cost: '{X}{B}{B}{B}', oracle_text: '' },
+    { type_line: 'Land', oracle_text: '{T}: Add {B}.' },
+  ],
+})
 
 const lookup = new Map([
   [FOREST.id, FOREST], [ISLAND.id, ISLAND], [BEAR.id, BEAR],
@@ -171,5 +186,83 @@ describe('analyzeDeck', () => {
     expect(result.size).toBe(0)
     expect(result.colors).toEqual([])
     expect(Number.isFinite(result.lands.recommended)).toBe(true)
+  })
+})
+
+
+describe('modal double-faced lands (found by live validation)', () => {
+  it('is not a true land — the front face is what you cast', () => {
+    expect(isTrueLand(MDFC)).toBe(false)
+    expect(isModalLand(MDFC)).toBe(true)
+  })
+
+  it('stays in the mana curve at its real cost', () => {
+    // The bug: the flattened "Sorcery // Land" type line matched a land check,
+    // so a six-mana sorcery vanished from the curve entirely.
+    const curve = manaCurve([{ card: MDFC, quantity: 4 }])
+    expect(curve.nonLandCount).toBe(4)
+    expect(curve.buckets[6]).toBe(4)
+  })
+
+  it('is filed under its front-face type, not as a land', () => {
+    const types = typeBreakdown([{ card: MDFC, quantity: 4 }])
+    expect(types.Sorcery).toBe(4)
+    expect(types.Land).toBe(0)
+  })
+
+  it('still counts as a mana source, because you may play it as a land', () => {
+    expect(countManaSources([{ card: MDFC, quantity: 4 }])).toBe(4)
+  })
+
+  it('is reported separately so the mana base is honest about what it is', () => {
+    const advice = landAdvice(
+      [{ card: MDFC, quantity: 4 }, { card: FOREST, quantity: 20 }], 60, 'modern')
+    expect(advice.landCount).toBe(20)
+    expect(advice.modalLands).toBe(4)
+    expect(advice.totalSources).toBe(24)
+  })
+
+  it('does not mistake an ordinary transforming creature for a modal land', () => {
+    const werewolf = card({
+      id: 'w', type_line: 'Creature — Human // Creature — Werewolf',
+      card_faces: [{ type_line: 'Creature — Human' }, { type_line: 'Creature — Werewolf' }],
+    })
+    expect(isModalLand(werewolf)).toBe(false)
+  })
+
+  it('does not mistake a true land with two faces for a modal land', () => {
+    const dfcLand = card({
+      id: 'dl', type_line: 'Land // Land',
+      card_faces: [{ type_line: 'Land' }, { type_line: 'Land' }],
+    })
+    expect(isTrueLand(dfcLand)).toBe(true)
+    expect(isModalLand(dfcLand)).toBe(false)
+  })
+})
+
+describe('foil-only pricing (found by live validation)', () => {
+  const foilOnly = card({ id: 'f', name: 'Craterclaw Colossus', prices: { usd: null, usd_foil: '199.00' } })
+
+  it('falls back to the foil price rather than reporting a $199 card as free', () => {
+    expect(priceOf(foilOnly)).toEqual({ value: 199, foil: true })
+  })
+
+  it('counts the card and flags that the price is a foil one', () => {
+    const result = deckPrice([{ card: foilOnly, quantity: 1 }])
+    expect(result.total).toBe(199)
+    expect(result.foilOnly).toBe(1)
+    expect(result.missing).toBe(0)
+  })
+
+  it('prefers a nonfoil price when both exist', () => {
+    const both = card({ id: 'b', prices: { usd: '2.00', usd_foil: '40.00' } })
+    expect(priceOf(both)).toEqual({ value: 2, foil: false })
+  })
+
+  it('distinguishes a genuinely free card from an unpriced one', () => {
+    // Number(null) is 0, not NaN — the trap that made null read as free.
+    expect(priceOf(card({ id: 'z', prices: { usd: '0.00' } }))).toEqual({ value: 0, foil: false })
+    expect(priceOf(card({ id: 'n', prices: { usd: null } })).value).toBeNull()
+    expect(priceOf(card({ id: 'e', prices: {} })).value).toBeNull()
   })
 })
