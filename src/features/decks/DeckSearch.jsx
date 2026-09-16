@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { searchCards } from '../../lib/scryfall.js'
 import { addCard, setCommanders } from '../../lib/deck.js'
 import { getFormat, canBeCommander, cardLegality, effectiveCopyLimit } from '../../lib/formats.js'
@@ -15,7 +15,7 @@ import { identityAttr } from '../../components/CardFace.jsx'
  * of the time while building you only want cards you can actually play — and
  * shows why a card is blocked rather than just hiding it.
  */
-export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards }) {
+export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards, seedQuery }) {
   const [query, setQuery] = useState('')
   const [scoped, setScoped] = useState(true)
   const [identityScoped, setIdentityScoped] = useState(true)
@@ -28,6 +28,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards 
   const format = getFormat(deck.formatId)
   const counts = combinedCounts(deck)
   const filters = useMemo(() => parseQuery(query), [query])
+  const seededRef = useRef(null)
 
   /**
    * A commander fixes what the deck may legally contain, so searching inside
@@ -93,6 +94,18 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards 
       : addCard(deck, card.id, 1))
     pinCards([card.id])
   }
+
+  // A query handed over by the coach runs once on arrival. The coach already
+  // scopes to format and colour identity, so its query goes out as written.
+  useEffect(() => {
+    if (!seedQuery || seededRef.current === seedQuery) return
+    seededRef.current = seedQuery
+    setQuery(seedQuery)
+    setScoped(false)
+    setIdentityScoped(false)
+    run(seedQuery, { scoped: false, identityScoped: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedQuery])
 
   return (
     <div className="stack">

@@ -143,6 +143,39 @@ so no set can render illegibly on the dark base.
 
 *Revisit if:* Scryfall ever exposes set colour metadata, which would beat a hash.
 
+### The deck coach advises, it does not gate
+
+A live checklist beside the real deck builder rather than a separate wizard. A
+wizard is easy to follow once and useless afterwards; this keeps helping on the
+second and third deck, lets you wander and backtrack, and never blocks a choice
+it disagrees with. The panel says so explicitly: these are what most decks do,
+not rules.
+
+**Targets come from published beginner guides, not invention** — roughly 40%
+lands, most spells costing one to three, eight to ten answers, a creature count
+that swings with how aggressive the deck is. The one number that is *not*
+quoted is the mana target: it is solved by the calibrated recommender, which
+independently arrives at the same 24 sources for a 60-card deck that every guide
+states. Agreement between a published rule of thumb and a solved model is the
+strongest evidence either is right.
+
+**Card categories are matched on oracle text**, so there is no hand-written card
+list to rot — and the patterns deliberately err toward counting. Missing a
+removal spell is annoying; telling someone to add removal they already have is
+actively wrong.
+
+Two things the first version got wrong, both about half-built decks. It judged
+the mana base against the deck's *current* size, so a 43-card work in progress
+was told it had twenty more lands than it needed while being 57 cards short.
+And it scored the curve from a handful of cards, letting a single four-mana
+commander drag the average to 4 and push the mana target three sources higher.
+Advice is now computed against the finished deck size, and a check with too
+little to judge shows a dash rather than a score — a number beside a green tick
+reads as a verdict, and it was not one.
+
+*Revisit if:* the oracle-text patterns start miscounting a common card shape.
+They are exported for testing precisely so a miss can be pinned down.
+
 ### The card explainer reads templating, not a card list
 
 Magic's rules text is templated far more regularly than beginners realise, and

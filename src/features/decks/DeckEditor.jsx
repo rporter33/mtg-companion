@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import useDeckCards from './useDeckCards.js'
 import DeckAnalysis from './DeckAnalysis.jsx'
+import DeckCoach from './DeckCoach.jsx'
 import DeckSearch from './DeckSearch.jsx'
 import DeckImportExport from './DeckImportExport.jsx'
 import ManaCost from '../../components/ManaCost.jsx'
@@ -18,6 +19,7 @@ const GROUP_ORDER = ['Commander', 'Creature', 'Planeswalker', 'Instant', 'Sorcer
 
 export default function DeckEditor({ deck, onBack, onChange, onOpenCard, offline }) {
   const [tab, setTab] = useState('list')
+  const [coachQuery, setCoachQuery] = useState(null)
   const { cards, loading, missing, lookup } = useDeckCards(deck)
   const format = getFormat(deck.formatId)
 
@@ -86,7 +88,7 @@ export default function DeckEditor({ deck, onBack, onChange, onOpenCard, offline
       )}
 
       <nav className="row" role="tablist">
-        {[['list', 'List'], ['add', 'Add cards'], ['analysis', 'Analysis'], ['io', 'Import / export']]
+        {[['list', 'List'], ['add', 'Add cards'], ['coach', 'Coach'], ['analysis', 'Analysis'], ['io', 'Import / export']]
           .map(([id, label]) => (
             <button
               key={id}
@@ -109,7 +111,15 @@ export default function DeckEditor({ deck, onBack, onChange, onOpenCard, offline
       {tab === 'add' && (
         <DeckSearch
           deck={deck} onChange={commit} onOpenCard={onOpenCard}
-          offline={offline} cards={cards}
+          offline={offline} cards={cards} seedQuery={coachQuery}
+        />
+      )}
+      {tab === 'coach' && (
+        <DeckCoach
+          deck={deck}
+          lookup={lookup}
+          cardCount={cards.size}
+          onSearch={(query) => { setCoachQuery(query); setTab('add') }}
         />
       )}
       {tab === 'analysis' && (
