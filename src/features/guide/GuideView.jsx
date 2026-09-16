@@ -4,11 +4,12 @@ import { GLOSSARY_SECTIONS, lookupTerm } from '../../data/glossary.js'
 import { getGuideProgress, markLessonComplete, resetLesson } from '../../lib/storage.js'
 import TutorialGame from './TutorialGame.jsx'
 import SeasonBanner from './SeasonBanner.jsx'
+import Commanders from './Commanders.jsx'
 import Term, { TermBody } from '../../components/Term.jsx'
 import Sheet from '../../components/Sheet.jsx'
 import './guide.css'
 
-export default function GuideView({ onNavigate, onExploreQuery }) {
+export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onStartDeck }) {
   const [mode, setMode] = useState('home')
   const [trackId, setTrackId] = useState(null)
   const [lessonId, setLessonId] = useState(null)
@@ -105,6 +106,11 @@ export default function GuideView({ onNavigate, onExploreQuery }) {
           })}
         </div>
       </section>
+
+      <Commanders
+        onOpenCard={onOpenCard}
+        onBuild={(example, card) => onStartDeck?.(example, card)}
+      />
 
       <section>
         <div className="section-title"><h2>Look anything up</h2></div>

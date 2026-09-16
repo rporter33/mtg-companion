@@ -17,8 +17,10 @@ import { captureSnapshot } from '../../lib/snapshot.js'
 const GROUP_ORDER = ['Commander', 'Creature', 'Planeswalker', 'Instant', 'Sorcery',
   'Artifact', 'Enchantment', 'Battle', 'Land', 'Other']
 
-export default function DeckEditor({ deck, onBack, onChange, onOpenCard, offline }) {
-  const [tab, setTab] = useState('list')
+export default function DeckEditor({
+  deck, onBack, onChange, onOpenCard, offline, pending, onPendingConsumed,
+}) {
+  const [tab, setTab] = useState(pending?.kind === 'example' ? 'io' : 'list')
   const [coachQuery, setCoachQuery] = useState(null)
   const { cards, loading, missing, lookup } = useDeckCards(deck)
   const format = getFormat(deck.formatId)
@@ -125,7 +127,12 @@ export default function DeckEditor({ deck, onBack, onChange, onOpenCard, offline
       {tab === 'analysis' && (
         <DeckAnalysis deck={deck} lookup={lookup} cardCount={cards.size} />
       )}
-      {tab === 'io' && <DeckImportExport deck={deck} lookup={lookup} onChange={commit} />}
+      {tab === 'io' && (
+        <DeckImportExport
+          deck={deck} lookup={lookup} onChange={commit}
+          pending={pending} onPendingConsumed={onPendingConsumed}
+        />
+      )}
     </div>
   )
 }

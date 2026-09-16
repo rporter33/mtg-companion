@@ -1,23 +1,44 @@
-import { useState } from 'react'
-import { searchCards, getCardByName } from '../../lib/scryfall.js'
+import { useEffect, useState } from 'react'
+import { searchCards, getCardByName, autocomplete } from '../../lib/scryfall.js'
+import {
+  looksLikeUrl, planForUrl, fetchFromSource, toDecklistText,
+} from '../../lib/deck-sources.js'
+import { toExampleEntry } from '../../data/example-decks.js'
 import { addCard, setCommanders, createDeck } from '../../lib/deck.js'
 import { pinCards } from '../../lib/cache.js'
 import { exportAll, importAll } from '../../lib/storage.js'
+import { exampleToDecklist } from '../../data/example-decks.js'
 
 /**
  * Decklists move between sites as plain text ("4 Lightning Bolt"), so that is
  * the interchange format here too — you can paste a list from anywhere, and
  * copy this deck into anywhere.
  */
-export default function DeckImportExport({ deck, lookup, onChange }) {
+export default function DeckImportExport({ deck, lookup, onChange, pending, onPendingConsumed }) {
   const [text, setText] = useState('')
   const [status, setStatus] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [preview, setPreview] = useState(null)
+  const [urlPlan, setUrlPlan] = useState(null)
 
   const decklist = toText(deck, lookup)
 
-  const runImport = async () => {
-    const lines = parseDecklist(text)
+  // A deck handed over from the commanders browser arrives as text to import.
+  useEffect(() => {
+    if (pending?.kind !== 'example') return
+    setText(exampleToDecklist(pending.example))
+    setStatus({ tone: 'info', text: `Loaded "${pending.example.name}". Review it below, then import.` })
+    onPendingConsumed?.()
+  }, [pending, onPendingConsumed])
+
+  /**
+   * Resolving happens before anything is written, so the user sees what will
+   * land and what could not be found while the deck is still untouched. The
+   * previous version applied immediately and reported the failures afterwards,
+   * by which point the damage was done.
+   */
+  const buildPreview = async (raw) => {
+    const lines = parseDecklist(raw)
     if (!lines.length) {
       setStatus({ tone: 'warn', text: 'No card lines found. One card per line, like "4 Lightning Bolt".' })
       return
@@ -25,27 +46,92 @@ export default function DeckImportExport({ deck, lookup, onChange }) {
     setBusy(true)
     setStatus({ tone: 'info', text: `Looking up ${lines.length} cards…` })
 
-    let next = deck
+    const resolved = []
     const failed = []
-    for (const { quantity, name, section } of lines) {
+    for (const line of lines) {
       try {
-        const card = await getCardByName(name, { exact: false })
-        pinCards([card.id])
-        if (section === 'commander') {
-          next = setCommanders(next, [...next.commanders, card.id])
-        } else {
-          next = addCard(next, card.id, quantity, section === 'sideboard' ? 'sideboard' : 'main')
-        }
+        const card = await getCardByName(line.name, { exact: false })
+        resolved.push({ ...line, card })
       } catch {
-        failed.push(name)
+        failed.push(line)
       }
     }
-    onChange(next)
+
+    // Offer the closest matches for anything that did not resolve. Most import
+    // failures are a typo or a punctuation difference, not a missing card.
+    for (const line of failed) {
+      try {
+        line.candidates = (await autocomplete(line.name)).slice(0, 4)
+      } catch {
+        line.candidates = []
+      }
+    }
+
     setBusy(false)
-    setStatus(failed.length
-      ? { tone: 'warn', text: `Imported ${lines.length - failed.length} cards. Could not find: ${failed.slice(0, 6).join(', ')}${failed.length > 6 ? '…' : ''}` }
-      : { tone: 'info', text: `Imported ${lines.length} cards.` })
+    setPreview({ resolved, failed })
+    setStatus(null)
+  }
+
+  const applyPreview = () => {
+    let next = deck
+    for (const { quantity, section, card } of preview.resolved) {
+      pinCards([card.id])
+      if (section === 'commander') next = setCommanders(next, [...next.commanders, card.id])
+      else next = addCard(next, card.id, quantity, section === 'sideboard' ? 'sideboard' : 'main')
+    }
+    onChange(next)
+    setPreview(null)
     setText('')
+    setStatus({
+      tone: 'info',
+      text: `Added ${preview.resolved.length} cards.${preview.failed.length ? ` ${preview.failed.length} could not be found and were skipped.` : ''}`,
+    })
+  }
+
+  /**
+   * A pasted URL is recognised before any request is made, so the app can say
+   * what it is about to do — or explain why it cannot — instead of failing
+   * opaquely. Sources that do not permit browser access are never fetched.
+   */
+  const handleInput = (value) => {
+    setText(value)
+    setPreview(null)
+    setUrlPlan(looksLikeUrl(value) ? planForUrl(value) : null)
+  }
+
+  const runImport = async () => {
+    if (urlPlan?.kind === 'fetch') {
+      setBusy(true)
+      setStatus({ tone: 'info', text: urlPlan.message })
+      try {
+        const parsed = await fetchFromSource(urlPlan)
+        const asText = toDecklistText(parsed)
+        setText(asText)
+        setUrlPlan(null)
+        setBusy(false)
+        await buildPreview(asText)
+      } catch (error) {
+        setBusy(false)
+        setStatus({ tone: 'warn', text: `${error.message} ${error.instructions ?? ''}`.trim() })
+      }
+      return
+    }
+    await buildPreview(text)
+  }
+
+  const copyAsExample = async () => {
+    const entry = toExampleEntry(deck, lookup)
+    const json = `${JSON.stringify(entry, null, 2)},`
+    try {
+      await navigator.clipboard.writeText(json)
+      setStatus({
+        tone: 'info',
+        text: 'Copied. Paste it into src/data/example-decks.js to ship this deck as an example.',
+      })
+    } catch {
+      setStatus({ tone: 'warn', text: 'Could not reach the clipboard. The entry is shown below instead.' })
+      setPreview({ resolved: [], failed: [], raw: json })
+    }
   }
 
   const copy = async () => {
@@ -79,34 +165,69 @@ export default function DeckImportExport({ deck, lookup, onChange }) {
         <textarea
           rows={8}
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={'Commander\n1 Atraxa, Praetors’ Voice\n\n4 Lightning Bolt\n24 Mountain'}
+          onChange={(e) => handleInput(e.target.value)}
+          placeholder={'Paste a decklist, or a link from Archidekt or Moxfield\n\nCommander\n1 Atraxa, Praetors’ Voice\n\n4 Lightning Bolt\n24 Mountain'}
           className="mono"
           style={{ fontSize: '0.82rem' }}
         />
+
+        {urlPlan && (
+          <div className={`banner banner--${urlPlan.kind === 'fetch' ? 'info' : 'warn'} tiny`}>
+            <strong>{urlPlan.message}</strong>
+            {urlPlan.hint && <div style={{ marginTop: 'var(--space-2)' }}>{urlPlan.hint}</div>}
+          </div>
+        )}
+
         <div className="row">
-          <button className="btn btn--primary" onClick={runImport} disabled={busy || !text.trim()}>
-            {busy ? 'Importing…' : 'Import into this deck'}
+          <button
+            className="btn btn--primary"
+            onClick={runImport}
+            disabled={busy || !text.trim() || urlPlan?.kind === 'manual' || urlPlan?.kind === 'unknown'}
+          >
+            {busy ? 'Reading…' : urlPlan?.kind === 'fetch' ? 'Fetch this deck' : 'Review import'}
           </button>
         </div>
         <p className="faint tiny" style={{ margin: 0 }}>
-          Each name is looked up individually and rate limited, so a 100-card list takes
-          about ten seconds.
+          Nothing is added until you have seen what will land. Each name is looked up
+          individually and rate limited, so a 100-card list takes about ten seconds.
         </p>
       </section>
 
       <section className="panel stack">
         <h3>Export this deck</h3>
         <textarea rows={8} readOnly value={decklist} className="mono" style={{ fontSize: '0.82rem' }} />
-        <div className="row">
+        <div className="row row--wrap">
           <button className="btn" onClick={copy}>Copy decklist</button>
           <button className="btn" onClick={download}>Download all data</button>
+          <button className="btn btn--ghost btn--sm" onClick={copyAsExample}>Copy as example</button>
         </div>
         <p className="faint tiny" style={{ margin: 0 }}>
           There are no accounts here, so &ldquo;download all data&rdquo; is the backup. It is a
           plain JSON file containing every deck and your guide progress — yours to keep.
         </p>
       </section>
+
+      {preview && (
+        <ImportPreview
+          preview={preview}
+          onApply={applyPreview}
+          onCancel={() => setPreview(null)}
+          onResolve={(line, name) => {
+            setPreview((current) => ({
+              ...current,
+              failed: current.failed.filter((f) => f !== line),
+              pendingName: name,
+            }))
+            // Re-run just this one line rather than the whole list.
+            getCardByName(name, { exact: true })
+              .then((card) => setPreview((current) => ({
+                ...current,
+                resolved: [...current.resolved, { ...line, card }],
+              })))
+              .catch(() => { /* leave it out; the user saw the attempt */ })
+          }}
+        />
+      )}
 
       {status && <div className={`banner banner--${status.tone} tiny`}>{status.text}</div>}
     </div>
@@ -164,4 +285,61 @@ export function parseDecklist(text) {
     out.push({ quantity: Number(match[1]), name, section })
   }
   return out
+}
+
+/** Shows exactly what an import will do before it does any of it. */
+function ImportPreview({ preview, onApply, onCancel, onResolve }) {
+  const total = preview.resolved.reduce((n, line) => n + line.quantity, 0)
+
+  if (preview.raw) {
+    return (
+      <section className="panel stack">
+        <h3>Example entry</h3>
+        <textarea rows={10} readOnly value={preview.raw} className="mono" style={{ fontSize: '0.75rem' }} />
+        <button className="btn btn--ghost btn--sm" onClick={onCancel}>Close</button>
+      </section>
+    )
+  }
+
+  return (
+    <section className="panel stack">
+      <h3>Before anything is added</h3>
+      <div className="row row--wrap">
+        <span className="chip chip--ok">{total} cards found</span>
+        {preview.failed.length > 0 && (
+          <span className="chip chip--warn">{preview.failed.length} not found</span>
+        )}
+      </div>
+
+      {preview.failed.length > 0 && (
+        <div className="stack" style={{ gap: 'var(--space-2)' }}>
+          <p className="faint tiny" style={{ margin: 0 }}>
+            These names did not match a card. Most import failures are a typo or a
+            punctuation difference — pick the right one, or leave it out.
+          </p>
+          {preview.failed.map((line, i) => (
+            <div className="stack" key={i} style={{ gap: 'var(--space-1)' }}>
+              <span className="tiny mono">{line.quantity} {line.name}</span>
+              <div className="row row--wrap">
+                {line.candidates?.length
+                  ? line.candidates.map((name) => (
+                    <button key={name} className="chip" onClick={() => onResolve(line, name)}>
+                      {name}
+                    </button>
+                  ))
+                  : <span className="faint tiny">No close matches.</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="row">
+        <button className="btn btn--primary" onClick={onApply} disabled={!preview.resolved.length}>
+          Add {total} cards
+        </button>
+        <button className="btn btn--ghost" onClick={onCancel}>Cancel</button>
+      </div>
+    </section>
+  )
 }

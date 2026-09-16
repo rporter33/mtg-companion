@@ -1,0 +1,21 @@
+.commander-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+
+.commander { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.commander__foot { display: flex; flex-direction: column; gap: var(--space-1); }
+
+.commander__name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 720px) {
+  .commander-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+}

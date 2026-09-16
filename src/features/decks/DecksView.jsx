@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { listDecks, saveDeck, deleteDeck } from '../../lib/storage.js'
 import { createDeck } from '../../lib/deck.js'
 import { FORMAT_GROUPS, formatsInGroup, getFormat } from '../../lib/formats.js'
@@ -8,13 +8,34 @@ import useLegalityWatch from './useLegalityWatch.js'
 import Term from '../../components/Term.jsx'
 import './decks.css'
 
-export default function DecksView({ onOpenCard, offline }) {
+export default function DecksView({ onOpenCard, offline, seed, onSeedConsumed }) {
   const [decks, setDecks] = useState(() => listDecks())
   const [editingId, setEditingId] = useState(null)
   const [creating, setCreating] = useState(false)
+  const [pending, setPending] = useState(null)
   const { report, summary, dismiss } = useLegalityWatch({ enabled: !offline })
 
   const refresh = () => setDecks(listDecks())
+
+  /**
+   * A commander or example deck handed over from the Learn tab. Creating the
+   * deck here rather than there keeps deck creation in one place, so the format
+   * defaults and naming stay consistent however you arrive.
+   */
+  useEffect(() => {
+    if (!seed) return
+    const { example, card } = seed
+    const deck = createDeck({
+      name: example?.name ?? (card ? `${card.name} deck` : 'Untitled deck'),
+      formatId: example?.formatId ?? 'commander',
+    })
+    saveDeck(deck)
+    refresh()
+    setEditingId(deck.id)
+    setPending(example ? { kind: 'example', example } : { kind: 'commander', card })
+    onSeedConsumed?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed])
 
   if (editingId) {
     const deck = decks.find((d) => d.id === editingId)
@@ -22,10 +43,12 @@ export default function DecksView({ onOpenCard, offline }) {
     return (
       <DeckEditor
         deck={deck}
-        onBack={() => { refresh(); setEditingId(null) }}
+        onBack={() => { refresh(); setEditingId(null); setPending(null) }}
         onChange={(next) => { saveDeck(next); refresh() }}
         onOpenCard={onOpenCard}
         offline={offline}
+        pending={pending}
+        onPendingConsumed={() => setPending(null)}
       />
     )
   }

@@ -143,6 +143,47 @@ so no set can render illegibly on the dark base.
 
 *Revisit if:* Scryfall ever exposes set colour metadata, which would beat a hash.
 
+### Deck sites are read only where they permit it
+
+There is no backend, so every request comes from the user's browser, and a site
+can only be read if it sends CORS headers allowing it. Moxfield publishes no
+official public API at all; the third-party wrappers that exist work by spoofing
+a `PostmanRuntime` user agent, which is signal enough about intent.
+
+So each source declares whether a browser may read it. Archidekt publishes an
+API and is attempted at runtime rather than assumed either way. Moxfield,
+Deckstats, TappedOut and MTGGoldfish are never fetched — pasting one of their
+links produces the name of the site, why it cannot be read, and exactly which
+button to press instead, with the paste box already open. A browser test asserts
+the negative directly: **no request is made to moxfield.com**.
+
+No user-agent spoofing and no scraping proxy. Both would be fragile, both work
+against what the service has signalled, and this repository is public.
+
+A CORS refusal and being offline are indistinguishable from script — both
+surface as a `TypeError` with no status — so the failure message covers both
+rather than guessing which happened.
+
+### Imports are previewed before anything is written
+
+The previous importer applied immediately and reported failures afterwards, by
+which point the deck had already changed. Now every name is resolved first and
+the user sees what will land, what will not, and candidate matches for anything
+that failed. Most import failures are a typo or a punctuation difference, so
+guessing close matches is worth more than listing what broke.
+
+### Example decks are supplied by a person, and say so
+
+Real decklists cannot be fetched from anywhere, and inventing a hundred-card
+list and presenting it as a good deck would be worse than shipping none. So
+examples are pasted in by someone who plays, exported to `data/example-decks.js`
+with a credit and a date, and stored as card **names** rather than printing ids —
+a printing id pins an example to one art from one set and breaks when it is not
+cached, where a name resolves against whatever printing the player has.
+
+*Revisit if:* a deck site publishes a browser-readable API. That would change
+both this and the import story.
+
 ### The deck coach advises, it does not gate
 
 A live checklist beside the real deck builder rather than a separate wizard. A
