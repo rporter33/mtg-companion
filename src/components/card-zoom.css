@@ -1,0 +1,122 @@
+.zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: #05070b;
+  display: flex;
+  flex-direction: column;
+  animation: zoom-in 0.15s ease;
+}
+
+.zoom__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  padding-top: calc(var(--space-2) + var(--safe-top));
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  flex-shrink: 0;
+}
+
+.zoom__name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45vw;
+}
+
+.zoom__level { font-size: 0.75rem; color: var(--text-faint); min-width: 3.5ch; text-align: right; }
+
+.zoom__frame {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  /* Take every gesture: without this the browser pans and pinch-zooms the page
+     instead, and the viewer never sees the events. */
+  touch-action: none;
+  outline: none;
+  padding: var(--space-3);
+}
+
+.zoom__content {
+  /* transform-origin at the centre is what the pan-bounds maths assumes. */
+  transform-origin: center center;
+  will-change: transform;
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  /* Dragging to pan otherwise selects the card's text, which highlights half
+     the card in blue and leaves a selection behind after the drag ends. The
+     CSS-rendered face is real text, so this is not theoretical. */
+  user-select: none;
+  -webkit-user-select: none;
+  /* Stops the iOS press-and-hold callout over the card image. */
+  -webkit-touch-callout: none;
+}
+
+.zoom__content * { user-select: none; -webkit-user-select: none; }
+
+.zoom__content img {
+  max-width: min(92vw, 70vh * 0.716);
+  max-height: 70vh;
+  width: auto;
+  height: auto;
+  border-radius: 4.75% / 3.5%;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* The CSS-rendered fallback. Live text, so it is the one that stays sharp. */
+.zoom__face { width: min(92vw, 50vh * 0.716); }
+
+.zoom__hint {
+  text-align: center;
+  padding: var(--space-3);
+  padding-bottom: calc(var(--space-3) + var(--safe-bottom));
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.zoom__hint kbd {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+@keyframes zoom-in { from { opacity: 0; } }
+
+/* A magnifier affordance for places where tapping the card does something else
+   — the tutorial, where tap means play. */
+.inspect {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #0b0e14cc;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  line-height: 1;
+  backdrop-filter: blur(2px);
+}
+.inspect:hover { color: var(--text); border-color: var(--accent); }
+.inspect svg { width: 12px; height: 12px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .zoom { animation: none; }
+  .zoom__content { will-change: auto; }
+}

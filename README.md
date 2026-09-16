@@ -22,6 +22,11 @@ as a JSON file you own.
 - A 44-term glossary, wired through the whole app. Any jargon anywhere is
   tappable.
 
+**Zoom** — Any card opens full screen: pinch, scroll, double-tap or the keyboard,
+up to 4x, with drag to pan. Zoom fetches a higher-resolution image rather than
+magnifying a thumbnail. In the tutorial each card carries a magnifier button, so
+a beginner can study a card without playing it.
+
 **Cards** — Search with Scryfall's own query syntax (`t:creature f:modern
 cmc<=3`, `c:r usd<5`). Full oracle text, official rulings, legality across every
 supported format, every printing, and prices.
@@ -49,7 +54,8 @@ Works entirely offline and keeps the screen awake.
 ```bash
 npm install
 npm run dev
-npm test             # 208 tests
+npm test             # 259 tests
+npm run test:browser   # drives the zoom viewer in a real browser
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run build
 npm run preview

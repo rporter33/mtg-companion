@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "validate:live": "node scripts/validate-live.mjs"
+    "validate:live": "node scripts/validate-live.mjs",
+    "test:browser": "node tests/browser/zoom.spec.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { TUTORIAL } from '../../data/tutorial.js'
 import { tutorialCard } from '../../data/tutorial-cards.js'
 import CardFace from '../../components/CardFace.jsx'
+import CardZoom from '../../components/CardZoom.jsx'
 import Term from '../../components/Term.jsx'
 import { saveTutorialState, getGuideProgress, markLessonComplete } from '../../lib/storage.js'
 import './guide.css'
@@ -10,7 +11,31 @@ const PHASE_LABEL = {
   main1: 'Main phase', main2: 'Second main phase', combat: 'Combat', draw: 'Draw step',
 }
 
+/**
+ * Inspecting a card in the tutorial needs its own affordance, because tapping a
+ * card here plays it. A visible button beats a long-press: a beginner will never
+ * discover a hidden gesture, and long-press collides with the OS context menu.
+ */
+function InspectButton({ onClick, name }) {
+  return (
+    <button
+      type="button"
+      className="inspect"
+      onClick={(event) => { event.stopPropagation(); onClick() }}
+      aria-label={`Look closely at ${name}`}
+      title={`Look closely at ${name}`}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
+        strokeLinecap="round" aria-hidden="true">
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m20 20-4.2-4.2" />
+      </svg>
+    </button>
+  )
+}
+
 export default function TutorialGame({ onExit }) {
+  const [inspecting, setInspecting] = useState(null)
   const [index, setIndex] = useState(() => {
     const saved = getGuideProgress().tutorialState
     return typeof saved === 'number' && saved < TUTORIAL.length ? saved : 0
@@ -53,7 +78,12 @@ export default function TutorialGame({ onExit }) {
         <div style={{ width: `${((index + 1) / TUTORIAL.length) * 100}%` }} />
       </div>
 
-      <Board beat={beat} onCardClick={handleCardClick} action={beat.action} />
+      <Board
+        beat={beat}
+        onCardClick={handleCardClick}
+        onInspect={setInspecting}
+        action={beat.action}
+      />
 
       <div className="coach">
         <div className="coach__title">
@@ -89,12 +119,19 @@ export default function TutorialGame({ onExit }) {
         cards={beat.you.hand}
         highlight={beat.action.type === 'click' && beat.action.zone === 'hand' ? beat.action.cardId : null}
         onCardClick={(id) => handleCardClick(id, 'hand')}
+        onInspect={setInspecting}
+      />
+
+      <CardZoom
+        card={inspecting ? tutorialCard(inspecting) : null}
+        open={!!inspecting}
+        onClose={() => setInspecting(null)}
       />
     </div>
   )
 }
 
-function Board({ beat, onCardClick, action }) {
+function Board({ beat, onCardClick, onInspect, action }) {
   const wanted = action.type === 'click' ? action : null
 
   return (
@@ -103,7 +140,7 @@ function Board({ beat, onCardClick, action }) {
         label="Opponent" life={beat.foe.life} handCount={beat.foe.hand}
         graveyard={beat.foe.graveyard} active={beat.active === 'foe'} opponent
       />
-      <Zone permanents={beat.foe.board} side="foe" />
+      <Zone permanents={beat.foe.board} side="foe" onInspect={onInspect} />
 
       <div className="board-view__divider" aria-hidden="true" />
 
@@ -111,6 +148,7 @@ function Board({ beat, onCardClick, action }) {
         permanents={beat.you.board} side="you"
         highlight={wanted?.zone === 'board' ? wanted.cardId : null}
         onCardClick={(id) => onCardClick(id, 'board')}
+        onInspect={onInspect}
       />
       <PlayerStrip
         label="You" life={beat.you.life} handCount={beat.you.hand.length}
@@ -136,7 +174,7 @@ function PlayerStrip({ label, life, handCount, graveyard, active, opponent }) {
   )
 }
 
-function Zone({ permanents, side, highlight, onCardClick }) {
+function Zone({ permanents, side, highlight, onCardClick, onInspect }) {
   const lands = permanents.filter((p) => p.id === 'forest' || p.id === 'mountain')
   const others = permanents.filter((p) => !(p.id === 'forest' || p.id === 'mountain'))
 
@@ -147,12 +185,13 @@ function Zone({ permanents, side, highlight, onCardClick }) {
   return (
     <div className={`zone zone--${side}`}>
       {others.map((p, i) => (
-        <Permanent key={`${p.id}-${i}`} perm={p} highlight={highlight === p.id} onClick={onCardClick} />
+        <Permanent key={`${p.id}-${i}`} perm={p} highlight={highlight === p.id}
+          onClick={onCardClick} onInspect={onInspect} />
       ))}
       {lands.length > 0 && (
         <div className="zone__lands">
           {lands.map((p, i) => (
-            <Permanent key={`land-${i}`} perm={p} small highlight={false} />
+            <Permanent key={`land-${i}`} perm={p} small highlight={false} onInspect={onInspect} />
           ))}
         </div>
       )}
@@ -160,7 +199,7 @@ function Zone({ permanents, side, highlight, onCardClick }) {
   )
 }
 
-function Permanent({ perm: p, small, highlight, onClick }) {
+function Permanent({ perm: p, small, highlight, onClick, onInspect }) {
   const card = tutorialCard(p.id)
   if (!card) return null
   const clickable = !!onClick
@@ -178,6 +217,7 @@ function Permanent({ perm: p, small, highlight, onClick }) {
       ].filter(Boolean).join(' ')}
     >
       <CardFace card={card} size={small ? 'sm' : 'md'} onClick={clickable ? () => onClick(p.id) : undefined} />
+      {onInspect && !small && <InspectButton name={card.name} onClick={() => onInspect(p.id)} />}
       {p.buff && <span className="permanent__buff">{p.buff}</span>}
       {p.sick && <span className="permanent__tag" title="Summoning sick — cannot attack yet">zzz</span>}
       {p.attacking && <span className="permanent__tag permanent__tag--attack">attacking</span>}
@@ -186,7 +226,7 @@ function Permanent({ perm: p, small, highlight, onClick }) {
   )
 }
 
-function Hand({ cards, highlight, onCardClick }) {
+function Hand({ cards, highlight, onCardClick, onInspect }) {
   if (!cards.length) return null
   return (
     <div className="hand">
@@ -199,6 +239,7 @@ function Hand({ cards, highlight, onCardClick }) {
           return (
             <div key={`${id}-${i}`} className={`hand__card ${wanted ? 'hand__card--wanted' : ''}`}>
               <CardFace card={card} size="md" onClick={() => onCardClick(id)} />
+              {onInspect && <InspectButton name={card.name} onClick={() => onInspect(id)} />}
             </div>
           )
         })}

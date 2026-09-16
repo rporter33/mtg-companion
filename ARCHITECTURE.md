@@ -189,6 +189,32 @@ rather than taking a size prop and guessing. Below ~104px the oracle text is
 unreadable and only squeezes the name, so it goes; below ~70px the type line
 goes too.
 
+### Zoom upgrades the image rather than magnifying it
+
+Cards are browsed at Scryfall's `normal` (488px wide). Past about 1.4x that is
+just bigger pixels, so the viewer swaps the source for `large` and then `png` as
+you zoom, instead of scaling a thumbnail.
+
+Pan limits are bounded by the *card*, not the viewport. Bounding by the frame —
+the obvious first implementation — let a card that still fitted entirely on
+screen be dragged halfway out of view. The overhang is how far the scaled card
+sticks out past the frame; when it does not stick out, it does not move.
+
+The CSS-rendered `CardFace` is the fallback when there is no image, and it is
+the *better* zoom: live text stays perfectly crisp at 4x where a raster image
+does not. The tutorial, which needs zoom most because its cards render at 82px
+to players who cannot yet read them, renders from CardFace and so gets the
+sharpest result for free.
+
+In the tutorial, tapping a card plays it, so inspection needed its own
+affordance. That is a visible magnifier button rather than a long-press: a
+beginner will never discover a hidden gesture, long-press collides with the OS
+context menu, and adding tap disambiguation would have put a delay on every
+play in a tutorial whose whole pitch is "you make the plays".
+
+*Revisit if:* zoom is wanted directly in the search grid. Tapping there already
+opens the detail view, so tap is effectively the zoom today.
+
 ### Offline is a case, not a fallback
 
 - Cards referenced by a saved deck are **pinned** in IndexedDB and never
@@ -267,6 +293,13 @@ them would have failed a unit test. The ban-detection flow is verified the same
 way: a deck and a newly-banned card are seeded into real IndexedDB and
 localStorage, and the run asserts both that the alert fires and that a second
 launch stays silent.
+
+`npm run test:browser` drives the zoom viewer in a real browser: pinch via
+synthetic pointer pairs, wheel, double-tap, drag-to-clamp, keyboard, and focus
+return. Every bug that feature had was invisible to unit tests and obvious
+there — text selected while panning, a pointer lost to a thrown
+`setPointerCapture`, and pan bounds measured against the viewport instead of
+the card.
 
 `npm run validate:live` is the one thing the suite cannot do — it checks this
 app's *assumptions about Scryfall* against the live API, which mocks written

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import Sheet from '../../components/Sheet.jsx'
 import CardImage, { hasBackFace } from '../../components/CardImage.jsx'
+import CardZoom from '../../components/CardZoom.jsx'
 import ManaCost, { OracleText } from '../../components/ManaCost.jsx'
 import Term from '../../components/Term.jsx'
 import AddToDeck from '../decks/AddToDeck.jsx'
@@ -24,9 +25,10 @@ export default function CardDetail({ card, onClose, onOpenCard }) {
 function CardDetailBody({ card, onOpenCard }) {
   const [face, setFace] = useState(0)
   const [tab, setTab] = useState('card')
+  const [zoomed, setZoomed] = useState(false)
 
   // Reset when a different card is opened into the same sheet.
-  useEffect(() => { setFace(0); setTab('card') }, [card.id])
+  useEffect(() => { setFace(0); setTab('card'); setZoomed(false) }, [card.id])
 
   const activeFace = card.card_faces?.[face] ?? card
   const cost = activeFace.mana_cost ?? card.mana_cost ?? ''
@@ -37,7 +39,15 @@ function CardDetailBody({ card, onOpenCard }) {
     <div className="stack">
       <div className="detail-layout">
         <div className="detail-layout__art stack">
-          <CardImage card={card} size="normal" faceIndex={face} />
+          <CardImage
+            card={card}
+            size="normal"
+            faceIndex={face}
+            onClick={() => setZoomed(true)}
+          />
+          <button className="btn btn--sm" onClick={() => setZoomed(true)}>
+            Zoom in
+          </button>
           {hasBackFace(card) && (
             <button className="btn btn--sm" onClick={() => setFace(face === 0 ? 1 : 0)}>
               Flip to {card.card_faces[face === 0 ? 1 : 0].name}
@@ -99,6 +109,13 @@ function CardDetailBody({ card, onOpenCard }) {
       {tab === 'card' && <Legality card={card} />}
       {tab === 'rulings' && <Rulings card={card} />}
       {tab === 'printings' && <Printings card={card} onOpenCard={onOpenCard} />}
+
+      <CardZoom
+        card={card}
+        open={zoomed}
+        initialFace={face}
+        onClose={() => setZoomed(false)}
+      />
     </div>
   )
 }
