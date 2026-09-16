@@ -3,11 +3,12 @@ import { TRACKS, LESSONS } from '../../data/lessons.js'
 import { GLOSSARY_SECTIONS, lookupTerm } from '../../data/glossary.js'
 import { getGuideProgress, markLessonComplete, resetLesson } from '../../lib/storage.js'
 import TutorialGame from './TutorialGame.jsx'
+import SeasonBanner from './SeasonBanner.jsx'
 import Term, { TermBody } from '../../components/Term.jsx'
 import Sheet from '../../components/Sheet.jsx'
 import './guide.css'
 
-export default function GuideView({ onNavigate }) {
+export default function GuideView({ onNavigate, onExploreQuery }) {
   const [mode, setMode] = useState('home')
   const [trackId, setTrackId] = useState(null)
   const [lessonId, setLessonId] = useState(null)
@@ -56,6 +57,8 @@ export default function GuideView({ onNavigate }) {
           Three ways in, depending on how you learn. Nothing here needs a connection.
         </p>
       </div>
+
+      <SeasonBanner onExplore={onExploreQuery} />
 
       <section className="hero" onClick={() => setMode('tutorial')} role="button" tabIndex={0}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setMode('tutorial') }}>

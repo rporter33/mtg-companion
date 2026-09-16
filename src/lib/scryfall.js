@@ -284,6 +284,29 @@ export async function getCardsByIds(ids, { signal } = {}) {
   return found
 }
 
+/**
+ * The set list, used by the theming engine.
+ *
+ * Cached for a day like any other query, because set metadata changes on the
+ * order of weeks and this runs on every launch.
+ */
+export async function getSets({ signal } = {}) {
+  const cached = await getQuery('sets:all')
+  if (cached) return cached
+  const payload = await request('/sets', { signal })
+  const sets = (payload.data ?? []).map((set) => ({
+    code: set.code,
+    name: set.name,
+    releasedAt: set.released_at,
+    setType: set.set_type,
+    iconSvgUri: set.icon_svg_uri,
+    cardCount: set.card_count,
+    digital: !!set.digital,
+  }))
+  await putQuery('sets:all', sets)
+  return sets
+}
+
 /** Scryfall's random card endpoint, used by the guide's "show me a card" button. */
 export async function randomCard({ query, signal } = {}) {
   const params = query ? `?q=${encodeURIComponent(query)}` : ''

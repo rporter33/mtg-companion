@@ -3,6 +3,8 @@ import { listDecks, saveDeck, deleteDeck } from '../../lib/storage.js'
 import { createDeck } from '../../lib/deck.js'
 import { FORMAT_GROUPS, formatsInGroup, getFormat } from '../../lib/formats.js'
 import DeckEditor from './DeckEditor.jsx'
+import LegalityChanges from './LegalityChanges.jsx'
+import useLegalityWatch from './useLegalityWatch.js'
 import Term from '../../components/Term.jsx'
 import './decks.css'
 
@@ -10,6 +12,7 @@ export default function DecksView({ onOpenCard, offline }) {
   const [decks, setDecks] = useState(() => listDecks())
   const [editingId, setEditingId] = useState(null)
   const [creating, setCreating] = useState(false)
+  const { report, summary, dismiss } = useLegalityWatch({ enabled: !offline })
 
   const refresh = () => setDecks(listDecks())
 
@@ -33,6 +36,13 @@ export default function DecksView({ onOpenCard, offline }) {
         <h1 style={{ flex: 1 }}>Decks</h1>
         <button className="btn btn--primary" onClick={() => setCreating(true)}>New deck</button>
       </div>
+
+      <LegalityChanges
+        report={report}
+        summary={summary}
+        onDismiss={dismiss}
+        onOpenDeck={(id) => setEditingId(id)}
+      />
 
       {creating && (
         <NewDeckForm

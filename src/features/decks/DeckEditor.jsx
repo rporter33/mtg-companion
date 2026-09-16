@@ -11,6 +11,7 @@ import {
 } from '../../lib/deck.js'
 import { getFormat, typeLineOf } from '../../lib/formats.js'
 import { manaValueOf } from '../../lib/analysis.js'
+import { captureSnapshot } from '../../lib/snapshot.js'
 
 const GROUP_ORDER = ['Commander', 'Creature', 'Planeswalker', 'Instant', 'Sorcery',
   'Artifact', 'Enchantment', 'Battle', 'Land', 'Other']
@@ -21,6 +22,14 @@ export default function DeckEditor({ deck, onBack, onChange, onOpenCard, offline
   const format = getFormat(deck.formatId)
 
   const validation = useMemo(() => validateDeck(deck, cards), [deck, cards])
+
+  // Capture the legality verdict alongside every edit, so a later ban
+  // announcement is a *diff* against a known-good baseline rather than a silent
+  // rewrite of what this deck used to be.
+  const commit = (next) => {
+    const snapshot = cards.size ? captureSnapshot(next, cards) : next.snapshot
+    onChange(snapshot ? { ...next, snapshot } : next)
+  }
   const total = deckSize(deck, format)
   const target = format?.deck.max ?? format?.deck.min ?? 60
 
@@ -94,16 +103,16 @@ export default function DeckEditor({ deck, onBack, onChange, onOpenCard, offline
       {tab === 'list' && (
         <DeckList
           deck={deck} groups={groups} format={format}
-          onChange={onChange} onOpenCard={onOpenCard} validation={validation}
+          onChange={commit} onOpenCard={onOpenCard} validation={validation}
         />
       )}
       {tab === 'add' && (
-        <DeckSearch deck={deck} onChange={onChange} onOpenCard={onOpenCard} offline={offline} />
+        <DeckSearch deck={deck} onChange={commit} onOpenCard={onOpenCard} offline={offline} />
       )}
       {tab === 'analysis' && (
         <DeckAnalysis deck={deck} lookup={lookup} cardCount={cards.size} />
       )}
-      {tab === 'io' && <DeckImportExport deck={deck} lookup={lookup} onChange={onChange} />}
+      {tab === 'io' && <DeckImportExport deck={deck} lookup={lookup} onChange={commit} />}
     </div>
   )
 }

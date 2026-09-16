@@ -106,6 +106,43 @@ a real authoring slip.
 *Revisit if:* the guide grows past one scripted game. A second or third scenario
 is cheap; a branching scenario is where this model starts to strain.
 
+### Legality is snapshotted, and the diff is the product
+
+A deck stores card ids and used to re-derive legality live. That meant a ban
+announcement silently made a deck you had built and registered illegal, with no
+record it had ever been legal — the same class of bug as a repriced catalog
+rewriting a bid already sitting with a customer, and it takes the same fix.
+
+Every edit now captures the verdict for every card with a timestamp. The
+snapshot travels with an export, so history cannot mutate underneath the user.
+
+The diff is the interesting half. Ban lists move on a rolling schedule and
+nobody tells you the change touched *your* deck, so on launch the app compares
+the stored verdict against today's and reports only what moved, worst news
+first. Deliberate restraint throughout: a card that merely failed to load says
+nothing (offline is not a rules change), a data gap says nothing, a deck moved
+between formats reports that rather than mass illegality, and each change is
+announced exactly once. An app that speaks on every launch is one you learn to
+dismiss unread.
+
+*Revisit if:* users want a history of changes rather than a one-shot alert. The
+log is not kept today — only the current baseline.
+
+### The set theme is derived, never hardcoded
+
+Magic releases a set every few months. Hardcoding the current one's name and
+palette would rot exactly like a hardcoded ban list, so the banner is derived
+from Scryfall's set list at runtime: which paper set is next, how far away, and
+its official icon. It works for sets nobody has announced yet.
+
+What genuinely cannot be derived is a set's art direction. Rather than invent a
+palette and present it as the set's, the accent hue is computed deterministically
+from the set code — stable per set, spread across the wheel by golden-angle
+stepping so consecutive sets look distinct — with saturation and lightness fixed
+so no set can render illegibly on the dark base.
+
+*Revisit if:* Scryfall ever exposes set colour metadata, which would beat a hash.
+
 ### Card faces are drawn in CSS as well as fetched
 
 `CardFace` renders a readable card from data alone. This is not a placeholder —
@@ -163,6 +200,8 @@ limit. Decks store ids and quantities only, so this is thousands of decks away.
 | Prices are Scryfall's daily aggregate | Live market pricing needs a commercial data source. Daily is right for "is this deck expensive". | If the app ever needs to support actual purchasing, which it should not. |
 | No rules engine | Covering the real rules is a multi-year project. | Never, realistically. Forge and XMage exist and are better at this. |
 | Brawl's deck size and starting life are the likeliest data to drift | Encoded as plain data in `formats.js` and trivially editable, unlike ban lists which are fetched. | When Wizards next revises the format. |
+| Set accent colours are hashed from the set code, not the set's real art direction | The app has no way to know a set's palette and should not pretend to. A hash gives each set a stable identity without claiming to represent it. | If Scryfall exposes set colour metadata. |
+| Legality change history is not kept — only the latest baseline | A one-shot alert covers the actual need ("act on this"), and keeping a log means unbounded growth in localStorage. | If users ask what changed three months ago. |
 
 ## Testing
 
@@ -181,7 +220,18 @@ behaviour:
 - `scryfall.test.js` covers the failure paths — retry, no-retry, offline,
   chunking at 75 identifiers, and that one rejected request does not stall the
   queue behind it.
+- `snapshot.test.js` pins the restraint as much as the detection: offline says
+  nothing, a data gap says nothing, a format change is its own event.
+- `season.test.js` asserts the theming engine excludes digital-only and
+  supplemental products, and that no set code can produce an illegible accent.
 
 The full 27-beat tutorial is also walked end to end in a real browser, which is
 how the base-path, sticky-coach and card-truncation bugs were found. None of
-them would have failed a unit test.
+them would have failed a unit test. The ban-detection flow is verified the same
+way: a deck and a newly-banned card are seeded into real IndexedDB and
+localStorage, and the run asserts both that the alert fires and that a second
+launch stays silent.
+
+`npm run validate:live` is the one thing the suite cannot do — it checks this
+app's *assumptions about Scryfall* against the live API, which mocks written
+from those same assumptions never can.

@@ -16,6 +16,7 @@ const TABS = [
 export default function App() {
   const [tab, setTab] = useState(() => (loadState().decks.length ? 'decks' : 'guide'))
   const [detailCard, setDetailCard] = useState(null)
+  const [seedQuery, setSeedQuery] = useState(null)
   const [offline, setOffline] = useState(() =>
     typeof navigator !== 'undefined' && navigator.onLine === false)
 
@@ -37,12 +38,18 @@ export default function App() {
 
   const view = useMemo(() => {
     switch (tab) {
-      case 'cards': return <CardsView onOpenCard={openCard} offline={offline} />
+      case 'cards': return <CardsView onOpenCard={openCard} offline={offline} seedQuery={seedQuery} />
       case 'decks': return <DecksView onOpenCard={openCard} offline={offline} />
       case 'play':  return <PlayView />
-      default:      return <GuideView onOpenCard={openCard} onNavigate={setTab} />
+      default:      return (
+        <GuideView
+          onOpenCard={openCard}
+          onNavigate={setTab}
+          onExploreQuery={(query) => { setSeedQuery(query); setTab('cards') }}
+        />
+      )
     }
-  }, [tab, openCard, offline])
+  }, [tab, openCard, offline, seedQuery])
 
   return (
     <div className="app">

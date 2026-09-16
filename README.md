@@ -26,6 +26,11 @@ as a JSON file you own.
 cmc<=3`, `c:r usd<5`). Full oracle text, official rulings, legality across every
 supported format, every printing, and prices.
 
+**Change alerts** — Ban lists move, and nobody tells you the change hit your
+deck. The app snapshots each deck's legality when you edit it, and on launch
+reports only what actually moved: *"Lightning Bolt has been banned in Modern"*,
+with the deck it is in. Told once, worst news first, silent when nothing changed.
+
 **Decks** — Build for Standard, Pioneer, Modern, Legacy, Vintage, Pauper,
 Commander, Duel Commander, Brawl, or Oathbreaker. The deck is validated against
 the format's real construction rules as you build, with specific messages rather
@@ -43,19 +48,18 @@ Works entirely offline and keeps the screen awake.
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173/mtg-companion/
-npm test           # 153 tests
+npm run dev
+npm test             # 208 tests
+npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run build
 npm run preview
 ```
 
 Node 22 or newer.
 
-Hosting somewhere other than a `/mtg-companion/` path:
-
-```bash
-VITE_BASE=/ npm run build
-```
+The build uses a relative base, so it runs at any path — GitHub Pages under a
+subdirectory, a domain root, anywhere — with no configuration. Set `VITE_BASE`
+only if a host needs an absolute one.
 
 ## Things worth knowing
 
@@ -78,6 +82,12 @@ which reproduces the accepted ratios: 24 sources for 60 cards, 16 for 40, 40 for
 state, so it cannot desync, cannot present an illegal board, and needs no
 network. A real rules engine covering even ten cards correctly is a much larger
 project, and it would not teach any better.
+
+**The set banner is derived, not hardcoded.** Which set is next, when it lands
+and its official icon all come from Scryfall at runtime, so it stays correct for
+sets that do not exist yet. The accent is computed from the set code rather than
+hand-picked, because the app cannot know a set's art direction and should not
+pretend to.
 
 **Offline is a first-class case, not a fallback.** Cards a deck references are
 pinned in IndexedDB and never evicted, so a deck built at home opens on a phone

@@ -1,0 +1,54 @@
+/* The set banner takes its accent from a CSS variable the component sets from
+   the set code, so one rule set themes every past and future release. */
+.season {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(100deg, var(--season-dim), transparent 60%),
+    var(--bg-raised);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--season-accent);
+}
+
+.season__icon {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  /* Scryfall's set icons are solid black SVGs, invisible on a dark field.
+     Inverting and tinting them is the only way to use the official mark. */
+  filter: invert(1) sepia(1) saturate(0) brightness(1.4);
+  opacity: 0.85;
+}
+
+.season__body { flex: 1; min-width: 0; }
+
+.season__label {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 700;
+  color: var(--season-accent);
+}
+.season__countdown { color: var(--text-faint); font-weight: 500; letter-spacing: 0.04em; }
+
+.season h2 {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 500;
+  margin: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.season p { margin: 0; }
+
+.season__cta { flex-shrink: 0; border-color: var(--season-accent); color: var(--season-accent); }
+.season__cta:hover { background: var(--season-dim); }
+
+@media (max-width: 520px) {
+  .season { flex-wrap: wrap; }
+  .season__cta { width: 100%; }
+}

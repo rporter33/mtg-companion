@@ -14,7 +14,7 @@ const EXAMPLES = [
   { label: 'Lifegain in white', query: 'c:w o:"gain life" t:creature' },
 ]
 
-export default function CardsView({ onOpenCard, offline }) {
+export default function CardsView({ onOpenCard, offline, seedQuery }) {
   const [query, setQuery] = useState('')
   const [submitted, setSubmitted] = useState('')
   const [results, setResults] = useState(null)
@@ -46,6 +46,16 @@ export default function CardsView({ onOpenCard, offline }) {
   }, [])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // A query handed over from another tab (for example "show me this set")
+  // runs once on arrival, and only if the user has not already typed something.
+  useEffect(() => {
+    if (seedQuery && !submitted) {
+      setQuery(seedQuery)
+      run(seedQuery)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedQuery])
 
   const toggleImages = () => {
     const next = !showImages
