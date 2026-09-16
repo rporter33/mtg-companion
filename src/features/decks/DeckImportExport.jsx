@@ -5,6 +5,7 @@ import {
 } from '../../lib/deck-sources.js'
 import { toExampleEntry } from '../../data/example-decks.js'
 import { addCard, setCommanders, createDeck } from '../../lib/deck.js'
+import { parseDecklist } from '../../lib/decklist.js'
 import { pinCards } from '../../lib/cache.js'
 import { exportAll, importAll } from '../../lib/storage.js'
 import { exampleToDecklist } from '../../data/example-decks.js'
@@ -251,40 +252,6 @@ export function toText(deck, lookup) {
     for (const { cardId, quantity } of deck.sideboard) lines.push(`${quantity} ${name(cardId)}`)
   }
   return lines.join('\n')
-}
-
-/**
- * Parses the loose decklist formats that sites actually emit:
- * "4 Lightning Bolt", "4x Lightning Bolt", "4 Lightning Bolt (2X2) 117",
- * with optional section headers.
- */
-export function parseDecklist(text) {
-  const out = []
-  let section = 'main'
-
-  for (const raw of (text ?? '').split('\n')) {
-    const line = raw.trim()
-    if (!line || line.startsWith('//') || line.startsWith('#')) continue
-
-    const header = line.toLowerCase().replace(/[:\s]+$/, '')
-    if (['sideboard', 'sb'].includes(header)) { section = 'sideboard'; continue }
-    if (['commander', 'commanders'].includes(header)) { section = 'commander'; continue }
-    if (['deck', 'maindeck', 'main', 'mainboard'].includes(header)) { section = 'main'; continue }
-
-    const match = line.match(/^(\d+)\s*[xX]?\s+(.+)$/)
-    if (!match) continue
-
-    let name = match[2]
-      .replace(/\s*\([^)]*\)\s*\d*\s*$/, '')   // trailing "(SET) 123"
-      .replace(/\s*\[[^\]]*\]\s*$/, '')        // trailing "[SET]"
-      .trim()
-    // Split cards are written "Fire // Ice"; Scryfall's fuzzy search wants the
-    // full name, so leave the separator alone.
-    if (!name) continue
-
-    out.push({ quantity: Number(match[1]), name, section })
-  }
-  return out
 }
 
 /** Shows exactly what an import will do before it does any of it. */

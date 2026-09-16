@@ -54,9 +54,10 @@ Works entirely offline and keeps the screen awake.
 ```bash
 npm install
 npm run dev
-npm test             # 259 tests
-npm run test:browser   # drives the zoom viewer in a real browser
+npm test               # 402 unit tests
+npm run test:browser   # drives the real UI in a real browser (91 assertions)
 npm run validate:live  # checks our assumptions against the live Scryfall API
+npm run deck:fetch     # turns a deck you own into a shippable example
 npm run build
 npm run preview
 ```
@@ -68,6 +69,28 @@ subdirectory, a domain root, anywhere — with no configuration. Set `VITE_BASE`
 only if a host needs an absolute one.
 
 ## Things worth knowing
+
+**Example decks come from a person, not a scraper.** The app cannot read
+Moxfield, Deckstats, TappedOut or MTGGoldfish from a browser: they send no CORS
+headers permitting it, which is their decision, and there is no honest
+client-side way around it. So the importer recognises those links and tells you
+which Export button to press instead of failing silently.
+
+Examples that ship with the app are curated by hand with `npm run deck:fetch`,
+which runs on a maintainer's machine rather than in anyone's browser:
+
+```bash
+# from a plain text export — always works, no network needed for the deck itself
+npm run deck:fetch -- deck.txt --credit "Your name" --note "why it's worth a look" --append
+
+# from a link, where the site allows it
+npm run deck:fetch -- https://archidekt.com/decks/123456
+```
+
+Every card name is checked against Scryfall before an entry is emitted, because
+examples resolve by name at runtime and a typo would be a broken deck for
+everyone. The script refuses to write an entry containing a name Scryfall does
+not know.
 
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   looksLikeUrl, identifySource, planForUrl, fetchFromSource,
-  parseArchidekt, toDecklistText, SOURCES,
+  parseArchidekt, parseMoxfield, toDecklistText, SOURCES,
 } from '../src/lib/deck-sources.js'
 import { toExampleEntry, exampleToDecklist, exampleSize } from '../src/data/example-decks.js'
 
@@ -193,5 +193,64 @@ describe('example decks', () => {
 
   it('counts the commander toward the size', () => {
     expect(exampleSize(toExampleEntry(deck, lookup))).toBe(4)
+  })
+})
+
+describe('parseMoxfield', () => {
+  // Both shapes are inferred from payloads in the wild, not from documentation,
+  // which is exactly why the parser walks instead of asserting a path.
+  const v3 = {
+    name: 'Fracture Tempo',
+    boards: {
+      commanders: { cards: { a1: { quantity: 1, card: { name: 'Kenrith, the Returned King' } } } },
+      mainboard: {
+        cards: {
+          b1: { quantity: 1, card: { name: 'Sol Ring' } },
+          b2: { quantity: 8, card: { name: 'Island' } },
+        },
+      },
+      sideboard: { cards: {} },
+    },
+  }
+
+  const v2 = {
+    name: 'Fracture Tempo',
+    commanders: { 'Kenrith, the Returned King': { quantity: 1, card: { name: 'Kenrith, the Returned King' } } },
+    mainboard: {
+      'Sol Ring': { quantity: 1, card: { name: 'Sol Ring' } },
+      Island: { quantity: 8, card: { name: 'Island' } },
+    },
+    sideboard: {},
+  }
+
+  it('reads the nested board shape', () => {
+    const deck = parseMoxfield(v3)
+    expect(deck.name).toBe('Fracture Tempo')
+    expect(deck.commanders).toEqual([{ name: 'Kenrith, the Returned King', quantity: 1 }])
+    expect(deck.main).toContainEqual({ name: 'Island', quantity: 8 })
+    expect(deck.sideboard).toEqual([])
+  })
+
+  it('reads the flat board shape identically', () => {
+    expect(parseMoxfield(v2)).toEqual(parseMoxfield(v3))
+  })
+
+  it('forces the commander to a single copy', () => {
+    const doubled = structuredClone(v3)
+    doubled.boards.commanders.cards.a1.quantity = 4
+    expect(parseMoxfield(doubled).commanders[0].quantity).toBe(1)
+  })
+
+  it('survives a payload with nothing it recognises', () => {
+    expect(parseMoxfield({})).toEqual({
+      name: 'Imported deck', commanders: [], main: [], sideboard: [],
+    })
+    expect(parseMoxfield(null).main).toEqual([])
+  })
+
+  it('skips entries with no card name rather than emitting a null', () => {
+    const broken = structuredClone(v3)
+    broken.boards.mainboard.cards.b3 = { quantity: 2 }
+    expect(parseMoxfield(broken).main).toHaveLength(2)
   })
 })

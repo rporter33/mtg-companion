@@ -172,6 +172,38 @@ export function parseArchidekt(payload) {
   }
 }
 
+/**
+ * MOXFIELD IS NEVER FETCHED BY THE APP. This parser exists for the offline
+ * curation script (scripts/fetch-deck.mjs), which runs on a maintainer's own
+ * machine where CORS does not apply. It lives here so it can be tested beside
+ * the other deck shapes, not so the browser can use it.
+ *
+ * Moxfield's deck payload has changed shape at least once, and neither shape is
+ * documented. Rather than assert one, walk whichever board containers exist and
+ * pull anything that looks like {quantity, card:{name}}.
+ */
+export function parseMoxfield(payload) {
+  const boards = payload?.boards ?? payload
+  const pick = (key) => {
+    const board = boards?.[key]
+    const cards = board?.cards ?? board
+    if (!cards || typeof cards !== 'object') return []
+    return Object.values(cards)
+      .map((entry) => ({
+        name: entry?.card?.name ?? entry?.name ?? null,
+        quantity: Number(entry?.quantity) || 1,
+      }))
+      .filter((entry) => entry.name)
+  }
+
+  return {
+    name: payload?.name ?? 'Imported deck',
+    commanders: pick('commanders').map((e) => ({ ...e, quantity: 1 })),
+    main: pick('mainboard'),
+    sideboard: pick('sideboard'),
+  }
+}
+
 /** Renders a parsed deck back into the plain text the importer already reads. */
 export function toDecklistText({ commanders = [], main = [], sideboard = [] }) {
   const lines = []
