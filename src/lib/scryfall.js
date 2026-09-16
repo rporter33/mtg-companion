@@ -134,11 +134,14 @@ async function request(path, { method = 'GET', body, signal } = {}) {
  * player already knows (`t:creature`, `c>=wu`, `f:modern`, `cmc<=3`) works
  * unchanged. Results are cached for a day; the cards themselves for a week.
  */
-export async function searchCards(query, { order = 'name', unique = 'cards', page = 1, signal } = {}) {
+export async function searchCards(
+  query,
+  { order = 'name', dir = 'auto', unique = 'cards', page = 1, signal } = {},
+) {
   const trimmed = (query ?? '').trim()
   if (!trimmed) return { cards: [], totalCards: 0, hasMore: false, fromCache: false }
 
-  const key = `search:${trimmed}:${order}:${unique}:${page}`
+  const key = `search:${trimmed}:${order}:${dir}:${unique}:${page}`
   const cached = await getQuery(key)
   if (cached) {
     const cards = await getCards(cached.ids)
@@ -153,7 +156,7 @@ export async function searchCards(query, { order = 'name', unique = 'cards', pag
     }
   }
 
-  const params = new URLSearchParams({ q: trimmed, order, unique, page: String(page) })
+  const params = new URLSearchParams({ q: trimmed, order, dir, unique, page: String(page) })
   let payload
   try {
     payload = await request(`/cards/search?${params}`, { signal })

@@ -28,7 +28,10 @@ const EMPTY = {
   decks: [],
   games: [],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
-  prefs: { currency: 'usd', showCardImages: true, lastFormat: 'commander' },
+  prefs: {
+    currency: 'usd', showCardImages: true, lastFormat: 'commander',
+    sortId: 'name', sortDir: null,
+  },
 }
 
 let memoryFallback = null

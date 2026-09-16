@@ -107,7 +107,10 @@ export default function DeckEditor({ deck, onBack, onChange, onOpenCard, offline
         />
       )}
       {tab === 'add' && (
-        <DeckSearch deck={deck} onChange={commit} onOpenCard={onOpenCard} offline={offline} />
+        <DeckSearch
+          deck={deck} onChange={commit} onOpenCard={onOpenCard}
+          offline={offline} cards={cards}
+        />
       )}
       {tab === 'analysis' && (
         <DeckAnalysis deck={deck} lookup={lookup} cardCount={cards.size} />

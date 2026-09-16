@@ -215,6 +215,45 @@ play in a tutorial whose whole pitch is "you make the plays".
 *Revisit if:* zoom is wanted directly in the search grid. Tapping there already
 opens the detail view, so tap is effectively the zoom today.
 
+### The filter controls and the search box are one query
+
+Filters do not sit alongside the search box; they write into it. Toggling
+"green" rewrites the query to `c>=g`, and typing `c<=ur` by hand lights up the
+blue and red pips. One source of truth means the controls can never claim a
+filter the search did not actually use.
+
+**Anything the controls do not model is preserved verbatim.** Type
+`o:"draw a card" is:commander`, toggle a colour, and both survive untouched.
+A filter UI that silently drops the parts it does not understand is worse than
+no filter UI, because the loss is invisible — so negations, unmodelled
+operators and parenthesised groups all round-trip, and there are tests for
+each. Operators are *written* explicitly (`c>=rg`, never the ambiguous `c:rg`)
+and *parsed* permissively, so the query on screen means exactly one thing.
+
+Bare `id:` parses as "at most", not "includes", because the Commander question
+is what a deck may legally contain.
+
+### Sorting is a server round-trip, not a client-side reorder
+
+Scryfall pages at 175 cards. Sorting the loaded page would put "cheapest" at the
+top of page one while a cheaper card sat on page three — confidently wrong in a
+way the user cannot see. Sorting therefore re-queries with `order` and `dir`.
+Results are cached, so flipping back is free.
+
+*Revisit if:* a result set is small enough to hold entirely. Not worth the
+branch today, since the cache already makes repeat sorts instant.
+
+### Deck search starts scoped to the commander
+
+A commander fixes what a deck may contain, so searching inside one applies its
+colour identity automatically — with a visible, removable chip. An invisible
+filter is one the user blames the search for.
+
+Scoping is passed into the search function rather than read from state: a
+handler that calls `setScoped(false)` and then searches would otherwise run the
+previous callback and send the setting the user just turned off. That bug
+already existed on the format-scope checkbox and is fixed with the same change.
+
 ### Offline is a case, not a fallback
 
 - Cards referenced by a saved deck are **pinned** in IndexedDB and never

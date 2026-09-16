@@ -1,0 +1,90 @@
+.filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.filters__group {
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.filters__group:disabled { opacity: 0.55; }
+.filters__group legend {
+  padding: 0;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin-bottom: var(--space-2);
+}
+.filters__hint { margin: var(--space-2) 0 0; }
+
+.filters__more {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+
+/* Colour pips. Large enough to be a comfortable touch target, and carrying the
+   colour itself rather than a label, since that is how players think. */
+.pip {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg-overlay);
+  color: var(--text-faint);
+  font-weight: 700;
+  font-size: 0.85rem;
+  display: grid;
+  place-items: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  flex-shrink: 0;
+}
+.pip:hover { border-color: var(--pip, var(--border-strong)); }
+.pip--on {
+  background: var(--pip, var(--mtg-c));
+  border-color: var(--pip, var(--mtg-c));
+  color: #14110a;
+}
+.pip--colorless { --pip: var(--mtg-c); }
+
+.search-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sort-select { width: auto; min-width: 130px; }
+
+.query-preview {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-2) 4px var(--space-3);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+.scope-chip button { color: inherit; opacity: 0.8; font-size: 0.9rem; line-height: 1; }
+.scope-chip button:hover { opacity: 1; }

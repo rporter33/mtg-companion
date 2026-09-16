@@ -1,8 +1,11 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { searchCards } from '../../lib/scryfall.js'
 import { addCard, setCommanders } from '../../lib/deck.js'
 import { getFormat, canBeCommander, cardLegality, effectiveCopyLimit } from '../../lib/formats.js'
-import { combinedCounts } from '../../lib/deck.js'
+import { combinedCounts, unionColorIdentity } from '../../lib/deck.js'
+import { parseQuery, serialiseQuery, clearFilters, hasActiveFilters } from '../../lib/query.js'
+import SearchFilters from '../cards/SearchFilters.jsx'
+import '../cards/filters.css'
 import { pinCards } from '../../lib/cache.js'
 import ManaCost from '../../components/ManaCost.jsx'
 import { identityAttr } from '../../components/CardFace.jsx'
@@ -12,9 +15,11 @@ import { identityAttr } from '../../components/CardFace.jsx'
  * of the time while building you only want cards you can actually play — and
  * shows why a card is blocked rather than just hiding it.
  */
-export default function DeckSearch({ deck, onChange, onOpenCard, offline }) {
+export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards }) {
   const [query, setQuery] = useState('')
   const [scoped, setScoped] = useState(true)
+  const [identityScoped, setIdentityScoped] = useState(true)
+  const [showFilters, setShowFilters] = useState(false)
   const [results, setResults] = useState(null)
   const [status, setStatus] = useState('idle')
   const [error, setError] = useState(null)
@@ -22,19 +27,57 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline }) {
 
   const format = getFormat(deck.formatId)
   const counts = combinedCounts(deck)
+  const filters = useMemo(() => parseQuery(query), [query])
 
-  const run = useCallback(async (raw) => {
+  /**
+   * A commander fixes what the deck may legally contain, so searching inside
+   * one starts scoped to its colour identity. Cards you could not play simply
+   * do not appear — with a visible chip saying so, because a filter you cannot
+   * see is a filter you will blame the search for.
+   */
+  const commanderIdentity = useMemo(() => {
+    if (!format.commander?.colorIdentity || !deck.commanders.length) return null
+    const commanderCards = deck.commanders.map((id) => cards?.get?.(id)).filter(Boolean)
+    if (!commanderCards.length) return null
+    const identity = unionColorIdentity(commanderCards)
+    return {
+      letters: identity.map((c) => c.toLowerCase()),
+      names: commanderCards.map((c) => c.name).join(' and '),
+    }
+  }, [deck.commanders, cards, format])
+
+  /**
+   * Scoping is passed in rather than read from state.
+   *
+   * A toggle that calls `setX(false)` and then `run(query)` in the same handler
+   * runs the *previous* callback, which still closes over the old value — so
+   * the search goes out with the setting the user just turned off. Explicit
+   * overrides remove the race entirely.
+   */
+  const run = useCallback(async (raw, overrides = {}) => {
     const q = raw.trim()
     if (!q) return
+    const useFormatScope = overrides.scoped ?? scoped
+    const useIdentityScope = overrides.identityScoped ?? identityScoped
+
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
 
     setStatus('loading')
     setError(null)
-    const scopedQuery = scoped ? `${q} legal:${format.legalityKey}` : q
+
+    const parts = [q]
+    if (useFormatScope) parts.push(`legal:${format.legalityKey}`)
+    if (useIdentityScope && commanderIdentity) {
+      // A colourless commander still restricts the deck to colourless cards.
+      parts.push(commanderIdentity.letters.length
+        ? `id<=${commanderIdentity.letters.join('')}`
+        : 'id<=c')
+    }
+
     try {
-      const result = await searchCards(scopedQuery, { signal: controller.signal })
+      const result = await searchCards(parts.join(' '), { signal: controller.signal })
       setResults(result)
       setStatus('done')
     } catch (err) {
@@ -42,7 +85,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline }) {
       setError(err)
       setStatus('error')
     }
-  }, [scoped, format.legalityKey])
+  }, [scoped, identityScoped, commanderIdentity, format.legalityKey])
 
   const add = (card, asCommander = false) => {
     onChange(asCommander
@@ -66,15 +109,83 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline }) {
         <button className="btn btn--primary" type="submit" disabled={!query.trim()}>Search</button>
       </form>
 
-      <label className="row tiny muted" style={{ gap: 'var(--space-2)' }}>
-        <input
-          type="checkbox"
-          checked={scoped}
-          onChange={(e) => { setScoped(e.target.checked); if (query.trim()) run(query) }}
-          style={{ width: 'auto' }}
-        />
-        Only show cards legal in {format.name}
-      </label>
+      <div className="row row--wrap">
+        <button
+          className={`btn btn--sm ${hasActiveFilters(filters) ? 'chip--active' : ''}`}
+          onClick={() => setShowFilters(!showFilters)}
+          aria-expanded={showFilters}
+        >
+          Filters{hasActiveFilters(filters) ? ' · on' : ''}
+        </button>
+        <label className="row tiny muted" style={{ gap: 'var(--space-2)', width: 'auto' }}>
+          <input
+            type="checkbox"
+            checked={scoped}
+            onChange={(e) => {
+              setScoped(e.target.checked)
+              if (query.trim()) run(query, { scoped: e.target.checked })
+            }}
+            style={{ width: 'auto' }}
+          />
+          Legal in {format.name}
+        </label>
+      </div>
+
+      {commanderIdentity && identityScoped && (
+        <div className="row row--wrap">
+          <span className="scope-chip">
+            Within {commanderIdentity.names}&rsquo;s colours
+            <button
+              onClick={() => {
+                setIdentityScoped(false)
+                if (query.trim()) run(query, { identityScoped: false })
+              }}
+              aria-label="Stop restricting to the commander's colour identity"
+              title="Show cards outside this commander's colours too"
+            >
+              ✕
+            </button>
+          </span>
+        </div>
+      )}
+
+      {commanderIdentity && !identityScoped && (
+        <button
+          className="btn btn--sm btn--ghost"
+          style={{ alignSelf: 'flex-start' }}
+          onClick={() => {
+            setIdentityScoped(true)
+            if (query.trim()) run(query, { identityScoped: true })
+          }}
+        >
+          Restrict to {commanderIdentity.names}&rsquo;s colours again
+        </button>
+      )}
+
+      {showFilters && (
+        <>
+          <SearchFilters
+            filters={filters}
+            onChange={(next) => {
+              const rewritten = serialiseQuery(next)
+              setQuery(rewritten)
+              if (rewritten.trim()) run(rewritten)
+            }}
+            onClear={() => {
+              const rewritten = serialiseQuery(clearFilters(filters))
+              setQuery(rewritten)
+              if (rewritten.trim()) run(rewritten)
+            }}
+            locked={identityScoped && !!commanderIdentity}
+          />
+          {identityScoped && commanderIdentity && (
+            <p className="faint tiny" style={{ margin: 0 }}>
+              Colour identity is set by your commander. Remove the chip above to filter it
+              yourself.
+            </p>
+          )}
+        </>
+      )}
 
       {status === 'error' && (
         <div className="banner banner--error tiny">
