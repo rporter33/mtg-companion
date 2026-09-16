@@ -143,6 +143,41 @@ so no set can render illegibly on the dark base.
 
 *Revisit if:* Scryfall ever exposes set colour metadata, which would beat a hash.
 
+### Set mechanics are the one hand-written exception
+
+Everything else in this app is fetched, because it changes: legality, prices,
+set names, release dates, colour profiles. New set mechanics cannot be. Scryfall
+publishes reminder text on individual cards, but nothing that says "here is what
+is new this set and why it matters if you have never played".
+
+So `data/set-mechanics.js` is curated by hand — and the UI says so. Every entry
+carries a curation date, its sources, and a provisional flag for content written
+during spoiler season, and the sheet renders all three. An entry that has gone
+stale is visibly stale rather than quietly wrong, which is the same reasoning
+that keeps ban lists out of the repository, applied to content that genuinely
+cannot be fetched.
+
+Tests enforce that each entry is dated and sourced, that cross-references
+resolve, and that a set mechanic never shadows a glossary term — two
+explanations of the same word diverging silently is exactly the failure this
+structure exists to prevent.
+
+*Revisit if:* an API appears that publishes set mechanics, or if maintaining
+entries per set becomes a chore rather than a few minutes per release.
+
+### Art treatments apply only to sets whose art direction we know
+
+Reality Fracture's signature treatment is Shattered Mirror: the Echoverse
+version of a subject centred inside broken mirror fragments showing the
+original. The banner picks that up as a chipped edge, hairline fractures and a
+raking facet highlight.
+
+A set with no curated entry gets the plain banner. The app does not invent an
+aesthetic for a set it knows nothing about, for the same reason it does not
+invent a palette — and the treatment is deliberately restrained, because it sits
+directly above "Play your first game" and a novelty that competes with the
+tutorial entry point is a novelty that costs more than it earns.
+
 ### Card faces are drawn in CSS as well as fetched
 
 `CardFace` renders a readable card from data alone. This is not a placeholder —
@@ -200,7 +235,8 @@ limit. Decks store ids and quantities only, so this is thousands of decks away.
 | Prices are Scryfall's daily aggregate | Live market pricing needs a commercial data source. Daily is right for "is this deck expensive". | If the app ever needs to support actual purchasing, which it should not. |
 | No rules engine | Covering the real rules is a multi-year project. | Never, realistically. Forge and XMage exist and are better at this. |
 | Brawl's deck size and starting life are the likeliest data to drift | Encoded as plain data in `formats.js` and trivially editable, unlike ban lists which are fetched. | When Wizards next revises the format. |
-| Set accent colours are hashed from the set code, not the set's real art direction | The app has no way to know a set's palette and should not pretend to. A hash gives each set a stable identity without claiming to represent it. | If Scryfall exposes set colour metadata. |
+| Set accents derive from the set's real colour distribution, falling back to a code hash | Five `total_cards` queries give genuine information; the hash is a stable identity for sets with no card data yet. Neither claims to know the set's art direction. | If Scryfall exposes set colour metadata. |
+| Set mechanics are hand-written, dated and sourced | They cannot be fetched from anywhere. The alternative is not explaining new mechanics at all, which fails the new players this app is built for. | If a mechanics API appears. |
 | Legality change history is not kept — only the latest baseline | A one-shot alert covers the actual need ("act on this"), and keeping a log means unbounded growth in localStorage. | If users ask what changed three months ago. |
 
 ## Testing

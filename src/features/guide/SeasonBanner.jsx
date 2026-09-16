@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { getSets, getSetColorProfile } from '../../lib/scryfall.js'
 import { buildSeasonTheme } from '../../lib/season.js'
+import { mechanicsForSet, curationAgeDays } from '../../data/set-mechanics.js'
+import Sheet from '../../components/Sheet.jsx'
+import Term from '../../components/Term.jsx'
 import './season.css'
 
 /**
@@ -18,6 +21,7 @@ import './season.css'
 export default function SeasonBanner({ onExplore }) {
   const [theme, setTheme] = useState(null)
   const [iconFailed, setIconFailed] = useState(false)
+  const [openMechanics, setOpenMechanics] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -47,9 +51,19 @@ export default function SeasonBanner({ onExplore }) {
   if (!theme) return null
   const { set, isUpcoming, countdown, accent, accentDim } = theme
 
+  // Art-direction treatment, only where we actually know the set's. A set with
+  // no curated entry gets the plain banner rather than a guessed aesthetic.
+  const curated = mechanicsForSet(set.code)
+  const treatment = curated?.art?.headline === 'Shattered Mirror' ? 'fracture' : null
+
   return (
+    // The sheet is a sibling of the banner, never a child. The fracture
+    // treatment gives the banner a clip-path and overflow:hidden, and a
+    // clipping ancestor clips its descendants even when they are fixed —
+    // which rendered the modal as a clipped strip inside the banner.
+    <>
     <section
-      className="season"
+      className={`season ${treatment ? `season--${treatment}` : ''}`}
       style={{ '--season-accent': accent, '--season-dim': accentDim }}
     >
       {set.iconSvgUri && !iconFailed && (
@@ -78,11 +92,98 @@ export default function SeasonBanner({ onExplore }) {
         </p>
       </div>
 
-      <button className="btn btn--sm season__cta" onClick={() => onExplore?.(theme.searchQuery)}>
-        {isUpcoming ? 'Spoilers so far' : 'Browse the set'}
-      </button>
+      <div className="season__actions">
+        {curated && (
+          <button className="btn btn--sm season__cta" onClick={() => setOpenMechanics(true)}>
+            What&rsquo;s new
+          </button>
+        )}
+        <button className="btn btn--sm season__cta" onClick={() => onExplore?.(theme.searchQuery)}>
+          {isUpcoming ? 'Spoilers so far' : 'Browse the set'}
+        </button>
+      </div>
+
     </section>
+
+    <Sheet
+      open={openMechanics}
+      onClose={() => setOpenMechanics(false)}
+      title={`New in ${set.name}`}
+      size="lg"
+    >
+      {curated && (
+        <div style={{ '--season-accent': accent }}>
+          <SetMechanics entry={curated} />
+        </div>
+      )}
+    </Sheet>
+    </>
   )
+}
+
+function SetMechanics({ entry }) {
+  const age = curationAgeDays(entry)
+
+  return (
+    <div className="stack">
+      <p className="term__short">{entry.premise}</p>
+
+      {entry.mechanics.map((mechanic) => (
+        <section className="panel stack" key={mechanic.id} style={{ gap: 'var(--space-2)' }}>
+          <h3>{mechanic.term}</h3>
+          <p style={{ margin: 0 }}>{mechanic.short}</p>
+          <p className="muted tiny" style={{ margin: 0 }}>{mechanic.long}</p>
+          {mechanic.forNewPlayers && (
+            <p className="tiny" style={{ margin: 0, color: 'var(--season-accent, var(--accent))' }}>
+              New to Magic? {mechanic.forNewPlayers}
+            </p>
+          )}
+          {mechanic.seeAlso?.length > 0 && (
+            <div className="row row--wrap">
+              <span className="faint tiny">See also</span>
+              {mechanic.seeAlso.map((id) => <Term key={id} id={id} as="span" />)}
+            </div>
+          )}
+        </section>
+      ))}
+
+      {entry.art && (
+        <section className="panel stack" style={{ gap: 'var(--space-2)' }}>
+          <h3>{entry.art.headline}</h3>
+          <p className="muted tiny" style={{ margin: 0 }}>{entry.art.description}</p>
+        </section>
+      )}
+
+      {/* Say plainly how old this is and where it came from. Every other fact in
+          this app is fetched live; this section is hand-written, so it is the
+          one place that can quietly go stale. */}
+      <div className="banner banner--warn tiny">
+        {entry.provisional && <strong>Written during spoiler season. </strong>}
+        Summarised by hand on {entry.curatedAt}
+        {age != null && age > 0 && ` — ${age} day${age === 1 ? '' : 's'} ago`}
+        {entry.provisional && ', and wording sometimes changes before release'}.
+        {' '}Everything else in this app is read live from Scryfall; this section is not.
+        {entry.sources?.length > 0 && (
+          <div style={{ marginTop: 'var(--space-2)' }}>
+            {entry.sources.map((url) => (
+              <div key={url}>
+                <a href={url} target="_blank" rel="noreferrer noopener">{shortHost(url)}</a>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function shortHost(url) {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.hostname.replace(/^www\./, '')}${parsed.pathname}`
+  } catch {
+    return url
+  }
 }
 
 function formatDate(iso) {
