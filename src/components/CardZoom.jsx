@@ -33,6 +33,7 @@ export default function CardZoom({ card, open, onClose, initialFace = 0 }) {
   const scaleRef = useRef(MIN_SCALE)
   const offsetRef = useRef({ x: 0, y: 0 })
   const pointers = useRef(new Map())
+  const backdropRef = useRef(false)
   const pinchRef = useRef(null)
   const dragRef = useRef(null)
   const lastTapRef = useRef(0)
@@ -138,6 +139,12 @@ export default function CardZoom({ card, open, onClose, initialFace = 0 }) {
 
   // --- pointers ----------------------------------------------------------
   const onPointerDown = (event) => {
+    // Remember whether this gesture began on the card or on the empty space
+    // around it. Tapping the backdrop closes, tapping the card does not — the
+    // usual lightbox contract, and it keeps double-tap-to-zoom on the card
+    // where it belongs.
+    backdropRef.current = !contentRef.current?.contains(event.target)
+
     // Track the pointer BEFORE attempting capture. setPointerCapture throws
     // NotFoundError for a pointer the element does not recognise, and if that
     // escapes here the pointer is never tracked and the gesture silently dies.
@@ -203,9 +210,15 @@ export default function CardZoom({ card, open, onClose, initialFace = 0 }) {
           || Math.abs(event.clientY - dragRef.current.startY) > 6)
       dragRef.current = null
 
-      // Double tap toggles zoom. Only treated as a tap if the pointer barely
-      // moved, so the end of a pan never zooms unexpectedly.
       if (!moved) {
+        // A clean tap on the empty space around the card dismisses the viewer.
+        // Guarded on `moved` so releasing a pan outside the card never closes.
+        if (backdropRef.current) {
+          onClose()
+          return
+        }
+        // Double tap on the card toggles zoom. Only treated as a tap if the
+        // pointer barely moved, so the end of a pan never zooms unexpectedly.
         const now = Date.now()
         if (now - lastTapRef.current < 300) {
           const result = toggleZoom(
@@ -262,6 +275,7 @@ export default function CardZoom({ card, open, onClose, initialFace = 0 }) {
         onPointerCancel={onPointerUp}
         onWheel={onWheel}
         style={{ cursor: scale > MIN_SCALE ? 'grab' : 'zoom-in' }}
+        aria-label="Card viewer. Tap outside the card to close." 
       >
         <div
           ref={contentRef}
@@ -283,7 +297,9 @@ export default function CardZoom({ card, open, onClose, initialFace = 0 }) {
       </div>
 
       <div className="zoom__hint faint tiny">
-        Pinch, scroll or double-tap to zoom · drag to move · <kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd> <kbd>Esc</kbd>
+        Pinch, scroll or double-tap to zoom · drag to move · tap outside to close
+        <br />
+        <kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd> <kbd>Esc</kbd>
       </div>
     </div>
   )

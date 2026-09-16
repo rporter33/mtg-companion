@@ -122,6 +122,28 @@ check('pan clamps to the card\'s real overhang',
 const selection = await page.evaluate(() => (window.getSelection()?.toString() ?? '').trim())
 check('panning does not select the card text', selection === '', `selected: "${selection}"`)
 
+console.log('\nDismissal by tapping outside')
+await reset()
+const card = await page.locator('.zoom__content').boundingBox()
+await page.mouse.click(card.x + card.width / 2, card.y + card.height / 2)
+await page.waitForTimeout(220)
+check('tapping the card does not close', (await page.locator('.zoom').count()) === 1)
+
+await page.mouse.click(Math.max(frame.x + 6, card.x - 20), card.y + card.height / 2)
+await page.waitForTimeout(220)
+check('tapping beside the card closes', (await page.locator('.zoom').count()) === 0)
+
+// Reopen and confirm a pan that happens to end over the backdrop does not close.
+await page.locator('.hand__card .inspect').first().click()
+await page.waitForTimeout(300)
+await page.keyboard.press('+'); await page.keyboard.press('+'); await page.waitForTimeout(120)
+await page.mouse.move(centre.x, centre.y)
+await page.mouse.down()
+await page.mouse.move(frame.x + 4, frame.y + 30, { steps: 8 })
+await page.mouse.up()
+await page.waitForTimeout(220)
+check('a pan ending over the backdrop does not close', (await page.locator('.zoom').count()) === 1)
+
 console.log('\nKeyboard and dismissal')
 await reset()
 await page.keyboard.press('+')
