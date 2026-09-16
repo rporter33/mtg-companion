@@ -29,12 +29,25 @@ let fail = 0
 let warn = 0
 const failures = []
 
+// Colour only where it will actually render. Piping to a file, or the classic
+// Windows console, would otherwise fill the output with literal escape codes —
+// and this script exists to be read and pasted back, so garbled is worse than
+// plain. Honours NO_COLOR (https://no-color.org) and FORCE_COLOR.
+const useColor = process.env.FORCE_COLOR
+  ? process.env.FORCE_COLOR !== '0'
+  : !process.env.NO_COLOR
+    && process.stdout.isTTY
+    && process.env.TERM !== 'dumb'
+    // Windows gained ANSI support in Windows 10 build 10586.
+    && (process.platform !== 'win32' || Number(process.versions.node.split('.')[0]) >= 18)
+
+const paint = (code) => (s) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s)
 const c = {
-  ok: (s) => `\x1b[32m${s}\x1b[0m`,
-  bad: (s) => `\x1b[31m${s}\x1b[0m`,
-  warn: (s) => `\x1b[33m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-  head: (s) => `\x1b[1m${s}\x1b[0m`,
+  ok: paint(32),
+  bad: paint(31),
+  warn: paint(33),
+  dim: paint(2),
+  head: paint(1),
 }
 
 function check(label, condition, detail) {
