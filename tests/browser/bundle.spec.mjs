@@ -44,6 +44,21 @@ console.log('\nFirst paint')
     declared.join(' '))
 }
 
+console.log('\nThe build knows what it is')
+{
+  // version.json is emitted beside the build and the same stamp is baked into
+  // the entry script, so the running app can tell whether the file describes
+  // a newer build than itself. If the two ever drift, the update banner is
+  // either silent or nags forever.
+  const version = await (await fetch(`${TARGET}version.json`, { cache: 'no-store' })).json().catch(() => null)
+  check('version.json is published beside the build', !!version?.id && !!version?.at, JSON.stringify(version))
+  const html = await (await fetch(TARGET)).text()
+  const entry = [...html.matchAll(/src="([^"]+\.js)"/g)].map((m) => m[1]).find((d) => !/\/react-/.test(d))
+  const code = entry ? await (await fetch(new URL(entry, TARGET))).text() : ''
+  check('the entry script carries the same build id', !!version?.id && code.includes(version.id),
+    `looking for ${version?.id} in ${entry}`)
+}
+
 console.log('\nThe offline guarantee')
 {
   const page = await browser.newPage({ viewport: { width: 420, height: 1000 } })

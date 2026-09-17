@@ -167,6 +167,51 @@ if (rescued) {
 }
 await page.evaluate(() => { for (const k of Object.keys(localStorage)) if (/^(big|mid|small)-/.test(k)) localStorage.removeItem(k) })
 
+console.log('\nWhich build is this, and is there a newer one')
+{
+  await page.getByRole('button', { name: '← Decks' }).click()
+  await page.waitForTimeout(400)
+  await openData()
+  const built = await page.locator('[data-build]').innerText()
+  check('the Your data screen names the running build', /^Build \S+/.test(built), built)
+  check('and says a newer one is offered by banner', /banner/.test(built))
+
+  // A newer build is published while the app is open. The check runs shortly
+  // after load and again when the tab becomes visible, and it must see past
+  // the browser cache and the service worker, so the file is routed here.
+  const fresh = await context.newPage()
+  await fresh.route('**/api.scryfall.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))
+  await fresh.route('**/version.json', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ id: 'newer00', sha: 'newer00', at: '2999-01-01T00:00:00.000Z' }),
+  }))
+  await fresh.goto(TARGET, { waitUntil: 'networkidle' })
+  const banner = fresh.locator('.banner', { hasText: /newer version of this app/ })
+  await banner.waitFor({ timeout: 8000 }).catch(() => {})
+  check('a newer published build is announced within a few seconds of load', (await banner.count()) === 1)
+  check('the banner names the build', /build newer00/.test(await banner.innerText().catch(() => '')))
+  check('it offers a reload and a later', (await banner.getByRole('button', { name: 'Reload' }).count()) === 1
+    && (await banner.getByRole('button', { name: 'Later' }).count()) === 1)
+  await banner.getByRole('button', { name: 'Later' }).click()
+  check('later dismisses it', (await banner.count()) === 0)
+
+  // The same build as the running one is not an update, whatever the file's
+  // timestamp — a stale copy must never nag anyone into reloading.
+  const same = await context.newPage()
+  await same.route('**/api.scryfall.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))
+  const id = await fresh.evaluate(() => document.querySelector('[data-build]')?.dataset.build ?? null)
+  await same.route('**/version.json', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ id: 'older00', sha: 'older00', at: '2000-01-01T00:00:00.000Z' }),
+  }))
+  await same.goto(TARGET, { waitUntil: 'networkidle' })
+  await same.waitForTimeout(4000)
+  check('an older published build is not announced',
+    (await same.locator('.banner', { hasText: /newer version of this app/ }).count()) === 0, `running ${id}`)
+  await fresh.close()
+  await same.close()
+}
+
 check('no console errors throughout', errors.length === 0, errors.join('; '))
 console.log(`\n${pass} passed, ${fail} failed`)
 await browser.close()

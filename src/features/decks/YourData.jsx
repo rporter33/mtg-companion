@@ -5,6 +5,7 @@ import {
 } from '../../lib/storage.js'
 import { storageUsage, backupStatus, formatBytes } from '../../lib/data-safety.js'
 import { cacheStats, clearCache } from '../../lib/cache.js'
+import { BUILD, describeBuild } from '../../lib/version.js'
 
 /**
  * Where your data is, how much room it has, and how to keep it.
@@ -159,6 +160,9 @@ export default function YourData({ onClose, onChanged }) {
             Clear card cache
           </button>
         </div>
+        <p className="faint tiny" style={{ margin: 0 }} data-build={BUILD.id}>
+          Build {describeBuild()}. When a newer one is published, a banner at the top offers a reload.
+        </p>
       </section>
 
       {corrupt && (

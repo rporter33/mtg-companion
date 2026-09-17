@@ -57,7 +57,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 728 unit tests
+npm test               # 738 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -268,6 +268,18 @@ and its official icon all come from Scryfall at runtime, so it stays correct for
 sets that do not exist yet. The accent is computed from the set code rather than
 hand-picked, because the app cannot know a set's art direction and should not
 pretend to.
+
+**The app knows which build it is, and says when a newer one exists.** Every
+build carries its commit and publish time, baked into the code and written
+beside it as `version.json`. The Your-data screen names the running build, and
+shortly after load, and again whenever the tab comes back into view, the app
+fetches the version file past every cache and offers a reload if a newer build
+has been published. The comparison is by time, not difference, so a stale copy
+of the file can never nag anyone into reloading backwards. GitHub Pages sends
+the page with a ten-minute cache, and the service worker used to honour it, so
+a reload straight after a deploy brought back the previous build with nothing
+on screen to say so; navigations now revalidate, and each fresh page replaces
+the offline copy.
 
 **Offline is a first-class case, not a fallback.** Cards a deck references are
 pinned in IndexedDB and never evicted, so a deck built at home opens on a phone

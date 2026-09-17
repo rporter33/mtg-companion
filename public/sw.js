@@ -50,10 +50,26 @@ self.addEventListener('fetch', (event) => {
 
   if (url.origin !== self.location.origin) return
 
-  // Navigations fall back to the cached shell so a reload works offline.
+  // The version file exists to be fetched fresh; the app asks for it with
+  // no-store and this worker must not answer from a cache.
+  if (url.pathname.endsWith('/version.json')) return
+
+  // Navigations go to the network with revalidation — GitHub Pages sends the
+  // page with a ten-minute cache, and honouring it meant a reload straight
+  // after a deploy brought back the previous build — and a fresh copy replaces
+  // the cached shell, so offline serves the newest build this browser has
+  // seen. Only with no network at all does the cached shell answer.
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => caches.match('./index.html').then((r) => r ?? caches.match('./'))),
+      fetch(request, { cache: 'no-cache' })
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone()
+            caches.open(SHELL).then((cache) => cache.put('./index.html', copy))
+          }
+          return response
+        })
+        .catch(() => caches.match('./index.html').then((r) => r ?? caches.match('./'))),
     )
     return
   }

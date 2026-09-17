@@ -24,6 +24,7 @@ const DecksView = lazy(VIEWS.decks)
 const PlayView = lazy(VIEWS.play)
 const GuideView = lazy(VIEWS.guide)
 import { loadState, PERSIST_FAILED_EVENT, ROOM_MADE_EVENT } from './lib/storage.js'
+import { checkForUpdate, reloadForUpdate, minutesAgo } from './lib/version.js'
 
 const TABS = [
   { id: 'guide', label: 'Learn', icon: GuideIcon },
@@ -60,6 +61,29 @@ export default function App() {
     return () => {
       window.removeEventListener(PERSIST_FAILED_EVENT, onFail)
       window.removeEventListener(ROOM_MADE_EVENT, onRoom)
+    }
+  }, [])
+
+  // A newer build than the one running. Checked once shortly after load and
+  // again whenever the tab comes back into view, no more than every few
+  // minutes: an installed app can sit open for days, and "did my change
+  // deploy?" should be answered on screen rather than by clearing caches.
+  const [update, setUpdate] = useState(null)
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    let last = 0
+    let timer = null
+    const check = () => {
+      if (Date.now() - last < 5 * 60_000) return
+      last = Date.now()
+      checkForUpdate().then((newer) => { if (newer) setUpdate(newer) })
+    }
+    timer = setTimeout(check, 3000)
+    const onVisible = () => { if (document.visibilityState === 'visible') check() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [])
 
@@ -123,6 +147,17 @@ export default function App() {
   return (
     <div className="app">
       <main className="app__main">
+        {update && (
+          <div className="banner banner--info row row--wrap" style={{ marginBottom: 'var(--space-4)', alignItems: 'center' }} role="status">
+            <span style={{ flex: '1 1 16rem' }}>
+              A newer version of this app was published
+              {minutesAgo(update) !== null ? ` ${minutesAgo(update)} minute${minutesAgo(update) === 1 ? '' : 's'} ago` : ''}
+              {' '}(build {update.sha}). Reload to get it; your decks stay where they are.
+            </span>
+            <button className="btn btn--primary btn--sm" onClick={reloadForUpdate}>Reload</button>
+            <button className="btn btn--ghost btn--sm" onClick={() => setUpdate(null)}>Later</button>
+          </div>
+        )}
         {roomMade !== null && (
           <div className="banner banner--warn" style={{ marginBottom: 'var(--space-4)' }} role="status">
             Saved — but storage was nearly full, so {roomMade} automatic version
