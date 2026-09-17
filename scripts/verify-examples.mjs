@@ -48,28 +48,46 @@ const wanted = new Set(EXAMPLE_DECKS.flatMap(namesIn))
 const names = [...wanted]
 console.log(`${c.head('Verifying')} ${names.length} distinct names across ${EXAMPLE_DECKS.length} decks\n`)
 
+/**
+ * One chunk of names, with a deadline.
+ *
+ * Without a timeout a stalled connection leaves this script sitting on a
+ * progress counter forever, which looks identical to it working. Three tries,
+ * backing off, then say plainly which it was.
+ */
+async function ask(chunk) {
+  let last = null
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await fetch(`${API}/cards/collection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': UA },
+        body: JSON.stringify({ identifiers: chunk.map((name) => ({ name })) }),
+        signal: AbortSignal.timeout(20000),
+      })
+      if (response.ok) return response.json()
+      // A bad request or a refusal will not improve by being repeated.
+      if (response.status < 500 && response.status !== 429) {
+        console.error(`\n${c.bad('✗')} Scryfall returned ${response.status} ${response.statusText}.`)
+        process.exit(2)
+      }
+      last = `HTTP ${response.status}`
+    } catch (error) {
+      last = error.name === 'TimeoutError' ? 'timed out after 20s' : error.message
+    }
+    if (attempt < 3) await sleep(attempt * 2000)
+  }
+  console.error(`\n${c.bad('✗')} Could not reach Scryfall (${last}).`)
+  console.error(`  ${c.dim('Check your connection, then run npm run examples:verify again.')}`)
+  process.exit(2)
+}
+
 const cards = new Map()
 const missing = []
 
 for (let i = 0; i < names.length; i += 75) {
   const chunk = names.slice(i, i + 75)
-  let response
-  try {
-    response = await fetch(`${API}/cards/collection`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': UA },
-      body: JSON.stringify({ identifiers: chunk.map((name) => ({ name })) }),
-    })
-  } catch (error) {
-    console.error(`${c.bad('✗')} Could not reach Scryfall: ${error.message}`)
-    process.exit(2)
-  }
-  if (!response.ok) {
-    console.error(`${c.bad('✗')} Scryfall returned ${response.status}.`)
-    process.exit(2)
-  }
-
-  const payload = await response.json()
+  const payload = await ask(chunk)
   for (const card of payload.data ?? []) {
     const match = chunk.find((name) => name.toLowerCase() === card.name.toLowerCase())
       ?? chunk.find((name) => card.name.toLowerCase().startsWith(name.toLowerCase()))
