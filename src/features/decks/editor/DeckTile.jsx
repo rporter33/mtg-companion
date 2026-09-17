@@ -15,6 +15,7 @@ import { identityAttr } from '../../../components/CardFace.jsx'
  */
 const DeckTile = memo(function DeckTile({
   card, cardId, quantity, zone, market, owned = 0, isCommander, flagged, act, onOpenCard, art = null,
+  marked = false,
 }) {
   const onOpen = () => card && onOpenCard(card)
   const onSet = (n) => act('set', cardId, zone, n)
@@ -30,7 +31,7 @@ const DeckTile = memo(function DeckTile({
   }
 
   return (
-    <div className={`deck-tile ${flagged ? 'deck-tile--flagged' : ''} ${art ? 'deck-tile--backed' : ''}`} data-identity={identityAttr(card)}>
+    <div className={`deck-tile ${flagged ? 'deck-tile--flagged' : ''} ${art ? 'deck-tile--backed' : ''} ${marked ? 'deck-tile--arrived' : ''}`} data-identity={identityAttr(card)}>
       {art && <DeckArt src={art} cardId={card.id} className="deck-art--tile" />}
       <div className="deck-tile__art">
         <CardImage card={card} size="normal" onClick={onOpen} />

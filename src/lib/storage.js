@@ -348,7 +348,15 @@ export function saveDeck(deck) {
 }
 
 export function deleteDeck(id) {
-  return update((state) => ({ ...state, decks: state.decks.filter((d) => d.id !== id) }))
+  return update((state) => {
+    const next = { ...state, decks: state.decks.filter((d) => d.id !== id) }
+    // The list's remembered open section goes with the deck.
+    if (state.prefs?.deckOpen?.[id] !== undefined) {
+      const { [id]: _gone, ...deckOpen } = state.prefs.deckOpen
+      next.prefs = { ...state.prefs, deckOpen }
+    }
+    return next
+  })
 }
 
 // --- games ---------------------------------------------------------------

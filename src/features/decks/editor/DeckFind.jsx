@@ -16,7 +16,7 @@ import Chip from '../../../components/Chip.jsx'
  * gaining a line.
  */
 export default function DeckFind({
-  value, onChange, needOnly, onNeedOnly, status, identity = [], inputRef, onEnter,
+  value, onChange, needOnly, onNeedOnly, status, identity = [], inputRef, onEnter, children = null,
 }) {
   const onKeyDown = (event) => {
     if (event.key === 'Escape') {
@@ -27,7 +27,7 @@ export default function DeckFind({
   }
 
   return (
-    <div className="deck-find" role="search">
+    <div className={`deck-find ${children ? 'deck-find--sections' : ''}`} role="search">
       <div className="deck-find__row">
         <div className={`deck-find__field ${value ? 'deck-find__field--filled' : ''}`}>
           <svg className="deck-find__glass" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -68,6 +68,7 @@ export default function DeckFind({
           Not owned
         </Chip>
       </div>
+      {children}
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{status}</p>
       <span className="deck-find__identity" aria-hidden="true">
         {identity.length

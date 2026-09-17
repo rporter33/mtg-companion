@@ -15,7 +15,7 @@ import { identityAttr } from '../../../components/CardFace.jsx'
  * focused, because this view is for reading a deck, not counting it.
  */
 const TextRow = memo(function TextRow({
-  card, cardId, quantity, zone, isCommander, flagged, previewed, act, onPreview, onOpenCard,
+  card, cardId, quantity, zone, isCommander, flagged, previewed, act, onPreview, onOpenCard, marked = false,
 }) {
   const onOpen = () => card && onOpenCard(card)
   const onSet = (n) => act('set', cardId, zone, n)
@@ -32,7 +32,7 @@ const TextRow = memo(function TextRow({
   }
   return (
     <div
-      className={`text-row ${flagged ? 'text-row--flagged' : ''} ${previewed ? 'text-row--previewed' : ''}`}
+      className={`text-row ${flagged ? 'text-row--flagged' : ''} ${previewed ? 'text-row--previewed' : ''} ${marked ? 'text-row--arrived' : ''}`}
       data-identity={identityAttr(card)}
       onPointerEnter={show}
     >

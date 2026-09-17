@@ -394,6 +394,8 @@ select.chip { width: auto; max-width: 8rem; }
    bottom edge. */
 .deck-find {
   --find-height: 58px;
+  min-width: 0;
+  max-width: 100%;
   position: sticky;
   top: calc(-1 * var(--main-pad, var(--space-4)));
   z-index: 3;
@@ -476,4 +478,84 @@ select.chip { width: auto; max-width: 8rem; }
 /* The text view's card panel is sticky too; it now sits under the bar. */
 @media (hover: hover) and (min-width: 760px) {
   .deck-preview { top: calc(var(--find-height, 58px) + var(--space-3) - var(--main-pad, var(--space-6))); }
+}
+
+/* --- The cascade ----------------------------------------------------------
+   One button per section, pinned under the search. The row scrolls sideways
+   on a phone rather than wrapping, so the bar costs one line; a button is
+   thumb-sized on touch. The open button takes the accent like a chip; a dim
+   one has no match for the current search. */
+.deck-find--sections { --find-height: 104px; }
+.deck-sections {
+  /* Its own intrinsic width is the whole row of buttons; contained, so the
+     bar and the screen never widen to fit it. */
+  contain: inline-size;
+  /* Positioned, so the visually hidden text inside the buttons (absolute)
+     is placed against this scroller and clipped with it, rather than
+     against the sticky bar, where it widened the whole screen. */
+  position: relative;
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px;
+  margin-inline: -4px;
+}
+.deck-sections::-webkit-scrollbar { display: none; }
+.deck-sections__btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-overlay);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+.deck-sections__btn:hover { border-color: var(--border-strong, var(--text-faint)); color: var(--text); }
+.deck-sections__btn--open {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.deck-sections__btn--dim { opacity: 0.4; cursor: default; }
+.deck-sections__count { font-variant-numeric: tabular-nums; color: var(--text-faint); }
+.deck-sections__btn--open .deck-sections__count { color: inherit; }
+.deck-sections__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--error); flex-shrink: 0; }
+.deck-sections__need {
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: var(--warn);
+  border: 1px solid #d9a44155;
+  background: #d9a44118;
+  font-variant-numeric: tabular-nums;
+}
+@media (hover: none) {
+  .deck-sections__btn { min-height: 44px; }
+}
+/* Keyboard focus lands below the taller bar too. */
+.app__main:has(.deck-find--sections) { scroll-padding-top: 116px; }
+
+/* The one open section arrives with a short fold-in; reduced motion is
+   zeroed app-wide in base.css. */
+.deck-section--solo { animation: fold-in 180ms ease-out; }
+@keyframes fold-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* A card that just arrived from another tab is outlined for a moment. */
+.deck-row--arrived, .deck-tile--arrived, .text-row--arrived { animation: arrived 2.4s ease-out; }
+@keyframes arrived {
+  0%, 70% { box-shadow: 0 0 0 2px var(--accent); }
+  100% { box-shadow: 0 0 0 2px transparent; }
 }

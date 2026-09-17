@@ -19,6 +19,12 @@ const DeckImportExport = lazy(() => import('./DeckImportExport.jsx'))
 import { useCollection } from '../../lib/collection-store.js'
 import { missingFor, missingCost, ownEverythingIn, keyOf } from '../../lib/collection.js'
 
+const NO_IDS = Object.freeze([])
+const idsIn = (deck) => [
+  ...(deck.commanders ?? []), ...(deck.signatureSpell ? [deck.signatureSpell] : []),
+  ...deck.main.map((e) => e.cardId), ...deck.sideboard.map((e) => e.cardId),
+]
+
 /** "USD via TCGplayer" — the label alone does not say where a number came from. */
 const getMarketLabel = (id) => {
   const market = MARKETS.find((m) => m.id === id)
@@ -74,6 +80,28 @@ export default function DeckEditor({
   const notOwned = useMemo(() => missingFor(deck, lookup, collection), [deck, cards, collection])
   const needed = useMemo(() => new Set(notOwned.map((m) => keyOf(m.card))), [notOwned])
   const toBuy = useMemo(() => missingCost(notOwned, market), [notOwned, market])
+
+  // Cards that arrived while the list was not showing — added on the Add
+  // tab or from the card sheet — so the list can open their section and
+  // mark them. The set of ids the list last showed is kept while the List
+  // tab is up and frozen while it is not; the difference on return is what
+  // arrived. Quantity changes are not arrivals.
+  // Only an add counts: a card that comes back with a restored version or
+  // an import is a different event, and the list shows all of it instead.
+  const seenIds = useRef({ deckId: null, ids: null })
+  const lastTab = useRef(tab)
+  const [arrived, setArrived] = useState(NO_IDS)
+  useEffect(() => {
+    const from = lastTab.current
+    lastTab.current = tab
+    if (tab !== 'list') return
+    const ids = idsIn(deck)
+    const prev = seenIds.current.deckId === deck.id ? seenIds.current.ids : null
+    seenIds.current = { deckId: deck.id, ids: new Set(ids) }
+    if (!prev || (from !== 'add' && from !== 'list')) return
+    const fresh = ids.filter((id) => !prev.has(id))
+    if (fresh.length) setArrived(fresh)
+  }, [tab, deck])
 
   // The tab strip scrolls sideways on a phone; the open tab must be in view,
   // or a deck opened on Import / export shows a strip with nothing selected.
@@ -216,7 +244,7 @@ export default function DeckEditor({
           key={deck.id}
           deck={deck} groups={groups} format={format} market={market} lookup={lookup}
           art={showImages && rowArt} artSwitch={showImages ? toggleRowArt : null}
-          collection={collection} needed={needed}
+          collection={collection} needed={needed} loading={loading} arrived={arrived}
           onChange={commit} onOpenCard={onOpenCard} validation={validation}
           onFindElsewhere={(query) => { setCoachQuery(query); setTab('add') }}
         />

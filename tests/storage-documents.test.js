@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   useBackend, saveDeck, listDecks, deleteDeck, loadState, update, exportAll, importAll,
-  clearAll, corruptBackup, discardCorruptBackup, setPref, STORAGE_CHANGED_EVENT,
+  clearAll, corruptBackup, discardCorruptBackup, setPref, getPrefs, STORAGE_CHANGED_EVENT,
 } from '../src/lib/storage.js'
 import { memoryBackend } from '../src/lib/storage-backend.js'
 
@@ -64,6 +64,15 @@ describe('the layout', () => {
     deleteDeck('d1')
     expect(inner.keys()).toEqual([ROOT])
     expect(listDecks()).toEqual([])
+  })
+
+  it('deleting a deck forgets which of its sections was open, and no other deck\u2019s', () => {
+    useBackend(memoryBackend())
+    saveDeck(deck('d1'))
+    saveDeck(deck('d2'))
+    setPref('deckOpen', { d1: 'Lands', d2: 'Instants' })
+    deleteDeck('d1')
+    expect(getPrefs().deckOpen).toEqual({ d2: 'Instants' })
   })
 
   it('lists decks in the order they were made', () => {

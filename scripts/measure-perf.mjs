@@ -133,6 +133,11 @@ const finding = await page.evaluate(() => ({ long: window.__longTasks.length, lo
 console.log(`${'typing 12 chars in deck search'.padEnd(34)} ${String(Date.now() - f0).padStart(6)} ms   per char ${Math.round((Date.now() - f0) / 12)} ms   long ${finding.long} (${finding.longMs} ms)`)
 await settle('clear the search (100 rows back)', () => find.fill(''), () => document.querySelectorAll('.deck-row:not(.deck-row--missing)').length >= 100)
 
+// The cascade: open one section alone, then reopen everything.
+const lands = page.locator('.deck-sections__btn').filter({ hasText: 'Lands' })
+await settle('open Lands alone (cascade)', () => lands.click(), () => document.querySelectorAll('section[data-section]').length === 2)
+await settle('reopen everything (100 rows back)', () => lands.click(), () => document.querySelectorAll('.deck-row:not(.deck-row--missing)').length >= 100)
+
 await settle('Analysis tab', tab('Analysis'), () => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent === 'Analysis' && document.querySelectorAll('.app__main *').length > 50)
 await settle('Coach tab', tab('Coach'), () => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent === 'Coach' && document.querySelectorAll('.app__main *').length > 50)
 await settle('Playtest: draw a hand', async () => { await tab('Playtest')(); await page.getByRole('button', { name: 'Draw a hand' }).click() }, () => document.querySelectorAll('.hand-card').length === 7)

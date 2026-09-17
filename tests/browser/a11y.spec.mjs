@@ -267,6 +267,16 @@ await scanState('deck find, nothing matches', async () => {
 await page.getByLabel('Find a card in this deck').fill('')
 await page.waitForTimeout(200)
 
+await scanState('deck list, one section open', async () => {
+  const lands = page.locator('.deck-sections__btn').filter({ hasText: 'Lands' })
+  if (!await lands.count()) return false
+  await lands.click()
+  await page.waitForTimeout(400)
+  return (await page.locator('.section-title h2').allInnerTexts()).join() === 'Commander,Lands'
+})
+await page.locator('.deck-sections__btn').filter({ hasText: 'Lands' }).click()
+await page.waitForTimeout(300)
+
 await scanState('playtest hand', async () => {
   const tab = page.getByRole('tab', { name: 'Playtest' })
   if (!await tab.count()) return false

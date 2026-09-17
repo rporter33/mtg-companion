@@ -182,7 +182,7 @@ console.log('\nOn a phone')
   check('off again, everything is back', (await rowNames(page)).length === 16)
 
   console.log('\nOwning all of it')
-  await page.getByRole('button', { name: /to get/ }).click()
+  await page.locator('.deck-head').getByRole('button', { name: /to get/ }).click()
   await page.waitForTimeout(300)
   await page.getByRole('button', { name: 'Not owned' }).click()
   await page.waitForTimeout(200)

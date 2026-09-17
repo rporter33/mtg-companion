@@ -8,7 +8,7 @@ import CategoryPicker from './CategoryPicker.jsx'
 
 const DeckRow = memo(function DeckRow({
   card, cardId, quantity, isCommander, flagged, market, owned = 0, zone, section, sections,
-  act, onOpenCard, art = null,
+  act, onOpenCard, art = null, marked = false,
 }) {
   const onOpen = () => card && onOpenCard(card)
   const onSet = (n) => act('set', cardId, zone, n)
@@ -26,7 +26,7 @@ const DeckRow = memo(function DeckRow({
 
   return (
     <div
-      className={`deck-row ${flagged ? 'deck-row--flagged' : ''} ${art ? 'deck-row--art' : ''}`}
+      className={`deck-row ${flagged ? 'deck-row--flagged' : ''} ${art ? 'deck-row--art' : ''} ${marked ? 'deck-row--arrived' : ''}`}
       data-identity={identityAttr(card)}
     >
       {art && <DeckArt src={art} cardId={card.id} className="deck-art--row" />}

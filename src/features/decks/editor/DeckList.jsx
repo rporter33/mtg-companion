@@ -15,7 +15,9 @@ import TextRow from './TextRow.jsx'
 import DeckPreview from './DeckPreview.jsx'
 import SectionMenu from './SectionMenu.jsx'
 import DeckFind from './DeckFind.jsx'
+import SectionButtons from './SectionButtons.jsx'
 import { termsOf, matches, filterSections, statusLine } from '../../../lib/deck-find.js'
+import { openSectionFor, withOpenSection, openAfterRename, resolveOpen, toggledOpen } from '../../../lib/folds.js'
 
 /**
  * The deck as a list, a grid or text, with the sections shared by all three.
@@ -28,7 +30,7 @@ import { termsOf, matches, filterSections, statusLine } from '../../../lib/deck-
  */
 export default function DeckList({
   deck, groups, format, market, lookup, collection, onChange, onOpenCard, validation,
-  art = false, artSwitch = null, onFindElsewhere = null, needed = null,
+  art = false, artSwitch = null, onFindElsewhere = null, needed = null, loading = false, arrived = NONE,
 }) {
   const problemIds = new Set(
     validation.violations.filter((v) => v.severity === 'error' && v.cardId).map((v) => v.cardId),
@@ -136,6 +138,74 @@ export default function DeckList({
       : found.matched === 0 ? 'You own every card in this deck'
         : `${found.matched} of ${found.total} cards still needed`
 
+  // The cascade. One section open at a time, or all of them when nothing
+  // is chosen; remembered per deck in prefs, never on the deck document,
+  // because folding a section is not an edit. A remembered section that no
+  // longer exists means everything open, not a blank screen. Commander is
+  // never part of it: the commander stays above the cascade in every state.
+  const [openName, setOpenName] = useState(() => openSectionFor(getPrefs(), deck.id))
+  const names = useMemo(() => groups.map((g) => g.name).filter((n) => n !== COMMANDER_CATEGORY), [groups])
+  const open = resolveOpen(openName, names)
+  const snapTo = useRef(null)
+  const chooseOpen = (name, { snap = true } = {}) => {
+    setOpenName(name)
+    setPref('deckOpen', withOpenSection(getPrefs(), deck.id, name))
+    if (snap && name) snapTo.current = name
+  }
+  const pickSection = (name) => chooseOpen(toggledOpen(open, name))
+  const sectionEl = (name) => listRef.current?.querySelector(`section[data-section="${CSS.escape(name)}"]`)
+  const jumpTo = (name) => sectionEl(name)?.scrollIntoView({ block: 'start' })
+  // After a tap the opened section lands under the bar, where the thumb is.
+  useEffect(() => {
+    if (!snapTo.current) return
+    const name = snapTo.current
+    snapTo.current = null
+    sectionEl(name)?.scrollIntoView({ block: 'start' })
+  })
+
+  // A card added from another tab, or from the card sheet, arrives into a
+  // section that may be folded: that section opens and the row is marked
+  // for a moment, so the person always sees where it landed. Cards that
+  // arrive into several sections at once — a restore, an import — open
+  // everything instead, because hiding most of what just came back would
+  // be the wrong answer to "what changed".
+  const [marked, setMarked] = useState(NONE)
+  useEffect(() => {
+    if (!arrived.length) return undefined
+    const homes = groups
+      .filter((g) => g.name !== COMMANDER_CATEGORY && g.entries.some((e) => arrived.includes(e.cardId)))
+      .map((g) => g.name)
+    if (homes.length === 1 && names.includes(homes[0])) chooseOpen(homes[0])
+    else if (homes.length > 1) chooseOpen(null, { snap: false })
+    setMarked(arrived)
+    const timer = setTimeout(() => setMarked(NONE), 2400)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrived])
+
+  // What the list shows: everything the search matched; else the one open
+  // section with the commander above it; else the whole deck.
+  const visible = found.active ? found.sections
+    : open ? groups.filter((g) => g.name === COMMANDER_CATEGORY || g.name === open)
+      : groups
+
+  // What each button says. Counts follow the search; the dot and the number
+  // are the section's problems and cards still to buy, so a fold never hides
+  // either. Held back until the cards have loaded, because until then every
+  // card files under "Other" and the row would reshuffle a moment later.
+  const buttons = useMemo(() => {
+    if (loading) return null
+    const shownBy = new Map(found.sections.map((g) => [g.name, g.shownCount ?? g.count]))
+    return groups.filter((g) => g.name !== COMMANDER_CATEGORY).map((g) => ({
+      name: g.name,
+      count: g.count,
+      shownCount: shownBy.get(g.name) ?? 0,
+      problems: g.entries.filter((e) => problemIds.has(e.cardId)).length,
+      need: needed ? g.entries.filter((e) => needed.has(keyOf(e.card))).length : 0,
+    }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, found, needed, validation, loading])
+
   // In the text view the big panel follows the top match as you type, so a
   // search reads like a lookup. Pointing at a row still overrides it.
   const firstMatch = found.active ? found.sections[0]?.shown[0]?.cardId ?? null : null
@@ -153,21 +223,33 @@ export default function DeckList({
   }
 
   const rowsClass = { grid: 'deck-grid', text: 'text-rows', list: 'deck-rows' }[view]
-  const sectionsMarkup = found.sections.map(({ name, entries, shown, count, shownCount, price, chosen }) => (
-        <section key={name} className={view === 'text' ? 'text-section' : ''}>
+  const solo = !found.active && open !== null
+  const sectionsMarkup = visible.map(({ name, entries, shown, count, shownCount, price, chosen }) => (
+        <section
+          key={name}
+          data-section={name}
+          className={`${view === 'text' ? 'text-section' : ''} ${solo && name === open ? 'deck-section--solo' : ''}`}
+        >
           <SectionHeader title={name} count={found.active ? `${shownCount} of ${count}` : count}>
             {!found.active && <span className="faint tiny">{formatPrice(price.total, market)}</span>}
             {name !== COMMANDER_CATEGORY && name !== 'Sideboard' && (
               <SectionMenu
                 name={name}
                 chosen={chosen}
-                onRename={(to) => onChange(renameCategory(
-                  deck, name, to, entries.map((e) => e.cardId),
-                ))}
+                onRename={(to) => {
+                  onChange(renameCategory(deck, name, to, entries.map((e) => e.cardId)))
+                  if (open === name && to.trim()) {
+                    setOpenName(to.trim())
+                    setPref('deckOpen', openAfterRename(getPrefs(), deck.id, name, to.trim()))
+                  }
+                }}
                 onMove={(delta) => onChange(moveCategory(
                   deck, name, delta, groups.map((g) => g.name),
                 ))}
-                onDissolve={() => onChange(clearCategory(deck, name))}
+                onDissolve={() => {
+                  onChange(clearCategory(deck, name))
+                  if (open === name) chooseOpen(null, { snap: false })
+                }}
               />
             )}
           </SectionHeader>
@@ -187,6 +269,7 @@ export default function DeckList({
                     owned={ownedOf(collection, card)}
                     isCommander={isCommander}
                     flagged={problemIds.has(cardId)}
+                    marked={marked.includes(cardId)}
                     act={act}
                     onOpenCard={onOpenCard}
                   />
@@ -203,6 +286,7 @@ export default function DeckList({
                     isCommander={isCommander}
                     flagged={problemIds.has(cardId)}
                     previewed={previewId === cardId}
+                    marked={marked.includes(cardId)}
                     act={act}
                     onPreview={onPreview}
                     onOpenCard={onOpenCard}
@@ -223,6 +307,7 @@ export default function DeckList({
                   zone={zone}
                   isCommander={isCommander}
                   flagged={problemIds.has(cardId)}
+                  marked={marked.includes(cardId)}
                   act={act}
                   onOpenCard={onOpenCard}
                 />
@@ -256,7 +341,17 @@ export default function DeckList({
         identity={identity}
         inputRef={findRef}
         onEnter={focusFirstMatch}
-      />
+      >
+        {buttons && buttons.length > 0 && (
+          <SectionButtons
+            items={buttons}
+            open={open}
+            searching={found.active}
+            onPick={pickSection}
+            onJump={jumpTo}
+          />
+        )}
+      </DeckFind>
 
       {nothing ? (
         <div className="empty deck-find__empty">
@@ -297,3 +392,4 @@ export default function DeckList({
 }
 
 const VIEWS = [['list', 'List'], ['grid', 'Grid'], ['text', 'Text']]
+const NONE = Object.freeze([])
