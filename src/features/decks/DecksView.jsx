@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { listDecks, saveDeck, deleteDeck, loadState } from '../../lib/storage.js'
 import { backupStatus } from '../../lib/data-safety.js'
-import YourData, { BackupNudge } from './YourData.jsx'
+import BackupNudge from './BackupNudge.jsx'
 import { createDeck } from '../../lib/deck.js'
 import { FORMAT_GROUPS, formatsInGroup, getFormat } from '../../lib/formats.js'
 import DeckEditor from './DeckEditor.jsx'
-import FirstDeck from './FirstDeck.jsx'
 import LegalityChanges from './LegalityChanges.jsx'
 import useLegalityWatch from './useLegalityWatch.js'
 import Term from '../../components/Term.jsx'
@@ -15,6 +14,29 @@ import { artUrl, faceIdFor } from '../../lib/deck-art.js'
 import { getCard } from '../../lib/cache.js'
 import { getPrefs } from '../../lib/storage.js'
 import './decks.css'
+
+/*
+ * The rarer screens load on demand: the first-deck flow, the data screen,
+ * and inside the editor the playtest, history and import tabs. Opening the
+ * deck list should not download the colour dial. As in App.jsx, this is
+ * safe only because of the prefetch: once this chunk is up and the browser
+ * is idle, the rest are pulled in so the service worker holds them before
+ * the connection is needed.
+ */
+const LAZY = {
+  FirstDeck: () => import('./FirstDeck.jsx'),
+  YourData: () => import('./YourData.jsx'),
+  DeckPlaytest: () => import('./DeckPlaytest.jsx'),
+  DeckHistory: () => import('./DeckHistory.jsx'),
+  DeckImportExport: () => import('./DeckImportExport.jsx'),
+}
+const FirstDeck = lazy(LAZY.FirstDeck)
+const YourData = lazy(LAZY.YourData)
+if (typeof window !== 'undefined') {
+  const idle = window.requestIdleCallback ?? ((fn) => setTimeout(fn, 1500))
+  idle(() => { for (const load of Object.values(LAZY)) load().catch(() => {}) })
+}
+const Loading = () => <div className="view-loading" aria-busy="true" />
 
 export default function DecksView({ onOpenCard, offline, route, seed, onSeedConsumed }) {
   const [decks, setDecks] = useState(() => listDecks())
@@ -64,11 +86,11 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
   }, [seed])
 
   if (showingData) {
-    return <YourData onClose={() => showData(false)} onChanged={refresh} />
+    return <Suspense fallback={<Loading />}><YourData onClose={() => showData(false)} onChanged={refresh} /></Suspense>
   }
 
   if (route?.starting) {
-    return <FirstDeck onOpenCard={onOpenCard} />
+    return <Suspense fallback={<Loading />}><FirstDeck onOpenCard={onOpenCard} /></Suspense>
   }
 
   if (editingId) {

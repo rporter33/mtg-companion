@@ -5,6 +5,7 @@ import {
 } from '../../lib/storage.js'
 import { storageUsage, backupStatus, formatBytes } from '../../lib/data-safety.js'
 import { cacheStats, clearCache } from '../../lib/cache.js'
+import BackupNudge from './BackupNudge.jsx'
 import { BUILD, describeBuild } from '../../lib/version.js'
 
 /**
@@ -186,23 +187,6 @@ export default function YourData({ onClose, onChanged }) {
 }
 
 /** Only speaks up when there is something to say. */
-export function BackupNudge({ backup }) {
-  if (backup.level === 'never') {
-    return <div className="banner banner--warn tiny">You have {backup.changedSince} deck{backup.changedSince === 1 ? '' : 's'} and no backup yet.</div>
-  }
-  if (backup.level === 'stale') {
-    return (
-      <div className="banner banner--warn tiny">
-        {backup.changedSince} deck{backup.changedSince === 1 ? '' : 's'} changed since your last backup
-        {backup.last ? ` on ${new Date(backup.last).toLocaleDateString()}` : ''}.
-      </div>
-    )
-  }
-  if (backup.level === 'fresh' && backup.last) {
-    return <p className="faint tiny" style={{ margin: 0 }}>Last backup {new Date(backup.last).toLocaleDateString()} — nothing has changed since.</p>
-  }
-  return null
-}
 
 function Fact({ label, value }) {
   return (

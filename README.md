@@ -73,7 +73,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 803 unit tests
+npm test               # 809 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -407,6 +407,28 @@ focus moves. On a phone nothing hovers, so the panel is not shown at all and
 a tap opens the card sheet as everywhere else; the quantity buttons, quiet
 until pointed at on a desktop, are always visible there because there is no
 hover to reveal them with.
+
+**The browser suite gates the deploy.** Eighteen specs drive the built app
+in a real Chromium, and they have caught every real regression so far; they
+used to run only by hand, so a bug in routing or storage could deploy green.
+The workflow now installs Chromium, serves the build, and runs the suite
+before the deploy job is allowed to start.
+
+**One skeleton, read by the coach and the first-deck flow.** Both describe the
+same sensible deck: so many lands, so much ramp, draw and removal, the rest
+doing what the deck does. They used to be two lists that agreed because one
+person wrote both in the same week. `src/lib/skeleton.js` holds the targets
+per format and the one reading of what role a card fills; the coach's checks,
+the first-deck roles and the Add cards strip all read it, and a test asserts
+they agree so they cannot drift apart without a test saying so.
+
+**The rarer deck screens load on demand.** The Decks chunk had grown to
+121 KB and all of it loaded to open the deck list. The first-deck flow, the
+data screen, the playtest, history and import tabs are their own chunks now,
+prefetched on idle the same way the views are so the offline guarantee holds;
+the Decks chunk is 64 KB. The editor itself was split into a folder of view
+components with one row contract, from a 726-line file to a 240-line editor
+and eight small files, with no behaviour change and the deck specs unchanged.
 
 **A 100-card deck is the unit of performance, and it is measured, not
 assumed.** `npm run perf:measure` (needs a built preview) seeds a hundred

@@ -1,9 +1,8 @@
-import { useMemo, useState } from 'react'
+import { Suspense, lazy, useMemo, useState } from 'react'
 import useDeckCards from './useDeckCards.js'
 import DeckAnalysis from './DeckAnalysis.jsx'
 import DeckCoach from './DeckCoach.jsx'
 import DeckSearch from './DeckSearch.jsx'
-import DeckImportExport from './DeckImportExport.jsx'
 import DeckList from './editor/DeckList.jsx'
 import { validateDeck, deckSize } from '../../lib/deck.js'
 import { getFormat } from '../../lib/formats.js'
@@ -13,8 +12,10 @@ import { getPrefs, setPref } from '../../lib/storage.js'
 import { totalFor, formatPrice, MARKETS } from '../../lib/prices.js'
 import DeckArt from '../../components/DeckArt.jsx'
 import { artUrl, faceCardFor, setDeckArt, stampFace } from '../../lib/deck-art.js'
-import DeckPlaytest from './DeckPlaytest.jsx'
-import DeckHistory from './DeckHistory.jsx'
+// Loaded when their tab opens; DecksView prefetches them on idle.
+const DeckPlaytest = lazy(() => import('./DeckPlaytest.jsx'))
+const DeckHistory = lazy(() => import('./DeckHistory.jsx'))
+const DeckImportExport = lazy(() => import('./DeckImportExport.jsx'))
 import { useCollection } from '../../lib/collection-store.js'
 import { missingFor, missingCost, ownEverythingIn } from '../../lib/collection.js'
 
@@ -195,6 +196,7 @@ export default function DeckEditor({
           ))}
       </nav>
 
+      <Suspense fallback={<div className="view-loading" aria-busy="true" />}>
       {tab === 'list' && (
         <DeckList
           deck={deck} groups={groups} format={format} market={market} lookup={lookup}
@@ -235,6 +237,7 @@ export default function DeckEditor({
           pending={pending} onPendingConsumed={onPendingConsumed}
         />
       )}
+      </Suspense>
     </div>
   )
 }

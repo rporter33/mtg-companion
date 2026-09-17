@@ -23,6 +23,9 @@ const check = (label, ok, detail) => {
 }
 
 const VIEWS = ['CardsView', 'DecksView', 'PlayView', 'GuideView']
+// Inside the Decks chunk, the rarer screens are lazy too and prefetched the
+// same way, so they must also be fetched without being visited.
+const DECK_SCREENS = ['FirstDeck', 'YourData', 'DeckPlaytest', 'DeckHistory', 'DeckImportExport']
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
 
@@ -71,7 +74,7 @@ console.log('\nThe offline guarantee')
   // The prefetch waits for an idle callback, so give it real time.
   await page.waitForTimeout(3000)
 
-  const missing = VIEWS.filter((v) => ![...scripts].some((s) => s.startsWith(v)))
+  const missing = [...VIEWS, ...DECK_SCREENS].filter((v) => ![...scripts].some((s) => s.startsWith(v)))
   check('every view is fetched without being visited, so all of them cache',
     missing.length === 0, `never requested: ${missing.join(', ')}`)
   await page.close()
