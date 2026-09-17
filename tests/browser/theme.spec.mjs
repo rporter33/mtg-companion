@@ -28,7 +28,13 @@ const failedRequests = []
 const open = async (sets, viewport = { width: 1200, height: 900 }) => {
   const page = await browser.newPage({ viewport })
   page.on('pageerror', (e) => errors.push(e.message))
-  page.on('requestfailed', (r) => failedRequests.push(r.url()))
+  // A request the browser cancelled because the page navigated away is not
+  // an asset that failed to load; the hero picture's larger source can still
+  // be in flight when the spec moves on to the next screen.
+  page.on('requestfailed', (r) => {
+    if (r.failure()?.errorText === 'net::ERR_ABORTED') return
+    failedRequests.push(`${r.url()} (${r.failure()?.errorText})`)
+  })
   page.on('response', (r) => { if (r.status() >= 400 && !/api\.scryfall\.com/.test(r.url())) failedRequests.push(`${r.status()} ${r.url()}`) })
   await page.route('**/api.scryfall.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))
   await page.route('**/api.scryfall.com/sets', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: setsPayload(sets) }))
