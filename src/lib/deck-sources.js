@@ -35,6 +35,16 @@ export const SOURCES = [
     instructions: 'Open the deck on Archidekt, choose Export, and paste the text list below.',
   },
   {
+    id: 'edhrec',
+    name: 'EDHREC',
+    match: /^https?:\/\/(www\.)?edhrec\.com\/(precon|deckpreview|decks)\//i,
+    // Not tried. Whether EDHREC would permit a browser origin is not something
+    // this repo has checked, and not fetching someone else's site until you
+    // have is the right default rather than a limitation.
+    browserReadable: false,
+    instructions: 'Open the deck on EDHREC and copy its card list, then paste it below. A list with no quantity numbers is fine — it will be read as one of each.',
+  },
+  {
     id: 'deckstats',
     name: 'Deckstats',
     match: /^https?:\/\/(www\.)?deckstats\.net\/decks\//i,

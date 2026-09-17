@@ -66,3 +66,52 @@ describe('parseDecklist', () => {
     expect(parseDecklist('')).toEqual([])
   })
 })
+
+// Some pages list a singleton deck as bare names with no quantity column. That
+// used to parse to nothing at all, which is a worse answer than a careful guess.
+describe('parseDecklist, bare name lists', () => {
+  const names = [
+    'Sol Ring', 'Arcane Signet', 'Command Tower', 'Swiftfoot Boots',
+    'Lightning Greaves', 'Cultivate', "Kodama's Reach", 'Rampant Growth',
+    'Counterspell', 'Swords to Plowshares', 'Path to Exile', 'Beast Within',
+  ]
+
+  it('reads a list with no quantities as one of each', () => {
+    const lines = parseDecklist(names.join('\n'))
+    expect(lines).toHaveLength(12)
+    expect(lines.every((l) => l.quantity === 1)).toBe(true)
+    expect(lines[0]).toEqual({ quantity: 1, name: 'Sol Ring', section: 'main' })
+  })
+
+  it('still honours section headers in a bare list', () => {
+    const lines = parseDecklist(['Commander', 'Atraxa, Praetors\' Voice', 'Deck', ...names].join('\n'))
+    expect(lines[0].section).toBe('commander')
+    expect(lines[1].section).toBe('main')
+  })
+
+  it('strips printing metadata from bare names too', () => {
+    const lines = parseDecklist(names.map((n) => `${n} (CMD)`).join('\n'))
+    expect(lines[0].name).toBe('Sol Ring')
+  })
+
+  it('never fires when the normal pass found anything', () => {
+    // A real list with one quantity line must not gain eleven phantom cards.
+    const lines = parseDecklist(['4 Lightning Bolt', ...names].join('\n'))
+    expect(lines).toEqual([{ quantity: 4, name: 'Lightning Bolt', section: 'main' }])
+  })
+
+  it('ignores a short list, where a guess is more likely to be wrong', () => {
+    expect(parseDecklist('Sol Ring\nArcane Signet\nCommand Tower')).toEqual([])
+  })
+
+  it('does not swallow prose', () => {
+    const prose = Array.from({ length: 12 }, (_, i) => `This is sentence number ${i}.`)
+    expect(parseDecklist(prose.join('\n'))).toEqual([])
+  })
+
+  it('does not swallow links or long lines', () => {
+    const junk = Array.from({ length: 12 }, () => 'https://edhrec.com/precon')
+    expect(parseDecklist(junk.join('\n'))).toEqual([])
+    expect(parseDecklist(Array.from({ length: 12 }, () => 'x'.repeat(90)).join('\n'))).toEqual([])
+  })
+})

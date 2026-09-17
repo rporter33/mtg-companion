@@ -92,6 +92,14 @@ examples resolve by name at runtime and a typo would be a broken deck for
 everyone. The script refuses to write an entry containing a name Scryfall does
 not know.
 
+A list with no quantity column — the way some pages present a singleton deck —
+is read as one of each. That fallback only fires when the normal pass found
+nothing at all, so no list that parses today can change meaning because of it.
+
+Preconstructed decks make the best examples here: they are what a new player
+actually buys, they need no curator's opinion attached, and they line up with
+the commanders browser in Learn.
+
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a
 rolling announcement schedule, and a hardcoded copy would be wrong within weeks

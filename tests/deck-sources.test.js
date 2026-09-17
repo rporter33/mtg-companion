@@ -254,3 +254,17 @@ describe('parseMoxfield', () => {
     expect(parseMoxfield(broken).main).toHaveLength(2)
   })
 })
+
+describe('EDHREC', () => {
+  it('recognises a precon link', () => {
+    const plan = planForUrl('https://edhrec.com/precon/some-deck')
+    expect(plan.kind).toBe('manual')
+    expect(plan.source.id).toBe('edhrec')
+  })
+
+  it('is never fetched, because nobody has checked whether it would allow it', () => {
+    const edhrec = SOURCES.find((s) => s.id === 'edhrec')
+    expect(edhrec.browserReadable).toBe(false)
+    expect(edhrec.api).toBeUndefined()
+  })
+})
