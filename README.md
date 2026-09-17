@@ -125,6 +125,21 @@ a clean run, which is how the one critical finding stayed hidden.
 axe finds a specific subset of problems, and finding nothing is not the same as
 being accessible. It is a floor, not a ceiling.
 
+**The views are code-split, and the prefetch is what makes that safe.** Opening
+on Learn does not download the deck builder, card search and life counter: the
+document declares one entry chunk plus React, and each view arrives on demand.
+
+But the service worker caches same-origin responses as they are fetched, so a
+chunk nobody navigated to would simply not be there offline — and working
+offline is this app's claim, not a bonus. So once the first view is up and the
+browser is idle, the rest are pulled in anyway. Smaller first paint, same cache.
+`tests/browser/bundle.spec.mjs` checks both halves, because losing the prefetch
+would leave the app working online and broken offline, which is the worst way
+for it to fail.
+
+React is its own chunk, so shipping an app fix does not re-download the
+framework.
+
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a
 rolling announcement schedule, and a hardcoded copy would be wrong within weeks

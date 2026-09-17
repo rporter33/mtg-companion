@@ -13,6 +13,17 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   base: process.env.VITE_BASE ?? './',
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        // React changes on its own schedule, the app on ours. Splitting them
+        // means shipping a fix does not re-download the framework.
+        manualChunks: (id) => (/node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)
+          ? 'react'
+          : undefined),
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     setupFiles: ['./tests/setup.js'],

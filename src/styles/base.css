@@ -222,3 +222,8 @@ button:focus-visible, [tabindex]:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* Holds the page height while a lazily loaded view arrives, so navigation does
+   not bounce the layout. Deliberately blank: a spinner for something that
+   usually takes one frame is more distracting than nothing. */
+.view-loading { min-height: 60vh; }

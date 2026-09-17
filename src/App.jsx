@@ -1,9 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import CardsView from './features/cards/CardsView.jsx'
-import DecksView from './features/decks/DecksView.jsx'
-import PlayView from './features/play/PlayView.jsx'
-import GuideView from './features/guide/GuideView.jsx'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import CardDetail from './features/cards/CardDetail.jsx'
+
+/*
+ * The four views load on demand. Opening the app on Learn should not also
+ * download the deck builder, card search and the life counter.
+ *
+ * This is safe here only because of the prefetch below. The service worker
+ * caches same-origin responses as they are fetched, so a chunk the visitor
+ * never navigated to would simply not exist offline — and "works offline" is
+ * the app's whole claim, not a nice-to-have. So once the first view is up and
+ * the browser is idle, the rest are pulled in anyway. The visitor gets a
+ * smaller first paint; the cache still ends up holding everything.
+ */
+const VIEWS = {
+  cards: () => import('./features/cards/CardsView.jsx'),
+  decks: () => import('./features/decks/DecksView.jsx'),
+  play: () => import('./features/play/PlayView.jsx'),
+  guide: () => import('./features/guide/GuideView.jsx'),
+}
+
+const CardsView = lazy(VIEWS.cards)
+const DecksView = lazy(VIEWS.decks)
+const PlayView = lazy(VIEWS.play)
+const GuideView = lazy(VIEWS.guide)
 import { loadState } from './lib/storage.js'
 
 const TABS = [
@@ -60,6 +79,24 @@ export default function App() {
     }
   }, [tab, openCard, offline, seedQuery, deckSeed])
 
+  // Warm every other view once the first one is up and the browser is idle, so
+  // the service worker holds all of them before the connection is needed. Runs
+  // once, and never while offline — there would be nothing to fetch.
+  useEffect(() => {
+    if (offline) return undefined
+    const idle = window.requestIdleCallback ?? ((fn) => setTimeout(fn, 1500))
+    const cancel = window.cancelIdleCallback ?? clearTimeout
+    const handle = idle(() => {
+      for (const [id, load] of Object.entries(VIEWS)) {
+        if (id !== tab) load().catch(() => { /* it will load on demand instead */ })
+      }
+    })
+    return () => cancel(handle)
+    // Deliberately not keyed on `tab`: this is a one-off warm-up, not something
+    // to redo on every navigation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offline])
+
   return (
     <div className="app">
       <main className="app__main">
@@ -69,7 +106,11 @@ export default function App() {
             Card search is limited to what you have already looked at.
           </div>
         )}
-        {view}
+        {/* A view arriving a frame late should not collapse the layout, so the
+            fallback holds the same space rather than emptying the page. */}
+        <Suspense fallback={<div className="view-loading" aria-busy="true" />}>
+          {view}
+        </Suspense>
       </main>
 
       <nav className="app__nav" aria-label="Main">

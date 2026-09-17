@@ -14,7 +14,7 @@
     "validate:live": "node scripts/validate-live.mjs",
     "deck:fetch": "node scripts/fetch-deck.mjs",
     "examples:verify": "node scripts/verify-examples.mjs",
-    "test:browser": "node tests/browser/zoom.spec.mjs && node tests/browser/search.spec.mjs && node tests/browser/explain.spec.mjs && node tests/browser/coach.spec.mjs && node tests/browser/import.spec.mjs && node tests/browser/a11y.spec.mjs"
+    "test:browser": "node tests/browser/zoom.spec.mjs && node tests/browser/search.spec.mjs && node tests/browser/explain.spec.mjs && node tests/browser/coach.spec.mjs && node tests/browser/import.spec.mjs && node tests/browser/a11y.spec.mjs && node tests/browser/bundle.spec.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
