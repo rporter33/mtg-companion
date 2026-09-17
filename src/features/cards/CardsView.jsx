@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { navigate } from '../../lib/router.js'
 import { searchCards, ScryfallError, OfflineError } from '../../lib/scryfall.js'
 import { getPrefs, setPref } from '../../lib/storage.js'
 import {
@@ -51,6 +52,9 @@ export default function CardsView({ onOpenCard, offline, seedQuery }) {
     else { setStatus('loading'); setPages([]) }
     setError(null)
     setSubmitted(q)
+    // The search is part of where you are: a reload or a shared link runs it
+    // again. Replaced rather than pushed, so back does not retrace every query.
+    if (!append) navigate({ tab: 'cards', q }, { replace: true })
 
     try {
       const result = await searchCards(q, {

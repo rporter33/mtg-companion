@@ -24,6 +24,8 @@ const DecksView = lazy(VIEWS.decks)
 const PlayView = lazy(VIEWS.play)
 const GuideView = lazy(VIEWS.guide)
 import { loadState, PERSIST_FAILED_EVENT, ROOM_MADE_EVENT } from './lib/storage.js'
+import { useRoute, navigate } from './lib/router.js'
+import { getCardById } from './lib/scryfall.js'
 import { checkForUpdate, reloadForUpdate, minutesAgo } from './lib/version.js'
 
 const TABS = [
@@ -34,9 +36,19 @@ const TABS = [
 ]
 
 export default function App() {
-  const [tab, setTab] = useState(() => (loadState().decks.length ? 'decks' : 'guide'))
+  // Where the person is comes from the URL, so a reload, a bookmark and the
+  // back button all mean what they mean everywhere else. With no route at
+  // all — a fresh open — the app goes to Decks if there are any, else Learn.
+  const route = useRoute()
+  const tab = route.tab ?? (loadState().decks.length ? 'decks' : 'guide')
+  useEffect(() => {
+    if (!route.tab) navigate({ tab }, { replace: true })
+  }, [route.tab, tab])
+  // Pressing the tab you are already on returns to that tab's own screen —
+  // out of a deck, back to the deck list — as tab bars do on a phone.
+  const setTab = useCallback((id) => navigate({ tab: id, deckId: null, deckTab: null, data: false, q: null }), [])
+
   const [detailCard, setDetailCard] = useState(null)
-  const [seedQuery, setSeedQuery] = useState(null)
   const [deckSeed, setDeckSeed] = useState(null)
   const [offline, setOffline] = useState(() =>
     typeof navigator !== 'undefined' && navigator.onLine === false)
@@ -99,17 +111,39 @@ export default function App() {
   }, [])
 
   // One shared card-detail sheet for the whole app, so a card opened from a
-  // deck, from search, or from the guide all behave identically.
-  const openCard = useCallback((card) => setDetailCard(card), [])
-  const closeCard = useCallback(() => setDetailCard(null), [])
+  // deck, from search, or from the guide all behave identically. It is an
+  // overlay in the URL ("?card=…"): opening pushes a history entry, so the
+  // back button closes it; closing from the sheet steps back over that entry
+  // when it was ours, and otherwise just drops the parameter.
+  const openCard = useCallback((card) => {
+    setDetailCard(card)
+    navigate({ cardId: card.id }, { state: { cardSheet: true } })
+  }, [])
+  const closeCard = useCallback(() => {
+    if (window.history.state?.cardSheet) window.history.back()
+    else navigate({ cardId: null }, { replace: true })
+  }, [])
+  // The URL is the truth: a deep link with a card opens the sheet from the
+  // cache or Scryfall, and the back button clearing the parameter closes it.
+  useEffect(() => {
+    if (!route.cardId) { setDetailCard(null); return undefined }
+    if (detailCard?.id === route.cardId) return undefined
+    const controller = new AbortController()
+    getCardById(route.cardId, { signal: controller.signal })
+      .then((card) => setDetailCard(card))
+      .catch(() => { /* unreachable or unknown: the sheet stays closed */ })
+    return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.cardId])
 
   const view = useMemo(() => {
     switch (tab) {
-      case 'cards': return <CardsView onOpenCard={openCard} offline={offline} seedQuery={seedQuery} />
+      case 'cards': return <CardsView onOpenCard={openCard} offline={offline} seedQuery={route.q} />
       case 'decks': return (
         <DecksView
           onOpenCard={openCard}
           offline={offline}
+          route={route}
           seed={deckSeed}
           onSeedConsumed={() => setDeckSeed(null)}
         />
@@ -119,12 +153,12 @@ export default function App() {
         <GuideView
           onOpenCard={openCard}
           onNavigate={setTab}
-          onExploreQuery={(query) => { setSeedQuery(query); setTab('cards') }}
-          onStartDeck={(example, card) => { setDeckSeed({ example, card }); setTab('decks') }}
+          onExploreQuery={(query) => navigate({ tab: 'cards', q: query })}
+          onStartDeck={(example, card) => { setDeckSeed({ example, card }); navigate({ tab: 'decks' }) }}
         />
       )
     }
-  }, [tab, openCard, offline, seedQuery, deckSeed])
+  }, [tab, openCard, offline, route, deckSeed, setTab])
 
   // Warm every other view once the first one is up and the browser is idle, so
   // the service worker holds all of them before the connection is needed. Runs

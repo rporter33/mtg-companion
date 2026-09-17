@@ -33,9 +33,11 @@ const getMarketLabel = (id) => {
 }
 
 export default function DeckEditor({
-  deck, onBack, onChange, onOpenCard, offline, pending, onPendingConsumed,
+  deck, tab = 'list', onTab, onBack, onChange, onOpenCard, offline, pending, onPendingConsumed,
 }) {
-  const [tab, setTab] = useState(pending?.kind === 'example' ? 'io' : 'list')
+  // The open tab lives in the URL (see router.js), so a reload keeps it and a
+  // link can point at a deck's analysis.
+  const setTab = onTab
   const [coachQuery, setCoachQuery] = useState(null)
   const { cards, loading, missing, lookup } = useDeckCards(deck)
   const format = getFormat(deck.formatId)

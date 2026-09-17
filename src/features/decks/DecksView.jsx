@@ -8,15 +8,32 @@ import DeckEditor from './DeckEditor.jsx'
 import LegalityChanges from './LegalityChanges.jsx'
 import useLegalityWatch from './useLegalityWatch.js'
 import Term from '../../components/Term.jsx'
+import { navigate } from '../../lib/router.js'
 import './decks.css'
 
-export default function DecksView({ onOpenCard, offline, seed, onSeedConsumed }) {
+export default function DecksView({ onOpenCard, offline, route, seed, onSeedConsumed }) {
   const [decks, setDecks] = useState(() => listDecks())
-  const [editingId, setEditingId] = useState(null)
   const [creating, setCreating] = useState(false)
   const [pending, setPending] = useState(null)
-  const [showingData, setShowingData] = useState(false)
   const { report, summary, dismiss } = useLegalityWatch({ enabled: !offline })
+
+  // Which deck is open, and whether the data screen is, come from the URL.
+  const editingId = route?.deckId ?? null
+  const showingData = !!route?.data
+  const openDeck = (id, deckTab = null) => navigate({ tab: 'decks', deckId: id, deckTab, data: false })
+  const closeDeck = () => navigate({ tab: 'decks', deckId: null, deckTab: null, data: false })
+  const showData = (on) => navigate({ tab: 'decks', data: on, deckId: null, deckTab: null }, { replace: !on })
+
+  // A link to a deck that no longer exists goes back to the list rather than
+  // rendering nothing. Checked against storage, not the decks in state: a
+  // route change is flushed synchronously by React while a state update from
+  // the same effect is still batched, so right after creating a deck one
+  // render sees the new URL with the old list. Judging by that render sent
+  // every new deck straight back to the list.
+  useEffect(() => {
+    if (editingId && !listDecks().some((d) => d.id === editingId)) closeDeck()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId])
 
   const refresh = () => setDecks(listDecks())
   const backup = backupStatus(loadState())
@@ -35,23 +52,25 @@ export default function DecksView({ onOpenCard, offline, seed, onSeedConsumed })
     })
     saveDeck(deck)
     refresh()
-    setEditingId(deck.id)
     setPending(example ? { kind: 'example', example } : { kind: 'commander', card })
+    openDeck(deck.id, example ? 'io' : null)
     onSeedConsumed?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed])
 
   if (showingData) {
-    return <YourData onClose={() => setShowingData(false)} onChanged={refresh} />
+    return <YourData onClose={() => showData(false)} onChanged={refresh} />
   }
 
   if (editingId) {
-    const deck = decks.find((d) => d.id === editingId)
-    if (!deck) { setEditingId(null); return null }
+    const deck = decks.find((d) => d.id === editingId) ?? listDecks().find((d) => d.id === editingId)
+    if (!deck) return null
     return (
       <DeckEditor
         deck={deck}
-        onBack={() => { refresh(); setEditingId(null); setPending(null) }}
+        tab={route?.deckTab ?? 'list'}
+        onTab={(id) => navigate({ deckTab: id }, { replace: true })}
+        onBack={() => { refresh(); setPending(null); closeDeck() }}
         onChange={(next) => { saveDeck(next); refresh() }}
         onOpenCard={onOpenCard}
         offline={offline}
@@ -65,11 +84,11 @@ export default function DecksView({ onOpenCard, offline, seed, onSeedConsumed })
     <div className="stack">
       <div className="row">
         <h1 style={{ flex: 1 }}>Decks</h1>
-        <button className="btn btn--ghost btn--sm" onClick={() => setShowingData(true)}>Your data</button>
+        <button className="btn btn--ghost btn--sm" onClick={() => showData(true)}>Your data</button>
         <button className="btn btn--primary" onClick={() => setCreating(true)}>New deck</button>
       </div>
       {(backup.level === 'never' || backup.level === 'stale') && (
-        <button className="banner banner--warn tiny" style={{ textAlign: 'left', cursor: 'pointer', width: '100%' }} onClick={() => setShowingData(true)}>
+        <button className="banner banner--warn tiny" style={{ textAlign: 'left', cursor: 'pointer', width: '100%' }} onClick={() => showData(true)}>
           <BackupNudge backup={backup} /> Tap to download one.
         </button>
       )}
@@ -80,7 +99,7 @@ export default function DecksView({ onOpenCard, offline, seed, onSeedConsumed })
         report={report}
         summary={summary}
         onDismiss={dismiss}
-        onOpenDeck={(id) => setEditingId(id)}
+        onOpenDeck={(id) => openDeck(id)}
       />
 
       {creating && (
@@ -90,7 +109,7 @@ export default function DecksView({ onOpenCard, offline, seed, onSeedConsumed })
             saveDeck(deck)
             refresh()
             setCreating(false)
-            setEditingId(deck.id)
+            openDeck(deck.id)
           }}
         />
       )}
@@ -111,7 +130,7 @@ export default function DecksView({ onOpenCard, offline, seed, onSeedConsumed })
           <DeckCard
             key={deck.id}
             deck={deck}
-            onOpen={() => setEditingId(deck.id)}
+            onOpen={() => openDeck(deck.id)}
             onDelete={() => {
               if (confirm(`Delete "${deck.name}"? This cannot be undone.`)) {
                 deleteDeck(deck.id)

@@ -1,0 +1,130 @@
+/**
+ * Where the person is, kept in the URL.
+ *
+ * Navigation used to live in React state: a deck had no link, the back button
+ * did nothing useful, and a reload landed on the Decks screen whatever you
+ * were doing. Hash routes fix that without a server: GitHub Pages serves one
+ * file, and "#/decks/abc/analysis" survives a reload, a bookmark and a paste
+ * into a message. The grammar is small on purpose:
+ *
+ *   #/guide
+ *   #/cards?q=<search>
+ *   #/decks | #/decks/data | #/decks/<id> | #/decks/<id>/<tab>
+ *   #/play
+ *
+ * plus "?card=<id>" on any of them for the card sheet, which is an overlay
+ * rather than a place: closing it goes back to wherever it was opened from.
+ *
+ * The parse and build functions are pure and tested; the subscription below
+ * is the only part that touches the window.
+ */
+import { useMemo, useSyncExternalStore } from 'react'
+
+export const TABS = ['guide', 'cards', 'decks', 'play']
+export const DECK_TABS = ['list', 'add', 'coach', 'analysis', 'hand', 'history', 'io']
+
+const EMPTY = Object.freeze({
+  tab: null, deckId: null, deckTab: null, data: false, q: null, cardId: null,
+})
+
+/** "#/decks/abc/analysis?card=xyz" -> { tab, deckId, deckTab, data, q, cardId }. */
+export function parseRoute(hash) {
+  const raw = String(hash ?? '').replace(/^#/, '')
+  const [pathPart, queryPart = ''] = raw.split('?')
+  const params = new URLSearchParams(queryPart)
+  const segments = pathPart.split('/').filter(Boolean).map((s) => {
+    try { return decodeURIComponent(s) } catch { return s }
+  })
+  const route = { ...EMPTY }
+  route.cardId = params.get('card') || null
+
+  const [tab, second, third] = segments
+  if (!TABS.includes(tab)) return route
+  route.tab = tab
+  if (tab === 'cards') route.q = params.get('q') || null
+  if (tab === 'decks' && second) {
+    if (second === 'data') route.data = true
+    else {
+      route.deckId = second
+      route.deckTab = DECK_TABS.includes(third) ? third : null
+    }
+  }
+  return route
+}
+
+/** The inverse of parseRoute; always produces a canonical hash. */
+export function buildHash(route) {
+  const tab = TABS.includes(route?.tab) ? route.tab : 'guide'
+  const segments = [tab]
+  if (tab === 'decks') {
+    if (route.data) segments.push('data')
+    else if (route.deckId) {
+      segments.push(encodeURIComponent(route.deckId))
+      if (route.deckTab && route.deckTab !== 'list' && DECK_TABS.includes(route.deckTab)) segments.push(route.deckTab)
+    }
+  }
+  const params = new URLSearchParams()
+  if (tab === 'cards' && route.q) params.set('q', route.q)
+  if (route.cardId) params.set('card', route.cardId)
+  const query = params.toString()
+  return `#/${segments.join('/')}${query ? `?${query}` : ''}`
+}
+
+/**
+ * Applies a change to a route. Changing tab drops the old tab's own state
+ * (an open deck, a search) but keeps the card overlay unless told otherwise;
+ * a key set to null is cleared.
+ */
+export function withPatch(current, patch) {
+  const base = patch.tab && patch.tab !== current.tab
+    ? { ...EMPTY, cardId: current.cardId }
+    : { ...current }
+  for (const [key, value] of Object.entries(patch)) base[key] = value ?? (key === 'data' ? false : null)
+  return base
+}
+
+// --- the live part -------------------------------------------------------
+
+const listeners = new Set()
+const notify = () => { for (const fn of listeners) fn() }
+
+function subscribe(fn) {
+  listeners.add(fn)
+  if (listeners.size === 1 && typeof window !== 'undefined') {
+    window.addEventListener('popstate', notify)
+    window.addEventListener('hashchange', notify)
+  }
+  return () => {
+    listeners.delete(fn)
+    if (listeners.size === 0 && typeof window !== 'undefined') {
+      window.removeEventListener('popstate', notify)
+      window.removeEventListener('hashchange', notify)
+    }
+  }
+}
+
+const readHash = () => (typeof window === 'undefined' ? '' : window.location.hash)
+
+export function currentRoute() {
+  return parseRoute(readHash())
+}
+
+/**
+ * Moves to a new route. `replace` rewrites the current history entry, for
+ * changes that are not places of their own (a tab inside a deck, the search
+ * text); everything else pushes, so the back button retraces real steps.
+ */
+export function navigate(patch, { replace = false, state = null } = {}) {
+  if (typeof window === 'undefined') return
+  const next = buildHash(withPatch(currentRoute(), patch))
+  if (next === window.location.hash) return
+  if (replace) window.history.replaceState(state, '', next)
+  else window.history.pushState(state, '', next)
+  notify()
+}
+
+/** The current route, re-rendering on every change. */
+export function useRoute() {
+  const hash = useSyncExternalStore(subscribe, readHash, () => '')
+  return useMemo(() => parseRoute(hash), [hash])
+}

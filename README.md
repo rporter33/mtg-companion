@@ -60,7 +60,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 738 unit tests
+npm test               # 750 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -271,6 +271,16 @@ and its official icon all come from Scryfall at runtime, so it stays correct for
 sets that do not exist yet. The accent is computed from the set code rather than
 hand-picked, because the app cannot know a set's art direction and should not
 pretend to.
+
+**Where you are is in the address bar.** `#/decks/<id>/analysis` is a deck's
+analysis tab, `#/cards?q=t:instant` is a search, and `?card=<id>` on any of
+them is the card sheet. A reload keeps the screen, a deck has a link you can
+paste, the back button retraces real steps, and back closes a card sheet
+because opening one pushed a history entry. Tabs inside a deck and the search
+text replace the current entry rather than pushing, so back does not retrace
+every query. Hash routes rather than paths because GitHub Pages serves one
+file and there is no server to rewrite a path. Pressing the tab you are on
+returns to its own screen, as tab bars do on a phone.
 
 **The app knows which build it is, and says when a newer one exists.** Every
 build carries its commit and publish time, baked into the code and written
