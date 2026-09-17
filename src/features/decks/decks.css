@@ -230,3 +230,77 @@ select.chip { width: auto; max-width: 8rem; }
 .diff__name { flex: 1 1 auto; min-width: 0; }
 .deck-row__category--closed { cursor: pointer; text-align: left; }
 .deck-row__category--closed:hover { border-color: var(--border-strong); color: var(--text); }
+
+/* Text view: the whole deck on one screen.
+   Sections flow into columns like a printed decklist, each row a quantity, a
+   name and a cost. On a wide pointer screen the card under the pointer is
+   pinned beside the columns; on a phone there is no pointer and the card
+   sheet does that job on a tap, so the panel is simply not there. */
+.deck-text-layout { display: grid; gap: var(--space-4); grid-template-columns: minmax(0, 1fr); }
+.deck-preview { display: none; }
+@media (hover: hover) and (min-width: 760px) {
+  .deck-text-layout { grid-template-columns: 210px minmax(0, 1fr); }
+  .deck-preview {
+    display: block;
+    position: sticky;
+    top: var(--space-3);
+    align-self: start;
+  }
+}
+.deck-preview .cardimage { width: 100%; }
+.deck-preview__name { font-weight: 600; font-size: 0.95rem; }
+.deck-preview__hint { margin: 0; padding: var(--space-3); border: 1px dashed var(--border); border-radius: var(--radius-sm); }
+
+.deck-text { columns: 16rem; column-gap: var(--space-5); }
+.text-section { break-inside: avoid; margin-bottom: var(--space-4); }
+.text-section .section-title { margin-bottom: var(--space-1); }
+.text-rows { display: flex; flex-direction: column; }
+
+.text-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--identity, transparent);
+}
+.text-row:hover, .text-row:focus-within, .text-row--previewed { background: var(--bg-overlay); }
+.text-row--flagged { background: #e06c5f10; }
+.text-row--missing { opacity: 0.6; }
+.text-row__qty {
+  min-width: 1.4rem;
+  text-align: right;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.text-row__qty--commander { color: var(--accent); }
+.text-row__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  font-size: 0.86rem;
+  padding: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.text-row .mana-cost { font-size: 0.8rem; }
+/* Quiet until the row is pointed at or focused, and never removed from the
+   tab order: a keyboard reaches the buttons by focusing them, which reveals
+   them. Always visible on a touch screen, which has no hover to reveal with. */
+.text-row__edit { display: inline-flex; gap: 2px; opacity: 0; }
+.text-row:hover .text-row__edit, .text-row:focus-within .text-row__edit { opacity: 1; }
+@media (hover: none) { .text-row__edit { opacity: 1; } }
+.text-row__step {
+  width: 22px;
+  height: 22px;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+}
+.text-row__step:hover, .text-row__step:focus-visible { color: var(--text); border-color: var(--border-strong); }

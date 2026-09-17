@@ -244,11 +244,23 @@ function DeckList({ deck, groups, format, market, lookup, collection, onChange, 
     }
   }, [])
 
-  // Two ways to read the same deck. The list is faster to edit and survives a
-  // narrow screen; the grid is how a deck is actually recognised, because
-  // players know their cards by art long before they read the name.
-  const [view, setView] = useState(() => getPrefs().deckView ?? 'list')
+  // Three ways to read the same deck. The list is faster to edit and survives
+  // a narrow screen; the grid is how a deck is actually recognised, because
+  // players know their cards by art long before they read the name; the text
+  // view is the whole deck on one screen, sections flowing into columns, with
+  // the card under the pointer shown large beside it.
+  const [view, setView] = useState(() => {
+    const saved = getPrefs().deckView
+    return VIEWS.some(([id]) => id === saved) ? saved : 'list'
+  })
   const chooseView = (next) => { setView(next); setPref('deckView', next) }
+
+  // The card the text view is showing large. It stays on the last card the
+  // pointer or focus touched rather than emptying when it leaves, so the
+  // panel is something to read, not something to chase.
+  const [previewId, setPreviewId] = useState(null)
+  const onPreview = useCallback((cardId) => setPreviewId(cardId), [])
+  const previewCard = previewId ? lookup(previewId) ?? null : null
 
   if (!groups.length) {
     return (
@@ -259,26 +271,9 @@ function DeckList({ deck, groups, format, market, lookup, collection, onChange, 
     )
   }
 
-  return (
-    <div className="stack">
-      <div className="row">
-        <span className="spacer" />
-        <div className="row" role="group" aria-label="How to show the deck">
-          {[['list', 'List'], ['grid', 'Grid']].map(([id, label]) => (
-            <button
-              key={id}
-              className={`chip ${view === id ? 'chip--active' : ''}`}
-              aria-pressed={view === id}
-              onClick={() => chooseView(id)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {groups.map(({ name, entries, count, price, chosen }) => (
-        <section key={name}>
+  const rowsClass = { grid: 'deck-grid', text: 'text-rows', list: 'deck-rows' }[view]
+  const sectionsMarkup = groups.map(({ name, entries, count, price, chosen }) => (
+        <section key={name} className={view === 'text' ? 'text-section' : ''}>
           <div className="section-title">
             <h2>{name}</h2>
             <span className="faint">{count}</span>
@@ -298,44 +293,178 @@ function DeckList({ deck, groups, format, market, lookup, collection, onChange, 
               />
             )}
           </div>
-          <div className={view === 'grid' ? 'deck-grid' : 'deck-rows'}>
-            {entries.map(({ cardId, quantity, card, zone, isCommander }) => (
-              view === 'grid' ? (
-                <DeckTile
-                  key={`${zone}:${cardId}`}
+          <div className={rowsClass}>
+            {entries.map(({ cardId, quantity, card, zone, isCommander }) => {
+              const key = `${zone}:${cardId}`
+              if (view === 'grid') {
+                return (
+                  <DeckTile
+                    key={key}
+                    card={card}
+                    cardId={cardId}
+                    quantity={quantity}
+                    zone={zone}
+                    market={market}
+                    owned={ownedOf(collection, card)}
+                    isCommander={isCommander}
+                    flagged={problemIds.has(cardId)}
+                    act={act}
+                    onOpenCard={onOpenCard}
+                  />
+                )
+              }
+              if (view === 'text') {
+                return (
+                  <TextRow
+                    key={key}
+                    card={card}
+                    cardId={cardId}
+                    quantity={quantity}
+                    zone={zone}
+                    isCommander={isCommander}
+                    flagged={problemIds.has(cardId)}
+                    previewed={previewId === cardId}
+                    act={act}
+                    onPreview={onPreview}
+                    onOpenCard={onOpenCard}
+                  />
+                )
+              }
+              return (
+                <DeckRow
+                  key={key}
                   card={card}
+                  market={market}
+                  owned={ownedOf(collection, card)}
+                  section={name}
+                  sections={sections}
                   cardId={cardId}
                   quantity={quantity}
                   zone={zone}
-                  market={market}
-                  owned={ownedOf(collection, card)}
                   isCommander={isCommander}
                   flagged={problemIds.has(cardId)}
                   act={act}
                   onOpenCard={onOpenCard}
                 />
-              ) : (
-              <DeckRow
-                key={`${zone}:${cardId}`}
-                card={card}
-                market={market}
-                owned={ownedOf(collection, card)}
-                section={name}
-                sections={sections}
-                cardId={cardId}
-                quantity={quantity}
-                zone={zone}
-                isCommander={isCommander}
-                flagged={problemIds.has(cardId)}
-                act={act}
-                onOpenCard={onOpenCard}
-              />
               )
-            ))}
+            })}
           </div>
         </section>
-      ))}
+  ))
+
+  return (
+    <div className="stack">
+      <div className="row">
+        <span className="spacer" />
+        <div className="row" role="group" aria-label="How to show the deck">
+          {VIEWS.map(([id, label]) => (
+            <button
+              key={id}
+              className={`chip ${view === id ? 'chip--active' : ''}`}
+              aria-pressed={view === id}
+              onClick={() => chooseView(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {view === 'text' ? (
+        <div className="deck-text-layout">
+          <DeckPreview
+            card={previewCard}
+            market={market}
+            owned={previewCard ? ownedOf(collection, previewCard) : 0}
+            onOpenCard={onOpenCard}
+          />
+          <div className="deck-text">{sectionsMarkup}</div>
+        </div>
+      ) : sectionsMarkup}
     </div>
+  )
+}
+
+const VIEWS = [['list', 'List'], ['grid', 'Grid'], ['text', 'Text']]
+
+/**
+ * One line in the text view: quantity, name, cost. Nothing else, so a hundred
+ * cards fit on a screen the way a printed decklist does.
+ *
+ * Pointing at the name shows the card in the panel beside the list; so does
+ * keyboard focus, which is the same information for someone tabbing through.
+ * Pressing the name opens the card sheet as everywhere else — on a phone,
+ * where nothing hovers and the panel is not shown, that is the whole
+ * interaction. The stepper is there but quiet until the row is pointed at or
+ * focused, because this view is for reading a deck, not counting it.
+ */
+const TextRow = memo(function TextRow({
+  card, cardId, quantity, zone, isCommander, flagged, previewed, act, onPreview, onOpenCard,
+}) {
+  const onOpen = () => card && onOpenCard(card)
+  const onSet = (n) => act('set', cardId, zone, n)
+  const onRemove = () => act('remove', cardId, zone, isCommander)
+  const show = () => onPreview(cardId)
+  if (!card) {
+    return (
+      <div className="text-row text-row--missing">
+        <span className="text-row__qty">{quantity}</span>
+        <span className="text-row__name faint">Card not loaded</span>
+        <button className="text-row__step" onClick={onRemove} aria-label="Remove unloaded card">✕</button>
+      </div>
+    )
+  }
+  return (
+    <div
+      className={`text-row ${flagged ? 'text-row--flagged' : ''} ${previewed ? 'text-row--previewed' : ''}`}
+      data-identity={identityAttr(card)}
+      onPointerEnter={show}
+    >
+      <span className={`text-row__qty ${isCommander ? 'text-row__qty--commander' : ''}`} title={isCommander ? 'Commander' : undefined}>
+        {isCommander ? '★' : quantity}
+      </span>
+      <button className="text-row__name" onClick={onOpen} onFocus={show}>{card.name}</button>
+      <ManaCost cost={card.mana_cost || card.card_faces?.[0]?.mana_cost || ''} />
+      {!isCommander && (
+        <span className="text-row__edit">
+          <button className="text-row__step" onClick={() => onSet(quantity - 1)} aria-label={`One fewer ${card.name}`}>−</button>
+          <button className="text-row__step" onClick={() => onSet(quantity + 1)} aria-label={`One more ${card.name}`}>+</button>
+        </span>
+      )}
+    </div>
+  )
+})
+
+/**
+ * The card the text view is pointing at, shown large with its prices.
+ *
+ * Pinned beside the list on a wide screen and absent on a narrow or touch
+ * one, where there is no pointer to follow and the card sheet already does
+ * this on a tap. It is a live region so a screen reader hears the name
+ * change as focus moves down the list.
+ */
+function DeckPreview({ card, market, owned, onOpenCard }) {
+  return (
+    <aside className="deck-preview" aria-live="polite" aria-label="Card under the pointer">
+      {card ? (
+        <div className="stack" style={{ gap: 'var(--space-2)' }}>
+          <CardImage card={card} size="normal" onClick={() => onOpenCard(card)} />
+          <div>
+            <div className="deck-preview__name">{card.name}</div>
+            <div className="faint tiny">{card.type_line}</div>
+          </div>
+          <PriceRow card={card} size="sm" />
+          <div className="faint tiny">
+            {owned > 0 ? `You own ${owned}` : 'Not in your collection'}
+            {' · '}{priceLabel(card, market)}
+          </div>
+        </div>
+      ) : (
+        <p className="faint tiny deck-preview__hint">
+          Point at a card, or tab to one, to see it here.
+        </p>
+      )}
+    </aside>
   )
 }
 

@@ -44,7 +44,10 @@ than a pass/fail — *"Commander decks must be exactly 100 cards. This deck has 
 Analysis covers the mana curve, colour requirements against actual sources, a
 land recommendation, hypergeometric draw odds, and price. An Archidekt, Moxfield
 or Arena export pastes in as it is: the set and collector number pick the exact
-printing, and a section you named on the other site is a section here.
+printing, and a section you named on the other site is a section here. Read
+the deck as a list, a grid of card art, or as text: the whole deck on one
+screen, sections flowing into columns, with the card under the pointer shown
+large beside it.
 
 **Play** — A life counter for games with physical cards. One to six players,
 per-format starting life, commander damage tracked per source, poison, energy,
@@ -301,6 +304,18 @@ category that is not one of Archidekt's type defaults becomes a section; the
 `[Commander{top}]` marker sets the commander. A printing Scryfall does not know
 falls back to the name, still in bulk. The slow path still exists for names
 nothing else can place, and it now says which name it is on.
+
+**The text view follows the pointer, and the keyboard, and is honest about
+phones.** Every line is a quantity, a name and a cost, and sections flow into
+CSS columns so a Commander deck fits one screen. On a wide screen with a
+pointer, the card under the pointer is pinned beside the columns with its
+image and prices, and it stays on the last card touched rather than emptying
+when the pointer leaves. Focusing a name with the keyboard shows the same
+card, and the panel is a live region, so a screen reader hears each name as
+focus moves. On a phone nothing hovers, so the panel is not shown at all and
+a tap opens the card sheet as everywhere else; the quantity buttons, quiet
+until pointed at on a desktop, are always visible there because there is no
+hover to reveal them with.
 
 **A 100-card deck is the unit of performance, and it is measured, not
 assumed.** `npm run perf:measure` (needs a built preview) seeds a hundred

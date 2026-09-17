@@ -205,6 +205,17 @@ await scanState('deck grid view', async () => {
   return (await page.locator('.deck-tile').count()) > 0
 })
 
+await scanState('deck text view', async () => {
+  const text = page.getByRole('button', { name: 'Text', exact: true })
+  if (!await text.count()) return false
+  await text.click()
+  await page.waitForTimeout(600)
+  // Point at a row so the preview panel has content to scan too.
+  await page.locator('.text-row').first().hover().catch(() => {})
+  await page.waitForTimeout(200)
+  return (await page.locator('.text-row').count()) > 0
+})
+
 await scanState('playtest hand', async () => {
   const tab = page.getByRole('tab', { name: 'Playtest' })
   if (!await tab.count()) return false
