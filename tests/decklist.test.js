@@ -148,3 +148,77 @@ describe('parseDecklist, bare name lists', () => {
     expect(parseDecklist(Array.from({ length: 12 }, () => 'x'.repeat(90)).join('\n'))).toEqual([])
   })
 })
+
+describe('parseDecklist, site exports', () => {
+  it('reads an Archidekt line: printing before the category, both kept', () => {
+    // The old stripper only took "(set) 123" at the very end of the line, so
+    // every Archidekt name kept its set code and a whole deck missed the bulk
+    // lookup. This is the exact line that surfaced it.
+    const line = parseDecklist("1x Teshar, Ancestor's Apostle (soc) 180 [Creature]")[0]
+    expect(line).toMatchObject({ quantity: 1, name: "Teshar, Ancestor's Apostle", set: 'soc', number: '180', section: 'main' })
+    expect(line.category).toBeUndefined()
+  })
+
+  it("keeps a category the person made, and drops Archidekt's type defaults", () => {
+    expect(parseDecklist('1x Sol Ring (c21) 263 [Ramp]')[0].category).toBe('Ramp')
+    expect(parseDecklist('1x Sol Ring (c21) 263 [Artifact]')[0].category).toBeUndefined()
+    expect(parseDecklist('1x Sol Ring (c21) 263 [Land]')[0].category).toBeUndefined()
+  })
+
+  it('takes the first of several categories', () => {
+    expect(parseDecklist('1x Swords to Plowshares (soc) 30 [Removal,Instant]')[0].category).toBe('Removal')
+  })
+
+  it('reads the Archidekt commander marker with no Commander header', () => {
+    const lines = parseDecklist([
+      '1x Esika, God of the Tree // The Prismatic Bridge (khm) 168 [Commander{top}]',
+      '1x Sol Ring (c21) 263 [Artifact]',
+    ].join('\n'))
+    expect(lines[0]).toMatchObject({ name: 'Esika, God of the Tree // The Prismatic Bridge', section: 'commander' })
+    expect(lines[0].category).toBeUndefined()
+    expect(lines[1].section).toBe('main')
+  })
+
+  it('puts a maybeboard card in the sideboard rather than the deck', () => {
+    expect(parseDecklist('1x Counterspell (mh2) 267 [Maybeboard{noDeck}]')[0].section).toBe('sideboard')
+    expect(parseDecklist('1x Counterspell (mh2) 267 [Sideboard]')[0].section).toBe('sideboard')
+  })
+
+  it('reads a Moxfield line with a foil marker', () => {
+    expect(parseDecklist('1 Sol Ring (C21) 263 *F*')[0])
+      .toMatchObject({ name: 'Sol Ring', set: 'c21', number: '263' })
+    expect(parseDecklist('1 Sol Ring (C21) 263 *E*')[0].name).toBe('Sol Ring')
+  })
+
+  it('reads an Arena line', () => {
+    expect(parseDecklist('4 Lightning Bolt (STA) 42')[0]).toMatchObject({ name: 'Lightning Bolt', set: 'sta', number: '42' })
+  })
+
+  it('accepts the collector numbers real sets use', () => {
+    expect(parseDecklist('1 Sol Ring (plst) A-123')[0]).toMatchObject({ name: 'Sol Ring', number: 'A-123' })
+    expect(parseDecklist('1 Sol Ring (cmm) 12a')[0]).toMatchObject({ name: 'Sol Ring', number: '12a' })
+    expect(parseDecklist('1 Sol Ring (cmm) 12★')[0]).toMatchObject({ name: 'Sol Ring', number: '12★' })
+  })
+
+  it('still reads a bracketed set code as a set', () => {
+    expect(parseDecklist('1 Sol Ring [CMD]')[0]).toMatchObject({ name: 'Sol Ring', set: 'cmd' })
+  })
+
+  it('leaves parentheses that are part of a name alone, with no printing after them', () => {
+    expect(parseDecklist("1 Erase (Not the Urza's Legacy One)")[0].name).toBe("Erase (Not the Urza's Legacy One)")
+    expect(parseDecklist('1 B.F.M. (Big Furry Monster)')[0].name).toBe('B.F.M. (Big Furry Monster)')
+  })
+
+  it('carries printing and category on bare names too', () => {
+    const lines = parseDecklist(Array.from({ length: 10 }, (_, i) => `Card ${i} (soc) ${i} [Ramp]`).join('\n'))
+    expect(lines).toHaveLength(10)
+    expect(lines[3]).toMatchObject({ name: 'Card 3', set: 'soc', number: '3', category: 'Ramp' })
+  })
+
+  it('never invents printing fields on a plain line', () => {
+    const line = parseDecklist('4 Lightning Bolt')[0]
+    expect('set' in line).toBe(false)
+    expect('number' in line).toBe(false)
+    expect('category' in line).toBe(false)
+  })
+})

@@ -8,6 +8,7 @@ import { addCard, setCommanders } from '../../lib/deck.js'
 import { getFormat, frontTypeLine } from '../../lib/formats.js'
 import { parseDecklist } from '../../lib/decklist.js'
 import { captureVersion } from '../../lib/versions.js'
+import { setCategory } from '../../lib/categories.js'
 import { pinCards } from '../../lib/cache.js'
 import { exportAll, markExported } from '../../lib/storage.js'
 import { exampleToDecklist } from '../../data/example-decks.js'
@@ -52,10 +53,17 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
     // One request per 75 names rather than one per card. The old loop was
     // sequential and rate limited, so a Commander deck took twenty seconds when
     // everything worked and stalled outright when it did not.
-    const cards = await getCardsByNames(lines.map((line) => line.name), {
-      onProgress: (done, total) => setStatus({
+    // Lines that name a printing are looked up by it, so the card that lands is
+    // the one the person owns. The slow per-name path only runs for names the
+    // bulk lookup could not place, and it says which name it is on: "checking
+    // the last few" was the whole message while ninety-nine names went by one
+    // at a time, and it read as a hang.
+    const cards = await getCardsByNames(lines, {
+      onProgress: (done, total, stage) => setStatus({
         tone: 'info',
-        text: done < total ? `Looking up ${total} cards… ${done} done` : 'Checking the last few names…',
+        text: stage === 'single'
+          ? `${done} of ${total} unmatched name${total === 1 ? '' : 's'} checked one at a time…`
+          : `Looking up ${total} cards… ${done} found`,
       }),
     })
 
@@ -89,13 +97,17 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
     // first. This is one of the two places a version is taken automatically;
     // the other is a restore. Everything else is reversible by editing back.
     let next = captureVersion(deck, { label: 'Before import', auto: true })
-    for (const { quantity, section, card } of preview.resolved) {
+    for (const { quantity, section, card, category } of preview.resolved) {
       pinCards([card.id])
       // A card picked as the commander goes to the command zone instead of the
       // maindeck, not as well as it — otherwise the deck is 101 cards.
       if (section === 'commander' || card.id === preview.commanderId) {
         next = setCommanders(next, [...next.commanders, card.id])
-      } else next = addCard(next, card.id, quantity, section === 'sideboard' ? 'sideboard' : 'main')
+      } else {
+        next = addCard(next, card.id, quantity, section === 'sideboard' ? 'sideboard' : 'main')
+        // A section the person made on another site is theirs; keep it.
+        if (category) next = setCategory(next, card.id, category)
+      }
     }
     onChange(next)
     setPreview(null)
@@ -181,7 +193,9 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
         <p className="faint tiny" style={{ margin: 0 }}>
           One card per line. <code className="mono">4 Lightning Bolt</code>. A line reading
           {' '}<code className="mono">Sideboard</code> or <code className="mono">Commander</code>
-          {' '}switches which section the lines below it go into.
+          {' '}switches which section the lines below it go into. An Archidekt or Moxfield
+          export pastes as it is: the printing picks the exact card, and a section you named
+          there becomes a section here.
         </p>
         <textarea
           rows={8}
@@ -295,6 +309,10 @@ function commanderCandidates(resolved) {
 
 function ImportPreview({ preview, onApply, onCancel, onResolve, needsCommander, onPickCommander }) {
   const total = preview.resolved.reduce((n, line) => n + line.quantity, 0)
+  const printings = preview.resolved.filter(
+    (line) => line.set && line.number && line.card.set === line.set && line.card.collector_number === line.number,
+  ).length
+  const sections = [...new Set(preview.resolved.map((line) => line.category).filter(Boolean))]
 
   if (preview.raw) {
     return (
@@ -320,6 +338,16 @@ function ImportPreview({ preview, onApply, onCancel, onResolve, needsCommander, 
         <span className="chip chip--ok">{total} cards found</span>
         {preview.failed.length > 0 && (
           <span className="chip chip--warn">{preview.failed.length} not found</span>
+        )}
+        {printings > 0 && (
+          <span className="chip" title="These lines named a set and collector number, so the exact printing was chosen">
+            {printings} exact printing{printings === 1 ? '' : 's'}
+          </span>
+        )}
+        {sections.length > 0 && (
+          <span className="chip" title={sections.join(', ')}>
+            {sections.length} section{sections.length === 1 ? '' : 's'} kept: {sections.slice(0, 3).join(', ')}{sections.length > 3 ? '…' : ''}
+          </span>
         )}
       </div>
 

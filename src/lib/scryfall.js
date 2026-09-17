@@ -296,58 +296,106 @@ export async function getCardsByIds(ids, { signal } = {}) {
  * once a rate limit kicked in and the backoff compounded. In practice it looked
  * like the import had hung, because it effectively had.
  *
- * The collection endpoint takes 75 names at a time, so a Commander deck is two
- * requests. It matches names exactly though, where the old path matched fuzzily,
- * so anything it does not find is retried one at a time — the slow path still
- * exists, it just runs over the handful of names that need it instead of all of
- * them.
+ * The collection endpoint takes 75 identifiers at a time, so a Commander deck
+ * is two requests. It matches names exactly though, where the old path matched
+ * fuzzily, so anything it does not find is retried one at a time — the slow
+ * path still exists, it just runs over the handful of names that need it
+ * instead of all of them.
+ *
+ * An entry may be a name or { name, set, number }. With a printing, the
+ * identifier is the set and collector number, which is exact: no spelling to
+ * get wrong, and the card that comes back is the one the person actually owns,
+ * which is what their prices should be quoted on. A printing that Scryfall
+ * does not know (a set code from a site's own vocabulary, a promo it lists
+ * differently) falls back to the name in a second bulk pass, never to the
+ * slow path on its own account.
+ *
+ * Progress is reported as (done, total, stage): stage "bulk" counts entries
+ * through the collection passes, stage "single" counts the names on the slow
+ * path, so the caller can say which of the two is running — the second is
+ * the one that can take a while, and it used to be invisible.
  *
  * Returns a Map keyed by the name as it was asked for, not as Scryfall spells
  * it, so the caller can line results back up with the lines the user typed.
  */
 export async function getCardsByNames(names, { signal, onProgress } = {}) {
-  const wanted = [...new Set(names.filter(Boolean))]
-  const found = new Map()
-  const missed = []
-
-  for (let i = 0; i < wanted.length; i += 75) {
-    const chunk = wanted.slice(i, i + 75)
-    try {
-      const payload = await request('/cards/collection', {
-        method: 'POST',
-        body: { identifiers: chunk.map((name) => ({ name })) },
-        signal,
-      })
-      const cards = payload.data ?? []
-      await putCards(cards, { pinned: true })
-      for (const name of chunk) {
-        // Scryfall answers with its own spelling, and for a double-faced card
-        // that is "Front // Back" against a request for "Front".
-        const lower = name.toLowerCase()
-        const card = cards.find((c) => c.name.toLowerCase() === lower)
-          ?? cards.find((c) => c.name.toLowerCase().split(' // ')[0] === lower)
-        if (card) found.set(name, card)
-        else missed.push(name)
-      }
-    } catch (error) {
-      if (error.name === 'AbortError') throw error
-      // Fall back to the slow path for this chunk rather than losing it.
-      missed.push(...chunk)
-    }
-    onProgress?.(Math.min(i + 75, wanted.length), wanted.length)
+  const wanted = new Map()
+  for (const item of names) {
+    const entry = typeof item === 'string' ? { name: item } : item
+    if (!entry?.name || wanted.has(entry.name)) continue
+    wanted.set(entry.name, entry)
   }
+  const found = new Map()
+  const total = wanted.size
+
+  const byPrinting = (entry) => entry.set && entry.number
+    ? { set: String(entry.set).toLowerCase(), collector_number: String(entry.number) }
+    : null
+
+  const matches = (cards, entry, identifier) => {
+    if (identifier.collector_number) {
+      return cards.find((c) => c.set === identifier.set && c.collector_number === identifier.collector_number)
+    }
+    // Scryfall answers with its own spelling, and for a double-faced card
+    // that is "Front // Back" against a request for "Front".
+    const lower = entry.name.toLowerCase()
+    return cards.find((c) => c.name.toLowerCase() === lower)
+      ?? cards.find((c) => c.name.toLowerCase().split(' // ')[0] === lower)
+  }
+
+  /** One bulk pass; returns the entries it could not resolve. */
+  const collect = async (entries, identify) => {
+    const missed = []
+    for (let i = 0; i < entries.length; i += 75) {
+      const chunk = entries.slice(i, i + 75)
+      const identifiers = chunk.map(identify)
+      try {
+        const payload = await request('/cards/collection', {
+          method: 'POST',
+          body: { identifiers },
+          signal,
+        })
+        const cards = payload.data ?? []
+        await putCards(cards, { pinned: true })
+        chunk.forEach((entry, j) => {
+          const card = matches(cards, entry, identifiers[j])
+          if (card) found.set(entry.name, card)
+          else missed.push(entry)
+        })
+      } catch (error) {
+        if (error.name === 'AbortError') throw error
+        // Fall through to the next pass for this chunk rather than losing it.
+        missed.push(...chunk)
+      }
+      onProgress?.(found.size, total, 'bulk')
+    }
+    return missed
+  }
+
+  const entries = [...wanted.values()]
+  const withPrinting = entries.filter(byPrinting)
+  const byNameOnly = entries.filter((entry) => !byPrinting(entry))
+
+  // Pass one: exact printings for the lines that named one, names for the rest.
+  // Pass two: whatever a printing did not find, by name.
+  const unknownPrinting = await collect(withPrinting, byPrinting)
+  const missedByName = await collect([...byNameOnly, ...unknownPrinting], (entry) => ({ name: entry.name }))
+  onProgress?.(found.size, total, 'bulk')
 
   // Only the leftovers pay the per-request cost, and fuzzy matching is what
   // rescues a name with a typo or the wrong punctuation.
-  for (const name of missed) {
+  let checked = 0
+  for (const entry of missedByName) {
+    onProgress?.(checked, missedByName.length, 'single')
     try {
-      found.set(name, await getCardByName(name, { exact: false, signal }))
+      found.set(entry.name, await getCardByName(entry.name, { exact: false, signal }))
     } catch (error) {
       if (error.name === 'AbortError') throw error
       /* genuinely not found; the caller reports it */
     }
-    onProgress?.(wanted.length, wanted.length)
+    checked++
   }
+  onProgress?.(checked, missedByName.length, 'single')
 
   return found
 }

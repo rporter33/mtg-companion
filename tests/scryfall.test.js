@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { clearCache, putCards, getCard, pinCards, evictStale, CARD_TTL_MS } from '../src/lib/cache.js'
 import {
-  searchCards, getCardById, getCardsByIds, getRulings, autocomplete,
+  searchCards, getCardById, getCardsByIds, getCardsByNames, getRulings, autocomplete,
   ScryfallError, OfflineError, __internals,
 } from '../src/lib/scryfall.js'
 import { BEAR, COUNTERSPELL } from './fixtures.js'
@@ -254,5 +254,60 @@ describe('cache pinning and eviction', () => {
     await putCards([BEAR], { pinned: false })
     const record = await getCard(BEAR.id)
     expect(record.pinned).toBe(true)
+  })
+})
+
+describe('getCardsByNames', () => {
+  const collection = (data, not_found = []) => ok({ object: 'list', data, not_found })
+  const printing = (card, set, collector_number) => ({ ...card, id: `${card.id}-${set}-${collector_number}`, set, collector_number })
+
+  it('asks for a named printing by set and collector number, and gets that printing', async () => {
+    const wanted = printing(BEAR, 'c21', '263')
+    const fetchMock = vi.fn().mockResolvedValueOnce(collection([wanted]))
+    vi.stubGlobal('fetch', fetchMock)
+    const found = await getCardsByNames([{ name: BEAR.name, set: 'C21', number: '263' }])
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.identifiers).toEqual([{ set: 'c21', collector_number: '263' }])
+    expect(found.get(BEAR.name).id).toBe(wanted.id)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to the name, in bulk, when Scryfall does not know the printing', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(collection([], [{ set: 'soc', collector_number: '235' }]))
+      .mockResolvedValueOnce(collection([BEAR]))
+    vi.stubGlobal('fetch', fetchMock)
+    const found = await getCardsByNames([{ name: BEAR.name, set: 'soc', number: '235' }])
+    expect(found.get(BEAR.name).id).toBe(BEAR.id)
+    const second = JSON.parse(fetchMock.mock.calls[1][1].body)
+    expect(second.identifiers).toEqual([{ name: BEAR.name }])
+    expect(fetchMock.mock.calls.every(([url]) => /\/cards\/collection$/.test(url))).toBe(true)
+  })
+
+  it('mixes named printings and bare names in the same import', async () => {
+    const withPrinting = printing(COUNTERSPELL, 'mh2', '267')
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(collection([withPrinting]))
+      .mockResolvedValueOnce(collection([BEAR]))
+    vi.stubGlobal('fetch', fetchMock)
+    const found = await getCardsByNames([BEAR.name, { name: COUNTERSPELL.name, set: 'mh2', number: '267' }])
+    expect(found.get(COUNTERSPELL.name).id).toBe(withPrinting.id)
+    expect(found.get(BEAR.name).id).toBe(BEAR.id)
+  })
+
+  it('reports the slow path by name count, so the caller can show which name it is on', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(collection([], [{ name: 'Nope One' }, { name: 'Nope Two' }]))
+      .mockResolvedValueOnce(fail(404, { details: 'not found' }))
+      .mockResolvedValueOnce(ok(BEAR))
+    vi.stubGlobal('fetch', fetchMock)
+    const stages = []
+    const found = await getCardsByNames(['Nope One', 'Nope Two'], {
+      onProgress: (done, total, stage) => stages.push([done, total, stage]),
+    })
+    expect(found.has('Nope One')).toBe(false)
+    expect(found.get('Nope Two')).toBeTruthy()
+    expect(stages.filter(([, , s]) => s === 'single')).toEqual([[0, 2, 'single'], [1, 2, 'single'], [2, 2, 'single']])
+    expect(stages.at(-1)).toEqual([2, 2, 'single'])
   })
 })

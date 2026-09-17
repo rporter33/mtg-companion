@@ -63,12 +63,25 @@ await page.route('**/api.scryfall.com/cards/named**', (route) => {
 // so the fuzzy fall-back and the failure reporting both get exercised.
 let collectionCalls = 0
 let namedCalls = 0
+const printingNames = {}
 await page.route('**/api.scryfall.com/cards/collection', async (route) => {
   collectionCalls++
   const { identifiers } = JSON.parse(route.request().postData() ?? '{"identifiers":[]}')
   const data = []
   const not_found = []
-  for (const { name } of identifiers) {
+  for (const id of identifiers) {
+    // A printing identifier, as an Archidekt or Moxfield line produces. The
+    // mock knows a few printings by number; "zzz" is a set Scryfall never heard of.
+    if (id.collector_number) {
+      if (id.set === 'zzz') { not_found.push(id); continue }
+      const name = printingNames[`${id.set}/${id.collector_number}`] ?? `Printed ${id.set} ${id.collector_number}`
+      data.push(card(name, {
+        set: id.set, collector_number: id.collector_number,
+        ...(/legend/i.test(name) ? { type_line: 'Legendary Creature — Human' } : {}),
+      }))
+      continue
+    }
+    const { name } = id
     if (/nonexistent/i.test(name)) not_found.push({ name })
     else if (/legend/i.test(name)) data.push(card(name, { type_line: 'Legendary Creature — Human' }))
     else data.push(card(name))
@@ -214,6 +227,54 @@ console.log('\nA list with no Commander line')
     await page.locator('body').innerText().then((t) => t.slice(0, 0)) || '')
   check('it does not offer a non-legendary card',
     (await page.locator('.chip', { hasText: 'Plain Spell' }).count()) === 0)
+}
+
+console.log('\nAn Archidekt export, pasted as it is')
+{
+  // The real line that surfaced this: "1x Teshar, Ancestor's Apostle (soc) 180
+  // [Creature]". The printing sits before the category, so the old stripper
+  // never removed it, every name missed the bulk lookup, and ninety-nine names
+  // went through the slow path one at a time under "checking the last few".
+  Object.assign(printingNames, {
+    'soc/1': 'Import Legend', 'soc/2': 'Ramp Rock', 'soc/3': 'Plain Type',
+  })
+  await page.getByRole('tab', { name: 'Import / export' }).click()
+  await page.waitForTimeout(300)
+  const archidekt = page.locator('textarea').first()
+  collectionCalls = 0
+  namedCalls = 0
+  await archidekt.fill([
+    '1x Import Legend (soc) 1 [Commander{top}]',
+    '1x Ramp Rock (soc) 2 [Ramp]',
+    '1x Plain Type (soc) 3 [Creature]',
+    '1x Fallback Card (zzz) 9 [Instant]',
+  ].join('\n'))
+  await page.waitForTimeout(200)
+  await page.getByRole('button', { name: 'Review import' }).click()
+  await page.getByRole('button', { name: /Add \d+ cards/ }).waitFor({ timeout: 15000 })
+  const text = await page.locator('body').innerText()
+
+  check('every line resolves', /4 cards found/.test(text) && !/not found/.test(text),
+    text.match(/\d+ cards found[^\n]*/)?.[0])
+  check('printings are looked up as printings, in bulk, and an unknown one falls back by name',
+    collectionCalls === 2 && namedCalls === 0, `${collectionCalls} collection calls, ${namedCalls} single lookups`)
+  check('the preview says which lines matched their exact printing', /3 exact printings/.test(text))
+  check('the preview names the section kept from the export', /1 section kept: Ramp/.test(text))
+  check("Archidekt's commander marker is read, so no commander is asked for",
+    !/This list has no Commander line/.test(text))
+
+  await page.getByRole('button', { name: /Add \d+ cards/ }).click()
+  await page.waitForTimeout(600)
+  await page.getByRole('tab', { name: 'List' }).click()
+  await page.waitForTimeout(500)
+  const titles = await page.locator('.section-title').allInnerTexts()
+  check('the export\'s own section exists in the list', titles.some((t) => /^Ramp/.test(t)), titles.join(' | '))
+  check("Archidekt's default type category does not become a section of its own",
+    !titles.some((t) => /^Creature\b/.test(t)), titles.join(' | '))
+  const commanderSection = page.locator('section').filter({ has: page.locator('h2', { hasText: /^Commander/ }) })
+  check('the marked card is the commander',
+    /Import Legend/.test(await commanderSection.innerText().catch(() => '')),
+    await commanderSection.innerText().catch(() => 'no commander section'))
 }
 
 console.log('\nExamples survive Scryfall being unreachable')

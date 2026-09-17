@@ -42,7 +42,9 @@ the format's real construction rules as you build, with specific messages rather
 than a pass/fail — *"Commander decks must be exactly 100 cards. This deck has 99
 — 1 short"*, *"Counterspell is outside your commander's colour identity (U)"*.
 Analysis covers the mana curve, colour requirements against actual sources, a
-land recommendation, hypergeometric draw odds, and price.
+land recommendation, hypergeometric draw odds, and price. An Archidekt, Moxfield
+or Arena export pastes in as it is: the set and collector number pick the exact
+printing, and a section you named on the other site is a section here.
 
 **Play** — A life counter for games with physical cards. One to six players,
 per-format starting life, commander damage tracked per source, poison, energy,
@@ -55,7 +57,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 712 unit tests
+npm test               # 728 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -272,6 +274,21 @@ pinned in IndexedDB and never evicted, so a deck built at home opens on a phone
 with no signal. Card faces are drawn in CSS from card data as well as shown as
 Scryfall images — the CSS version is a fully readable card, not a placeholder.
 The guide and life counter need no network at any point.
+
+**A decklist's trailing markers are peeled in any order, and kept.** Every
+site appends something after a card name: Arena writes `(SET) 123`, Moxfield
+adds `*F*` for a foil, Archidekt writes `(set) 123 [Category]` with the
+category last. The first parser took the printing only when it sat at the very
+end of the line, so every Archidekt name kept its set code, all ninety-nine
+missed the bulk lookup, and each then went through Scryfall's fuzzy match one
+request at a time under a message that said "checking the last few names". The
+markers are now removed from the end until none is left, and each one is used:
+the printing goes to Scryfall as a set and collector number, which is exact and
+returns the card the person actually owns, so their prices are quoted on it; a
+category that is not one of Archidekt's type defaults becomes a section; the
+`[Commander{top}]` marker sets the commander. A printing Scryfall does not know
+falls back to the name, still in bulk. The slow path still exists for names
+nothing else can place, and it now says which name it is on.
 
 **A 100-card deck is the unit of performance, and it is measured, not
 assumed.** `npm run perf:measure` (needs a built preview) seeds a hundred

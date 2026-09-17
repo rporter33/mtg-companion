@@ -3,12 +3,89 @@
 // beside the component because it is pure, it is the part most likely to be
 // wrong about a real export, and both the app and the offline tooling need it.
 
-/** Trailing "(SET) 123" or "[SET]" is printing metadata, not part of the name. */
-function stripPrinting(name) {
-  return name
-    .replace(/\s*\([^)]*\)\s*\d*\s*$/, '')
-    .replace(/\s*\[[^\]]*\]\s*$/, '')
-    .trim()
+/**
+ * Archidekt writes a card's categories in trailing brackets, comma separated,
+ * with modifiers in braces: "[Commander{top}]", "[Ramp,Removal]",
+ * "[Maybeboard{noDeck}]". Its default categories are just the card's type,
+ * which the app already derives, so only a name a person chose survives as a
+ * section of their own.
+ */
+const ARCHIDEKT_DEFAULTS = new Set([
+  'creature', 'instant', 'sorcery', 'artifact', 'enchantment', 'land',
+  'planeswalker', 'battle', 'kindred', 'tribal', 'commander', 'sideboard', 'maybeboard',
+])
+
+const SET_CODE = /^[a-z0-9]{2,6}$/i
+const COLLECTOR = /^(?:\d[\w★†]*|A-\d+)$/
+
+/**
+ * Everything a site appends after a card name — printing, foil marker,
+ * categories — in whatever order it appends them.
+ *
+ * The old version took a trailing "(SET) 123" and, separately, a trailing
+ * "[SET]", once each and only at the very end. Archidekt writes
+ * "Name (soc) 180 [Creature]", so the printing was never at the end, every
+ * name kept its set code, and a whole deck missed the bulk lookup. Markers
+ * are peeled from the end now until nothing recognisable is left, so their
+ * order does not matter, and each one is kept rather than discarded: the
+ * printing picks the exact card, the category becomes the person's section.
+ */
+function stripPrinting(raw) {
+  let name = raw.trim()
+  const out = { name, set: undefined, number: undefined, categories: [] }
+  for (;;) {
+    let m
+    if ((m = name.match(/\s*\*[A-Z]\*\s*$/))) {
+      // Moxfield foil ("*F*") and etched ("*E*") markers.
+      name = name.slice(0, -m[0].length)
+    } else if ((m = name.match(/\s*\[([^\]]*)\]\s*$/))) {
+      const inner = m[1].trim()
+      // "[CMD]" is a set code; anything with lowercase, spaces or braces is a
+      // category list. A real category called "LAND" would be lost, but that
+      // is Archidekt's own default and would be dropped anyway.
+      if (/^[A-Z0-9]{2,6}$/.test(inner)) out.set ??= inner
+      else out.categories.unshift(...inner.split(',').map((c) => c.trim()).filter(Boolean))
+      name = name.slice(0, -m[0].length)
+    } else if ((m = name.match(/\s*\(([^()]*)\)(?:\s+([^\s()[\]]+))?\s*$/))) {
+      // A parenthesised group is only a set code when it looks like one. The
+      // card "Erase (Not the Urza's Legacy One)" ends in parentheses that are
+      // part of its name, and a bare "Erase (Not the Urza's Legacy One)" line
+      // used to lose them.
+      const code = m[1].trim()
+      const number = m[2]
+      if (!SET_CODE.test(code)) break
+      if (number !== undefined && !COLLECTOR.test(number)) break
+      out.set ??= code
+      out.number ??= number
+      name = name.slice(0, -m[0].length)
+    } else break
+  }
+  out.name = name.trim()
+  out.set = out.set?.toLowerCase()
+  return out
+}
+
+/**
+ * What a line's trailing markers say about where the card goes. A category of
+ * "Commander" on the line beats whatever section header is in force, because
+ * Archidekt has no header and marks the commander this way. A maybeboard card
+ * is not in the deck; the sideboard is the closest thing the app has, and the
+ * preview shows it there rather than dropping it silently.
+ */
+function placeLine(parsed, section) {
+  const kinds = parsed.categories.map((c) => c.replace(/\{[^}]*\}/g, '').trim().toLowerCase())
+  const modifiers = parsed.categories.join(' ').toLowerCase()
+  let where = section
+  if (kinds.includes('commander')) where = 'commander'
+  else if (kinds.includes('sideboard') || kinds.includes('maybeboard') || modifiers.includes('{nodeck}')) where = 'sideboard'
+  const own = parsed.categories
+    .map((c) => c.replace(/\{[^}]*\}/g, '').trim())
+    .find((c) => c && !ARCHIDEKT_DEFAULTS.has(c.toLowerCase()))
+  const entry = { name: parsed.name, section: where }
+  if (parsed.set) entry.set = parsed.set
+  if (parsed.number) entry.number = parsed.number
+  if (own) entry.category = own
+  return entry
 }
 
 /**
@@ -29,7 +106,12 @@ function looksLikeBareName(line) {
 /**
  * Parses the loose decklist formats that sites actually emit:
  * "4 Lightning Bolt", "4x Lightning Bolt", "4 Lightning Bolt (2X2) 117",
- * with optional section headers.
+ * Moxfield's "1 Sol Ring (C21) 263 *F*", Archidekt's
+ * "1x Sol Ring (c21) 263 [Ramp]", with optional section headers.
+ *
+ * Each entry is { quantity, name, section } plus, when the line carried them,
+ * the printing as { set, number } and the person's own category as
+ * { category }. Callers that only want names can ignore the rest.
  *
  * Some pages present a singleton deck as bare names with no quantities at all.
  * Those are handled by a fallback that fires ONLY when the normal pass found
@@ -70,15 +152,15 @@ export function parseDecklist(text) {
       // Split cards are written "Fire // Ice"; Scryfall's fuzzy search wants
       // the full name, so leave the separator alone.
       if (looksLikeBareName(line)) {
-        const name = stripPrinting(line)
-        if (name) bare.push({ quantity: 1, name, section })
+        const parsed = stripPrinting(line)
+        if (parsed.name) bare.push({ quantity: 1, ...placeLine(parsed, section) })
       }
       continue
     }
 
-    const name = stripPrinting(match[2])
-    if (!name) continue
-    out.push({ quantity: Number(match[1]), name, section })
+    const parsed = stripPrinting(match[2])
+    if (!parsed.name) continue
+    out.push({ quantity: Number(match[1]), ...placeLine(parsed, section) })
   }
 
   // Ten is high enough that a stray line or a short paragraph cannot trip it,
