@@ -52,7 +52,42 @@ export default function Commanders({ onOpenCard, onBuild }) {
     return () => { cancelled = true; controller.abort() }
   }, [active])
 
-  if (!sets?.length) return null
+  // The example decks are local data and need no network, but they used to live
+  // inside this guard — so losing the set list, which happens whenever Scryfall
+  // is unreachable, took the offline content down with the online content. An
+  // app that claims to work offline has to mean it.
+  const examples = EXAMPLE_DECKS.length > 0 && (
+    <div className="stack" style={{ gap: 'var(--space-2)' }}>
+      <div className="section-title"><h3>Example decks</h3></div>
+      <p className="muted tiny" style={{ marginTop: -4 }}>
+        Complete lists, exactly as they were built. Open one to read every card, see what
+        the deck is trying to do, and change anything you disagree with — nothing here is
+        precious.
+      </p>
+      <div className="row row--wrap">
+        {EXAMPLE_DECKS.map((example) => {
+          const unresolved = unverifiedIn(example).length
+          return (
+            <button
+              key={example.id}
+              className="chip"
+              onClick={() => onBuild?.(example)}
+              // Saying so up front beats the importer reporting it as a
+              // surprise: the reader knows before opening that some lines
+              // will not match, and that it is the list's fault not theirs.
+              title={example.note || undefined}
+            >
+              {example.name}
+              <span className="faint">&nbsp;({exampleSize(example)})</span>
+              {unresolved > 0 && <span className="faint">&nbsp;· {unresolved} won&rsquo;t match</span>}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  if (!sets?.length) return examples ? <section className="stack">{examples}</section> : null
 
   return (
     <section className="stack">
@@ -120,43 +155,8 @@ export default function Commanders({ onOpenCard, onBuild }) {
         </p>
       )}
 
-      {/*
-        The examples above only appear when a shipped deck happens to share a
-        commander with the set being browsed, which for most sets is none of
-        them. Without this list the decks exist and cannot be reached.
-      */}
-      {EXAMPLE_DECKS.length > 0 && (
-        <div className="stack" style={{ gap: 'var(--space-2)' }}>
-          <div className="section-title"><h3>Example decks</h3></div>
-          <p className="muted tiny" style={{ marginTop: -4 }}>
-            Complete lists, exactly as they were built. Open one to read every card, see what
-            the deck is trying to do, and change anything you disagree with — nothing here is
-            precious.
-          </p>
-          <div className="row row--wrap">
-            {EXAMPLE_DECKS.map((example) => {
-              const unresolved = unverifiedIn(example).length
-              return (
-                <button
-                  key={example.id}
-                  className="chip"
-                  onClick={() => onBuild?.(example)}
-                  // Saying so up front beats the importer reporting it as a
-                  // surprise: the reader knows before opening that some lines
-                  // will not match, and that it is the list's fault not theirs.
-                  title={example.note || undefined}
-                >
-                  {example.name}
-                  <span className="faint">&nbsp;({exampleSize(example)})</span>
-                  {unresolved > 0 && (
-                    <span className="faint">&nbsp;· {unresolved} won&rsquo;t match</span>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
+      {examples}
+
     </section>
   )
 }

@@ -143,6 +143,24 @@ check('opening an example loads its whole list, not a summary',
 check('the example arrives with its commander named',
   /^Commander\n/.test(loaded), JSON.stringify(loaded.slice(0, 60)))
 
+console.log('\nExamples survive Scryfall being unreachable')
+{
+  // They lived inside the commanders browser, which renders nothing without a
+  // set list — so losing the network took the offline content down with the
+  // online content, in an app whose whole claim is that it works offline.
+  const offline = await browser.newPage({ viewport: { width: 420, height: 1000 } })
+  await offline.route('**/api.scryfall.com/**', (route) => route.abort())
+  await offline.goto(TARGET, { waitUntil: 'domcontentloaded' })
+  await offline.waitForTimeout(1200)
+  await offline.locator('.app__nav button', { hasText: 'Learn' }).click()
+  await offline.waitForTimeout(700)
+  const chips = await offline.locator('.chip', { hasText: /\(\d+\)$/ }).count()
+  check('the example decks still render with no network', chips > 0, `${chips} chips`)
+  check('the commanders browser is absent rather than broken',
+    (await offline.locator('.commander').count()) === 0)
+  await offline.close()
+}
+
 check('no console errors throughout', errors.length === 0, errors.join('; '))
 console.log(`\n${pass} passed, ${fail} failed`)
 await browser.close()

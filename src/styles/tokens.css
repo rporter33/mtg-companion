@@ -14,7 +14,13 @@
 
   --text:          #e6eaf2;
   --text-muted:    #98a3b8;
-  --text-faint:    #64708a;
+  /* 4.51:1 against the lightest surface this text ever lands on, including the
+     set-derived accent tint, where it is not a fixed colour and the worst case
+     has to be assumed. The original #64708a was 3.58 and failed on every view.
+     Three tiers of grey on a dark theme means the bottom tier is always the one
+     that fails, so faint now separates from muted by very little — it is a
+     legible colour first and a quiet one second. */
+  --text-faint:    #939fb9;
 
   --accent:        #c9a227;   /* aged gold — the card frame, not a logo colour */
   --accent-soft:   #c9a22722;

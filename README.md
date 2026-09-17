@@ -55,7 +55,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm test               # 402 unit tests
-npm run test:browser   # drives the real UI in a real browser (91 assertions)
+npm run test:browser   # drives the real UI in a real browser, axe-core included
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -114,6 +114,16 @@ and pretending they resolve is worse. The importer already shows unresolved
 lines with alternatives, so a reader sees the truth either way. Unit tests cannot catch a wrong card
 name — it is only wrong relative to a database that is not in this repo — so
 that check lives in a script and has to be run deliberately.
+
+**Accessibility is checked in the browser, not asserted.** `tests/browser/a11y.spec.mjs`
+runs axe-core over every view and over the states that only exist after
+interaction — an open card, the zoom viewer, a deck being edited. A scan that
+cannot reach its target fails rather than passing quietly: the first version of
+that file skipped three states whose selectors found nothing and still reported
+a clean run, which is how the one critical finding stayed hidden.
+
+axe finds a specific subset of problems, and finding nothing is not the same as
+being accessible. It is a floor, not a ceiling.
 
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a

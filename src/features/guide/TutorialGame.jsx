@@ -74,6 +74,7 @@ export default function TutorialGame({ onExit }) {
       </div>
 
       <div className="tutorial__progress" role="progressbar"
+        aria-label={`Step ${index + 1} of ${TUTORIAL.length}`}
         aria-valuenow={index + 1} aria-valuemin={1} aria-valuemax={TUTORIAL.length}>
         <div style={{ width: `${((index + 1) / TUTORIAL.length) * 100}%` }} />
       </div>

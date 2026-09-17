@@ -28,7 +28,10 @@
 
 .track { text-align: left; display: flex; flex-direction: column; gap: var(--space-2); cursor: pointer; }
 .track:hover { border-color: var(--border-strong); }
-.track h3 { font-size: 0.95rem; }
+.track h3, .track__name { font-size: 0.95rem; font-weight: 600; color: var(--text); }
+/* A card holding its own controls cannot also be one: it is a plain panel. */
+.track--static { cursor: default; align-items: flex-start; }
+.track--static:hover { border-color: var(--border); }
 .track p { margin: 0; flex: 1; }
 
 .lesson-row {

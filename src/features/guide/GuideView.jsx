@@ -91,7 +91,7 @@ export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onSt
             const done = track.lessons.filter((id) => progress.completedLessons.includes(id)).length
             return (
               <button className="panel track" key={track.id} onClick={() => setTrackId(track.id)}>
-                <h3>{track.name}</h3>
+                <span className="track__name">{track.name}</span>
                 <p className="muted tiny">{track.blurb}</p>
                 <div className="row">
                   <div className="meter" style={{ flex: 1 }}>
@@ -114,13 +114,16 @@ export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onSt
 
       <section>
         <div className="section-title"><h2>Look anything up</h2></div>
-        <button className="panel track" onClick={() => setMode('glossary')} style={{ width: '100%' }}>
+        <div className="panel track track--static">
           <h3>Glossary</h3>
-          <p className="muted tiny" style={{ margin: 0 }}>
+          <p className="muted tiny">
             Every term in plain English. These also appear as dotted underlines everywhere
             else in the app — tap <Term id="stack" /> or <Term id="colorIdentity" /> to see.
           </p>
-        </button>
+          <button className="btn btn--sm" onClick={() => setMode('glossary')}>
+            Open the glossary
+          </button>
+        </div>
       </section>
 
       <section className="panel">

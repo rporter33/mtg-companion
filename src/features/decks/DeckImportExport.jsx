@@ -165,6 +165,7 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
         </p>
         <textarea
           rows={8}
+          aria-label="Decklist to import"
           value={text}
           onChange={(e) => handleInput(e.target.value)}
           placeholder={'Paste a decklist, or a link from Archidekt or Moxfield\n\nCommander\n1 Atraxa, Praetors’ Voice\n\n4 Lightning Bolt\n24 Mountain'}
@@ -196,7 +197,14 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
 
       <section className="panel stack">
         <h3>Export this deck</h3>
-        <textarea rows={8} readOnly value={decklist} className="mono" style={{ fontSize: '0.82rem' }} />
+        <textarea
+          rows={8}
+          readOnly
+          aria-label="This deck as a plain text list"
+          value={decklist}
+          className="mono"
+          style={{ fontSize: '0.82rem' }}
+        />
         <div className="row row--wrap">
           <button className="btn" onClick={copy}>Copy decklist</button>
           <button className="btn" onClick={download}>Download all data</button>
@@ -262,7 +270,14 @@ function ImportPreview({ preview, onApply, onCancel, onResolve }) {
     return (
       <section className="panel stack">
         <h3>Example entry</h3>
-        <textarea rows={10} readOnly value={preview.raw} className="mono" style={{ fontSize: '0.75rem' }} />
+        <textarea
+          rows={10}
+          readOnly
+          aria-label="Example deck entry to copy"
+          value={preview.raw}
+          className="mono"
+          style={{ fontSize: '0.75rem' }}
+        />
         <button className="btn btn--ghost btn--sm" onClick={onCancel}>Close</button>
       </section>
     )
