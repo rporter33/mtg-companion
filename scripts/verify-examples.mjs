@@ -16,6 +16,10 @@
  */
 
 import { EXAMPLE_DECKS, exampleSize } from '../src/data/example-decks.js'
+import { readFileSync, writeFileSync } from 'node:fs'
+
+const FIX = process.argv.includes('--fix')
+const EXAMPLES_FILE = new URL('../src/data/example-decks.js', import.meta.url)
 
 // Overridable so the reporting half can be exercised against a stub; there is
 // no other way to see this script's output without a perfect set of examples.
@@ -100,40 +104,7 @@ async function get(path) {
   } catch { return null }
 }
 
-/**
- * Every card in a set, by name.
- *
- * Fetched once per set and reused, because the question "what is this card
- * really called" is best answered against the actual contents of the set the
- * deck came from rather than by guessing at a search engine's ranking. A
- * Commander precon set is a few hundred cards — small enough to hold and
- * compare locally, where the comparison is one this repo can reason about.
- */
-const setCache = new Map()
-
-async function cardsInSet(code) {
-  if (setCache.has(code)) return setCache.get(code)
-  const found = []
-  let path = `/cards/search?q=${encodeURIComponent(`set:${code}`)}&include_extras=true&unique=cards`
-  for (let page = 0; page < 6 && path; page++) {
-    const payload = await get(path)
-    await sleep(120)
-    if (!payload?.data) break
-    for (const card of payload.data) {
-      found.push({
-        name: card.name,
-        token: card.layout === 'token' || /\bToken\b/.test(card.type_line ?? ''),
-      })
-    }
-    path = payload.has_more && payload.next_page
-      ? payload.next_page.replace(API, '').replace('https://api.scryfall.com', '')
-      : null
-  }
-  setCache.set(code, found)
-  return found
-}
-
-const normalise = (s2) => s2.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean)
+const normalise = (text) => text.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean)
 
 /** Ordinary edit distance, iterative so a long name cannot blow the stack. */
 function distance(a, b) {
@@ -151,12 +122,10 @@ function distance(a, b) {
 }
 
 /**
- * How close are two card names?
+ * How close are two names?
  *
  * Shared words dominate, because a card that gained a subtitle keeps every word
- * it had. Edit distance only breaks ties, so "Loki's Double" cannot beat
- * "Lady Loki's Manifestation" on letter count alone when one shares two words
- * and the other shares one.
+ * it had; edit distance only breaks ties. A perfect word overlap scores 4.
  */
 function similarity(wanted, candidate) {
   const a = normalise(wanted)
@@ -168,15 +137,57 @@ function similarity(wanted, candidate) {
   return overlap * 3 + letters
 }
 
-/** The nearest real names in the set this deck came from. */
-async function suggest(name, hintSet) {
-  if (!hintSet) return []
-  const pool = await cardsInSet(hintSet)
-  return pool
-    .map((card) => ({ ...card, score: similarity(name, card.name) }))
+const searchCache = new Map()
+
+/**
+ * Every card whose name contains this word, anywhere in Magic.
+ *
+ * NOT restricted to a set. The previous version searched the commander's
+ * printing set, which for these decks is a promo set the other cards are not
+ * in — so it narrowed the pool to the one place the answer could not be and
+ * reported "nothing is close" about a card that exists. A word is a small
+ * enough pool on its own.
+ */
+async function cardsNamed(word) {
+  if (searchCache.has(word)) return searchCache.get(word)
+  const payload = await get(`/cards/search?q=${encodeURIComponent(`name:${word}`)}&include_extras=true&unique=cards`)
+  await sleep(120)
+  const found = (payload?.data ?? []).map((card) => ({
+    name: card.name,
+    set: card.set,
+    token: card.layout === 'token' || /\bToken\b/.test(card.type_line ?? ''),
+    // A back face, an adventure half and a meld part are all names that exist
+    // on a card Scryfall will not find by that name alone. Knowing which half
+    // matched is the difference between renaming a line and deleting it.
+    faces: (card.card_faces ?? []).map((face) => face.name),
+  }))
+  searchCache.set(word, found)
+  return found
+}
+
+/** The closest real names to one that did not resolve. */
+async function suggest(name) {
+  const words = normalise(name).filter((word) => word.length > 2)
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 3)
+
+  const pool = new Map()
+  for (const word of words) {
+    for (const card of await cardsNamed(word)) pool.set(card.name, card)
+  }
+
+  return [...pool.values()]
+    .map((card) => {
+      // Score against the whole name and each face; a back face that matches
+      // exactly should win even though the whole name looks nothing like it.
+      const scores = [card.name, ...card.faces].map((text) => similarity(name, text))
+      const best = Math.max(...scores)
+      const face = card.faces[scores.indexOf(best) - 1] ?? null
+      return { ...card, score: best, matchedFace: best === scores[0] ? null : face }
+    })
     .sort((x, y) => y.score - x.score)
     .slice(0, 3)
-    .filter((card) => card.score > 0.6)
+    .filter((card) => card.score > 1.2)
 }
 
 const cards = new Map()
@@ -201,6 +212,9 @@ for (let i = 0; i < names.length; i += 75) {
 }
 if (process.stdout.isTTY) process.stdout.write(`${' '.repeat(40)}\r`)
 
+const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const repairs = []
 let problems = 0
 
 if (missing.length) {
@@ -209,22 +223,27 @@ if (missing.length) {
     ? '1 name Scryfall does not know:'
     : `${missing.length} names Scryfall does not know:`))
   console.log(c.dim('  Scryfall matches names exactly here, so a subtitle or a stray word is'))
-  console.log(c.dim("  enough to miss. Candidates are the closest real names in that deck's own set.\n"))
+  console.log(c.dim('  enough to miss. Candidates are the closest real names in Magic.\n'))
   for (const name of missing) {
     const owners = EXAMPLE_DECKS.filter((deck) => namesIn(deck).includes(name))
-    // A precon's odd names come from its own set, and the commander resolved,
-    // so its set code is the best hint available for where to look.
-    const hint = owners.map((deck) => cards.get(deck.commanders[0])?.set).find(Boolean)
     console.log(`  ${c.head(name)} ${c.dim(`(in ${owners.map((d) => d.id).join(', ')})`)}`)
-    const hits = await suggest(name, hint)
-    if (!hint) { console.log(`    ${c.dim('no set to search — its commander did not resolve either')}`); continue }
+    const hits = await suggest(name)
     if (!hits.length) {
-      console.log(`    ${c.dim(`nothing in set ${hint} is close, tokens included`)}`)
+      console.log(`    ${c.dim('nothing in Magic is close, tokens and every face included')}`)
       continue
     }
     for (const hit of hits) {
-      const tag = hit.token ? c.warn('   [token — delete the line, do not rename it]') : ''
-      console.log(`    ${hit.name}${tag}`)
+      const why = hit.token
+        ? c.warn('   [token — delete the line, do not rename it]')
+        : hit.matchedFace
+          ? c.warn(`   [this is the "${hit.matchedFace}" face — use the full name]`)
+          : ''
+      console.log(`    ${hit.name} ${c.dim(`(${hit.set}, ${hit.score.toFixed(1)})`)}${why}`)
+      repairs.push({
+        from: name, to: hit.name, token: hit.token, score: hit.score,
+        deckIds: owners.map((deck) => deck.id),
+      })
+      break
     }
   }
   console.log()
@@ -279,6 +298,60 @@ for (const deck of EXAMPLE_DECKS) {
   for (const entry of illegal) console.log(`    ${c.bad('not legal in ' + deck.formatId)}: ${entry}`)
   if (offColor.length) {
     console.log(`    ${c.bad('outside the commander\'s colour identity')}: ${offColor.join(', ')}`)
+  }
+}
+
+// Applying the repair here rather than printing it for a human to retype is the
+// whole point: the machine that can reach Scryfall is the one that should write
+// the answer down. Only unambiguous repairs are applied, and every one is
+// printed, so nothing changes quietly.
+if (repairs.length) {
+  const confident = repairs.filter((r) => r.score >= 2.5 || r.token)
+  const unsure = repairs.filter((r) => !confident.includes(r))
+
+  console.log()
+  if (!FIX) {
+    console.log(c.head('Repairs available — re-run with --fix to apply:'))
+    for (const r of confident) {
+      console.log(r.token ? `  delete  ${r.from} ${c.dim('(token)')}` : `  rename  ${r.from} -> ${r.to}`)
+    }
+    for (const r of unsure) console.log(`  ${c.dim(`too unsure to apply: ${r.from} -> ${r.to} (${r.score.toFixed(1)})`)}`)
+    console.log(c.dim('\n  npm run examples:verify -- --fix'))
+  } else {
+    let file = readFileSync(EXAMPLES_FILE, 'utf8')
+    let applied = 0
+    for (const r of confident) {
+      const line = new RegExp(`^ *\\{ name: ${escapeRe(JSON.stringify(r.from))}, quantity: \\d+ \\},\\n`, 'm')
+      if (r.token) {
+        if (line.test(file)) { file = file.replace(line, ''); applied++ }
+      } else {
+        const before = file
+        file = file.replace(line, (m) => m.replace(JSON.stringify(r.from), JSON.stringify(r.to)))
+        if (file !== before) applied++
+      }
+    }
+    // A deleted token leaves the deck short, and the repo's own test requires an
+    // example that is not 100 cards to say why. Write that reason now rather
+    // than leaving `npm test` red for someone else to puzzle over.
+    for (const r of confident.filter((x) => x.token)) {
+      for (const id of r.deckIds) {
+        const block = new RegExp(`(id: ${escapeRe(JSON.stringify(id))},[\\s\\S]{0,400}?note: )("(?:[^"\\\\]|\\\\.)*")`)
+        file = file.replace(block, (match, head, note) => {
+          const existing = JSON.parse(note)
+          const addition = `${r.from} was a token in the source export and was removed, leaving this list short.`
+          return existing.includes(addition) ? match : head + JSON.stringify(existing ? `${existing} ${addition}` : addition)
+        })
+      }
+    }
+
+    writeFileSync(EXAMPLES_FILE, file)
+    console.log(c.ok(`Applied ${applied} repair(s) to src/data/example-decks.js.`))
+    for (const r of confident) {
+      console.log(r.token ? `  deleted ${r.from}` : `  ${r.from} -> ${r.to}`)
+    }
+    for (const r of unsure) console.log(`  ${c.dim(`left alone: ${r.from} (best guess ${r.to}, ${r.score.toFixed(1)})`)}`)
+    console.log(c.dim('\n  Deleting a token line drops that deck below 100 cards — run again to see.'))
+    console.log(c.dim('  Then: git add -A; git commit -m "Fix example card names"; git push origin main'))
   }
 }
 
