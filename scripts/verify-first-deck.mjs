@@ -48,10 +48,10 @@ for (let i = 0; i < names.length; i += 75) {
 // broad fallback without saying so here.
 const silent = []
 let plansChecked = 0
-for (const [colors, plans] of Object.entries(STRATEGIES)) {
+for (const formatId of ['commander', 'modern']) for (const [colors, plans] of Object.entries(STRATEGIES)) {
   for (const plan of plans) {
     plansChecked++
-    const queries = stapleQueries(colors, 'theme', { capUsd: 4, strategy: plan }).slice(0, plan.queries.length)
+    const queries = stapleQueries(colors, 'theme', { capUsd: 4, strategy: plan, formatId }).slice(0, plan.queries.length)
     let answered = false
     for (const q of queries) {
       const response = await fetch(`${API}/cards/search?q=${encodeURIComponent(q)}&order=edhrec&unique=cards`, {
@@ -63,7 +63,7 @@ for (const [colors, plans] of Object.entries(STRATEGIES)) {
       const payload = await response.json()
       if ((payload.data ?? []).length) { answered = true; break }
     }
-    if (!answered) silent.push(`${colors} ${plan.id}: ${queries.join(' | ')}`)
+    if (!answered) silent.push(`${formatId} ${colors} ${plan.id}: ${queries.join(' | ')}`)
   }
 }
 

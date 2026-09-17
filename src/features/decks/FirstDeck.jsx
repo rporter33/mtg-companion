@@ -4,8 +4,10 @@ import { schoolsFor, schoolsForColor, SET_THEMES, LORE_SET } from '../../data/se
 import { decorFor, useThemeSet } from '../../lib/theme-set.js'
 import {
   DIAL_MAX, dialToColors, colorsToDial, describeColors, suggestColors, commanderQuery,
-  stapleQueries, ROLES, roleCounts, fillPlan, identityKeyOf, fitsIdentity, whyFor,
+  stapleQueries, roleCounts, rolesForFormat, fillPlan, identityKeyOf, fitsIdentity, whyFor, FIRST_FORMATS,
 } from '../../lib/first-deck.js'
+import { getFormat } from '../../lib/formats.js'
+import { targetsFor } from '../../lib/skeleton.js'
 import { strategiesFor, strategyById } from '../../data/strategies.js'
 import { useCollection } from '../../lib/collection-store.js'
 import { ownedOf, missingFor, missingCost } from '../../lib/collection.js'
@@ -35,7 +37,6 @@ import './first-deck.css'
 const STEPS = ['Colours', 'How you play', 'Commander', 'Starting list']
 const CAPS = [2, 4, 10]
 const BUDGETS = [0, 25, 50, 100, 200] // for the cards you do not own; 0 is none
-const LIST = 99 // a Commander list, with the commander outside it
 /** "Selesnya (Green and White)", or "Green" for a single colour. */
 const name = (key) => (key.length === 1 ? COLOR_PAGES[key].name : `${PAIRS[key]?.name} (${key.split('').map((c) => COLOR_PAGES[c].name).join(' and ')})`)
 
@@ -62,6 +63,17 @@ export default function FirstDeck({ onOpenCard }) {
     navigate({ step: at }, { replace: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.step])
+
+  // Which kind of deck. Commander first, because that is the recommendation;
+  // a sixty-card format skips the commander and starts from the colours. Once
+  // a deck exists its own format is the law, and a change of mind is a
+  // start-over, said out loud like a change of colours.
+  const [formatId, setFormatId] = useState(() => {
+    const saved = getPrefs().firstDeckFormat
+    return FIRST_FORMATS.includes(saved) ? saved : 'commander'
+  })
+  const chooseFormat = (id) => { setFormatId(id); setPref('firstDeckFormat', id) }
+  const commanderFormat = getFormat(formatId)?.group === 'commander'
 
   const [dial, setDial] = useState(() => colorsToDial(getPrefs().firstDeckColors ?? 'GW') ?? 0)
   const [picked, setPicked] = useState(() => getPrefs().firstDeckColors ?? null) // an enemy pair the dial cannot show
@@ -119,11 +131,18 @@ export default function FirstDeck({ onOpenCard }) {
     pinCards([card.id])
     if (deck?.commanders?.[0] === card.id) { go(3); return }
     const title = `${card.name.split(',')[0]} deck`
-    if (deck && deck.main.length === 0) {
+    if (deck && deck.main.length === 0 && deck.formatId === formatId) {
       commit(setCommanders({ ...deck, name: title }, [card.id]))
     } else {
-      commit(setCommanders(createDeck({ name: title, formatId: 'commander' }), [card.id]))
+      commit(setCommanders(createDeck({ name: title, formatId }), [card.id]))
     }
+    go(3)
+  }
+  // A sixty-card deck has no commander: it starts from the colours and the format.
+  const startPlain = () => {
+    if (deck && deck.formatId === formatId) { go(3); return }
+    const pair = colors.length === 1 ? COLOR_PAGES[colors].name : PAIRS[colors]?.name ?? colors
+    commit(createDeck({ name: `${pair} ${getFormat(formatId).name} deck`, formatId }))
     go(3)
   }
 
@@ -137,6 +156,8 @@ export default function FirstDeck({ onOpenCard }) {
   const clash = Boolean(identityKey) && !fitsIdentity(colors, identityKey)
   const keepCommander = () => { if (identityKey !== 'C') choosePair(identityKey) }
   const startOver = () => { setDeck(null); go(2) }
+  const formatClash = Boolean(deck) && deck.formatId !== formatId
+  const keepFormat = () => chooseFormat(deck.formatId)
 
   return (
     <div className="stack first-deck">
@@ -150,19 +171,35 @@ export default function FirstDeck({ onOpenCard }) {
       </div>
 
       <ol className="steps" aria-label="Steps">
-        {STEPS.map((label, i) => (
-          <li key={label} className={`steps__item ${i === step ? 'steps__item--current' : ''} ${i < step ? 'steps__item--done' : ''}`} aria-current={i === step ? 'step' : undefined}>
+        {STEPS.map((fixed, i) => {
+          const label = i === 2 && !commanderFormat ? 'Start' : fixed
+          return (
+          <li key={fixed} className={`steps__item ${i === step ? 'steps__item--current' : ''} ${i < step ? 'steps__item--done' : ''}`} aria-current={i === step ? 'step' : undefined}>
             <button
               className="steps__button"
               onClick={() => go(i)}
               disabled={i === 3 && !deck}
-              title={i === 3 && !deck ? 'Choose a commander first' : undefined}
+              title={i === 3 && !deck ? (commanderFormat ? 'Choose a commander first' : 'Start the deck first') : undefined}
             >
               <span className="steps__num">{i < step ? '✓' : i + 1}</span> {label}
             </button>
           </li>
-        ))}
+          )
+        })}
       </ol>
+
+      {formatClash && (
+        <div className="banner banner--warn stack stack--snug" role="status">
+          <span>
+            <strong>{deck.name}</strong> is a {getFormat(deck.formatId)?.name} deck, and a deck keeps its format.
+            Keep it as {getFormat(deck.formatId)?.name}, or start over as {getFormat(formatId)?.name}. The deck you started stays in your list.
+          </span>
+          <div className="row row--wrap">
+            <button className="btn btn--sm" onClick={keepFormat}>Keep {getFormat(deck.formatId)?.name}</button>
+            <button className="btn btn--sm btn--ghost" onClick={startOver}>Start over as {getFormat(formatId)?.name}</button>
+          </div>
+        </div>
+      )}
 
       {clash && (
         <div className="banner banner--warn stack stack--snug" role="status">
@@ -180,22 +217,26 @@ export default function FirstDeck({ onOpenCard }) {
         </div>
       )}
       {step === 0 && (
-        <ColourStep dial={dial} colors={colors} chosen={chosen} onDial={chooseDial} onPair={choosePair} onOpenCard={onOpenCard} onNext={() => go(1)} />
+        <ColourStep dial={dial} colors={colors} chosen={chosen} onDial={chooseDial} onPair={choosePair} onOpenCard={onOpenCard} onNext={() => go(1)} formatId={formatId} onFormat={chooseFormat} />
       )}
       {step === 1 && (
         <StyleStep answers={answers} colors={colors} onAnswer={(axis, id) => {
           const next = { ...answers, [axis]: id }
           setAnswers(next)
           setPref('firstDeckStyle', next)
-        }} onSuggest={applySuggestion} onNext={() => go(2)} />
+        }} onSuggest={applySuggestion} onNext={() => go(2)} commanderFormat={commanderFormat} />
       )}
-      {step === 2 && (
+      {step === 2 && commanderFormat && (
         <CommanderStep colors={colors} onOpenCard={onOpenCard} onStart={startWith} remember={remember} />
+      )}
+      {step === 2 && !commanderFormat && (
+        <StartStep colors={colors} formatId={formatId} deck={deck} onStart={startPlain} />
       )}
       {step === 3 && deck && (
         <StaplesStep
           deck={deck} colors={identityKey ?? colors} lookup={lookup} cap={cap} onCap={setCap}
           strategy={strategyById(identityKey ?? colors, strategyId)} onStrategy={chooseStrategy}
+          format={getFormat(deck.formatId) ?? getFormat('commander')}
           budget={budget} onBudget={chooseBudget} collection={collection}
           remember={remember} onChange={commit} onOpenCard={onOpenCard}
         />
@@ -208,7 +249,7 @@ export default function FirstDeck({ onOpenCard }) {
 
 const SWATCH = { W: 'var(--mtg-w)', U: 'var(--mtg-u)', B: 'var(--mtg-b)', R: 'var(--mtg-r)', G: 'var(--mtg-g)' }
 
-function ColourStep({ dial, colors, chosen, onDial, onPair, onOpenCard, onNext }) {
+function ColourStep({ dial, colors, chosen, onDial, onPair, onOpenCard, onNext, formatId, onFormat }) {
   // Hexhaven's schools are the five allied pairs, so a pair shows its school
   // and a single colour shows the two it belongs to. Every emblem carries the
   // school's name beside it; the emblem alone never says which school.
@@ -224,6 +265,29 @@ function ColourStep({ dial, colors, chosen, onDial, onPair, onOpenCard, onNext }
 
   return (
     <div className="stack">
+      <section className="panel stack stack--snug" aria-label="What kind of deck">
+        <div className="row row--wrap row--middle">
+          <strong>What kind of deck?</strong>
+          <div className="row row--wrap" role="group" aria-label="Format">
+            {FIRST_FORMATS.map((id) => (
+              <button
+                key={id}
+                type="button"
+                className={`chip ${formatId === id ? 'chip--active' : ''}`}
+                aria-pressed={formatId === id}
+                onClick={() => onFormat(id)}
+              >
+                {getFormat(id)?.name}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="tiny m0 muted">
+          {getFormat(formatId)?.group === 'commander'
+            ? 'Commander is the recommendation for a first deck: one commander, ninety-nine other cards, one of each, played at a table of friends.'
+            : `${getFormat(formatId)?.name} is a sixty-card, two-player format: at least sixty cards, up to four copies of a card, and no commander. The commander step becomes a start button.`}
+        </p>
+      </section>
       <section className="panel stack">
         <h3>Pick a colour, or the pair between two</h3>
         <p className="muted tiny m0">
@@ -344,7 +408,7 @@ function SignatureCard({ name, onOpenCard }) {
 
 // --- step 2: how you play -----------------------------------------------------
 
-function StyleStep({ answers, colors, onAnswer, onSuggest, onNext }) {
+function StyleStep({ answers, colors, onAnswer, onSuggest, onNext, commanderFormat = true }) {
   const suggestion = suggestColors(answers)
   return (
     <div className="stack">
@@ -380,7 +444,9 @@ function StyleStep({ answers, colors, onAnswer, onSuggest, onNext }) {
         </div>
       </section>
       <div className="row">
-        <button className="btn btn--primary" onClick={onNext}>Next: commanders in {name(colors)}</button>
+        <button className="btn btn--primary" onClick={onNext}>
+          {commanderFormat ? `Next: commanders in ${name(colors)}` : `Next: start a deck in ${name(colors)}`}
+        </button>
       </div>
     </div>
   )
@@ -466,16 +532,48 @@ function CommanderCard({ card, why, onOpenCard, onStart }) {
   )
 }
 
+// --- step 3, sixty-card: start from the colours ------------------------------
+
+function StartStep({ colors, formatId, deck, onStart }) {
+  const format = getFormat(formatId)
+  const t = targetsFor(format)
+  const same = deck && deck.formatId === formatId
+  return (
+    <section className="panel stack">
+      <h2 className="m0">A {format?.name} deck in {name(colors)}</h2>
+      <p className="m0">
+        No commander in {format?.name}: the deck is {t.size} cards with up to four copies of a card,
+        so the starting list leans on the cards that do its thing. The colours are yours to change until
+        cards go in.
+      </p>
+      <p className="tiny muted m0">
+        The skeleton: {t.lands} lands, {t.draw} card draw, {t.removal} removal, the rest what the deck does.
+        A guide, not a rule.
+      </p>
+      <div>
+        <button className="btn btn--primary" onClick={onStart}>
+          {same ? `Continue ${deck.name}` : `Start a ${format?.name} deck in ${name(colors)}`}
+        </button>
+      </div>
+    </section>
+  )
+}
+
 // --- step 4: staples by role --------------------------------------------------
 
 function StaplesStep({
-  deck, colors, lookup, cap, onCap, strategy, onStrategy, budget, onBudget, collection,
+  deck, colors, lookup, cap, onCap, strategy, onStrategy, budget, onBudget, collection, format,
   remember, onChange, onOpenCard,
 }) {
   const [role, setRole] = useState('lands')
   const [lists, setLists] = useState({}) // roleId -> { status, cards, fromPlan }
   const [filling, setFilling] = useState(false)
-  const counts = useMemo(() => roleCounts(deck, lookup), [deck, lookup])
+  // The deck's own format decides the skeleton, the searches and the size.
+  const ROLES = useMemo(() => rolesForFormat(format.id), [format.id])
+  const LIST = targetsFor(format).list
+  const copies = format.maxCopies ?? 1
+  const commander = format.group === 'commander'
+  const counts = useMemo(() => roleCounts(deck, lookup, format.id), [deck, lookup, format.id])
   const total = deck.main.reduce((n, e) => n + e.quantity, 0)
   const inDeck = new Set(deck.main.map((e) => e.cardId))
   const plans = strategiesFor(colors)
@@ -494,7 +592,7 @@ function StaplesStep({
    * answers, and remembers whether it was the plan's own search that did.
    */
   const load = async (roleId, signal) => {
-    const queries = stapleQueries(colors, roleId, { capUsd: cap, strategy })
+    const queries = stapleQueries(colors, roleId, { capUsd: cap, strategy, formatId: format.id })
     const planQueries = roleId === 'theme' ? (strategy?.queries?.length ?? 0) : 0
     for (const [i, query] of queries.entries()) {
       try {
@@ -521,7 +619,7 @@ function StaplesStep({
     })()
     return () => { cancelled = true; controller.abort() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colors, cap, strategy?.id])
+  }, [colors, cap, strategy?.id, format.id])
 
   const add = (card, quantity = 1) => onChange(addCard(deck, card.id, quantity, 'main'))
   const remove = (card) => onChange(addCard(deck, card.id, -1, 'main'))
@@ -531,7 +629,9 @@ function StaplesStep({
     try {
       const candidates = Object.fromEntries(ROLES.map((r) => [r.id, lists[r.id]?.cards ?? []]))
       candidates.colors = colors
-      const plan = fillPlan({ ...deck, colors }, lookup, candidates, { max: LIST })
+      const plan = fillPlan({ ...deck, colors }, lookup, candidates, {
+        max: LIST, copies, formatId: format.id, nonbasicLands: commander ? 6 : 8,
+      })
       const basicNames = [...new Set(plan.filter((a) => a.basic).map((a) => a.basic))]
       const basics = basicNames.length ? await getCardsByNames(basicNames) : new Map()
       remember([...basics.values()])
@@ -555,13 +655,16 @@ function StaplesStep({
         <div className="row row--wrap row--middle">
           <h3 className="m0">A starting list for {deck.name}</h3>
           <span className="spacer" />
-          <span className={`chip ${total === 99 ? 'chip--ok' : ''}`}>{total}/99</span>
+          <span className={`chip ${total === LIST ? 'chip--ok' : ''}`}>{total}/{LIST}</span>
           <select className="chip" aria-label="Price cap per card" value={cap} onChange={(e) => onCap(Number(e.target.value))}>
             {CAPS.map((c) => <option key={c} value={c}>Under ${c} a card</option>)}
           </select>
         </div>
         <p className="muted tiny m0">
-          A Commander deck is 99 cards plus the commander. This is the usual skeleton; the numbers are a guide, not a rule.
+          {commander
+            ? `A Commander deck is ${LIST} cards plus the commander.`
+            : `A ${format.name} deck is ${LIST} cards, up to ${copies} copies of a card.`}
+          {' '}This is the usual skeleton; the numbers are a guide, not a rule.
         </p>
         {plans.length > 0 && (
           <div className="stack stack--tight">
@@ -655,7 +758,7 @@ function StaplesStep({
         <button
           className="btn"
           onClick={fill}
-          disabled={filling || total >= 99 || ROLES.some((r) => !lists[r.id])}
+          disabled={filling || total >= LIST || ROLES.some((r) => !lists[r.id])}
           title="Adds the most played cards in each role until the skeleton is full, then basic lands"
         >
           {filling ? 'Filling…' : 'Fill the rest with staples'}
@@ -668,7 +771,7 @@ function StaplesStep({
             navigate({ tab: 'decks', deckId: deck.id, deckTab: null, starting: false, step: null })
           }}
         >
-          Open the deck{total < 99 ? ` (${99 - total} short)` : ''}
+          Open the deck{total < LIST ? ` (${LIST - total} short)` : ''}
         </button>
       </div>
       <p className="faint tiny m0">

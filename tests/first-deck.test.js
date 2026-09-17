@@ -3,6 +3,7 @@ import { STRATEGIES, strategiesFor, strategyById } from '../src/data/strategies.
 import {
   dialToColors, colorsToDial, pairKey, suggestColors, commanderQuery, stapleQueries,
   roleCounts, basicSplit, fillPlan, identityKeyOf, fitsIdentity, whyFor, ROLES, DIAL_MAX,
+  rolesForFormat, FIRST_FORMATS,
 } from '../src/lib/first-deck.js'
 import { COLOR_PAGES, PAIRS, STYLE_AXES, FIRST_COMMANDERS, WHEEL } from '../src/data/colors.js'
 
@@ -250,5 +251,50 @@ describe('plans for a first deck', () => {
     expect(whyFor({ role: 'Draw', owned: 1 })).toBe('Draw · popular in your colours · you own it')
     expect(whyFor({ role: 'Lands', owned: 2, quantity: 4 })).toBe('Lands · popular in your colours · you own 2')
     expect(whyFor({})).not.toMatch(/synergy/)
+  })
+})
+
+
+describe('a sixty-card first deck', () => {
+  it('offers Commander first and three sixty-card formats', () => {
+    expect(FIRST_FORMATS[0]).toBe('commander')
+    expect(FIRST_FORMATS).toContain('modern')
+  })
+  it('has a skeleton of its own that adds up to sixty, with no ramp role', () => {
+    const roles = rolesForFormat('modern')
+    expect(roles.map((r) => r.id)).toEqual(['lands', 'draw', 'removal', 'theme'])
+    expect(roles.reduce((n, r) => n + r.target, 0)).toBe(60)
+    expect(roles.find((r) => r.id === 'lands').blurb).toMatch(/sixty/)
+    expect(rolesForFormat('commander').reduce((n, r) => n + r.target, 0)).toBe(99)
+  })
+  it('asks Scryfall for cards legal in that format, without the commander clause', () => {
+    const q = stapleQueries('GW', 'theme', { formatId: 'modern' })[0]
+    expect(q).toMatch(/^legal:modern game:paper id<=gw usd<=4/)
+    expect(q).not.toMatch(/is:commander/)
+    expect(stapleQueries('GW', 'theme')[0]).toMatch(/legal:commander game:paper id<=gw -is:commander/)
+  })
+  it('fills with up to four copies of a card, never past sixty', () => {
+    const deck = { commanders: [], main: [], colors: 'G' }
+    const candidates = {
+      draw: [card('d0'), card('d1'), card('d2')],
+      removal: [card('k0'), card('k1'), card('k2')],
+      theme: Array.from({ length: 10 }, (_, i) => card(`t${i}`)),
+      lands: Array.from({ length: 6 }, (_, i) => card(`land${i}`, { type_line: 'Land' })),
+    }
+    const plan = fillPlan(deck, lookup, candidates, { max: 60, copies: 4, formatId: 'modern', nonbasicLands: 8 })
+    const total = plan.reduce((n, a) => n + a.quantity, 0)
+    expect(total).toBe(60)
+    const draw = plan.filter((a) => a.role === 'draw')
+    expect(draw.map((a) => a.quantity)).toEqual([4, 2]) // six draw: four of one, two of the next
+    expect(plan.filter((a) => a.role === 'removal').reduce((n, a) => n + a.quantity, 0)).toBe(8)
+    expect(plan.filter((a) => a.role === 'lands' && a.card).reduce((n, a) => n + a.quantity, 0)).toBe(8)
+    expect(plan.filter((a) => a.basic).reduce((n, a) => n + a.quantity, 0)).toBe(16)
+    expect(plan.filter((a) => a.card).every((a) => a.quantity <= 4)).toBe(true) // basics are unlimited
+  })
+  it('counts roles against the sixty-card targets', () => {
+    const deck = { commanders: [], main: [{ cardId: 'forest', quantity: 20 }] }
+    const lands = roleCounts(deck, lookup, 'modern').find((r) => r.id === 'lands')
+    expect(lands.target).toBe(24)
+    expect(lands.short).toBe(4)
   })
 })

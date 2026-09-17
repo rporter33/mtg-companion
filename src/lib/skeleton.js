@@ -32,22 +32,31 @@ export function targetsFor(format) {
 }
 
 const BLURBS = {
-  lands: 'Thirty-six or so. Most are basics; a few duals and utility lands help.',
-  ramp: 'Around ten. Mana rocks and dorks get your commander out early and keep you ahead.',
-  draw: 'Around ten. The hand runs out by turn six without it.',
-  removal: 'Around ten. Answers for the creature, artifact or enchantment that is beating you.',
-  theme: 'The rest: cards that do what your commander wants. Popular cards in your colours are a fine start.',
+  commander: {
+    lands: 'Thirty-six or so. Most are basics; a few duals and utility lands help.',
+    ramp: 'Around ten. Mana rocks and dorks get your commander out early and keep you ahead.',
+    draw: 'Around ten. The hand runs out by turn six without it.',
+    removal: 'Around ten. Answers for the creature, artifact or enchantment that is beating you.',
+    theme: 'The rest: cards that do what your commander wants. Popular cards in your colours are a fine start.',
+  },
+  constructed: {
+    lands: 'Twenty-four or so in sixty. Most are basics; a few duals help a two-colour deck.',
+    draw: 'Around six. Cheap cantrips and creatures that draw keep the hand full.',
+    removal: 'Around eight. Answers for the creature or permanent that is beating you.',
+    theme: 'The rest, up to four copies of a card: what the deck does. Popular cards in your colours are a fine start.',
+  },
 }
 const LABELS = { lands: 'Lands', ramp: 'Ramp', draw: 'Card draw', removal: 'Removal', theme: 'Does your thing' }
 
 /** The roles with their targets for a format; theme is whatever is left, so they add up to the list. */
 export function rolesFor(format) {
   const t = targetsFor(format)
+  const blurbs = BLURBS[format?.group === 'commander' ? 'commander' : 'constructed']
   const fixed = { lands: t.lands, ramp: t.ramp, draw: t.draw, removal: t.removal }
   const theme = t.list - Object.values(fixed).reduce((n, v) => n + v, 0)
   return [...Object.entries(fixed), ['theme', theme]]
     .filter(([, target]) => target > 0)
-    .map(([id, target]) => ({ id, label: LABELS[id], target, blurb: BLURBS[id] }))
+    .map(([id, target]) => ({ id, label: LABELS[id], target, blurb: blurbs[id] ?? BLURBS.commander[id] }))
 }
 
 /** Which role a card fills. One answer per card, checked in this order. */

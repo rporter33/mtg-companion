@@ -24,7 +24,7 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCA
 const card = (name, over = {}) => ({
   object: 'card', id: name.toLowerCase().replace(/\W+/g, '-'), oracle_id: `o-${name}`, name,
   mana_cost: '{1}{G}', cmc: 2, type_line: 'Creature — Elf', oracle_text: '', color_identity: ['G'], colors: ['G'],
-  rarity: 'common', set: 'tst', set_name: 'Test', collector_number: '1', legalities: { commander: 'legal' },
+  rarity: 'common', set: 'tst', set_name: 'Test', collector_number: '1', legalities: { commander: 'legal', modern: 'legal' },
   prices: { usd: '1.00' }, image_uris: { small: PNG, normal: PNG, art_crop: PNG }, ...over,
 })
 const legend = (name) => card(name, { type_line: 'Legendary Creature — Elf Warrior', color_identity: ['G', 'W'] })
@@ -228,6 +228,60 @@ check('the editor opens on the saved deck', (await page.locator('.deck-title').i
 check('legal and complete', /100\/100/.test(await body()) && !/not legal/.test(await body()), (await body()).match(/\d+\/100/)?.[0])
 const sections = await page.locator('.section-title h2').allInnerTexts()
 check('the list reads by type, with lands at the end', sections.at(-1) === 'Lands', sections.join(','))
+
+console.log('\nA sixty-card deck')
+// The finished Commander deck cleared the flow's memory when it was opened, so this starts fresh.
+await page.goto(`${TARGET}#/decks/new/colours`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(600)
+const formats = page.getByRole('group', { name: 'Format' })
+check('the colours step asks what kind of deck, Commander first',
+  (await formats.getByRole('button').first().innerText()) === 'Commander'
+  && (await formats.getByRole('button', { name: 'Commander' }).getAttribute('aria-pressed')) === 'true')
+await formats.getByRole('button', { name: 'Modern' }).click()
+await page.waitForTimeout(200)
+check('it says what a sixty-card format means', /Modern is a sixty-card, two-player format/.test(await body()))
+await page.getByRole('button', { name: /Next: how you play/ }).click()
+await page.waitForTimeout(200)
+check('the way on is a start, not a commander', (await page.getByRole('button', { name: /Next: start a deck in/ }).count()) === 1)
+await page.getByRole('button', { name: /Next: start a deck in/ }).click()
+await page.waitForTimeout(300)
+check('the third step is a start button',
+  (await page.getByRole('button', { name: /^3 Start$/ }).count()) === 1
+  && (await page.getByRole('button', { name: /Start a Modern deck in/ }).count()) === 1, await page.evaluate(() => location.hash))
+const before60 = queries.length
+await page.getByRole('button', { name: /Start a Modern deck in/ }).click()
+await page.waitForTimeout(1200)
+check('the list is sixty, with the sixty-card skeleton', /\d+\/60/.test(await body()) && /A Modern deck is 60 cards, up to 4 copies/.test(await body()),
+  (await body()).match(/\d+\/\d+/)?.[0])
+check('staples are asked for as legal in Modern, without the commander clause',
+  queries.slice(before60).some((q) => /legal:modern/.test(q)) && !queries.slice(before60).some((q) => /is:commander/.test(q)),
+  queries.slice(before60).join(' | '))
+check('no ramp role in sixty cards', (await page.getByRole('tab', { name: /Ramp/ }).count()) === 0)
+await page.getByRole('button', { name: 'Fill the rest with staples' }).click()
+await page.waitForTimeout(1500)
+check('fill brings the list to sixty', /60\/60/.test(await body()), (await body()).match(/\d+\/60/)?.[0])
+
+console.log('\nA deck keeps its format')
+await page.locator('.steps__button', { hasText: 'Colours' }).click()
+await page.waitForTimeout(200)
+await page.getByRole('group', { name: 'Format' }).getByRole('button', { name: 'Commander' }).click()
+await page.waitForTimeout(200)
+check('changing the format with a deck started is said out loud',
+  /is a Modern deck, and a deck keeps its format/.test(await body()) && (await page.getByRole('button', { name: 'Start over as Commander' }).count()) === 1,
+  (await body()).match(/is a Modern deck[^\n]*/)?.[0])
+await page.getByRole('button', { name: 'Keep Modern' }).click()
+await page.waitForTimeout(200)
+check('keeping it puts the format back',
+  (await page.getByRole('group', { name: 'Format' }).getByRole('button', { name: 'Modern' }).getAttribute('aria-pressed')) === 'true'
+  && !/keeps its format/.test(await body()))
+await page.locator('.steps__button', { hasText: 'Starting list' }).click()
+await page.waitForTimeout(500)
+await page.getByRole('button', { name: /Open the deck/ }).click()
+await page.waitForTimeout(900)
+check('the editor opens a legal Modern deck',
+  /Modern/.test(await body()) && /60\/60/.test(await body()) && !/not legal/.test(await body()),
+  (await body()).match(/\d+\/60|not legal[^\n]*/g)?.join(' | '))
+check('two decks exist now: the Commander one was kept', (await deckCount()) === 2, String(await deckCount()))
 
 console.log('\nFrom Learn')
 await page.getByRole('button', { name: 'Learn', exact: true }).click()

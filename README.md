@@ -37,7 +37,9 @@ reports only what actually moved: *"Lightning Bolt has been banned in Modern"*,
 with the deck it is in. Told once, worst news first, silent when nothing changed.
 
 **Your first deck** — Never built one? Four short steps on the Decks tab, also
-reachable from Learn. A dial walks the five colours in wheel order and names
+reachable from Learn. Commander is the recommendation; Standard, Pioneer and
+Modern are there too, with a sixty-card skeleton, up to four copies of a card
+and no commander step. A dial walks the five colours in wheel order and names
 the pair between any two, with a page for each colour: what it cares about,
 how it wins, what it is bad at, three cards that sum it up. Four questions
 about how you like to play lean the dial one way, and you can drag it back.

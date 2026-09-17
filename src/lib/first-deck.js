@@ -86,13 +86,25 @@ export function commanderQuery(colors) {
 /** The Commander skeleton, from the one place both the coach and this flow read it. */
 export const ROLES = rolesFor(getFormat('commander'))
 
+/** The formats a first deck can be built in: Commander first, then three sixty-card ones. */
+export const FIRST_FORMATS = ['commander', 'standard', 'pioneer', 'modern']
+
+/** The skeleton for any of them. */
+export function rolesForFormat(formatId = 'commander') {
+  return rolesFor(getFormat(formatId))
+}
+
 /**
  * Queries for a role, in the order to try them. Scryfall's oracle tags are
  * community-maintained and a slug can change, so each role lists a fallback;
  * the screen uses the first query that returns anything.
  */
-export function stapleQueries(colors, roleId, { capUsd = 4, strategy = null } = {}) {
-  const base = `legal:commander game:paper id<=${idOf(colors)} -is:commander usd<=${capUsd}`
+export function stapleQueries(colors, roleId, { capUsd = 4, strategy = null, formatId = 'commander' } = {}) {
+  // Colour identity stands in for "in your colours" in every format: for a
+  // sixty-card deck it is a slightly strict reading (a hybrid card counts as
+  // both colours), which errs toward castable cards.
+  const commander = getFormat(formatId)?.group === 'commander'
+  const base = `legal:${formatId} game:paper id<=${idOf(colors)}${commander ? ' -is:commander' : ''} usd<=${capUsd}`
   switch (roleId) {
     case 'lands': return [`${base} t:land -t:basic`]
     case 'ramp': return [`${base} otag:ramp`, `${base} otag:mana-ramp`, `${base} (t:artifact o:"add {") -t:land`]
@@ -125,8 +137,8 @@ export function whyFor({ role, strategy = null, matchedPlan = false, owned = 0, 
 }
 
 /** Cards in each role, by the coach's own classifiers, with the target beside. */
-export function roleCounts(deck, lookup) {
-  return countRoles(deck, lookup, getFormat('commander'))
+export function roleCounts(deck, lookup, formatId = 'commander') {
+  return countRoles(deck, lookup, getFormat(formatId))
 }
 
 /** How many basics of each colour fill the land shortfall: evenly, by colour identity. */
@@ -150,24 +162,29 @@ export function basicSplit(colors, count) {
  * creatures could be filled to a hundred and four. Lands give way last,
  * because a list short of lands is the one that never gets going.
  */
-export function fillPlan(deck, lookup, candidates, { nonbasicLands = 6, max = null } = {}) {
+export function fillPlan(deck, lookup, candidates, { nonbasicLands = 6, max = null, copies = 1, formatId = 'commander' } = {}) {
   const inDeck = new Set([...(deck.main ?? []).map((e) => e.cardId), ...(deck.commanders ?? [])])
   const chosenNames = new Set((deck.main ?? []).map((e) => lookup?.(e.cardId)?.name).filter(Boolean))
   const size = (deck.main ?? []).reduce((n, e) => n + (e.quantity ?? 1), 0)
   let room = max === null ? Infinity : Math.max(0, max - size)
   const adds = []
+  // Takes up to `n` copies from a list, `copies` of a card at a time: one in
+  // a singleton format, up to four in a sixty-card one.
   const take = (list, n) => {
     const out = []
+    let taken = 0
     for (const card of list ?? []) {
-      if (out.length >= n || room <= 0) break
+      if (taken >= n || room <= 0) break
       if (inDeck.has(card.id) || chosenNames.has(card.name)) continue
       inDeck.add(card.id); chosenNames.add(card.name)
-      out.push(card)
-      room -= 1
+      const quantity = Math.min(copies, n - taken, room)
+      out.push({ card, quantity })
+      taken += quantity
+      room -= quantity
     }
     return out
   }
-  const counts = roleCounts(deck, lookup)
+  const counts = roleCounts(deck, lookup, formatId)
   const lands = counts.find((r) => r.id === 'lands')
   // Lands are reserved before the spells are dealt out, so the cap cannot
   // eat them: whatever room remains after the land shortfall goes to spells.
@@ -175,13 +192,14 @@ export function fillPlan(deck, lookup, candidates, { nonbasicLands = 6, max = nu
   room -= landRoom
   for (const role of counts) {
     if (role.id === 'lands' || role.short === 0) continue
-    for (const card of take(candidates[role.id], role.short)) adds.push({ card, role: role.id, quantity: 1 })
+    for (const { card, quantity } of take(candidates[role.id], role.short)) adds.push({ card, role: role.id, quantity })
   }
   room += landRoom
   if (landRoom > 0) {
     const nonbasic = take(candidates.lands, Math.min(nonbasicLands, landRoom))
-    for (const card of nonbasic) adds.push({ card, role: 'lands', quantity: 1 })
-    const basics = basicSplit(deck.colors ?? candidates.colors, Math.min(landRoom - nonbasic.length, room))
+    let nonbasicCount = 0
+    for (const { card, quantity } of nonbasic) { adds.push({ card, role: 'lands', quantity }); nonbasicCount += quantity }
+    const basics = basicSplit(deck.colors ?? candidates.colors, Math.min(landRoom - nonbasicCount, room))
     for (const b of basics) adds.push({ basic: b.name, role: 'lands', quantity: b.quantity })
   }
   return adds
