@@ -8,7 +8,7 @@ import { getPrefs, setPref } from '../../lib/storage.js'
 import { priceLabel, priceFor } from '../../lib/prices.js'
 import { useCollection } from '../../lib/collection-store.js'
 import { ownedOf } from '../../lib/collection.js'
-import { roleCounts } from '../../lib/first-deck.js'
+import { roleCounts } from '../../lib/skeleton.js'
 import { artUrl } from '../../lib/deck-art.js'
 import SearchFilters from '../cards/SearchFilters.jsx'
 import '../cards/filters.css'
@@ -64,7 +64,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
   const sort = getSort(sortId)
   const direction = dir ?? sort.defaultDir
   const lookup = useCallback((id) => cards?.get?.(id), [cards])
-  const needs = useMemo(() => (format.group === 'commander' ? roleCounts(deck, lookup) : null), [deck, lookup, format])
+  const needs = useMemo(() => (format.group === 'commander' ? roleCounts(deck, lookup, format) : null), [deck, lookup, format])
   const total = deckSize(deck, format)
   const target = format?.deck.max ?? format?.deck.min ?? 60
 

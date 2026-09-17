@@ -4,8 +4,8 @@
  * sensible skeleton. All pure; the screen is a thin layer over this.
  */
 import { WHEEL, PAIRS, STYLE_AXES } from '../data/colors.js'
-import { CLASSIFIERS } from './coach.js'
-import { isLandCard } from './deck.js'
+import { getFormat } from './formats.js'
+import { rolesFor, roleCounts as countRoles } from './skeleton.js'
 
 /**
  * The dial runs W→U→B→R→G→W, one colour every 100, so every allied pair
@@ -83,13 +83,8 @@ export function commanderQuery(colors) {
   return `is:commander legal:commander game:paper id=${idOf(colors)}`
 }
 
-export const ROLES = [
-  { id: 'lands', label: 'Lands', target: 36, blurb: 'Thirty-six or so. Most are basics; a few duals and utility lands help.' },
-  { id: 'ramp', label: 'Ramp', target: 10, blurb: 'Around ten. Mana rocks and dorks get your commander out early and keep you ahead.' },
-  { id: 'draw', label: 'Card draw', target: 10, blurb: 'Around ten. The hand runs out by turn six without it.' },
-  { id: 'removal', label: 'Removal', target: 10, blurb: 'Around ten. Answers for the creature, artifact or enchantment that is beating you.' },
-  { id: 'theme', label: 'Does your thing', target: 33, blurb: 'The rest: cards that do what your commander wants. Popular cards in your colours are a fine start.' },
-]
+/** The Commander skeleton, from the one place both the coach and this flow read it. */
+export const ROLES = rolesFor(getFormat('commander'))
 
 /**
  * Queries for a role, in the order to try them. Scryfall's oracle tags are
@@ -107,22 +102,9 @@ export function stapleQueries(colors, roleId, { capUsd = 4 } = {}) {
   }
 }
 
-// --- how far the deck is from the skeleton ---------------------------------
-
-const roleOf = (card) => {
-  if (!card) return 'theme'
-  if (isLandCard(card)) return 'lands'
-  if (CLASSIFIERS.ramp(card)) return 'ramp'
-  if (CLASSIFIERS.draw(card)) return 'draw'
-  if (CLASSIFIERS.removal(card)) return 'removal'
-  return 'theme'
-}
-
 /** Cards in each role, by the coach's own classifiers, with the target beside. */
 export function roleCounts(deck, lookup) {
-  const have = { lands: 0, ramp: 0, draw: 0, removal: 0, theme: 0 }
-  for (const entry of deck?.main ?? []) have[roleOf(lookup?.(entry.cardId))] += entry.quantity
-  return ROLES.map((role) => ({ ...role, have: have[role.id], short: Math.max(0, role.target - have[role.id]) }))
+  return countRoles(deck, lookup, getFormat('commander'))
 }
 
 /** How many basics of each colour fill the land shortfall: evenly, by colour identity. */
