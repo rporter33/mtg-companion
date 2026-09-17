@@ -6,6 +6,7 @@
 // is one JSON file the user owns, matching the no-accounts promise.
 
 import { defaultBackend, memoryBackend } from './storage-backend.js'
+import { dropOldestCheckpoint } from './data-safety.js'
 
 const KEY = 'mtg-companion:v1'
 
@@ -140,11 +141,40 @@ export function discardCorruptBackup() {
 
 const PERSIST_EVENT = 'mtg:persist-failed'
 
+let lastRoomMade = 0
+
 function write(state) {
   // The in-memory copy is updated first and unconditionally, so a failed
   // persist costs durability across a reload rather than the current session.
   memoryFallback = state
-  const ok = store().write(JSON.stringify(state))
+  let ok = store().write(JSON.stringify(state))
+
+  // A refused write gets one more chance: drop automatic version checkpoints
+  // — the only thing in the store the app made on its own — and try again.
+  // If that lands, the change is saved and the person is told what was
+  // thinned rather than told nothing and losing the change on reload.
+  // The browser does not say how much it would have accepted, so there is no
+  // size to shrink toward — the write is the only oracle. Drop one checkpoint,
+  // try again, and stop the moment it lands or there is nothing left to drop.
+  // Bounded by the number of automatic checkpoints in the store.
+  if (!ok) {
+    let current = state
+    let removed = 0
+    for (;;) {
+      const step = dropOldestCheckpoint(current)
+      if (step.removed === 0) break
+      current = step.state
+      removed += step.removed
+      if (store().write(JSON.stringify(current))) { ok = true; break }
+    }
+    if (ok) {
+      memoryFallback = current
+      lastRoomMade = removed
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(ROOM_MADE_EVENT, { detail: { removed } }))
+      }
+    }
+  }
 
   // Returning false into a caller that ignored it was the same as returning
   // nothing: the screen showed the change and the reload lost it, with no
@@ -163,6 +193,12 @@ export function lastSaveSucceeded() {
 }
 
 export const PERSIST_FAILED_EVENT = PERSIST_EVENT
+export const ROOM_MADE_EVENT = 'mtg:room-made'
+
+/** How many automatic checkpoints the last save had to drop to fit. */
+export function checkpointsDroppedToFit() {
+  return lastRoomMade
+}
 
 export function loadState() {
   return read()
@@ -272,6 +308,10 @@ export function setPref(key, value) {
 }
 
 // --- import / export -----------------------------------------------------
+
+export function markExported(at = new Date().toISOString()) {
+  return update((state) => ({ ...state, prefs: { ...state.prefs, lastExportedAt: at } }))
+}
 
 export function exportAll() {
   return JSON.stringify({ ...read(), exportedAt: new Date().toISOString() }, null, 2)

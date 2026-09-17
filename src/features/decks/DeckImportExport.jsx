@@ -9,7 +9,7 @@ import { getFormat, frontTypeLine } from '../../lib/formats.js'
 import { parseDecklist } from '../../lib/decklist.js'
 import { captureVersion } from '../../lib/versions.js'
 import { pinCards } from '../../lib/cache.js'
-import { exportAll } from '../../lib/storage.js'
+import { exportAll, markExported } from '../../lib/storage.js'
 import { exampleToDecklist } from '../../data/example-decks.js'
 
 /**
@@ -163,6 +163,9 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
 
   const download = () => {
     const blob = new Blob([exportAll()], { type: 'application/json' })
+    // Both download buttons count as a backup, so staleness is judged from
+    // whichever was pressed last.
+    markExported()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url

@@ -23,7 +23,7 @@ const CardsView = lazy(VIEWS.cards)
 const DecksView = lazy(VIEWS.decks)
 const PlayView = lazy(VIEWS.play)
 const GuideView = lazy(VIEWS.guide)
-import { loadState, PERSIST_FAILED_EVENT } from './lib/storage.js'
+import { loadState, PERSIST_FAILED_EVENT, ROOM_MADE_EVENT } from './lib/storage.js'
 
 const TABS = [
   { id: 'guide', label: 'Learn', icon: GuideIcon },
@@ -45,10 +45,22 @@ export default function App() {
   // fails, and the banner stays until the page is reloaded — because until it
   // is, nothing on screen is known to be durable.
   const [saveFailed, setSaveFailed] = useState(false)
+  // When a refused write was rescued by thinning history, say so once and
+  // briefly. Silently thinning history is the kind of thing that later reads
+  // as data loss; a line saying what happened is not.
+  const [roomMade, setRoomMade] = useState(null)
   useEffect(() => {
     const onFail = () => setSaveFailed(true)
+    const onRoom = (e) => {
+      setRoomMade(e.detail?.removed ?? 0)
+      setTimeout(() => setRoomMade(null), 8000)
+    }
     window.addEventListener(PERSIST_FAILED_EVENT, onFail)
-    return () => window.removeEventListener(PERSIST_FAILED_EVENT, onFail)
+    window.addEventListener(ROOM_MADE_EVENT, onRoom)
+    return () => {
+      window.removeEventListener(PERSIST_FAILED_EVENT, onFail)
+      window.removeEventListener(ROOM_MADE_EVENT, onRoom)
+    }
   }, [])
 
   useEffect(() => {
@@ -111,6 +123,13 @@ export default function App() {
   return (
     <div className="app">
       <main className="app__main">
+        {roomMade !== null && (
+          <div className="banner banner--warn" style={{ marginBottom: 'var(--space-4)' }} role="status">
+            Saved — but storage was nearly full, so {roomMade} automatic version
+            checkpoint{roomMade === 1 ? ' was' : 's were'} dropped to make room. Labelled versions were kept.
+            Consider a backup.
+          </div>
+        )}
         {saveFailed && (
           <div className="banner banner--error" style={{ marginBottom: 'var(--space-4)' }} role="alert">
             A change could not be saved — the browser refused the write, usually because storage

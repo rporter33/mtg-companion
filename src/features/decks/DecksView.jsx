@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { listDecks, saveDeck, deleteDeck } from '../../lib/storage.js'
+import { listDecks, saveDeck, deleteDeck, loadState } from '../../lib/storage.js'
+import { backupStatus } from '../../lib/data-safety.js'
+import YourData, { BackupNudge } from './YourData.jsx'
 import { createDeck } from '../../lib/deck.js'
 import { FORMAT_GROUPS, formatsInGroup, getFormat } from '../../lib/formats.js'
 import DeckEditor from './DeckEditor.jsx'
@@ -13,9 +15,11 @@ export default function DecksView({ onOpenCard, offline, seed, onSeedConsumed })
   const [editingId, setEditingId] = useState(null)
   const [creating, setCreating] = useState(false)
   const [pending, setPending] = useState(null)
+  const [showingData, setShowingData] = useState(false)
   const { report, summary, dismiss } = useLegalityWatch({ enabled: !offline })
 
   const refresh = () => setDecks(listDecks())
+  const backup = backupStatus(loadState())
 
   /**
    * A commander or example deck handed over from the Learn tab. Creating the
@@ -37,6 +41,10 @@ export default function DecksView({ onOpenCard, offline, seed, onSeedConsumed })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed])
 
+  if (showingData) {
+    return <YourData onClose={() => setShowingData(false)} onChanged={refresh} />
+  }
+
   if (editingId) {
     const deck = decks.find((d) => d.id === editingId)
     if (!deck) { setEditingId(null); return null }
@@ -57,7 +65,15 @@ export default function DecksView({ onOpenCard, offline, seed, onSeedConsumed })
     <div className="stack">
       <div className="row">
         <h1 style={{ flex: 1 }}>Decks</h1>
+        <button className="btn btn--ghost btn--sm" onClick={() => setShowingData(true)}>Your data</button>
         <button className="btn btn--primary" onClick={() => setCreating(true)}>New deck</button>
+      </div>
+      {(backup.level === 'never' || backup.level === 'stale') && (
+        <button className="banner banner--warn tiny" style={{ textAlign: 'left', cursor: 'pointer', width: '100%' }} onClick={() => setShowingData(true)}>
+          <BackupNudge backup={backup} /> Tap to download one.
+        </button>
+      )}
+      <div style={{ display: 'none' }}>
       </div>
 
       <LegalityChanges

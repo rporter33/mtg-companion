@@ -55,7 +55,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 685 unit tests
+npm test               # 712 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -226,6 +226,21 @@ Restore is its own undo. It captures the list it is leaving first, so the
 version you just left is one restore away. There is no separate undo to get
 wrong.
 
+**A refused save is rescued before it is reported.** When the browser refuses a
+write, the app drops automatic version checkpoints — the only thing in the store
+it made on its own — one at a time, trying the write after each, until it lands
+or nothing droppable is left. The write itself is the only oracle for "does it
+fit", because the browser does not say how much it would have accepted. If it
+lands, a banner says how many checkpoints went; if it does not, a banner says
+the save failed and how to keep the data. Labelled versions are never dropped.
+
+**A backup is one file, and the app asks for one when it should.** "Your data"
+on the Decks screen downloads the whole store, restores one with an explicit
+merge-or-replace choice, shows what the space is spent on, and offers back any
+saved file the app could not read rather than writing over it. The nudge to
+back up appears when decks exist and none was ever taken, or when several have
+changed since — not on every edit.
+
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a
 rolling announcement schedule, and a hardcoded copy would be wrong within weeks
@@ -268,10 +283,9 @@ Honest edges, stated rather than discovered.
 - **Tab isolation.** Ownership and settings sync within one tab. Another tab
   writing the same storage is not noticed until reload.
 - **Saved data and browser storage.** Everything lives in `localStorage`, which
-  browsers cap at a few megabytes. A save the browser refuses is announced in a
-  banner and kept for the session; it is not retried. A file that cannot be
-  parsed is set aside under a backup key rather than overwritten — but nothing
-  yet offers to restore it. Both are the subject of the next data-safety pass.
+  browsers cap at a few megabytes and never say exactly how many. The Your-data
+  screen shows use against the common limit; a browser with more room simply
+  fails later than it predicts, which is the safe direction to be wrong in.
 - **Two `window.prompt` / `confirm` dialogs remain** (new section name, delete
   deck). They work, including in installed PWAs, but are not styled.
 - **Deck total includes the sideboard; the card count does not.** The count
