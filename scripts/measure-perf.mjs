@@ -40,7 +40,7 @@ for (const [type_line, count] of TYPES) {
       set: 'tst', set_name: 'Test', collector_number: String(n), legalities: { commander: 'legal' },
       prices: { usd: (n * 0.37).toFixed(2), eur: (n * 0.31).toFixed(2), tix: (n * 0.01).toFixed(2) },
       purchase_uris: { tcgplayer: 'https://t', cardmarket: 'https://c', cardhoarder: 'https://h' },
-      image_uris: { normal: IMG, small: IMG }, produced_mana: /Land/.test(type_line) ? ['G'] : undefined,
+      image_uris: { normal: IMG, small: IMG, art_crop: IMG }, produced_mana: /Land/.test(type_line) ? ['G'] : undefined,
     })
   }
 }
@@ -96,9 +96,12 @@ const settle = async (label, action, ready) => {
 console.log(`\nCPU throttle ×${THROTTLE}, 390px viewport, 100-card deck, 25 versions, images ${FALLBACK ? 'BROKEN (CSS face fallback)' : 'real'}\n`)
 const tab = (name) => () => page.getByRole('tab', { name }).click()
 await settle('open Decks', () => page.locator('.app__nav button', { hasText: 'Decks' }).click(), () => document.querySelector('.deck-card__open'))
-await settle('open deck (list, 100 rows)', () => page.locator('.deck-card__open').first().click(), () => document.querySelectorAll('.deck-row').length >= 100)
+// Loaded rows, not placeholders: a row whose card has not arrived is also a
+// .deck-row, and counting those measured the wrong thing once the editor
+// started painting before the cards came back.
+await settle('open deck (list, 100 rows)', () => page.locator('.deck-card__open').first().click(), () => document.querySelectorAll('.deck-row:not(.deck-row--missing)').length >= 100)
 await settle('switch to grid (100 tiles)', () => page.getByRole('button', { name: 'Grid', exact: true }).click(), () => document.querySelectorAll('.deck-tile').length >= 100)
-await settle('back to list', () => page.getByRole('button', { name: 'List', exact: true }).click(), () => document.querySelectorAll('.deck-row').length >= 100)
+await settle('back to list', () => page.getByRole('button', { name: 'List', exact: true }).click(), () => document.querySelectorAll('.deck-row:not(.deck-row--missing)').length >= 100)
 
 // Re-render cost: what one keystroke or click costs once the view is up.
 await page.evaluate(() => { window.__longTasks = [] })

@@ -32,7 +32,11 @@ const card = (name, extra = {}) => ({
   mana_cost: '{1}{G}', cmc: 2, type_line: 'Creature — Elf', oracle_text: 'Flying',
   color_identity: ['G'], colors: ['G'], rarity: 'common', set: 'tst', set_name: 'Test',
   collector_number: '1', legalities: { commander: 'legal' }, prices: { usd: '1.00' },
-  image_uris: { normal: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' },
+  image_uris: {
+    normal: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=',
+    // A real painting behind the rows, so the sweep scans text over art.
+    art_crop: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+  },
   ...extra,
 })
 

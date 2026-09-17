@@ -9,6 +9,10 @@ import LegalityChanges from './LegalityChanges.jsx'
 import useLegalityWatch from './useLegalityWatch.js'
 import Term from '../../components/Term.jsx'
 import { navigate } from '../../lib/router.js'
+import DeckArt from '../../components/DeckArt.jsx'
+import { artUrl, faceIdFor } from '../../lib/deck-art.js'
+import { getCard } from '../../lib/cache.js'
+import { getPrefs } from '../../lib/storage.js'
 import './decks.css'
 
 export default function DecksView({ onOpenCard, offline, route, seed, onSeedConsumed }) {
@@ -144,15 +148,34 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
   )
 }
 
+/**
+ * The painting for a deck on the list screen, where no cards are loaded.
+ * One read from the card cache — every card in a deck is pinned there — so
+ * ten decks cost ten reads, not a thousand.
+ */
+function useFaceArt(deck) {
+  const faceId = faceIdFor(deck)
+  const [art, setArt] = useState(null)
+  useEffect(() => {
+    let live = true
+    if (!faceId || getPrefs().showCardImages === false) { setArt(null); return undefined }
+    getCard(faceId).then((hit) => { if (live) setArt(hit ? { src: artUrl(hit.card), id: faceId } : null) })
+    return () => { live = false }
+  }, [faceId])
+  return art?.src ? art : null
+}
+
 function DeckCard({ deck, onOpen, onDelete }) {
   const format = getFormat(deck.formatId)
   const count = deck.main.reduce((n, e) => n + e.quantity, 0)
     + (format?.commanderCountsTowardDeck ? deck.commanders.length : 0)
   const target = format?.deck.max ?? format?.deck.min ?? 60
   const identity = deck.identity ?? 'C'
+  const art = useFaceArt(deck)
 
   return (
-    <div className="panel panel--tinted deck-card" data-identity={identity}>
+    <div className={`panel panel--tinted deck-card ${art ? 'deck-card--art' : ''}`} data-identity={identity}>
+      {art && <DeckArt src={art.src} cardId={art.id} className="deck-art--card" />}
       <button className="deck-card__open" onClick={onOpen}>
         <h3>{deck.name}</h3>
         <div className="row row--wrap" style={{ marginTop: 'var(--space-2)' }}>

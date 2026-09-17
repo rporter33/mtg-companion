@@ -60,7 +60,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 767 unit tests
+npm test               # 780 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -327,6 +327,28 @@ category that is not one of Archidekt's type defaults becomes a section; the
 `[Commander{top}]` marker sets the commander. A printing Scryfall does not know
 falls back to the name, still in bulk. The slow path still exists for names
 nothing else can place, and it now says which name it is on.
+
+**A deck is recognised by a painting, so one stands for it.** Scryfall carries
+an "art crop" of every card: the painting alone, no frame, about 40 KB. The
+card whose painting stands for a deck follows a fixed order, one the person
+chose, else the commander, else the costliest card in the list, else the
+first, skipping anything without art at each step. It sits behind the deck's
+name on the Decks screen and behind the title in the editor, and each list row
+carries its own card's painting on the right at low opacity, fading out
+before it reaches the name, so contrast is unchanged and the accessibility
+sweep scans the rows with art present. The paintings are image elements
+rather than CSS backgrounds: they lazy-load, so a hundred rows fetch only
+what is on screen, and a painting that cannot be fetched leaves a plain row
+rather than a broken frame. They are decoration, hidden from assistive
+technology; the name is right there in text. An Art switch on the list turns
+the row paintings off, and the images-off preference from card search turns
+all of it off. The editor records its automatic answer on the deck, so the
+Decks screen, which cannot load a hundred cards per deck, shows the same
+painting from one cache read; a deck never opened in this browser shows none
+until it is. Under the four-times CPU throttle the harness uses, a 100-card
+list opens in 438 ms with art behind every row against 430 ms without, and
+a list-to-grid toggle costs 237 ms against 219: within noise, which is what
+lazy loading and a 40 KB asset were meant to buy.
 
 **The text view follows the pointer, and the keyboard, and is honest about
 phones.** Every line is a quantity, a name and a cost, and sections flow into

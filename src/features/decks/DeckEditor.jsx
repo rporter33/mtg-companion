@@ -20,6 +20,8 @@ import { getPrefs, setPref } from '../../lib/storage.js'
 import { totalFor, formatPrice, priceLabel, MARKETS } from '../../lib/prices.js'
 import CardImage from '../../components/CardImage.jsx'
 import PriceRow from '../../components/PriceRow.jsx'
+import DeckArt from '../../components/DeckArt.jsx'
+import { artUrl, faceCardFor, setDeckArt, stampFace } from '../../lib/deck-art.js'
 import DeckPlaytest from './DeckPlaytest.jsx'
 import DeckHistory from './DeckHistory.jsx'
 import { useCollection } from '../../lib/collection-store.js'
@@ -49,7 +51,9 @@ export default function DeckEditor({
   // rewrite of what this deck used to be.
   const commit = (next) => {
     const snapshot = cards.size ? captureSnapshot(next, cards) : next.snapshot
-    onChange(snapshot ? { ...next, snapshot } : next)
+    // The automatic face card is recorded alongside, so the Decks screen can
+    // show the same art without loading the cards. Same object when unchanged.
+    onChange(stampFace(snapshot ? { ...next, snapshot } : next, lookup, market))
   }
   const total = deckSize(deck, format)
   const target = format?.deck.max ?? format?.deck.min ?? 60
@@ -63,6 +67,17 @@ export default function DeckEditor({
     () => deckSections(deck, lookup, { marketId: market }),
     [deck, cards, market],
   )
+
+  // The painting that stands for this deck, and whether paintings show at
+  // all. Both follow the person's choices: the images preference from the
+  // card search applies here too, and the row art has its own switch.
+  const showImages = getPrefs().showCardImages !== false
+  const face = useMemo(() => faceCardFor(deck, lookup, market), [deck, cards, market])
+  const [rowArt, setRowArt] = useState(() => getPrefs().rowArt !== false)
+  const toggleRowArt = () => { setRowArt(!rowArt); setPref('rowArt', !rowArt) }
+  const artChoices = useMemo(() => [...cards.values()]
+    .filter((card) => artUrl(card))
+    .sort((a, b) => a.name.localeCompare(b.name)), [cards])
 
   const [collection, setCollection] = useCollection()
   const notOwned = useMemo(() => missingFor(deck, lookup, collection), [deck, cards, collection])
@@ -85,7 +100,8 @@ export default function DeckEditor({
         </span>
       </div>
 
-      <div>
+      <div className={`deck-head ${showImages && face ? 'deck-head--art' : ''}`}>
+        {showImages && <DeckArt src={artUrl(face)} cardId={face?.id} className="deck-art--head" />}
         <input
           className="deck-title"
           value={deck.name}
@@ -138,6 +154,18 @@ export default function DeckEditor({
           >
             {MARKETS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
+          {showImages && artChoices.length > 0 && (
+            <select
+              className="chip"
+              aria-label="Deck art"
+              title="Which card's painting stands for this deck"
+              value={deck.artCardId ?? ''}
+              onChange={(e) => onChange(setDeckArt(deck, e.target.value || null))}
+            >
+              <option value="">Art: automatic{face && !deck.artCardId ? ` (${face.name})` : ''}</option>
+              {artChoices.map((card) => <option key={card.id} value={card.id}>Art: {card.name}</option>)}
+            </select>
+          )}
         </div>
       </div>
 
@@ -180,6 +208,7 @@ export default function DeckEditor({
       {tab === 'list' && (
         <DeckList
           deck={deck} groups={groups} format={format} market={market} lookup={lookup}
+          art={showImages && rowArt} artSwitch={showImages ? toggleRowArt : null}
           collection={collection}
           onChange={commit} onOpenCard={onOpenCard} validation={validation}
         />
@@ -219,7 +248,7 @@ export default function DeckEditor({
   )
 }
 
-function DeckList({ deck, groups, format, market, lookup, collection, onChange, onOpenCard, validation }) {
+function DeckList({ deck, groups, format, market, lookup, collection, onChange, onOpenCard, validation, art = false, artSwitch = null }) {
   const problemIds = new Set(
     validation.violations.filter((v) => v.severity === 'error' && v.cardId).map((v) => v.cardId),
   )
@@ -336,6 +365,7 @@ function DeckList({ deck, groups, format, market, lookup, collection, onChange, 
                 <DeckRow
                   key={key}
                   card={card}
+                  art={art ? artUrl(card) : null}
                   market={market}
                   owned={ownedOf(collection, card)}
                   section={name}
@@ -369,6 +399,16 @@ function DeckList({ deck, groups, format, market, lookup, collection, onChange, 
               {label}
             </button>
           ))}
+          {artSwitch && view === 'list' && (
+            <button
+              className={`chip ${art ? 'chip--active' : ''}`}
+              aria-pressed={art}
+              title="Show each card's painting behind its row"
+              onClick={artSwitch}
+            >
+              Art
+            </button>
+          )}
         </div>
       </div>
 
@@ -625,7 +665,7 @@ function CategoryPicker({ card, section, sections, onCategory }) {
 
 const DeckRow = memo(function DeckRow({
   card, cardId, quantity, isCommander, flagged, market, owned = 0, zone, section, sections,
-  act, onOpenCard,
+  act, onOpenCard, art = null,
 }) {
   const onOpen = () => card && onOpenCard(card)
   const onSet = (n) => act('set', cardId, zone, n)
@@ -643,9 +683,10 @@ const DeckRow = memo(function DeckRow({
 
   return (
     <div
-      className={`deck-row ${flagged ? 'deck-row--flagged' : ''}`}
+      className={`deck-row ${flagged ? 'deck-row--flagged' : ''} ${art ? 'deck-row--art' : ''}`}
       data-identity={identityAttr(card)}
     >
+      {art && <DeckArt src={art} cardId={card.id} className="deck-art--row" />}
       {isCommander
         ? <span className="deck-row__qty deck-row__qty--commander" title="Commander">★</span>
         : (
