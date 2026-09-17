@@ -89,36 +89,48 @@ function isUnreleased(card) {
   return Boolean(card?.released_at) && card.released_at > TODAY
 }
 
+/** One GET, or null. Every lookup here is advisory, so a failure is not fatal. */
+async function get(path) {
+  try {
+    const response = await fetch(`${API}${path}`, {
+      headers: { Accept: 'application/json', 'User-Agent': UA },
+      signal: AbortSignal.timeout(15000),
+    })
+    return response.ok ? response.json() : null
+  } catch { return null }
+}
+
 /**
  * What did they probably mean?
  *
- * Fuzzy naming gives one confident guess; autocomplete gives a list. Both are
- * printed and neither is applied, because a fuzzy match is confidently wrong
- * often enough that a person has to look at it.
+ * Not the fuzzy-name endpoint: asked for six real misses it returned five
+ * unrelated cards, because it always answers with its nearest match however far
+ * away that is, and never says "nothing". Search does say that, which is the
+ * useful answer. include_extras covers tokens, because an export that swept up
+ * a token needs that line deleted rather than corrected, and the two have to be
+ * told apart before either is done.
  */
-async function suggest(name) {
-  const get = async (path) => {
-    try {
-      const response = await fetch(`${API}${path}`, {
-        headers: { Accept: 'application/json', 'User-Agent': UA },
-        signal: AbortSignal.timeout(15000),
-      })
-      return response.ok ? response.json() : null
-    } catch { return null }
+async function suggest(name, hintSet) {
+  const look = async (query) => {
+    const payload = await get(`/cards/search?q=${encodeURIComponent(query)}&include_extras=true&unique=cards`)
+    await sleep(120)
+    return (payload?.data ?? []).slice(0, 6).map((card) => ({
+      name: card.name,
+      set: card.set,
+      token: card.layout === 'token' || /\bToken\b/.test(card.type_line ?? ''),
+    }))
   }
 
-  const fuzzy = await get(`/cards/named?fuzzy=${encodeURIComponent(name)}`)
-  await sleep(120)
-  // Drop the last word: "Awesome Android" finds nothing, "Awesome" finds the
-  // family of names it might belong to.
-  const stem = name.split(/\s+/).slice(0, 2).join(' ')
-  const auto = await get(`/cards/autocomplete?q=${encodeURIComponent(stem)}`)
-  await sleep(120)
+  // Every word, anywhere in a name; then the deck's own set, since a precon's
+  // unfamiliar names are nearly always from it; then the single most
+  // distinctive word, which is what survives a subtitle or a dropped article.
+  const word = name.split(/[\s,]+/).filter((w) => w.length > 3)
+    .sort((a, b) => b.length - a.length)[0] ?? name
 
-  return {
-    best: fuzzy?.name ?? null,
-    candidates: (auto?.data ?? []).filter((candidate) => candidate !== fuzzy?.name),
-  }
+  let hits = await look(name)
+  if (!hits.length && hintSet) hits = await look(`${word} set:${hintSet}`)
+  if (!hits.length) hits = await look(word)
+  return hits
 }
 
 const cards = new Map()
@@ -151,14 +163,22 @@ if (missing.length) {
     ? '1 name Scryfall does not know:'
     : `${missing.length} names Scryfall does not know:`))
   console.log(c.dim('  Scryfall matches names exactly here, so a subtitle or a stray word is'))
-  console.log(c.dim('  enough to miss. Closest matches are looked up for each one.\n'))
+  console.log(c.dim('  enough to miss. Candidates below are searched, tokens included.\n'))
   for (const name of missing) {
-    const owners = EXAMPLE_DECKS.filter((deck) => namesIn(deck).includes(name)).map((deck) => deck.id)
-    console.log(`  ${c.head(name)} ${c.dim(`(in ${owners.join(', ')})`)}`)
-    const { best, candidates } = await suggest(name)
-    if (best) console.log(`    closest: ${c.ok(best)}`)
-    if (candidates.length) console.log(`    ${c.dim(`also: ${candidates.slice(0, 5).join(' | ')}`)}`)
-    if (!best && !candidates.length) console.log(`    ${c.dim('no close match — it may be a token, not a card')}`)
+    const owners = EXAMPLE_DECKS.filter((deck) => namesIn(deck).includes(name))
+    // A precon's odd names come from its own set, and the commander resolved,
+    // so its set code is the best hint available for where to look.
+    const hint = owners.map((deck) => cards.get(deck.commanders[0])?.set).find(Boolean)
+    console.log(`  ${c.head(name)} ${c.dim(`(in ${owners.map((d) => d.id).join(', ')})`)}`)
+    const hits = await suggest(name, hint)
+    if (!hits.length) {
+      console.log(`    ${c.dim('nothing in Scryfall matches this, tokens included')}`)
+      continue
+    }
+    for (const hit of hits) {
+      const tag = hit.token ? c.warn('   [token — delete the line, do not rename it]') : ''
+      console.log(`    ${hit.name} ${c.dim(`(${hit.set})`)}${tag}`)
+    }
   }
   console.log()
 }
