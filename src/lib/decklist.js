@@ -12,7 +12,11 @@ export function parseDecklist(text) {
   const out = []
   let section = 'main'
 
-  for (const raw of (text ?? '').split('\n')) {
+  // A file saved by PowerShell, Notepad or Excel often starts with a UTF-8
+  // byte order mark. Left alone it fuses to the first card name and that line
+  // silently fails to resolve, which is the worst kind of import bug: quiet,
+  // and only on one platform.
+  for (const raw of String(text ?? '').replace(/^\uFEFF/, '').split('\n')) {
     const line = raw.trim()
     if (!line || line.startsWith('//') || line.startsWith('#')) continue
 

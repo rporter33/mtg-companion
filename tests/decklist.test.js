@@ -51,6 +51,16 @@ describe('parseDecklist', () => {
     expect(parseDecklist('// notes\n\n# heading\nthis is not a card line')).toEqual([])
   })
 
+  it('strips a UTF-8 byte order mark from a Windows-saved file', () => {
+    expect(parseDecklist('\uFEFF1 Sol Ring')[0].name).toBe('Sol Ring')
+    expect(parseDecklist('\uFEFFCommander\n1 Sol Ring')[0].section).toBe('commander')
+  })
+
+  it('tolerates Windows line endings', () => {
+    const lines = parseDecklist('Commander\r\n1 Sol Ring\r\n')
+    expect(lines).toEqual([{ quantity: 1, name: 'Sol Ring', section: 'commander' }])
+  })
+
   it('returns nothing for empty input rather than throwing', () => {
     expect(parseDecklist(null)).toEqual([])
     expect(parseDecklist('')).toEqual([])
