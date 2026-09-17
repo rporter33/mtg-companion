@@ -107,6 +107,28 @@ check('the choice is remembered', (await page.locator('.deck-row .deck-art').cou
 await page.getByRole('button', { name: 'Art', exact: true }).click()
 await page.waitForTimeout(300)
 
+console.log('\nIn the grid')
+await page.getByRole('button', { name: 'Grid', exact: true }).click()
+await page.waitForTimeout(600)
+const tileArts = page.locator('.deck-tile .deck-art')
+check('tiles carry their painting behind them too', (await tileArts.count()) >= 3, String(await tileArts.count()))
+check('a card with no art gets a plain tile',
+  (await page.locator('.deck-tile', { hasText: 'Plain Token' }).locator('.deck-art').count()) === 0)
+check('the painting sits under the card image, not over it',
+  await page.locator('.deck-tile--backed').first().evaluate((tile) => {
+    const kids = [...tile.children]
+    return kids[0].classList.contains('deck-art') && kids.slice(1).every((k) => getComputedStyle(k).position === 'relative')
+  }))
+const gridSwitch = page.getByRole('button', { name: 'Art', exact: true })
+check('the Art switch is offered on the grid as well', (await gridSwitch.count()) === 1)
+await gridSwitch.click()
+await page.waitForTimeout(300)
+check('and takes the paintings out of the tiles', (await tileArts.count()) === 0)
+await gridSwitch.click()
+await page.waitForTimeout(300)
+await page.getByRole('button', { name: 'List', exact: true }).click()
+await page.waitForTimeout(500)
+
 console.log('\nChoosing the art')
 const picker = page.getByLabel('Deck art')
 check('the picker says which card is automatic', /automatic \(Art Commander\)/.test(await picker.locator('option').first().innerText()))

@@ -335,20 +335,25 @@ chose, else the commander, else the costliest card in the list, else the
 first, skipping anything without art at each step. It sits behind the deck's
 name on the Decks screen and behind the title in the editor, and each list row
 carries its own card's painting on the right at low opacity, fading out
-before it reaches the name, so contrast is unchanged and the accessibility
+before it reaches the name, so contrast is unchanged; a grid tile carries
+its painting blurred and faint across the whole tile, under the card image,
+so the price row and controls sit on a wash of the card's own colours and the accessibility
 sweep scans the rows with art present. The paintings are image elements
 rather than CSS backgrounds: they lazy-load, so a hundred rows fetch only
 what is on screen, and a painting that cannot be fetched leaves a plain row
 rather than a broken frame. They are decoration, hidden from assistive
-technology; the name is right there in text. An Art switch on the list turns
-the row paintings off, and the images-off preference from card search turns
+technology; the name is right there in text. An Art switch on the list and the grid turns
+these paintings off, and the images-off preference from card search turns
 all of it off. The editor records its automatic answer on the deck, so the
 Decks screen, which cannot load a hundred cards per deck, shows the same
 painting from one cache read; a deck never opened in this browser shows none
 until it is. Under the four-times CPU throttle the harness uses, a 100-card
-list opens in 438 ms with art behind every row against 430 ms without, and
-a list-to-grid toggle costs 237 ms against 219: within noise, which is what
-lazy loading and a 40 KB asset were meant to buy.
+list opens in 438 ms with art behind every row against 430 ms without; the
+grid, whose tiles blur their painting, opens in 327 ms against 302; a
+list-to-grid toggle costs 253 ms against 219. Run-to-run noise on the same
+build is about 70 ms, so the row art is free and the blurred tile art costs
+a little paint, which is what lazy loading and a 40 KB asset were meant to
+buy.
 
 **The text view follows the pointer, and the keyboard, and is honest about
 phones.** Every line is a quantity, a name and a cost, and sections flow into

@@ -332,6 +332,7 @@ function DeckList({ deck, groups, format, market, lookup, collection, onChange, 
                   <DeckTile
                     key={key}
                     card={card}
+                    art={art ? artUrl(card) : null}
                     cardId={cardId}
                     quantity={quantity}
                     zone={zone}
@@ -399,11 +400,11 @@ function DeckList({ deck, groups, format, market, lookup, collection, onChange, 
               {label}
             </button>
           ))}
-          {artSwitch && view === 'list' && (
+          {artSwitch && view !== 'text' && (
             <button
               className={`chip ${art ? 'chip--active' : ''}`}
               aria-pressed={art}
-              title="Show each card's painting behind its row"
+              title="Show each card's painting behind its row or tile"
               onClick={artSwitch}
             >
               Art
@@ -519,7 +520,7 @@ function DeckPreview({ card, market, owned, onOpenCard }) {
  * this is mostly used on.
  */
 const DeckTile = memo(function DeckTile({
-  card, cardId, quantity, zone, market, owned = 0, isCommander, flagged, act, onOpenCard,
+  card, cardId, quantity, zone, market, owned = 0, isCommander, flagged, act, onOpenCard, art = null,
 }) {
   const onOpen = () => card && onOpenCard(card)
   const onSet = (n) => act('set', cardId, zone, n)
@@ -535,7 +536,8 @@ const DeckTile = memo(function DeckTile({
   }
 
   return (
-    <div className={`deck-tile ${flagged ? 'deck-tile--flagged' : ''}`} data-identity={identityAttr(card)}>
+    <div className={`deck-tile ${flagged ? 'deck-tile--flagged' : ''} ${art ? 'deck-tile--backed' : ''}`} data-identity={identityAttr(card)}>
+      {art && <DeckArt src={art} cardId={card.id} className="deck-art--tile" />}
       <div className="deck-tile__art">
         <CardImage card={card} size="normal" onClick={onOpen} />
         <span className={`deck-tile__qty ${isCommander ? 'deck-tile__qty--commander' : ''}`}>

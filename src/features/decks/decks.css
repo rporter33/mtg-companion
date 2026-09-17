@@ -345,3 +345,17 @@ select.chip { width: auto; max-width: 8rem; }
 .deck-row--art > :not(.deck-art) { position: relative; }
 /* A flagged row keeps its warning tint readable over art. */
 .deck-row--flagged .deck-art--row { opacity: 0.12; }
+
+/* Behind a grid tile the painting fills the whole tile, blurred and faint,
+   so the price row and controls under the card sit on a wash of its own
+   colours rather than on a flat panel. The card image covers most of it. */
+.deck-tile { position: relative; overflow: hidden; }
+.deck-art--tile {
+  width: 100%;
+  opacity: 0.28;
+  filter: blur(6px) saturate(1.2);
+  transform: scale(1.15);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.deck-tile--backed > :not(.deck-art) { position: relative; }
