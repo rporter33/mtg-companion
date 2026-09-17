@@ -7,6 +7,7 @@ describe('parseRoute', () => {
     expect(parseRoute('#/play').tab).toBe('play')
     expect(parseRoute('#/decks')).toMatchObject({ tab: 'decks', deckId: null, data: false })
     expect(parseRoute('#/decks/data')).toMatchObject({ tab: 'decks', data: true, deckId: null })
+    expect(parseRoute('#/decks/new')).toMatchObject({ tab: 'decks', starting: true, deckId: null })
     expect(parseRoute('#/decks/abc')).toMatchObject({ tab: 'decks', deckId: 'abc', deckTab: null })
     expect(parseRoute('#/decks/abc/analysis')).toMatchObject({ deckId: 'abc', deckTab: 'analysis' })
     expect(parseRoute('#/cards?q=t%3Ainstant')).toMatchObject({ tab: 'cards', q: 't:instant' })
@@ -31,7 +32,7 @@ describe('parseRoute', () => {
 describe('buildHash', () => {
   it('round-trips every shape', () => {
     for (const hash of [
-      '#/guide', '#/play', '#/decks', '#/decks/data', '#/decks/abc', '#/decks/abc/analysis',
+      '#/guide', '#/play', '#/decks', '#/decks/data', '#/decks/new', '#/decks/abc', '#/decks/abc/analysis',
       '#/cards?q=t%3Ainstant', '#/decks/abc/io?card=xyz', '#/guide?card=xyz', '#/decks/a%20b%2Fc',
     ]) expect(buildHash(parseRoute(hash))).toBe(hash)
   })

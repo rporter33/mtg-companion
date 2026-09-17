@@ -6,6 +6,7 @@ import TutorialGame from './TutorialGame.jsx'
 import SeasonBanner from './SeasonBanner.jsx'
 import Commanders from './Commanders.jsx'
 import Term, { TermBody } from '../../components/Term.jsx'
+import { navigate } from '../../lib/router.js'
 import Sheet from '../../components/Sheet.jsx'
 import './guide.css'
 
@@ -132,7 +133,8 @@ export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onSt
           Build a deck and the app checks it against the real format rules as you go, or open
           the life counter for a game with physical cards.
         </p>
-        <div className="row">
+        <div className="row row--wrap">
+          <button className="btn btn--sm btn--primary" onClick={() => navigate({ tab: 'decks', starting: true })}>Start your first deck</button>
           <button className="btn btn--sm" onClick={() => onNavigate('decks')}>Build a deck</button>
           <button className="btn btn--sm" onClick={() => onNavigate('play')}>Life counter</button>
         </div>
@@ -190,6 +192,12 @@ function Lesson({ lesson, done, onComplete, onReset, onBack }) {
         {lesson.body.map((paragraph, i) => <p key={i}>{paragraph}</p>)}
       </div>
 
+      {lesson.interactive === 'firstDeck' && (
+        <div className="panel row row--wrap" style={{ alignItems: 'center' }}>
+          <span className="tiny">Try it: the colour dial walks the wheel and names each pair.</span>
+          <button className="btn btn--sm" onClick={() => navigate({ tab: 'decks', starting: true })}>Open the colour dial</button>
+        </div>
+      )}
       {lesson.terms?.length > 0 && (
         <div className="row row--wrap">
           <span className="faint tiny">Terms in this lesson</span>

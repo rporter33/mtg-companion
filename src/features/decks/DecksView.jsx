@@ -5,6 +5,7 @@ import YourData, { BackupNudge } from './YourData.jsx'
 import { createDeck } from '../../lib/deck.js'
 import { FORMAT_GROUPS, formatsInGroup, getFormat } from '../../lib/formats.js'
 import DeckEditor from './DeckEditor.jsx'
+import FirstDeck from './FirstDeck.jsx'
 import LegalityChanges from './LegalityChanges.jsx'
 import useLegalityWatch from './useLegalityWatch.js'
 import Term from '../../components/Term.jsx'
@@ -66,6 +67,10 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
     return <YourData onClose={() => showData(false)} onChanged={refresh} />
   }
 
+  if (route?.starting) {
+    return <FirstDeck onOpenCard={onOpenCard} />
+  }
+
   if (editingId) {
     const deck = decks.find((d) => d.id === editingId) ?? listDecks().find((d) => d.id === editingId)
     if (!deck) return null
@@ -89,6 +94,7 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
       <div className="row">
         <h1 style={{ flex: 1 }}>Decks</h1>
         <button className="btn btn--ghost btn--sm" onClick={() => showData(true)}>Your data</button>
+        <button className="btn btn--sm" onClick={() => navigate({ tab: 'decks', starting: true })}>Start a deck</button>
         <button className="btn btn--primary" onClick={() => setCreating(true)}>New deck</button>
       </div>
       {(backup.level === 'never' || backup.level === 'stale') && (
@@ -119,13 +125,15 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
       )}
 
       {!decks.length && !creating && (
-        <div className="empty">
+        <div className="empty stack" style={{ alignItems: 'center' }}>
           <h3>No decks yet</h3>
           <p>
-            Build one and this app checks it against the format&rsquo;s real rules as you go —
-            deck size, copy limits, <Term id="colorIdentity">colour identity</Term>, and the
-            current ban list.
+            Never built one? Pick a colour, say how you like to play, choose a commander, and
+            build a starting list by role. Or start blank and this app checks it against the
+            format&rsquo;s real rules as you go — deck size, copy limits,
+            {' '}<Term id="colorIdentity">colour identity</Term>, and the current ban list.
           </p>
+          <button className="btn btn--primary" onClick={() => navigate({ tab: 'decks', starting: true })}>Start your first deck</button>
         </div>
       )}
 

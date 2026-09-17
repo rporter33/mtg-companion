@@ -9,7 +9,7 @@
  *
  *   #/guide
  *   #/cards?q=<search>
- *   #/decks | #/decks/data | #/decks/<id> | #/decks/<id>/<tab>
+ *   #/decks | #/decks/new | #/decks/data | #/decks/<id> | #/decks/<id>/<tab>
  *   #/play
  *
  * plus "?card=<id>" on any of them for the card sheet, which is an overlay
@@ -24,7 +24,7 @@ export const TABS = ['guide', 'cards', 'decks', 'play']
 export const DECK_TABS = ['list', 'add', 'coach', 'analysis', 'hand', 'history', 'io']
 
 const EMPTY = Object.freeze({
-  tab: null, deckId: null, deckTab: null, data: false, q: null, cardId: null,
+  tab: null, deckId: null, deckTab: null, data: false, starting: false, q: null, cardId: null,
 })
 
 /** "#/decks/abc/analysis?card=xyz" -> { tab, deckId, deckTab, data, q, cardId }. */
@@ -44,6 +44,7 @@ export function parseRoute(hash) {
   if (tab === 'cards') route.q = params.get('q') || null
   if (tab === 'decks' && second) {
     if (second === 'data') route.data = true
+    else if (second === 'new') route.starting = true
     else {
       route.deckId = second
       route.deckTab = DECK_TABS.includes(third) ? third : null
@@ -58,6 +59,7 @@ export function buildHash(route) {
   const segments = [tab]
   if (tab === 'decks') {
     if (route.data) segments.push('data')
+    else if (route.starting) segments.push('new')
     else if (route.deckId) {
       segments.push(encodeURIComponent(route.deckId))
       if (route.deckTab && route.deckTab !== 'list' && DECK_TABS.includes(route.deckTab)) segments.push(route.deckTab)
@@ -79,7 +81,7 @@ export function withPatch(current, patch) {
   const base = patch.tab && patch.tab !== current.tab
     ? { ...EMPTY, cardId: current.cardId }
     : { ...current }
-  for (const [key, value] of Object.entries(patch)) base[key] = value ?? (key === 'data' ? false : null)
+  for (const [key, value] of Object.entries(patch)) base[key] = value ?? (key === 'data' || key === 'starting' ? false : null)
   return base
 }
 

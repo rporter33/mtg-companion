@@ -209,6 +209,23 @@ await scanState('deck grid view', async () => {
   return (await page.locator('.deck-tile').count()) > 0
 })
 
+await scanState('first deck flow', async () => {
+  await page.evaluate(() => { location.hash = '#/decks/new' })
+  await page.waitForTimeout(700)
+  if (!await page.getByLabel('Colour dial').count()) return false
+  await page.getByLabel('Colour dial').fill('150')
+  await page.waitForTimeout(200)
+  const ok = (await page.locator('.colour-page').count()) === 2
+  await page.getByRole('button', { name: /Next: how you play/ }).click()
+  await page.waitForTimeout(300)
+  return ok && (await page.locator('.chip').count()) > 0
+})
+
+await scanState('first deck: how you play', async () => (await page.getByRole('button', { name: /Patient/ }).count()) > 0)
+
+await page.evaluate(() => { location.hash = '#/decks/a11y-deck' })
+await page.waitForTimeout(900)
+
 await scanState('deck text view', async () => {
   const text = page.getByRole('button', { name: 'Text', exact: true })
   if (!await text.count()) return false

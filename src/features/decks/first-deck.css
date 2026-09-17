@@ -1,0 +1,78 @@
+/* Your first deck: the dial, the colour pages, commanders, roles. */
+
+.steps { display: flex; flex-wrap: wrap; gap: var(--space-2); list-style: none; padding: 0; margin: 0; }
+.steps__button {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--bg-raised); color: var(--text-muted); font-size: 0.85rem;
+}
+.steps__item--current .steps__button { border-color: var(--accent); color: var(--text); }
+.steps__item--done .steps__button { color: var(--ok, var(--text)); }
+.steps__button:disabled { opacity: 0.5; cursor: not-allowed; }
+.steps__num {
+  width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center;
+  font-size: 0.7rem; background: var(--bg-overlay); border: 1px solid var(--border);
+}
+
+/* The dial: a native range over a wheel-coloured strip, so it is keyboard
+   and screen-reader accessible for free and still reads as the wheel. */
+.dial { position: relative; padding: var(--space-2) 0 var(--space-4); }
+.dial__strip {
+  height: 14px; border-radius: 999px; border: 1px solid var(--border-strong);
+  background: linear-gradient(90deg, var(--mtg-w) 0%, var(--mtg-u) 20%, var(--mtg-b) 40%, var(--mtg-r) 60%, var(--mtg-g) 80%, var(--mtg-w) 100%);
+}
+.dial__input {
+  position: absolute; left: 0; right: 0; top: var(--space-2); width: 100%; height: 14px; margin: 0;
+  -webkit-appearance: none; appearance: none; background: transparent;
+}
+.dial__input::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--bg); border: 3px solid var(--text); box-shadow: 0 1px 4px #0008; cursor: grab;
+}
+.dial__input::-moz-range-thumb { width: 26px; height: 26px; border-radius: 50%; background: var(--bg); border: 3px solid var(--text); cursor: grab; }
+.dial__input:focus-visible { outline: none; }
+.dial__input:focus-visible::-webkit-slider-thumb { outline: 3px solid var(--accent); outline-offset: 2px; }
+.dial__labels { display: flex; justify-content: space-between; margin-top: var(--space-2); font-size: 0.72rem; color: var(--text-muted); }
+.dial__labels span::before {
+  content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px;
+  background: var(--swatch); border: 1px solid var(--border-strong); vertical-align: middle;
+}
+
+.pair-chip { gap: 6px; }
+.pair-chip__dot {
+  width: 12px; height: 12px; border-radius: 50%; display: inline-block;
+  background: linear-gradient(135deg, var(--a) 0 50%, var(--b) 50% 100%); border: 1px solid var(--border-strong);
+}
+
+.colour-pages__does { margin: 0; font-size: 0.95rem; }
+.colour-pages__grid { display: grid; gap: var(--space-3); grid-template-columns: 1fr; }
+@media (min-width: 720px) { .colour-pages__grid--two { grid-template-columns: 1fr 1fr; } }
+.colour-page { padding: var(--space-3); border-radius: var(--radius); border: 1px solid var(--border); border-left: 4px solid var(--swatch); background: var(--bg-overlay); }
+.colour-page h3 { margin: 0 0 var(--space-2); display: flex; align-items: center; gap: var(--space-2); }
+.colour-page__dot { width: 14px; height: 14px; border-radius: 50%; background: var(--swatch); border: 1px solid var(--border-strong); }
+.colour-page .facts { margin: 0 0 var(--space-2); }
+.colour-page dd { font-size: 0.86rem; }
+
+.commander-picks { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.commander-pick { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-2); border-radius: var(--radius-sm); background: var(--bg-overlay); }
+.commander-pick .cardimage, .commander-pick .cardface { width: 92px; flex-shrink: 0; }
+.commander-pick__name { font-size: 0.95rem; }
+
+.roles { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+.role {
+  display: flex; flex-direction: column; gap: 4px; padding: var(--space-2); text-align: left;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-raised); color: var(--text-muted);
+}
+.role--active { border-color: var(--accent); color: var(--text); }
+.role--done { color: var(--ok, var(--text)); }
+.role__label { font-size: 0.82rem; font-weight: 600; }
+.role__count { font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.role__bar { height: 4px; border-radius: 2px; background: var(--bg-overlay); overflow: hidden; }
+.role__bar > span { display: block; height: 100%; background: var(--accent); }
+.role--done .role__bar > span { background: var(--ok, var(--accent)); }
+
+.staples { display: flex; flex-direction: column; gap: 2px; }
+.staple { display: flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-2); border-radius: var(--radius-sm); }
+.staple:hover { background: var(--bg-overlay); }
+.staple--in { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.staple__name { flex: 1 1 8rem; min-width: 0; text-align: left; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

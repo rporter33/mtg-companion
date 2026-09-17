@@ -9,7 +9,7 @@ export const TRACKS = [
     id: 'beginner',
     name: 'Never played a card game',
     blurb: 'Start from zero. What the pieces are, what a turn is, how you win.',
-    lessons: ['goal', 'turn', 'castingSpells', 'combatBasics', 'theStack', 'mulliganing'],
+    lessons: ['goal', 'turn', 'castingSpells', 'combatBasics', 'theStack', 'mulliganing', 'fiveColors'],
   },
   {
     id: 'arena',
@@ -21,7 +21,7 @@ export const TRACKS = [
     id: 'tcg',
     name: 'I play other card games',
     blurb: 'Hearthstone, Pokémon, Yu-Gi-Oh. Here is what Magic does differently.',
-    lessons: ['landSystem', 'theStack', 'combatBasics', 'mulliganing', 'formatsPaper'],
+    lessons: ['landSystem', 'fiveColors', 'theStack', 'combatBasics', 'mulliganing', 'formatsPaper'],
   },
   {
     id: 'returning',
@@ -234,6 +234,31 @@ export const LESSONS = {
           why: 'Cheapest to start, but it rotates — you will be rebuying every year, which usually costs more over time.' },
         { text: 'Vintage', correct: false,
           why: 'Non-rotating, but it is the most expensive format in the game. The reserved list makes some staples cost thousands.' },
+      ],
+    },
+  },
+
+  fiveColors: {
+    id: 'fiveColors',
+    title: 'The five colours, and which one is yours',
+    minutes: 4,
+    body: [
+      'Every card belongs to one or more of five colours, and each colour is a philosophy before it is a set of cards. White values order and community and wins with a wide board kept safe. Blue values knowledge and control and wins by knowing more and countering what matters. Black values ambition at any price and wins by killing what stands in the way and draining the table. Red values passion and speed and wins by attacking first. Green values growth and wins by making more mana and bigger creatures than anyone else.',
+      'Each colour is bad at something on purpose. White struggles to draw cards, blue struggles to remove a creature already in play, black struggles with artifacts and enchantments, red runs out of gas, green cannot stop a flyer or a spell. The game is balanced by those gaps, and a two-colour deck exists to cover one of them.',
+      'Neighbours on the wheel — white and blue, blue and black, and so on round to green and white — are allies with overlapping ideas. Opposites are enemies, and enemy pairs are the most interesting decks: they combine things that should not go together.',
+      'The deck builder has a dial that walks the wheel and names each pair as you go, with commanders in those colours and a starting list under it. It is the practical half of this lesson.',
+    ],
+    terms: ['colorIdentity', 'commander'],
+    interactive: 'firstDeck',
+    quiz: {
+      question: 'You want a deck that draws lots of cards and stops opponents\u2019 spells, but you keep losing to one big creature. Which colour would you add?',
+      options: [
+        { text: 'White or black — both remove a creature already in play', correct: true,
+          why: 'Blue\u2019s known weakness is a creature that has already resolved. White exiles it, black destroys it; either pair covers the gap.' },
+        { text: 'More blue — a second counterspell', correct: false,
+          why: 'A counterspell only works before the creature lands. Once it is on the battlefield, blue can bounce it at best, and it comes straight back.' },
+        { text: 'Green — bigger creatures to block it', correct: false,
+          why: 'Green can outgrow it, but that is a race, not an answer, and green adds nothing to the draw-and-counter plan you already like.' },
       ],
     },
   },

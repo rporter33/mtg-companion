@@ -36,6 +36,19 @@ deck. The app snapshots each deck's legality when you edit it, and on launch
 reports only what actually moved: *"Lightning Bolt has been banned in Modern"*,
 with the deck it is in. Told once, worst news first, silent when nothing changed.
 
+**Your first deck** — Never built one? Four short steps on the Decks tab, also
+reachable from Learn. A dial walks the five colours in wheel order and names
+the pair between any two, with a page for each colour: what it cares about,
+how it wins, what it is bad at, three cards that sum it up. Four questions
+about how you like to play lean the dial one way, and you can drag it back.
+Commanders in your colours come two ways: a short recommended list chosen for
+this app because the plan fits on one line and the deck is cheap, marked as a
+recommendation, and the most played list live from Scryfall. Choosing one
+makes the deck. Then a starting list by role, lands, ramp, draw, removal and
+"does your thing", each with a target, a progress bar, and popular cards in
+your colours under a price cap that defaults to four dollars, with a button to
+fill the rest and open the deck in the editor.
+
 **Decks** — Build for Standard, Pioneer, Modern, Legacy, Vintage, Pauper,
 Commander, Duel Commander, Brawl, or Oathbreaker. The deck is validated against
 the format's real construction rules as you build, with specific messages rather
@@ -60,7 +73,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 780 unit tests
+npm test               # 803 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -327,6 +340,20 @@ category that is not one of Archidekt's type defaults becomes a section; the
 `[Commander{top}]` marker sets the commander. A printing Scryfall does not know
 falls back to the name, still in bulk. The slow path still exists for names
 nothing else can place, and it now says which name it is on.
+
+**The first-deck flow invents nothing.** The colour writing is the app's own
+and says so on screen. The recommended commanders are a list written for this
+app with a reason each, and `npm run firstdeck:verify` checks every name and
+every signature card against Scryfall, since a wrong name would simply not
+appear; the list beside it is Scryfall's popularity rank for exactly the
+chosen colours. Staples come from Scryfall searches in the deck's colour
+identity, legal in Commander, under the price cap, by the same oracle tags
+the coach's classifiers were scored against, with a plainer fallback query
+per role in case a tag slug changes. "Fill the rest" takes the most played
+cards in each role up to its target, never a duplicate, never the commander,
+then a few nonbasic lands and basics split across the colours. The result is
+a deck the coach would call sensible, not a deck anyone would call optimised,
+and the screen says the numbers are a guide, not a rule.
 
 **A deck is recognised by a painting, so one stands for it.** Scryfall carries
 an "art crop" of every card: the painting alone, no frame, about 40 KB. The
