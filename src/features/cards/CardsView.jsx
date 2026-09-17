@@ -5,6 +5,7 @@ import {
   parseQuery, serialiseQuery, clearFilters, hasActiveFilters, getSort, SORT_OPTIONS,
 } from '../../lib/query.js'
 import CardImage from '../../components/CardImage.jsx'
+import PriceRow from '../../components/PriceRow.jsx'
 import SearchFilters from './SearchFilters.jsx'
 import Term from '../../components/Term.jsx'
 import './cards.css'
@@ -244,13 +245,15 @@ export default function CardsView({ onOpenCard, offline, seedQuery }) {
 
           <div className="card-grid">
             {cards.map((card, i) => (
-              <CardImage
-                key={`${card.id}-${i}`}
-                card={card}
-                size="normal"
-                preferImages={showImages}
-                onClick={() => onOpenCard(card)}
-              />
+              <div className="card-tile" key={`${card.id}-${i}`}>
+                <CardImage
+                  card={card}
+                  size="normal"
+                  preferImages={showImages}
+                  onClick={() => onOpenCard(card)}
+                />
+                <PriceRow card={card} size="sm" />
+              </div>
             ))}
           </div>
 

@@ -29,6 +29,7 @@ const EMPTY = {
   games: [],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
   prefs: {
+    market: 'usd',
     currency: 'usd', showCardImages: true, lastFormat: 'commander',
     sortId: 'name', sortDir: null,
   },
@@ -47,7 +48,8 @@ function read() {
       ...EMPTY,
       ...parsed,
       guide: { ...EMPTY.guide, ...(parsed.guide ?? {}) },
-      prefs: { ...EMPTY.prefs, ...(parsed.prefs ?? {}) },
+      prefs: {
+    market: 'usd', ...EMPTY.prefs, ...(parsed.prefs ?? {}) },
     }
   } catch {
     // Private mode, disabled storage, or corrupted JSON. Keep working in memory

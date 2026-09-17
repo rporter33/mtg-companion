@@ -13,9 +13,20 @@ import {
 import { getFormat, typeLineOf } from '../../lib/formats.js'
 import { manaValueOf } from '../../lib/analysis.js'
 import { captureSnapshot } from '../../lib/snapshot.js'
+import { typeGroupOf } from '../../lib/grouping.js'
+import { getPrefs, setPref } from '../../lib/storage.js'
+import { totalFor, formatPrice, priceLabel, MARKETS } from '../../lib/prices.js'
 
-const GROUP_ORDER = ['Commander', 'Creature', 'Planeswalker', 'Instant', 'Sorcery',
-  'Artifact', 'Enchantment', 'Battle', 'Land', 'Other']
+// Section titles and their order. The classification itself lives in
+// lib/grouping.js so there is one rule for "what type is this card", rather
+// than one here and another wherever else a deck gets split up.
+const getMarketLabel = (id) => {
+  const market = MARKETS.find((m) => m.id === id)
+  return market ? `${market.label} via ${market.source}` : id
+}
+
+const GROUP_ORDER = ['Commander', 'Creatures', 'Planeswalkers', 'Battles', 'Instants',
+  'Sorceries', 'Artifacts', 'Enchantments', 'Lands', 'Other']
 
 export default function DeckEditor({
   deck, onBack, onChange, onOpenCard, offline, pending, onPendingConsumed,
@@ -38,6 +49,16 @@ export default function DeckEditor({
   const target = format?.deck.max ?? format?.deck.min ?? 60
 
   const groups = useMemo(() => groupDeck(deck, lookup, format), [deck, cards, format])
+
+  // Which market to price in. Stored, because a player in Europe should not
+  // have to re-pick dollars-or-euros every time they open a deck.
+  const [market, setMarket] = useState(() => getPrefs().market ?? 'usd')
+  const chooseMarket = (id) => { setMarket(id); setPref('market', id) }
+
+  const money = useMemo(
+    () => totalFor(groups.flatMap((g) => g.entries).filter((e) => e.card), market),
+    [groups, market],
+  )
   const errors = validation.violations.filter((v) => v.severity === 'error')
   const warnings = validation.violations.filter((v) => v.severity === 'warning')
 
@@ -65,6 +86,27 @@ export default function DeckEditor({
             <span className="chip">{deck.sideboard.reduce((n, e) => n + e.quantity, 0)} sideboard</span>
           )}
           {loading && <span className="chip">loading cards…</span>}
+          <span className="chip" title={`${getMarketLabel(market)} — a daily aggregate, not a live quote`}>
+            {formatPrice(money.total, market)}
+          </span>
+          {/*
+            Archidekt shows one "Est cost" and says nothing about the cards it
+            could not price. A total that quietly skips nine of them is a wrong
+            number with a confident label, so the gap is shown next to it.
+          */}
+          {money.missing > 0 && (
+            <span className="chip chip--warn" title="These have no price for this market, so they are not in the total">
+              {money.missing} unpriced
+            </span>
+          )}
+          <select
+            className="chip"
+            aria-label="Price in"
+            value={market}
+            onChange={(e) => chooseMarket(e.target.value)}
+          >
+            {MARKETS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
         </div>
       </div>
 
@@ -106,7 +148,7 @@ export default function DeckEditor({
 
       {tab === 'list' && (
         <DeckList
-          deck={deck} groups={groups} format={format}
+          deck={deck} groups={groups} format={format} market={market}
           onChange={commit} onOpenCard={onOpenCard} validation={validation}
         />
       )}
@@ -137,7 +179,7 @@ export default function DeckEditor({
   )
 }
 
-function DeckList({ deck, groups, format, onChange, onOpenCard, validation }) {
+function DeckList({ deck, groups, format, market, onChange, onOpenCard, validation }) {
   const problemIds = new Set(
     validation.violations.filter((v) => v.severity === 'error' && v.cardId).map((v) => v.cardId),
   )
@@ -158,12 +200,17 @@ function DeckList({ deck, groups, format, onChange, onOpenCard, validation }) {
           <div className="section-title">
             <h2>{title}</h2>
             <span className="faint">{count}</span>
+            <span className="spacer" />
+            <span className="faint tiny">
+              {formatPrice(totalFor(entries.filter((e) => e.card), market).total, market)}
+            </span>
           </div>
           <div className="deck-rows">
             {entries.map(({ cardId, quantity, card, zone, isCommander }) => (
               <DeckRow
                 key={`${zone}:${cardId}`}
                 card={card}
+                market={market}
                 cardId={cardId}
                 quantity={quantity}
                 zone={zone}
@@ -186,7 +233,7 @@ function DeckList({ deck, groups, format, onChange, onOpenCard, validation }) {
   )
 }
 
-function DeckRow({ card, cardId, quantity, isCommander, flagged, onOpen, onSet, onRemove }) {
+function DeckRow({ card, cardId, quantity, isCommander, flagged, market, onOpen, onSet, onRemove }) {
   if (!card) {
     return (
       <div className="deck-row deck-row--missing">
@@ -214,6 +261,7 @@ function DeckRow({ card, cardId, quantity, isCommander, flagged, onOpen, onSet, 
 
       <button className="deck-row__name" onClick={onOpen}>{card.name}</button>
       <ManaCost cost={card.mana_cost || card.card_faces?.[0]?.mana_cost || ''} />
+      <span className="deck-row__price faint tiny">{priceLabel(card, market)}</span>
       <button className="btn btn--sm btn--ghost btn--danger" onClick={onRemove} aria-label={`Remove ${card.name}`}>✕</button>
     </div>
   )
@@ -239,7 +287,7 @@ function groupDeck(deck, lookup, format) {
 
   for (const { cardId, quantity } of deck.main) {
     const card = lookup(cardId)
-    push(card ? primaryType(card) : 'Other', { cardId, quantity, card, zone: 'main' })
+    push(card ? typeGroupOf(card).label : 'Other', { cardId, quantity, card, zone: 'main' })
   }
   for (const { cardId, quantity } of deck.sideboard) {
     push('Sideboard', { cardId, quantity, card: lookup(cardId), zone: 'sideboard' })
@@ -254,15 +302,7 @@ function groupDeck(deck, lookup, format) {
     })
 }
 
-function primaryType(card) {
-  const line = typeLineOf(card)
-  if (isLandCard(card)) return 'Land'
-  for (const type of GROUP_ORDER) {
-    if (type === 'Land' || type === 'Commander' || type === 'Other') continue
-    if (new RegExp(`\\b${type}s?\\b`).test(line)) return type
-  }
-  return 'Other'
-}
+
 
 function byManaThenName(a, b) {
   const av = a.card ? manaValueOf(a.card) : 99

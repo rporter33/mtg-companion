@@ -54,8 +54,8 @@ Works entirely offline and keeps the screen awake.
 ```bash
 npm install
 npm run dev
-npm test               # 402 unit tests
 npm run test:browser   # drives the real UI in a real browser, axe-core included
+npm test               # 543 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -161,6 +161,17 @@ regexes, which is the point, since measuring oracle-text patterns against
 oracle-text patterns proves nothing. Those tags are volunteer-maintained and
 incomplete, so precision from that run is a lower bound and recall is the
 sturdier number.
+
+**Prices are three markets, and only three.** Scryfall supplies US dollars from
+TCGplayer, euros from Cardmarket, and tickets from Cardhoarder. Other
+deckbuilding sites show a fourth vendor; this one cannot, because that data is
+not in the API it uses, and a column labelled with a shop that did not supply
+the number would be a lie that looks like a feature.
+
+Every figure is a daily aggregate, not a live quote. A printing with no price is
+common, and absence renders as dashes — never as zero, because `Number(null)` is
+0 and that is how a two-hundred-dollar foil once read as free. A deck total says
+how many cards it could not price instead of quietly leaving them out.
 
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a

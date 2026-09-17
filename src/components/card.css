@@ -198,3 +198,49 @@ button.cardimage:hover { transform: translateY(-3px); box-shadow: var(--shadow-l
   }
   .mana-cost { display: none; }
 }
+
+/* Market prices under a card. A fixed three-column grid, so the row is the same
+   width whether a card has three prices or none — a row that reflows per card
+   makes a grid impossible to scan down. */
+.prices {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+.prices__cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 2px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  text-decoration: none;
+  color: inherit;
+  min-width: 0;
+}
+.prices__cell--link:hover { border-color: var(--accent); }
+.prices__cell--link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.prices__label {
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.prices__value {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+.prices__value--none { color: var(--text-faint); }
+.prices__basis { font-size: 0.55rem; color: var(--accent); }
+.prices--sm .prices__value { font-size: 0.66rem; }
+.prices--sm .prices__label { font-size: 0.55rem; }
+
+.deck-row__price { font-variant-numeric: tabular-nums; min-width: 4.5rem; text-align: right; }
