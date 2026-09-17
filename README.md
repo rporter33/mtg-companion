@@ -273,6 +273,35 @@ with no signal. Card faces are drawn in CSS from card data as well as shown as
 Scryfall images — the CSS version is a fully readable card, not a placeholder.
 The guide and life counter need no network at any point.
 
+**A 100-card deck is the unit of performance, and it is measured, not
+assumed.** `npm run perf:measure` (needs a built preview) seeds a hundred
+distinct cards with real images, twenty-five saved versions and a collection,
+throttles the CPU four times to stand in for a mid-range phone, and times every
+screen a deck can be on: the list, the grid, five list-to-grid toggles, five
+quantity taps, Analysis, Coach, a sample hand, History and a full hundred-card
+diff. Long tasks (over 50 ms on the main thread) are counted separately, since
+those are what a person feels as a hitch. The interesting result was the
+version-label box: each keystroke re-rendered the whole history, at 41 ms a
+character under throttle. The form now owns its text, list rows are memoised
+with handlers that do not change identity, and each row's section picker is a
+button until tapped rather than a hundred live `<select>`s. Under the same
+throttle:
+
+| | before | after |
+| --- | ---: | ---: |
+| open a 100-card list | 446 ms, 2185 nodes, 327 ms in long tasks | 430 ms, 1393 nodes, 279 ms |
+| list to grid, per toggle | 265 ms | 219 ms |
+| typing in the version label, per character | 41 ms | 18 ms |
+| a quantity tap | 145 ms, no long tasks | 136 ms, no long tasks |
+
+With the CSS card face standing in for a missing image, the grid is heavier
+(4,195 nodes for a hundred tiles) and a toggle costs 371 ms rather than 454 ms
+before. The quantity tap barely moved, and honestly so: a quantity change
+rebuilds the deck's sections, so memoised rows re-render anyway, and most of
+that figure is the test driver's own click cost. Nothing on any screen is a
+long task except the first paint of a hundred rows, which is the browser laying
+them out.
+
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the reasoning and the standing
 trade-offs.
 

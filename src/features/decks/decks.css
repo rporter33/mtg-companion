@@ -228,3 +228,5 @@ select.chip { width: auto; max-width: 8rem; }
 .diff__row--out .diff__sign { color: var(--error); }
 .diff__row--change .diff__sign { color: var(--warn); }
 .diff__name { flex: 1 1 auto; min-width: 0; }
+.deck-row__category--closed { cursor: pointer; text-align: left; }
+.deck-row__category--closed:hover { border-color: var(--border-strong); color: var(--text); }

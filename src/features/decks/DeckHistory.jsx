@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { getCardsByIds } from '../../lib/scryfall.js'
 import {
   captureVersion, restoreVersion, deleteVersion, relabelVersion, diffVersions,
@@ -56,20 +56,24 @@ function useHistoryLookup(deck, editorLookup) {
 }
 
 export default function DeckHistory({ deck, lookup: editorLookup, market, onChange }) {
-  const [label, setLabel] = useState('')
   const [comparing, setComparing] = useState(null)
   const versions = deck.versions ?? []
   const lookup = useHistoryLookup(deck, editorLookup)
 
-  const save = () => {
-    const next = captureVersion(deck, { label })
-    if (next === deck) return
-    onChange(next)
-    setLabel('')
-  }
+  // Memoised, because every row compares itself against this and a fresh
+  // object each render would defeat those comparisons' own memoisation.
+  const current = useMemo(() => listsOf(deck), [deck])
+  const unchanged = useMemo(
+    () => Boolean(versions[0] && diffVersions(versions[0], current, lookup).empty),
+    [versions, current, lookup],
+  )
 
-  const current = listsOf(deck)
-  const unchanged = versions[0] && diffVersions(versions[0], current, lookup).empty
+  const save = (label) => {
+    const next = captureVersion(deck, { label })
+    if (next === deck) return false
+    onChange(next)
+    return true
+  }
 
   return (
     <div className="stack">
@@ -79,20 +83,7 @@ export default function DeckHistory({ deck, lookup: editorLookup, market, onChan
           A version is the list as it stands, with a name. Restoring one later puts the list back
           and keeps the one you left, so nothing here is one-way.
         </p>
-        <div className="row row--wrap">
-          <input
-            className="input"
-            value={label}
-            placeholder="What changed — e.g. cut the artifact package"
-            aria-label="Version label"
-            onChange={(e) => setLabel(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') save() }}
-            style={{ flex: '1 1 14rem' }}
-          />
-          <button className="btn btn--primary" onClick={save} disabled={unchanged}>
-            {unchanged ? 'No changes since last version' : 'Save version'}
-          </button>
-        </div>
+        <SaveVersionForm onSave={save} unchanged={unchanged} />
       </div>
 
       {versions.length === 0 ? (
@@ -129,11 +120,37 @@ export default function DeckHistory({ deck, lookup: editorLookup, market, onChan
   )
 }
 
-function VersionRow({ version, previous, lookup, market, open, current, onCompare, onRestore, onDelete, onRelabel }) {
+/**
+ * The label box owns its own text. Keeping that state up in DeckHistory meant
+ * every keystroke re-rendered all the version rows, each re-diffing a
+ * hundred-card list — 41 ms a character on a throttled phone.
+ */
+function SaveVersionForm({ onSave, unchanged }) {
+  const [label, setLabel] = useState('')
+  const submit = () => { if (onSave(label)) setLabel('') }
+  return (
+    <div className="row row--wrap">
+      <input
+        className="input"
+        value={label}
+        placeholder="What changed — e.g. cut the artifact package"
+        aria-label="Version label"
+        onChange={(e) => setLabel(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+        style={{ flex: '1 1 14rem' }}
+      />
+      <button className="btn btn--primary" onClick={submit} disabled={unchanged}>
+        {unchanged ? 'No changes since last version' : 'Save version'}
+      </button>
+    </div>
+  )
+}
+
+const VersionRow = memo(function VersionRow({ version, previous, lookup, market, open, current, onCompare, onRestore, onDelete, onRelabel }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(version.label)
   const when = new Date(version.at)
-  const isCurrent = diffVersions(version, current, lookup).empty
+  const isCurrent = useMemo(() => diffVersions(version, current, lookup).empty, [version, current, lookup])
 
   return (
     <div className="version">
@@ -183,7 +200,7 @@ function VersionRow({ version, previous, lookup, market, open, current, onCompar
       )}
     </div>
   )
-}
+})
 
 function Diff({ from, to, lookup, market, sinceLabel }) {
   const d = diffVersions(from, to, lookup, market, priceFor)

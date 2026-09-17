@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import useDeckCards from './useDeckCards.js'
 import DeckAnalysis from './DeckAnalysis.jsx'
 import DeckCoach from './DeckCoach.jsx'
@@ -222,6 +222,28 @@ function DeckList({ deck, groups, format, market, lookup, collection, onChange, 
     validation.violations.filter((v) => v.severity === 'error' && v.cardId).map((v) => v.cardId),
   )
 
+  // Once per render. This used to be computed inside the row loop — a hundred
+  // full scans of the deck on every render, and a quantity tap re-renders the
+  // list — which the profiler put at 145 ms a tap on a throttled phone.
+  const sections = useMemo(() => categoryNames(deck, lookup), [deck, lookup])
+
+  // One stable handler for every row, reading the latest deck and onChange
+  // through refs. Rows are memoised below; an inline arrow per row would be a
+  // new function each render and defeat that, so a tap would still re-render
+  // all hundred rows instead of the one it touched.
+  const latest = useRef({ deck, onChange })
+  latest.current = { deck, onChange }
+  const act = useCallback((kind, cardId, zone, arg) => {
+    const { deck: d, onChange: change } = latest.current
+    if (kind === 'set') change(setQuantity(d, cardId, arg, zone))
+    else if (kind === 'category') change(setCategory(d, cardId, arg))
+    else if (kind === 'remove') {
+      change(arg
+        ? setCommanders(d, d.commanders.filter((id) => id !== cardId))
+        : removeCard(d, cardId, zone))
+    }
+  }, [])
+
   // Two ways to read the same deck. The list is faster to edit and survives a
   // narrow screen; the grid is how a deck is actually recognised, because
   // players know their cards by art long before they read the name.
@@ -284,17 +306,13 @@ function DeckList({ deck, groups, format, market, lookup, collection, onChange, 
                   card={card}
                   cardId={cardId}
                   quantity={quantity}
+                  zone={zone}
                   market={market}
                   owned={ownedOf(collection, card)}
                   isCommander={isCommander}
                   flagged={problemIds.has(cardId)}
-                  onOpen={() => card && onOpenCard(card)}
-                  onSet={(n) => onChange(setQuantity(deck, cardId, n, zone))}
-                  onRemove={() => onChange(
-                    isCommander
-                      ? setCommanders(deck, deck.commanders.filter((id) => id !== cardId))
-                      : removeCard(deck, cardId, zone),
-                  )}
+                  act={act}
+                  onOpenCard={onOpenCard}
                 />
               ) : (
               <DeckRow
@@ -303,21 +321,14 @@ function DeckList({ deck, groups, format, market, lookup, collection, onChange, 
                 market={market}
                 owned={ownedOf(collection, card)}
                 section={name}
-                sections={categoryNames(deck, lookup)}
-                onCategory={(to) => onChange(setCategory(deck, cardId, to))}
+                sections={sections}
                 cardId={cardId}
                 quantity={quantity}
                 zone={zone}
                 isCommander={isCommander}
                 flagged={problemIds.has(cardId)}
-                format={format}
-                onOpen={() => card && onOpenCard(card)}
-                onSet={(n) => onChange(setQuantity(deck, cardId, n, zone))}
-                onRemove={() => onChange(
-                  isCommander
-                    ? setCommanders(deck, deck.commanders.filter((id) => id !== cardId))
-                    : removeCard(deck, cardId, zone),
-                )}
+                act={act}
+                onOpenCard={onOpenCard}
               />
               )
             ))}
@@ -336,9 +347,12 @@ function DeckList({ deck, groups, format, market, lookup, collection, onChange, 
  * visible rather than appearing on hover — hover does not exist on the phone
  * this is mostly used on.
  */
-function DeckTile({
-  card, cardId, quantity, market, owned = 0, isCommander, flagged, onOpen, onSet, onRemove,
+const DeckTile = memo(function DeckTile({
+  card, cardId, quantity, zone, market, owned = 0, isCommander, flagged, act, onOpenCard,
 }) {
+  const onOpen = () => card && onOpenCard(card)
+  const onSet = (n) => act('set', cardId, zone, n)
+  const onRemove = () => act('remove', cardId, zone, isCommander)
   if (!card) {
     return (
       <div className="deck-tile deck-tile--missing">
@@ -380,7 +394,7 @@ function DeckTile({
       </div>
     </div>
   )
-}
+})
 
 /**
  * Rename, reorder or dissolve a section.
@@ -433,17 +447,39 @@ function SectionMenu({ name, chosen, onRename, onMove, onDissolve }) {
   )
 }
 
-/** Moves one card to another section, or to a new one. */
+/**
+ * Moves one card to another section, or to a new one.
+ *
+ * Rendered as a button until it is tapped. A <select> with nine options on
+ * each of a hundred rows was nine hundred DOM nodes that nobody was looking
+ * at; changing a section is rare next to reading the list.
+ */
 function CategoryPicker({ card, section, sections, onCategory }) {
   const NEW = '\u0000new'
+  const [open, setOpen] = useState(false)
   const options = [...new Set([section, ...sections])].filter(Boolean)
+
+  if (!open) {
+    return (
+      <button
+        className="deck-row__category deck-row__category--closed"
+        onClick={() => setOpen(true)}
+        aria-label={`Section for ${card.name}: ${section}. Change`}
+      >
+        {section}
+      </button>
+    )
+  }
 
   return (
     <select
+      autoFocus
+      onBlur={() => setOpen(false)}
       className="deck-row__category"
       value={section}
       aria-label={`Section for ${card.name}`}
       onChange={(e) => {
+        setOpen(false)
         if (e.target.value !== NEW) return onCategory(e.target.value)
         // eslint-disable-next-line no-alert
         const typed = window.prompt(`Move ${card.name} to which section?`, section)
@@ -456,10 +492,14 @@ function CategoryPicker({ card, section, sections, onCategory }) {
   )
 }
 
-function DeckRow({
+const DeckRow = memo(function DeckRow({
   card, cardId, quantity, isCommander, flagged, market, owned = 0, zone, section, sections,
-  onOpen, onSet, onRemove, onCategory,
+  act, onOpenCard,
 }) {
+  const onOpen = () => card && onOpenCard(card)
+  const onSet = (n) => act('set', cardId, zone, n)
+  const onRemove = () => act('remove', cardId, zone, isCommander)
+  const onCategory = (to) => act('category', cardId, zone, to)
   if (!card) {
     return (
       <div className="deck-row deck-row--missing">
@@ -505,7 +545,7 @@ function DeckRow({
       </button>
     </div>
   )
-}
+})
 
 /** Groups a deck the way a decklist is normally written: by card type. */
 

@@ -78,7 +78,16 @@ const clipped = await page.locator('.deck-row__name')
 check('no card name is truncated on a phone', clipped.length === 0, clipped.join(', '))
 
 console.log('\nMoving a card')
-await page.locator('.deck-row__category').first().selectOption({ label: 'Artifacts' })
+const closed = page.locator('.deck-row__category--closed').first()
+check('the section picker is a button until tapped, not a select per row',
+  (await closed.evaluate((e) => e.tagName)) === 'BUTTON'
+  && /^Section for .+: .+\. Change$/.test(await closed.getAttribute('aria-label') || ''),
+  await closed.getAttribute('aria-label'))
+await closed.click()
+await page.waitForTimeout(100)
+const picker = page.locator('select.deck-row__category')
+check('tapping it opens a focused select', await picker.evaluate((e) => document.activeElement === e))
+await picker.selectOption({ label: 'Artifacts' })
 await page.waitForTimeout(600)
 check('the card moves to the section chosen',
   (await page.locator('.section-title').filter({ hasText: 'Artifacts' }).innerText()).includes('2'),
