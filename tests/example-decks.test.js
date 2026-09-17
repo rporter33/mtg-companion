@@ -117,14 +117,21 @@ describe('exampleDecksFor', () => {
   })
 })
 
+// Nothing shipped declares an unverified name right now, so this tests the
+// function rather than the data — otherwise it would pass by vacuum and stop
+// being a test the moment it mattered.
 describe('unverifiedIn', () => {
   it('reads the declared list', () => {
-    const marked = EXAMPLE_DECKS.find((d) => d.unverified?.length)
-    expect(unverifiedIn(marked)).toEqual(marked.unverified)
+    expect(unverifiedIn({ unverified: ['Some Misprint'] })).toEqual(['Some Misprint'])
   })
 
   it('is empty for a deck that declares none, and for nothing at all', () => {
-    expect(unverifiedIn({ })).toEqual([])
+    expect(unverifiedIn({})).toEqual([])
     expect(unverifiedIn(null)).toEqual([])
+    expect(unverifiedIn(undefined)).toEqual([])
+  })
+
+  it('every shipped deck currently resolves in full', () => {
+    expect(EXAMPLE_DECKS.flatMap(unverifiedIn)).toEqual([])
   })
 })
