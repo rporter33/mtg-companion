@@ -170,6 +170,53 @@ await scanState('deck editor', async () => {
   return (await page.locator('.deck-title, textarea').count()) > 0
 })
 
+// The grid and the playtest need a deck whose cards have actually loaded. The
+// example-deck route above resolves nothing under these mocks, so seed one
+// directly and answer the collection lookup for it.
+const SEEDED = [
+  card('Seed Commander', { id: 'seed-cmdr', oracle_id: 'o-seed-cmdr', type_line: 'Legendary Creature — Elf' }),
+  card('Seed Forest', { id: 'seed-forest', oracle_id: 'o-seed-forest', type_line: 'Basic Land — Forest' }),
+  card('Seed Elf', { id: 'seed-elf', oracle_id: 'o-seed-elf' }),
+]
+await page.route('**/api.scryfall.com/cards/collection', (route) => route.fulfill({
+  status: 200, contentType: 'application/json', body: JSON.stringify({ data: SEEDED }) }))
+await page.evaluate(() => localStorage.setItem('mtg-companion:v1', JSON.stringify({
+  version: 3, collection: {},
+  decks: [{
+    id: 'a11y-deck', name: 'Sweep Deck', formatId: 'commander', commanders: ['seed-cmdr'],
+    signatureSpell: null, categoryOrder: [],
+    main: [{ cardId: 'seed-forest', quantity: 40 }, { cardId: 'seed-elf', quantity: 59 }],
+    sideboard: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+  }],
+  games: [], guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
+  prefs: { deckView: 'list' },
+})))
+await page.reload({ waitUntil: 'networkidle' })
+await page.waitForTimeout(500)
+await go('Decks')
+await page.locator('.deck-card__open').first().click()
+await page.waitForTimeout(900)
+
+await scanState('deck grid view', async () => {
+  const grid = page.getByRole('button', { name: 'Grid', exact: true })
+  if (!await grid.count()) return false
+  await grid.click()
+  await page.waitForTimeout(600)
+  return (await page.locator('.deck-tile').count()) > 0
+})
+
+await scanState('playtest hand', async () => {
+  const tab = page.getByRole('tab', { name: 'Playtest' })
+  if (!await tab.count()) return false
+  await tab.click()
+  await page.waitForTimeout(400)
+  const drawBtn = page.getByRole('button', { name: 'Draw a hand' })
+  if (!await drawBtn.count() || await drawBtn.isDisabled()) return false
+  await drawBtn.click()
+  await page.waitForTimeout(500)
+  return (await page.locator('.hand-card').count()) === 7
+})
+
 console.log('\nFindings')
 if (!seen.size) console.log('  none')
 const order = { critical: 0, serious: 1, moderate: 2, minor: 3 }

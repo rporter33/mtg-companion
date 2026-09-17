@@ -10,6 +10,10 @@ const VERSION = 'v1'
 const SHELL = `shell-${VERSION}`
 const IMAGES = `images-${VERSION}`
 const MAX_IMAGES = 400
+// Every deploy adds freshly hashed chunks and nothing ever removed the old
+// ones, so the shell cache grew by one build's worth of assets per release.
+// Insertion order is oldest first, so trimming drops previous builds.
+const MAX_SHELL = 80
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -58,7 +62,7 @@ self.addEventListener('fetch', (event) => {
     caches.match(request).then((cached) => cached ?? fetch(request).then((response) => {
       if (response.ok) {
         const copy = response.clone()
-        caches.open(SHELL).then((cache) => cache.put(request, copy))
+        caches.open(SHELL).then((cache) => cache.put(request, copy).then(() => trim(cache, MAX_SHELL)))
       }
       return response
     })),
@@ -81,8 +85,8 @@ async function cacheFirstImage(request) {
   }
 }
 
-async function trim(cache) {
+async function trim(cache, max = MAX_IMAGES) {
   const keys = await cache.keys()
-  if (keys.length <= MAX_IMAGES) return
-  for (const key of keys.slice(0, keys.length - MAX_IMAGES)) await cache.delete(key)
+  if (keys.length <= max) return
+  for (const key of keys.slice(0, keys.length - max)) await cache.delete(key)
 }

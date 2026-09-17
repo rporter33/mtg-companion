@@ -55,7 +55,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 643 unit tests
+npm test               # 651 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -247,6 +247,27 @@ The guide and life counter need no network at any point.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the reasoning and the standing
 trade-offs.
+
+## Known limits
+
+Honest edges, stated rather than discovered.
+
+- **Tab isolation.** Ownership and settings sync within one tab. Another tab
+  writing the same storage is not noticed until reload.
+- **Saved data and browser storage.** Everything lives in `localStorage`, which
+  browsers cap at a few megabytes. A save the browser refuses is announced in a
+  banner and kept for the session; it is not retried. A file that cannot be
+  parsed is set aside under a backup key rather than overwritten — but nothing
+  yet offers to restore it. Both are the subject of the next data-safety pass.
+- **Two `window.prompt` / `confirm` dialogs remain** (new section name, delete
+  deck). They work, including in installed PWAs, but are not styled.
+- **Deck total includes the sideboard; the card count does not.** The count
+  answers "is this a legal deck", the total answers "what would all of this
+  cost", and the two questions have different scopes.
+- **A renamed section leaves its name on a sideboard card too**, where it is
+  ignored. Harmless, and cleaned up the next time that card is moved.
+- **Printings show the market chosen on a deck**, read once when the card sheet
+  opens rather than live. Reopen the sheet after changing it.
 
 ## Data
 

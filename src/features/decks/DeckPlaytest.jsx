@@ -19,6 +19,12 @@ export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
   const [chosen, setChosen] = useState(new Set())
 
   const size = deck.main.reduce((n, e) => n + e.quantity, 0)
+  // The library is built from cards that have loaded, not from the list. Until
+  // every entry resolves, a shuffle would deal from a deck missing whatever is
+  // still in flight — and a hand short of lands is exactly the thing this tab
+  // exists to notice, so it must never manufacture one.
+  const loaded = deck.main.reduce((n, e) => n + (lookup(e.cardId) ? e.quantity : 0), 0)
+  const ready = loaded === size
   const lands = deck.main.reduce(
     (n, e) => n + (lookup(e.cardId) && isLandCard(lookup(e.cardId)) ? e.quantity : 0), 0,
   )
@@ -56,7 +62,9 @@ export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
               {label}
             </button>
           ))}
-          <button className="btn btn--primary" onClick={() => start()}>Draw a hand</button>
+          <button className="btn btn--primary" onClick={() => start()} disabled={!ready}>
+            {ready ? 'Draw a hand' : `Loading cards… ${loaded}/${size}`}
+          </button>
         </div>
       </div>
     )
@@ -155,9 +163,7 @@ export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
         </p>
       )}
 
-      {cards.size === 0 && (
-        <p className="faint tiny">Cards are still loading — the hand will look right once they arrive.</p>
-      )}
+
     </div>
   )
 }

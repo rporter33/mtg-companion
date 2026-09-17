@@ -23,7 +23,7 @@ const CardsView = lazy(VIEWS.cards)
 const DecksView = lazy(VIEWS.decks)
 const PlayView = lazy(VIEWS.play)
 const GuideView = lazy(VIEWS.guide)
-import { loadState } from './lib/storage.js'
+import { loadState, PERSIST_FAILED_EVENT } from './lib/storage.js'
 
 const TABS = [
   { id: 'guide', label: 'Learn', icon: GuideIcon },
@@ -39,6 +39,17 @@ export default function App() {
   const [deckSeed, setDeckSeed] = useState(null)
   const [offline, setOffline] = useState(() =>
     typeof navigator !== 'undefined' && navigator.onLine === false)
+
+  // A save that never reached storage used to be invisible: the screen showed
+  // the change and the reload lost it. Storage fires this once when a write
+  // fails, and the banner stays until the page is reloaded — because until it
+  // is, nothing on screen is known to be durable.
+  const [saveFailed, setSaveFailed] = useState(false)
+  useEffect(() => {
+    const onFail = () => setSaveFailed(true)
+    window.addEventListener(PERSIST_FAILED_EVENT, onFail)
+    return () => window.removeEventListener(PERSIST_FAILED_EVENT, onFail)
+  }, [])
 
   useEffect(() => {
     const online = () => setOffline(false)
@@ -100,6 +111,13 @@ export default function App() {
   return (
     <div className="app">
       <main className="app__main">
+        {saveFailed && (
+          <div className="banner banner--error" style={{ marginBottom: 'var(--space-4)' }} role="alert">
+            A change could not be saved — the browser refused the write, usually because storage
+            is full or disabled. What you see is still here for this session. Use
+            <strong> Download all data</strong> on any deck&rsquo;s Import / export tab to keep it.
+          </div>
+        )}
         {offline && (
           <div className="banner banner--warn" style={{ marginBottom: 'var(--space-4)' }}>
             Offline — your decks, the guide and the life counter all still work.

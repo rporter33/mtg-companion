@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
-import { searchCards, getCardByName, getCardsByNames, autocomplete } from '../../lib/scryfall.js'
+import { getCardByName, getCardsByNames, autocomplete } from '../../lib/scryfall.js'
 import {
   looksLikeUrl, planForUrl, fetchFromSource, toDecklistText,
 } from '../../lib/deck-sources.js'
 import { toExampleEntry } from '../../data/example-decks.js'
-import { addCard, setCommanders, createDeck } from '../../lib/deck.js'
+import { addCard, setCommanders } from '../../lib/deck.js'
 import { getFormat, frontTypeLine } from '../../lib/formats.js'
 import { parseDecklist } from '../../lib/decklist.js'
 import { pinCards } from '../../lib/cache.js'
-import { exportAll, importAll } from '../../lib/storage.js'
+import { exportAll } from '../../lib/storage.js'
 import { exampleToDecklist } from '../../data/example-decks.js'
 
 /**
@@ -242,7 +242,6 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
             setPreview((current) => ({
               ...current,
               failed: current.failed.filter((f) => f !== line),
-              pendingName: name,
             }))
             // Re-run just this one line rather than the whole list.
             getCardByName(name, { exact: true })

@@ -10,8 +10,7 @@ import { identityAttr } from '../../components/CardFace.jsx'
 import {
   validateDeck, setQuantity, removeCard, setCommanders, deckSize, isLandCard,
 } from '../../lib/deck.js'
-import { getFormat, typeLineOf } from '../../lib/formats.js'
-import { manaValueOf } from '../../lib/analysis.js'
+import { getFormat } from '../../lib/formats.js'
 import { captureSnapshot } from '../../lib/snapshot.js'
 import {
   deckSections, setCategory, renameCategory, clearCategory, moveCategory,

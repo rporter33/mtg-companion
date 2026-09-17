@@ -118,6 +118,50 @@ await page.waitForTimeout(400)
 // The player on the draw draws for turn one; that is the whole difference.
 check('keeping on the draw gives eight', (await hand()) === 8, String(await hand()))
 
+console.log('\nWhile cards are still loading')
+{
+  // The library is built from cards that have loaded. Dealing before they all
+  // have would shuffle a deck missing whatever is still in flight — and a hand
+  // short of lands is the exact thing this tab exists to notice.
+  const slow = await browser.newPage({ viewport: { width: 430, height: 1300 } })
+  await slow.route('**/api.scryfall.com/**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))
+  let release
+  const held = new Promise((r) => { release = r })
+  await slow.route('**/api.scryfall.com/cards/collection', async (route) => {
+    await held
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: CARDS }) })
+  })
+  // A new page is a new context: nothing seeded above is in its storage.
+  await slow.goto(TARGET, { waitUntil: 'domcontentloaded' })
+  await slow.evaluate(() => localStorage.setItem('mtg-companion:v1', JSON.stringify({
+    version: 2,
+    decks: [{
+      id: 'd1', name: 'Hand Test', formatId: 'commander', commanders: ['cmdr'], signatureSpell: null,
+      main: [{ cardId: 'forest', quantity: 40 }, { cardId: 'elf', quantity: 59 }],
+      sideboard: [], categoryOrder: [],
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    }],
+    games: [], guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
+    prefs: { deckView: 'list' },
+  })))
+  await slow.reload({ waitUntil: 'domcontentloaded' })
+  await slow.waitForTimeout(300)
+  await slow.getByRole('button', { name: 'Decks', exact: true }).click()
+  await slow.waitForTimeout(300)
+  await slow.locator('.deck-card__open').first().click()
+  await slow.waitForTimeout(500)
+  await slow.getByRole('tab', { name: 'Playtest' }).click()
+  await slow.waitForTimeout(300)
+  const btn = slow.getByRole('button', { name: /Loading cards|Draw a hand/ })
+  check('drawing is blocked until every card has loaded', await btn.isDisabled(), await btn.innerText())
+  check('and says what it is waiting for', /Loading cards… 0\/99/.test(await btn.innerText()), await btn.innerText())
+  release()
+  await slow.waitForTimeout(900)
+  check('then unblocks', !(await btn.isDisabled()) && /Draw a hand/.test(await btn.innerText()), await btn.innerText())
+  await slow.close()
+}
+
 check('no console errors throughout', errors.length === 0, errors.join('; '))
 console.log(`\n${pass} passed, ${fail} failed`)
 await browser.close()

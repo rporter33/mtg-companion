@@ -16,6 +16,10 @@ const store = () => (backend ??= defaultBackend(KEY))
 
 export function useBackend(next) {
   backend = next ?? memoryBackend()
+  // A new backend is a new session: nothing carried in memory from the last
+  // one belongs to it, and neither does a save failure it never had.
+  memoryFallback = null
+  persistFailed = false
   return backend
 }
 
@@ -80,6 +84,7 @@ const EMPTY = {
 }
 
 let memoryFallback = null
+let persistFailed = false
 
 function read() {
   try {
@@ -97,17 +102,60 @@ function read() {
     }
   } catch {
     // Private mode, disabled storage, or corrupted JSON. Keep working in memory
-    // rather than refusing to start.
+    // rather than refusing to start — but first keep the broken text. The next
+    // save would otherwise write a fresh empty state straight over the top of
+    // whatever a truncated write or a bad extension left there, and that text
+    // is often mostly a person's decks.
+    preserveCorrupt()
     return memoryFallback ?? { ...EMPTY }
   }
 }
+
+const CORRUPT_KEY = `${KEY}:corrupt`
+
+function preserveCorrupt() {
+  try {
+    const raw = store().read()
+    if (raw && typeof localStorage !== 'undefined' && !localStorage.getItem(CORRUPT_KEY)) {
+      localStorage.setItem(CORRUPT_KEY, raw)
+    }
+  } catch { /* nowhere to keep it; nothing more can be done */ }
+}
+
+/** Unparseable state that was set aside rather than overwritten, if any. */
+export function corruptBackup() {
+  try { return localStorage.getItem(CORRUPT_KEY) } catch { return null }
+}
+
+export function discardCorruptBackup() {
+  try { localStorage.removeItem(CORRUPT_KEY) } catch { /* nothing to do */ }
+}
+
+const PERSIST_EVENT = 'mtg:persist-failed'
 
 function write(state) {
   // The in-memory copy is updated first and unconditionally, so a failed
   // persist costs durability across a reload rather than the current session.
   memoryFallback = state
-  return store().write(JSON.stringify(state))
+  const ok = store().write(JSON.stringify(state))
+
+  // Returning false into a caller that ignored it was the same as returning
+  // nothing: the screen showed the change and the reload lost it, with no
+  // moment in between where the app said so. Announce it instead.
+  if (!ok && !persistFailed && typeof window !== 'undefined') {
+    persistFailed = true
+    window.dispatchEvent(new CustomEvent(PERSIST_EVENT))
+  }
+  if (ok) persistFailed = false
+  return ok
 }
+
+/** Whether the most recent save reached storage. */
+export function lastSaveSucceeded() {
+  return !persistFailed
+}
+
+export const PERSIST_FAILED_EVENT = PERSIST_EVENT
 
 export function loadState() {
   return read()
