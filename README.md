@@ -59,6 +59,7 @@ npm run test:browser   # drives the real UI in a real browser, axe-core included
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
+npm run coach:measure  # scores the coach's card classifiers against real cards
 npm run build
 npm run preview
 ```
@@ -139,6 +140,27 @@ for it to fail.
 
 React is its own chunk, so shipping an app fix does not re-download the
 framework.
+
+**The deck coach's classifiers are the one place this app guesses.** Everything
+else it does is arithmetic — count the lands, compare against a number from a
+hypergeometric distribution. But whether a card *is* removal, ramp or card draw
+is three regexes over oracle text, written from memory and checked only against
+cards that happened to occur to whoever wrote them.
+
+That was worth measuring, and the measurement found eight defects. `Farseek`,
+`Cultivate` and `Nature's Lore` — among the most played ramp in Commander —
+counted as nothing, because the pattern demanded the exact words "a basic land".
+`Arcane Signet` counted as nothing, because it says "Add one mana of any color"
+and the pattern wanted a mana symbol. `Whenever you draw a card` counted as card
+draw, so a deck full of draw *payoffs* was told it had draw.
+
+`tests/coach-classifiers.test.js` pins all of it offline.
+`npm run coach:measure` scores the same functions against a few hundred real
+cards using Scryfall's community tags as ground truth — independent of these
+regexes, which is the point, since measuring oracle-text patterns against
+oracle-text patterns proves nothing. Those tags are volunteer-maintained and
+incomplete, so precision from that run is a lower bound and recall is the
+sturdier number.
 
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a
