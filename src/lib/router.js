@@ -9,7 +9,7 @@
  *
  *   #/guide
  *   #/cards?q=<search>
- *   #/decks | #/decks/new | #/decks/data | #/decks/<id> | #/decks/<id>/<tab>
+ *   #/decks | #/decks/new | #/decks/new/<step> | #/decks/data | #/decks/<id> | #/decks/<id>/<tab>
  *   #/play
  *
  * plus "?card=<id>" on any of them for the card sheet, which is an overlay
@@ -22,9 +22,11 @@ import { useMemo, useSyncExternalStore } from 'react'
 
 export const TABS = ['guide', 'cards', 'decks', 'play']
 export const DECK_TABS = ['list', 'add', 'coach', 'analysis', 'hand', 'history', 'io']
+/** The first-deck flow's steps, in order. The bare #/decks/new means "resume". */
+export const STEP_SLUGS = ['colours', 'play', 'commander', 'list']
 
 const EMPTY = Object.freeze({
-  tab: null, deckId: null, deckTab: null, data: false, starting: false, q: null, cardId: null,
+  tab: null, deckId: null, deckTab: null, data: false, starting: false, step: null, q: null, cardId: null,
 })
 
 /** "#/decks/abc/analysis?card=xyz" -> { tab, deckId, deckTab, data, q, cardId }. */
@@ -44,8 +46,10 @@ export function parseRoute(hash) {
   if (tab === 'cards') route.q = params.get('q') || null
   if (tab === 'decks' && second) {
     if (second === 'data') route.data = true
-    else if (second === 'new') route.starting = true
-    else {
+    else if (second === 'new') {
+      route.starting = true
+      route.step = STEP_SLUGS.includes(third) ? third : null
+    } else {
       route.deckId = second
       route.deckTab = DECK_TABS.includes(third) ? third : null
     }
@@ -59,8 +63,10 @@ export function buildHash(route) {
   const segments = [tab]
   if (tab === 'decks') {
     if (route.data) segments.push('data')
-    else if (route.starting) segments.push('new')
-    else if (route.deckId) {
+    else if (route.starting) {
+      segments.push('new')
+      if (route.step && STEP_SLUGS.includes(route.step)) segments.push(route.step)
+    } else if (route.deckId) {
       segments.push(encodeURIComponent(route.deckId))
       if (route.deckTab && route.deckTab !== 'list' && DECK_TABS.includes(route.deckTab)) segments.push(route.deckTab)
     }

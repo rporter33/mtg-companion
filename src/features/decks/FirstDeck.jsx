@@ -8,9 +8,10 @@ import {
 } from '../../lib/first-deck.js'
 import { searchCards, getCardsByNames, getCardByName } from '../../lib/scryfall.js'
 import { createDeck, addCard, setCommanders } from '../../lib/deck.js'
-import { saveDeck, getPrefs, setPref } from '../../lib/storage.js'
+import { saveDeck, getDeck, getPrefs, setPref } from '../../lib/storage.js'
 import { pinCards } from '../../lib/cache.js'
-import { navigate } from '../../lib/router.js'
+import { navigate, useRoute, STEP_SLUGS } from '../../lib/router.js'
+import useDeckCards from './useDeckCards.js'
 import { priceLabel } from '../../lib/prices.js'
 import CardImage from '../../components/CardImage.jsx'
 import ManaCost from '../../components/ManaCost.jsx'
@@ -34,19 +35,51 @@ const LIST = 99 // a Commander list, with the commander outside it
 const name = (key) => (key.length === 1 ? COLOR_PAGES[key].name : `${PAIRS[key]?.name} (${key.split('').map((c) => COLOR_PAGES[c].name).join(' and ')})`)
 
 export default function FirstDeck({ onOpenCard }) {
-  const [step, setStep] = useState(0)
+  // The step lives in the URL (#/decks/new/<step>), so a reload keeps it and
+  // the back button retraces the steps. The deck being built and the step
+  // reached are remembered in prefs, so coming back later resumes rather
+  // than starting a second deck; the deck itself stays the only copy of its
+  // cards. A remembered deck that has since been deleted is simply forgotten.
+  const route = useRoute()
+  const step = Math.max(0, STEP_SLUGS.indexOf(route.step))
+  const go = (i) => navigate({ step: STEP_SLUGS[i] })
+  const [restored] = useState(() => {
+    const saved = getPrefs().firstDeck
+    return saved?.deckId ? getDeck(saved.deckId) : null
+  })
+  // The bare address resumes: with a deck being built, it goes to the step
+  // reached; without one, to the colours. Navigating to the same hash is a
+  // no-op, so a fresh start does not loop.
+  useEffect(() => {
+    if (route.step) return
+    const saved = getPrefs().firstDeck
+    const at = restored && saved?.step && STEP_SLUGS.includes(saved.step) ? saved.step : STEP_SLUGS[0]
+    navigate({ step: at }, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.step])
+
   const [dial, setDial] = useState(() => colorsToDial(getPrefs().firstDeckColors ?? 'GW') ?? 0)
   const [picked, setPicked] = useState(() => getPrefs().firstDeckColors ?? null) // an enemy pair the dial cannot show
   const [answers, setAnswers] = useState(() => getPrefs().firstDeckStyle ?? {})
-  const [deck, setDeck] = useState(null)
+  const [deck, setDeck] = useState(restored)
   const [cards, setCards] = useState(() => new Map())
   const [cap, setCap] = useState(4)
+  // A restored deck's cards are fetched once; cards chosen in this visit are
+  // remembered as they arrive.
+  const restoredCards = useDeckCards(restored)
 
   const colors = picked && colorsToDial(picked) === null ? picked : dialToColors(dial)
   const chosen = describeColors(colors)
   useEffect(() => { setPref('firstDeckColors', colors) }, [colors])
+  useEffect(() => {
+    setPref('firstDeck', { deckId: deck?.id ?? null, step: STEP_SLUGS[step] })
+  }, [deck?.id, step])
+  // The list step needs a deck; a link to it without one goes to the commanders.
+  useEffect(() => {
+    if (step === 3 && !deck) navigate({ step: STEP_SLUGS[2] }, { replace: true })
+  }, [step, deck])
 
-  const lookup = (id) => cards.get(id)
+  const lookup = (id) => cards.get(id) ?? restoredCards.lookup(id)
   const remember = (list) => setCards((prev) => {
     const next = new Map(prev)
     for (const card of list) next.set(card.id, card)
@@ -65,13 +98,21 @@ export default function FirstDeck({ onOpenCard }) {
     if (suggestion) choosePair(suggestion)
   }
 
+  // Choosing a commander never makes a second copy of a deck already being
+  // built: the same commander again just continues, and a different one on
+  // a deck with no cards yet takes the commander's seat. Only a deck with
+  // cards in it is left alone, and a new one started beside it.
   const startWith = (card) => {
-    const fresh = createDeck({ name: `${card.name.split(',')[0]} deck`, formatId: 'commander' })
-    const next = setCommanders(fresh, [card.id])
     remember([card])
     pinCards([card.id])
-    commit(next)
-    setStep(3)
+    if (deck?.commanders?.[0] === card.id) { go(3); return }
+    const title = `${card.name.split(',')[0]} deck`
+    if (deck && deck.main.length === 0) {
+      commit(setCommanders({ ...deck, name: title }, [card.id]))
+    } else {
+      commit(setCommanders(createDeck({ name: title, formatId: 'commander' }), [card.id]))
+    }
+    go(3)
   }
 
   // Once a commander exists, its colour identity is the law for the starting
@@ -83,7 +124,7 @@ export default function FirstDeck({ onOpenCard }) {
   const identityKey = commander ? identityKeyOf(commander) : null
   const clash = Boolean(identityKey) && !fitsIdentity(colors, identityKey)
   const keepCommander = () => { if (identityKey !== 'C') choosePair(identityKey) }
-  const startOver = () => { setDeck(null); setStep(2) }
+  const startOver = () => { setDeck(null); go(2) }
 
   return (
     <div className="stack first-deck">
@@ -101,7 +142,7 @@ export default function FirstDeck({ onOpenCard }) {
           <li key={label} className={`steps__item ${i === step ? 'steps__item--current' : ''} ${i < step ? 'steps__item--done' : ''}`} aria-current={i === step ? 'step' : undefined}>
             <button
               className="steps__button"
-              onClick={() => setStep(i)}
+              onClick={() => go(i)}
               disabled={i === 3 && !deck}
               title={i === 3 && !deck ? 'Choose a commander first' : undefined}
             >
@@ -127,14 +168,14 @@ export default function FirstDeck({ onOpenCard }) {
         </div>
       )}
       {step === 0 && (
-        <ColourStep dial={dial} colors={colors} chosen={chosen} onDial={chooseDial} onPair={choosePair} onOpenCard={onOpenCard} onNext={() => setStep(1)} />
+        <ColourStep dial={dial} colors={colors} chosen={chosen} onDial={chooseDial} onPair={choosePair} onOpenCard={onOpenCard} onNext={() => go(1)} />
       )}
       {step === 1 && (
         <StyleStep answers={answers} colors={colors} onAnswer={(axis, id) => {
           const next = { ...answers, [axis]: id }
           setAnswers(next)
           setPref('firstDeckStyle', next)
-        }} onSuggest={applySuggestion} onNext={() => setStep(2)} />
+        }} onSuggest={applySuggestion} onNext={() => go(2)} />
       )}
       {step === 2 && (
         <CommanderStep colors={colors} onOpenCard={onOpenCard} onStart={startWith} remember={remember} />
@@ -531,7 +572,14 @@ function StaplesStep({ deck, colors, lookup, cap, onCap, remember, onChange, onO
         >
           {filling ? 'Filling…' : 'Fill the rest with staples'}
         </button>
-        <button className="btn btn--primary" onClick={() => navigate({ tab: 'decks', deckId: deck.id, deckTab: null, starting: false })}>
+        <button
+          className="btn btn--primary"
+          onClick={() => {
+            // A finished list is done with the flow; a short one can be come back to.
+            if (total >= LIST) setPref('firstDeck', null)
+            navigate({ tab: 'decks', deckId: deck.id, deckTab: null, starting: false, step: null })
+          }}
+        >
           Open the deck{total < 99 ? ` (${99 - total} short)` : ''}
         </button>
       </div>

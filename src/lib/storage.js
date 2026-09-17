@@ -355,6 +355,10 @@ export function deleteDeck(id) {
       const { [id]: _gone, ...deckOpen } = state.prefs.deckOpen
       next.prefs = { ...state.prefs, deckOpen }
     }
+    // So does the first-deck flow's memory of which deck it was building.
+    if (state.prefs?.firstDeck?.deckId === id) {
+      next.prefs = { ...(next.prefs ?? state.prefs), firstDeck: null }
+    }
     return next
   })
 }

@@ -67,6 +67,10 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
   const refresh = () => setDecks(listDecks())
   const backup = backupStatus(loadState())
 
+  // The first-deck flow saves a deck of its own while this screen is still
+  // mounted underneath it, so the list is re-read on the way back out.
+  useEffect(() => { if (!route?.starting) refresh() }, [route?.starting])
+
   /**
    * A commander or example deck handed over from the Learn tab. Creating the
    * deck here rather than there keeps deck creation in one place, so the format
@@ -126,6 +130,7 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
           <BackupNudge backup={backup} /> Tap to download one.
         </button>
       )}
+      <ContinueBuilding decks={decks} />
 
       <LegalityChanges
         report={report}
@@ -285,5 +290,27 @@ function NewDeckForm({ onCreate, onCancel }) {
         <button className="btn btn--ghost" type="button" onClick={onCancel}>Cancel</button>
       </div>
     </form>
+  )
+}
+
+
+/**
+ * A first deck left unfinished is offered back, with where it stands. The
+ * flow itself remembers the deck and the step; this only reads that memory,
+ * and says nothing once the deck is deleted or the list is complete.
+ */
+function ContinueBuilding({ decks }) {
+  const saved = getPrefs().firstDeck
+  const deck = saved?.deckId ? decks.find((d) => d.id === saved.deckId) : null
+  if (!deck) return null
+  const count = deck.main.reduce((n, e) => n + e.quantity, 0)
+  if (count >= 99) return null
+  return (
+    <button
+      className="banner banner--info banner--button"
+      onClick={() => navigate({ tab: 'decks', starting: true, step: saved.step ?? null })}
+    >
+      <strong>Continue building {deck.name}</strong> — {count} of 99 cards so far. Pick up where you left off.
+    </button>
   )
 }

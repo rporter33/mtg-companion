@@ -80,7 +80,7 @@ console.log('\nGetting there')
 check('an empty Decks screen offers to start a first deck', (await page.getByRole('button', { name: 'Start your first deck' }).count()) === 1)
 await page.getByRole('button', { name: 'Start your first deck' }).click()
 await page.waitForTimeout(500)
-check('it has an address of its own', (await page.evaluate(() => location.hash)) === '#/decks/new', await page.evaluate(() => location.hash))
+check('it has an address of its own', (await page.evaluate(() => location.hash)) === '#/decks/new/colours', await page.evaluate(() => location.hash))
 
 console.log('\nThe dial')
 const dial = page.getByLabel('Colour dial')
@@ -114,13 +114,17 @@ check('the answers lean somewhere and say so', /lean Dimir/.test(await body()), 
 await page.getByRole('button', { name: 'Move the dial there' }).click()
 await page.waitForTimeout(150)
 check('the dial moves there', (await page.getByRole('button', { name: /Next: commanders in Dimir/ }).count()) === 1)
+check('each step has an address', (await page.evaluate(() => location.hash)) === '#/decks/new/play', await page.evaluate(() => location.hash))
 await page.reload({ waitUntil: 'networkidle' })
 await page.waitForTimeout(500)
-check('colours and answers are remembered across a reload',
-  /Blue and Black — Dimir/.test(await page.getByLabel('Colour dial').getAttribute('aria-valuetext')))
+check('a reload lands on the same step, with the answers remembered',
+  (await page.getByRole('button', { name: /Patient/ }).getAttribute('aria-pressed')) === 'true', await page.evaluate(() => location.hash))
+await page.goBack()
+await page.waitForTimeout(300)
+check('the back button retraces to the colours, remembered too',
+  /Blue and Black — Dimir/.test(await page.getByLabel('Colour dial').getAttribute('aria-valuetext') ?? ''), await page.evaluate(() => location.hash))
 await page.getByRole('button', { name: /Next: how you play/ }).click()
 await page.waitForTimeout(100)
-check('the answers too', (await page.getByRole('button', { name: /Patient/ }).getAttribute('aria-pressed')) === 'true')
 await page.getByRole('button', { name: /Next: commanders/ }).click()
 await page.waitForTimeout(800)
 
@@ -134,6 +138,27 @@ await page.waitForTimeout(1200)
 
 console.log('\nThe starting list')
 check('a deck exists now, named after the commander', /Phenax deck/.test(await body()))
+
+console.log('\nComing back later')
+// Decks are their own documents: one key per deck.
+const deckCount = () => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('mtg-companion:v1:deck:')).length)
+check('one deck exists', (await deckCount()) === 1, String(await deckCount()))
+await page.goto(`${TARGET}#/decks`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(500)
+const nudge = page.getByRole('button', { name: /Continue building Phenax deck/ })
+check('the Decks screen offers the unfinished deck back', (await nudge.count()) === 1, await body().then((t) => t.slice(0, 200)))
+await nudge.click()
+await page.waitForTimeout(800)
+check('and it resumes on the starting list, same deck',
+  (await page.evaluate(() => location.hash)) === '#/decks/new/list' && /Phenax deck/.test(await body()), await page.evaluate(() => location.hash))
+await page.goto(`${TARGET}#/decks/new`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(600)
+check('the bare address resumes too', (await page.evaluate(() => location.hash)) === '#/decks/new/list', await page.evaluate(() => location.hash))
+await page.locator('.steps__button', { hasText: 'Commander' }).click()
+await page.waitForTimeout(800)
+await page.getByRole('button', { name: 'Start with Phenax' }).click()
+await page.waitForTimeout(600)
+check('choosing the same commander again continues the same deck', (await deckCount()) === 1, String(await deckCount()))
 
 console.log('\nMoving the dial after a commander exists')
 await page.locator('.steps__button', { hasText: 'Colours' }).click()

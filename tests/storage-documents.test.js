@@ -75,6 +75,14 @@ describe('the layout', () => {
     expect(getPrefs().deckOpen).toEqual({ d2: 'Instants' })
   })
 
+  it('deleting the deck the first-deck flow was building forgets that too', () => {
+    useBackend(memoryBackend())
+    saveDeck(deck('d1'))
+    setPref('firstDeck', { deckId: 'd1', step: 'list' })
+    deleteDeck('d1')
+    expect(getPrefs().firstDeck).toBeNull()
+  })
+
   it('lists decks in the order they were made', () => {
     useBackend(memoryBackend())
     saveDeck(deck('d3'))
