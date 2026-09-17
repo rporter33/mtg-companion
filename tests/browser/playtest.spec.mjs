@@ -25,7 +25,7 @@ const c = (id, name, type_line) => ({
 })
 const CARDS = [
   c('cmdr', 'Test Commander', 'Legendary Creature — Elf'),
-  c('forest', 'Forest', 'Basic Land — Forest'),
+  { ...c('forest', 'Forest', 'Basic Land — Forest'), mana_cost: '', cmc: 0, produced_mana: ['G'] },
   c('elf', 'Llanowar Elves', 'Creature — Elf Druid'),
 ]
 
@@ -143,6 +143,58 @@ check('switching to three or more reshuffles and says so',
 await page.getByRole('button', { name: 'Keep', exact: true }).click()
 await page.waitForTimeout(400)
 check('on the play in a pod, the first player still draws: eight', (await hand()) === 8, String(await hand()))
+
+console.log('\nWhat the hand says')
+const reading = page.getByRole('region', { name: 'What this hand says' })
+check('a drawn hand is read back as observations',
+  (await reading.count()) === 1 && /\d+ lands?, making green|No lands|All lands/.test(await reading.innerText()), await reading.innerText())
+check('and this deck, with lands enough for its curve, is offered no change',
+  /Nothing to suggest/.test(await page.getByRole('region', { name: 'Try a change' }).innerText()))
+
+console.log('\nTrying a change on a land-light list')
+{
+  // 28 lands and 71 two-drops: short of the sources this curve wants, so the
+  // proposal is a Forest for an elf, judged by the same arithmetic as the intro.
+  const thin = await browser.newPage({ viewport: { width: 430, height: 1300 } })
+  await thin.route('**/api.scryfall.com/**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))
+  await thin.route('**/api.scryfall.com/cards/collection', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ data: CARDS }) }))
+  await thin.goto(TARGET, { waitUntil: 'networkidle' })
+  await thin.evaluate(() => localStorage.setItem('mtg-companion:v1', JSON.stringify({
+    version: 3, collection: {},
+    decks: [{
+      id: 'd2', name: 'Thin Test', formatId: 'commander', commanders: ['cmdr'], signatureSpell: null, categoryOrder: [],
+      main: [{ cardId: 'forest', quantity: 28 }, { cardId: 'elf', quantity: 71 }],
+      sideboard: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    }],
+    games: [], guide: { completedLessons: [], tutorialState: null, seenGlossary: [] }, prefs: { deckView: 'list' },
+  })))
+  await thin.reload({ waitUntil: 'networkidle' })
+  await thin.goto(`${TARGET}#/decks/d2/hand`, { waitUntil: 'networkidle' })
+  await thin.getByRole('button', { name: 'Draw a hand' }).waitFor({ timeout: 15000 })
+  await thin.waitForTimeout(300)
+  const panel = thin.getByRole('region', { name: 'Try a change' })
+  const text = await panel.innerText()
+  check('one change is proposed, a basic for the costliest spell', /Try a change: \+1 Forest, \u22121 Llanowar Elves/.test(text), text.split('\n')[0])
+  const now = Number(text.match(/Two lands in the opening seven\s*\n?\s*(\d+)%\s*\n?\s*(\d+)%/)?.[1])
+  const after = Number(text.match(/Two lands in the opening seven\s*\n?\s*(\d+)%\s*\n?\s*(\d+)%/)?.[2])
+  check('with the odds before and after, and the assumptions written down',
+    after >= now && /only lands count toward these odds/.test(text) && /99 cards the commander is not among/.test(text), `${now}% -> ${after}%`)
+  await panel.getByRole('button', { name: 'Make this change' }).click()
+  await thin.waitForTimeout(600)
+  const counts = await thin.evaluate(() => {
+    const deck = JSON.parse(localStorage.getItem('mtg-companion:v1:deck:d2'))
+    return Object.fromEntries(deck.main.map((e) => [e.cardId, e.quantity]))
+  })
+  check('making it changes the list one for one', counts.forest === 29 && counts.elf === 70, JSON.stringify(counts))
+  await thin.getByRole('tab', { name: 'History' }).click()
+  await thin.waitForTimeout(500)
+  check('and the list before it is kept in History, one restore away',
+    /Before: \+1 Forest, \u22121 Llanowar Elves/.test(await thin.locator('.app__main').innerText()),
+    (await thin.locator('.app__main').innerText()).match(/Before[^\n]*/)?.[0])
+  await thin.close()
+}
 
 console.log('\nWhile cards are still loading')
 {

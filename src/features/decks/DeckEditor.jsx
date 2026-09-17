@@ -268,7 +268,7 @@ export default function DeckEditor({
         <DeckAnalysis deck={deck} lookup={lookup} cardCount={cards.size} />
       )}
       {tab === 'hand' && (
-        <DeckPlaytest deck={deck} lookup={lookup} cards={cards} onOpenCard={onOpenCard} />
+        <DeckPlaytest deck={deck} lookup={lookup} cards={cards} onOpenCard={onOpenCard} onChange={commit} />
       )}
 
       {tab === 'history' && (

@@ -77,6 +77,13 @@ per section: tap Lands and only the lands show, tap again and the deck is
 back, remembered per deck. Each button carries a dot for a legality problem
 and a count of cards still to buy, so a folded section never hides either.
 
+**Practice** — Draw a real hand from a deck and the app reads it back as
+observations, never verdicts: which colours the lands make, which spells have
+no source, what can be cast by turn three from these lands alone. Beside it,
+one change worth trying, from the list rather than the hand, with the odds
+before and after under assumptions written next to the numbers; making it
+keeps the list as it was in History, one restore away.
+
 **Play** — A life counter for games with physical cards. One to six players,
 per-format starting life, commander damage tracked per source, poison, energy,
 experience and rad counters, a turn and phase tracker, dice, and full undo.

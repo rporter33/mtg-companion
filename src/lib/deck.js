@@ -27,13 +27,13 @@ export function createDeck({ name = 'Untitled deck', formatId = 'commander' } = 
 const zoneOf = (deck, zone) => (zone === 'sideboard' ? deck.sideboard : deck.main)
 
 export function addCard(deck, cardId, quantity = 1, zone = 'main') {
-  const list = [...zoneOf(deck, zone)]
-  const existing = list.find((e) => e.cardId === cardId)
-  if (existing) {
-    existing.quantity += quantity
-  } else {
-    list.push({ cardId, quantity })
-  }
+  const current = zoneOf(deck, zone)
+  // A new entry object, never `existing.quantity += n`: the entries are
+  // shared with the deck passed in, and a version or a "before" held by
+  // reference would otherwise change under the caller's feet.
+  const list = current.some((e) => e.cardId === cardId)
+    ? current.map((e) => (e.cardId === cardId ? { ...e, quantity: e.quantity + quantity } : e))
+    : [...current, { cardId, quantity }]
   const pruned = list.filter((e) => e.quantity > 0)
   return { ...deck, [zone]: pruned, updatedAt: new Date().toISOString() }
 }

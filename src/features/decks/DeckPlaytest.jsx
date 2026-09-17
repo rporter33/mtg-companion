@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import CardImage from '../../components/CardImage.jsx'
 import {
   newGame, mulligan, keep, draw, nextTurn, bottomCount, describeHand, OPENING_HAND,
@@ -6,6 +6,9 @@ import {
 import { isLandCard } from '../../lib/deck.js'
 import { getFormat } from '../../lib/formats.js'
 import { openingHandOdds, percent } from '../../lib/probability.js'
+import { diagnoseHand, proposeChange, applyChange, describeChange } from '../../lib/practice.js'
+import { captureVersion } from '../../lib/versions.js'
+import { getCardsByNames } from '../../lib/scryfall.js'
 
 /**
  * Draw a real hand from this deck.
@@ -14,7 +17,7 @@ import { openingHandOdds, percent } from '../../lib/probability.js'
  * thousand games. This shows one. Both are worth having: a player deciding
  * whether to cut a land wants the number, and then wants to see seven cards.
  */
-export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
+export default function DeckPlaytest({ deck, lookup, cards, onOpenCard, onChange }) {
   const [onPlay, setOnPlay] = useState(true)
   // Commander is usually a pod of three or more, where nobody skips the
   // first draw; every other format defaults to the two-player rule.
@@ -81,12 +84,14 @@ export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
             {ready ? 'Draw a hand' : `Loading cards… ${loaded}/${size}`}
           </button>
         </div>
+        {ready && onChange && <TryAChange deck={deck} lookup={lookup} onChange={onChange} />}
       </div>
     )
   }
 
   const needed = bottomCount(game)
   const shape = describeHand(game.hand, isLandCard)
+  const reading = diagnoseHand(game.hand)
   const toggle = (i) => {
     const next = new Set(chosen)
     if (next.has(i)) next.delete(i)
@@ -185,7 +190,76 @@ export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
         </p>
       )}
 
+      {/*
+        What this hand says, as observations about these cards and nothing
+        more: which colours the lands make, which spells have no source,
+        what can be cast by turn three from these lands alone. Not a keep
+        or mulligan verdict — that decision is the thing being practised.
+      */}
+      <section className="panel stack stack--snug hand-reading" aria-label="What this hand says">
+        <h3 className="m0">What this hand says</h3>
+        <ul className="hand-reading__notes">
+          {reading.notes.map((note, i) => <li key={i}>{note}</li>)}
+        </ul>
+      </section>
 
+      {onChange && <TryAChange deck={deck} lookup={lookup} onChange={onChange} />}
     </div>
+  )
+}
+
+/**
+ * One change to the deck, with the odds before and after. The change comes
+ * from the list, not the hand: a hand is seven random cards and the list is
+ * what keeps dealing them. Making it goes through the editor's commit path
+ * with the list before it kept as a version, so it is one restore away.
+ */
+function TryAChange({ deck, lookup, onChange }) {
+  const [busy, setBusy] = useState(false)
+  const change = useMemo(() => proposeChange(deck, lookup), [deck, lookup])
+  if (!change) {
+    return (
+      <section className="panel stack stack--snug" aria-label="Try a change">
+        <h3 className="m0">Try a change</h3>
+        <p className="faint tiny m0">Nothing to suggest: the land count fits this curve and every colour has the sources it asks for.</p>
+      </section>
+    )
+  }
+  const make = async () => {
+    setBusy(true)
+    try {
+      let basic = null
+      if (!deck.main.some((e) => lookup(e.cardId)?.name === change.addBasic)) {
+        const found = await getCardsByNames([change.addBasic])
+        basic = [...found.values()][0] ?? null
+        if (!basic) return
+      }
+      const kept = captureVersion(deck, { label: `Before: ${describeChange(change)}`, auto: true })
+      onChange(applyChange(kept, change, lookup, basic))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const pct = (p) => percent(p, 0)
+  return (
+    <section className="panel stack stack--snug" aria-label="Try a change">
+      <h3 className="m0">Try a change: {describeChange(change)}</h3>
+      <p className="tiny m0">{change.reason}</p>
+      <table className="odds">
+        <thead><tr><th>Lands only</th><th>Now</th><th>After</th></tr></thead>
+        <tbody>
+          <tr><td>Two lands in the opening seven</td><td className="mono">{pct(change.before.twoLands)}</td><td className="mono">{pct(change.after.twoLands)}</td></tr>
+          <tr><td>Every land drop through turn {change.before.targetTurn}, on the play</td><td className="mono">{pct(change.before.onCurve)}</td><td className="mono">{pct(change.after.onCurve)}</td></tr>
+          <tr><td>Opening hand with no lands</td><td className="mono">{percent(change.before.noLands, 1)}</td><td className="mono">{percent(change.after.noLands, 1)}</td></tr>
+        </tbody>
+      </table>
+      <p className="faint tiny m0">{change.assumptions}</p>
+      <div className="row row--wrap">
+        <button className="btn btn--sm" onClick={make} disabled={busy}>
+          {busy ? 'Making it…' : 'Make this change'}
+        </button>
+        <span className="faint tiny">The list as it is now is kept in History, one restore away.</span>
+      </div>
+    </section>
   )
 }

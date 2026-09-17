@@ -559,3 +559,6 @@ select.chip { width: auto; max-width: 8rem; }
   0%, 70% { box-shadow: 0 0 0 2px var(--accent); }
   100% { box-shadow: 0 0 0 2px transparent; }
 }
+
+/* What a hand says: short observations, one a line. */
+.hand-reading__notes { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 4px; font-size: 0.88rem; }
