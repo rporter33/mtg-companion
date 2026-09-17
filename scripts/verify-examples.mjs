@@ -101,36 +101,82 @@ async function get(path) {
 }
 
 /**
- * What did they probably mean?
+ * Every card in a set, by name.
  *
- * Not the fuzzy-name endpoint: asked for six real misses it returned five
- * unrelated cards, because it always answers with its nearest match however far
- * away that is, and never says "nothing". Search does say that, which is the
- * useful answer. include_extras covers tokens, because an export that swept up
- * a token needs that line deleted rather than corrected, and the two have to be
- * told apart before either is done.
+ * Fetched once per set and reused, because the question "what is this card
+ * really called" is best answered against the actual contents of the set the
+ * deck came from rather than by guessing at a search engine's ranking. A
+ * Commander precon set is a few hundred cards — small enough to hold and
+ * compare locally, where the comparison is one this repo can reason about.
  */
-async function suggest(name, hintSet) {
-  const look = async (query) => {
-    const payload = await get(`/cards/search?q=${encodeURIComponent(query)}&include_extras=true&unique=cards`)
+const setCache = new Map()
+
+async function cardsInSet(code) {
+  if (setCache.has(code)) return setCache.get(code)
+  const found = []
+  let path = `/cards/search?q=${encodeURIComponent(`set:${code}`)}&include_extras=true&unique=cards`
+  for (let page = 0; page < 6 && path; page++) {
+    const payload = await get(path)
     await sleep(120)
-    return (payload?.data ?? []).slice(0, 6).map((card) => ({
-      name: card.name,
-      set: card.set,
-      token: card.layout === 'token' || /\bToken\b/.test(card.type_line ?? ''),
-    }))
+    if (!payload?.data) break
+    for (const card of payload.data) {
+      found.push({
+        name: card.name,
+        token: card.layout === 'token' || /\bToken\b/.test(card.type_line ?? ''),
+      })
+    }
+    path = payload.has_more && payload.next_page
+      ? payload.next_page.replace(API, '').replace('https://api.scryfall.com', '')
+      : null
   }
+  setCache.set(code, found)
+  return found
+}
 
-  // Every word, anywhere in a name; then the deck's own set, since a precon's
-  // unfamiliar names are nearly always from it; then the single most
-  // distinctive word, which is what survives a subtitle or a dropped article.
-  const word = name.split(/[\s,]+/).filter((w) => w.length > 3)
-    .sort((a, b) => b.length - a.length)[0] ?? name
+const normalise = (s2) => s2.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean)
 
-  let hits = await look(name)
-  if (!hits.length && hintSet) hits = await look(`${word} set:${hintSet}`)
-  if (!hits.length) hits = await look(word)
-  return hits
+/** Ordinary edit distance, iterative so a long name cannot blow the stack. */
+function distance(a, b) {
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= a.length; i++) {
+    let corner = prev[0]
+    prev[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const next = Math.min(prev[j] + 1, prev[j - 1] + 1, corner + (a[i - 1] === b[j - 1] ? 0 : 1))
+      corner = prev[j]
+      prev[j] = next
+    }
+  }
+  return prev[b.length]
+}
+
+/**
+ * How close are two card names?
+ *
+ * Shared words dominate, because a card that gained a subtitle keeps every word
+ * it had. Edit distance only breaks ties, so "Loki's Double" cannot beat
+ * "Lady Loki's Manifestation" on letter count alone when one shares two words
+ * and the other shares one.
+ */
+function similarity(wanted, candidate) {
+  const a = normalise(wanted)
+  const b = normalise(candidate)
+  const shared = a.filter((word) => b.includes(word)).length
+  const overlap = shared / Math.max(a.length, 1)
+  const letters = 1 - distance(wanted.toLowerCase(), candidate.toLowerCase())
+    / Math.max(wanted.length, candidate.length, 1)
+  return overlap * 3 + letters
+}
+
+/** The nearest real names in the set this deck came from. */
+async function suggest(name, hintSet) {
+  if (!hintSet) return []
+  const pool = await cardsInSet(hintSet)
+  return pool
+    .map((card) => ({ ...card, score: similarity(name, card.name) }))
+    .sort((x, y) => y.score - x.score)
+    .slice(0, 3)
+    .filter((card) => card.score > 0.6)
 }
 
 const cards = new Map()
@@ -163,7 +209,7 @@ if (missing.length) {
     ? '1 name Scryfall does not know:'
     : `${missing.length} names Scryfall does not know:`))
   console.log(c.dim('  Scryfall matches names exactly here, so a subtitle or a stray word is'))
-  console.log(c.dim('  enough to miss. Candidates below are searched, tokens included.\n'))
+  console.log(c.dim("  enough to miss. Candidates are the closest real names in that deck's own set.\n"))
   for (const name of missing) {
     const owners = EXAMPLE_DECKS.filter((deck) => namesIn(deck).includes(name))
     // A precon's odd names come from its own set, and the commander resolved,
@@ -171,13 +217,14 @@ if (missing.length) {
     const hint = owners.map((deck) => cards.get(deck.commanders[0])?.set).find(Boolean)
     console.log(`  ${c.head(name)} ${c.dim(`(in ${owners.map((d) => d.id).join(', ')})`)}`)
     const hits = await suggest(name, hint)
+    if (!hint) { console.log(`    ${c.dim('no set to search — its commander did not resolve either')}`); continue }
     if (!hits.length) {
-      console.log(`    ${c.dim('nothing in Scryfall matches this, tokens included')}`)
+      console.log(`    ${c.dim(`nothing in set ${hint} is close, tokens included`)}`)
       continue
     }
     for (const hit of hits) {
       const tag = hit.token ? c.warn('   [token — delete the line, do not rename it]') : ''
-      console.log(`    ${hit.name} ${c.dim(`(${hit.set})`)}${tag}`)
+      console.log(`    ${hit.name}${tag}`)
     }
   }
   console.log()
