@@ -47,7 +47,18 @@ export function parseDecklist(text) {
   // and only on one platform.
   for (const raw of String(text ?? '').replace(/^﻿/, '').split('\n')) {
     const line = raw.trim()
-    if (!line || line.startsWith('//') || line.startsWith('#')) continue
+    if (!line) {
+      // A commander section holds one or two cards and is followed by a blank
+      // line. Plenty of real exports then list the rest of the deck with no
+      // "Deck" header at all, and without this the whole deck lands in the
+      // command zone. Only the commander section ends this way: a blank line
+      // between categories inside the maindeck must stay meaningless.
+      if (section === 'commander' && out.some((entry) => entry.section === 'commander')) {
+        section = 'main'
+      }
+      continue
+    }
+    if (line.startsWith('//') || line.startsWith('#')) continue
 
     const header = line.toLowerCase().replace(/[:\s]+$/, '')
     if (['sideboard', 'sb'].includes(header)) { section = 'sideboard'; continue }

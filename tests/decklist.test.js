@@ -67,6 +67,39 @@ describe('parseDecklist', () => {
   })
 })
 
+// Found by a real seven-deck export: the commander block is followed by a blank
+// line and then the rest of the deck, with no "Deck" header anywhere. Without a
+// rule for that, all 92 remaining cards land in the command zone.
+describe('parseDecklist, an unheaded maindeck', () => {
+  it('ends the commander section at the blank line that follows it', () => {
+    const lines = parseDecklist([
+      'Commander', '1x Jace, Multiverse Architect', '',
+      '1x Sol Ring', '1x Command Tower',
+    ].join('\n'))
+    expect(lines.map((l) => l.section)).toEqual(['commander', 'main', 'main'])
+  })
+
+  it('keeps partners together, since no blank line separates them', () => {
+    const lines = parseDecklist(['Commander', '1 Thrasios', '1 Tymna', '', '1 Sol Ring'].join('\n'))
+    expect(lines.filter((l) => l.section === 'commander')).toHaveLength(2)
+  })
+
+  it('still honours an explicit Deck header after the blank line', () => {
+    const lines = parseDecklist(['Commander', '1 Atraxa', '', 'Deck', '1 Sol Ring'].join('\n'))
+    expect(lines.map((l) => l.section)).toEqual(['commander', 'main'])
+  })
+
+  it('does not treat a blank line inside the maindeck as anything', () => {
+    const lines = parseDecklist(['Deck', '1 Sol Ring', '', '1 Command Tower'].join('\n'))
+    expect(lines.map((l) => l.section)).toEqual(['main', 'main'])
+  })
+
+  it('ignores a blank line before the commander is named', () => {
+    const lines = parseDecklist(['Commander', '', '1 Atraxa', '', '1 Sol Ring'].join('\n'))
+    expect(lines.map((l) => l.section)).toEqual(['commander', 'main'])
+  })
+})
+
 // Some pages list a singleton deck as bare names with no quantity column. That
 // used to parse to nothing at all, which is a worse answer than a careful guess.
 describe('parseDecklist, bare name lists', () => {

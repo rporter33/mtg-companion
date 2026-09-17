@@ -119,6 +119,30 @@ export default function Commanders({ onOpenCard, onBuild }) {
           Import&nbsp;/&nbsp;export tab and use &ldquo;Copy as example&rdquo;.
         </p>
       )}
+
+      {/*
+        The examples above only appear when a shipped deck happens to share a
+        commander with the set being browsed, which for most sets is none of
+        them. Without this list the decks exist and cannot be reached.
+      */}
+      {EXAMPLE_DECKS.length > 0 && (
+        <div className="stack" style={{ gap: 'var(--space-2)' }}>
+          <div className="section-title"><h3>Example decks</h3></div>
+          <p className="muted tiny" style={{ marginTop: -4 }}>
+            Complete lists, exactly as they were built. Open one to read every card, see what
+            the deck is trying to do, and change anything you disagree with — nothing here is
+            precious.
+          </p>
+          <div className="row row--wrap">
+            {EXAMPLE_DECKS.map((example) => (
+              <button key={example.id} className="chip" onClick={() => onBuild?.(example)}>
+                {example.name}
+                <span className="faint">&nbsp;({exampleSize(example)})</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   )
 }

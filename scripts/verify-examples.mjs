@@ -1,0 +1,145 @@
+#!/usr/bin/env node
+/**
+ * Checks every card name in every shipped example against Scryfall.
+ *
+ *   npm run examples:verify
+ *
+ * The examples resolve by name at runtime, so a name Scryfall does not know is
+ * a card that silently never appears — the deck loads 99 cards and says nothing
+ * about the hundredth. Unit tests cannot catch that: the names are only wrong
+ * relative to a database that is not in this repo.
+ *
+ * It also reports the legality of each deck in its own format, because a name
+ * can be real and still not belong (wrong colour identity, banned, not legal in
+ * Commander at all). Read-only, no API key, rate limited to Scryfall's
+ * requested pace.
+ */
+
+import { EXAMPLE_DECKS, exampleSize } from '../src/data/example-decks.js'
+
+// Overridable so the reporting half can be exercised against a stub; there is
+// no other way to see this script's output without a perfect set of examples.
+const API = process.env.SCRYFALL_API || 'https://api.scryfall.com'
+const UA = 'mtg-companion-example-verifier/1.0 (+https://github.com/rporter33/mtg-companion)'
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+const useColor = process.env.FORCE_COLOR
+  ? process.env.FORCE_COLOR !== '0'
+  : !process.env.NO_COLOR && process.stdout.isTTY && process.env.TERM !== 'dumb'
+const paint = (code) => (s) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s)
+const c = { ok: paint(32), bad: paint(31), warn: paint(33), dim: paint(2), head: paint(1) }
+
+if (!EXAMPLE_DECKS.length) {
+  console.log('No examples are shipped yet — nothing to verify.')
+  process.exit(0)
+}
+
+// One lookup covers every deck: the same staples appear in all of them, and
+// Scryfall should not be asked for Sol Ring seven times.
+const namesIn = (deck) => [
+  ...deck.commanders,
+  ...(deck.signatureSpell ? [deck.signatureSpell] : []),
+  ...deck.main.map((card) => card.name),
+  ...deck.sideboard.map((card) => card.name),
+]
+
+const wanted = new Set(EXAMPLE_DECKS.flatMap(namesIn))
+
+const names = [...wanted]
+console.log(`${c.head('Verifying')} ${names.length} distinct names across ${EXAMPLE_DECKS.length} decks\n`)
+
+const cards = new Map()
+const missing = []
+
+for (let i = 0; i < names.length; i += 75) {
+  const chunk = names.slice(i, i + 75)
+  let response
+  try {
+    response = await fetch(`${API}/cards/collection`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': UA },
+      body: JSON.stringify({ identifiers: chunk.map((name) => ({ name })) }),
+    })
+  } catch (error) {
+    console.error(`${c.bad('✗')} Could not reach Scryfall: ${error.message}`)
+    process.exit(2)
+  }
+  if (!response.ok) {
+    console.error(`${c.bad('✗')} Scryfall returned ${response.status}.`)
+    process.exit(2)
+  }
+
+  const payload = await response.json()
+  for (const card of payload.data ?? []) {
+    const match = chunk.find((name) => name.toLowerCase() === card.name.toLowerCase())
+      ?? chunk.find((name) => card.name.toLowerCase().startsWith(name.toLowerCase()))
+    if (match) cards.set(match, card)
+  }
+  for (const entry of payload.not_found ?? []) missing.push(entry.name)
+
+  // Only on a terminal: a \r into a log file or a pasted transcript leaves the
+  // counter fused to the next line, and this output exists to be pasted back.
+  if (process.stdout.isTTY) {
+    process.stdout.write(`  ${c.dim(`${Math.min(i + 75, names.length)}/${names.length}`)}\r`)
+  }
+  await sleep(120)
+}
+if (process.stdout.isTTY) process.stdout.write(`${' '.repeat(40)}\r`)
+
+let problems = 0
+
+if (missing.length) {
+  problems += missing.length
+  console.log(c.bad(missing.length === 1
+    ? '1 name Scryfall does not know:'
+    : `${missing.length} names Scryfall does not know:`))
+  for (const name of missing) {
+    const owners = EXAMPLE_DECKS.filter((deck) => namesIn(deck).includes(name)).map((deck) => deck.id)
+    console.log(`  ${name} ${c.dim(`(in ${owners.join(', ')})`)}`)
+  }
+  console.log()
+}
+
+for (const deck of EXAMPLE_DECKS) {
+  const size = exampleSize(deck)
+  const entries = namesIn(deck)
+  const unresolved = entries.filter((name) => !cards.has(name))
+  const wrongSize = deck.formatId === 'commander' && size !== 100
+
+  const illegal = []
+  for (const { name } of deck.main) {
+    const legality = cards.get(name)?.legalities?.[deck.formatId]
+    if (legality && legality !== 'legal' && legality !== 'restricted') illegal.push(`${name} (${legality})`)
+  }
+
+  // A colourless commander has an empty identity and every coloured card is off
+  // limits, so "empty" must not be confused with "unknown". Only skip the check
+  // when a commander did not resolve at all.
+  const knownCommanders = deck.commanders.map((name) => cards.get(name))
+  const identity = new Set(knownCommanders.flatMap((card) => card?.color_identity ?? []))
+  const identityKnown = knownCommanders.every(Boolean)
+  // Colour identity is the rule people get wrong most often, and the one an
+  // example must not get wrong at all.
+  const offColor = deck.main.filter(({ name }) => {
+    const card = cards.get(name)
+    if (!card || !identityKnown) return false
+    return (card.color_identity ?? []).some((color) => !identity.has(color))
+  }).map((card) => card.name)
+
+  const bad = illegal.length + offColor.length + unresolved.length + (wrongSize ? 1 : 0)
+  problems += bad
+  const mark = bad ? c.bad('✗') : c.ok('✓')
+  console.log(`${mark} ${deck.name} ${c.dim(`— ${size} cards, ${entries.length - unresolved.length}/${entries.length} names known`)}`)
+  if (wrongSize) console.log(`    ${c.warn('not 100 cards')} ${c.dim(deck.note || '(no note explaining why)')}`)
+  for (const entry of illegal) console.log(`    ${c.bad('not legal in ' + deck.formatId)}: ${entry}`)
+  if (offColor.length) {
+    console.log(`    ${c.bad('outside the commander\'s colour identity')}: ${offColor.join(', ')}`)
+  }
+}
+
+console.log()
+if (problems) {
+  console.log(c.bad(`${problems} problem${problems === 1 ? '' : 's'}. Paste this output back and they can be fixed.`))
+  process.exit(1)
+}
+console.log(c.ok('Every example checks out.'))

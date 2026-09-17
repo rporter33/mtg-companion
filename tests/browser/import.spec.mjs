@@ -72,8 +72,17 @@ const setChips = await page.locator('.commander-grid').count()
 check('both the upcoming and current set are offered',
   (await page.getByRole('button', { name: 'Reality Fracture' }).count()) >= 1
   && (await page.getByRole('button', { name: 'The Hobbit' }).count()) >= 1)
-check('it says no example lists ship yet rather than pretending',
-  /No example decklists are shipped yet/.test(await page.locator('body').innerText()))
+// The per-commander "See a deck" button only fires when a shipped deck shares a
+// commander with the set on screen, which for most sets is none of them. The
+// list below it is the only thing that makes the examples reachable at all.
+const exampleChips = page.locator('.chip', { hasText: /\(\d+\)$/ })
+check('the shipped example decks are listed where they can be opened',
+  (await exampleChips.count()) >= 1,
+  `${await exampleChips.count()} example chips`)
+check('the empty-state message is gone now that examples ship',
+  !/No example decklists are shipped yet/.test(await page.locator('body').innerText()))
+
+
 
 console.log('\nStarting a deck from a commander')
 await page.locator('.commander .btn').first().click()
@@ -117,6 +126,22 @@ await page.waitForTimeout(600)
 await page.getByRole('tab', { name: 'List' }).click()
 await page.waitForTimeout(400)
 check('confirming adds the cards', (await page.locator('.deck-row').count()) > 0)
+
+console.log('\nOpening a shipped example')
+await page.locator('.app__nav button', { hasText: 'Learn' }).click()
+await page.waitForTimeout(600)
+const example = page.locator('.chip', { hasText: /\(\d+\)$/ }).first()
+const exampleName = await example.innerText()
+await example.click()
+await page.waitForTimeout(900)
+const loaded = await page.locator('textarea').first().inputValue()
+const cardLines = loaded.split('\n').filter((l) => /^\d+\s/.test(l))
+const totalCards = cardLines.reduce((n, l) => n + Number(l.match(/^(\d+)/)[1]), 0)
+check('opening an example loads its whole list, not a summary',
+  totalCards >= 99 && totalCards <= 100,
+  `${exampleName.replace(/\s+/g, ' ')} -> ${totalCards} cards over ${cardLines.length} lines`)
+check('the example arrives with its commander named',
+  /^Commander\n/.test(loaded), JSON.stringify(loaded.slice(0, 60)))
 
 check('no console errors throughout', errors.length === 0, errors.join('; '))
 console.log(`\n${pass} passed, ${fail} failed`)

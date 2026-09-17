@@ -58,6 +58,7 @@ npm test               # 402 unit tests
 npm run test:browser   # drives the real UI in a real browser (91 assertions)
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
+npm run examples:verify  # checks every shipped example against Scryfall
 npm run build
 npm run preview
 ```
@@ -99,6 +100,12 @@ nothing at all, so no list that parses today can change meaning because of it.
 Preconstructed decks make the best examples here: they are what a new player
 actually buys, they need no curator's opinion attached, and they line up with
 the commanders browser in Learn.
+
+`npm run examples:verify` checks every name in every shipped example against
+Scryfall in one pass, and also reports anything banned in the deck's own format
+or outside its commander's colour identity. Unit tests cannot catch a wrong card
+name — it is only wrong relative to a database that is not in this repo — so
+that check lives in a script and has to be run deliberately.
 
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a
