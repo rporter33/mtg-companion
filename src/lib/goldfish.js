@@ -53,15 +53,18 @@ export const OPENING_HAND = 7
 /**
  * A fresh game.
  *
- * `onPlay` matters: the player going first does not draw on turn one, which is
- * one card of difference across a whole game and the reason the analysis tab
- * reports both columns.
+ * `onPlay` matters: in a two-player game the player going first does not
+ * draw on turn one, which is one card of difference across a whole game and
+ * the reason the analysis tab reports both columns. `multiplayer` matters
+ * too: with three or more players nobody skips that draw (rule 103.8c), so a
+ * Commander pod on the play still draws — and most Commander games are pods.
  */
-export function newGame(deck, lookup, { seed = Date.now(), onPlay = true } = {}) {
+export function newGame(deck, lookup, { seed = Date.now(), onPlay = true, multiplayer = false } = {}) {
   const library = shuffle(buildLibrary(deck, lookup), rng(seed))
   return {
     seed,
     onPlay,
+    multiplayer,
     library: library.slice(OPENING_HAND),
     hand: library.slice(0, OPENING_HAND),
     bottomed: [],
@@ -79,7 +82,9 @@ export function newGame(deck, lookup, { seed = Date.now(), onPlay = true } = {})
  * hand size — the hand is always seven until the moment it is kept.
  */
 export function mulligan(state, deck, lookup) {
-  const next = newGame(deck, lookup, { seed: state.seed + state.mulligans + 1, onPlay: state.onPlay })
+  const next = newGame(deck, lookup, {
+    seed: state.seed + state.mulligans + 1, onPlay: state.onPlay, multiplayer: state.multiplayer,
+  })
   return { ...next, mulligans: state.mulligans + 1 }
 }
 
@@ -110,11 +115,15 @@ export function keep(state, indices = []) {
     error: null,
   }
 
-  // Turn one begins the moment the hand is kept, and the player on the draw
-  // draws for it. Doing this here rather than in newGame matters because a
-  // mulligan restarts the game, and that card would otherwise be drawn twice.
-  return state.onPlay ? kept : draw(kept, 1)
+  // Turn one begins the moment the hand is kept, and everyone but the first
+  // player of a two-player game draws for it. Doing this here rather than in
+  // newGame matters because a mulligan restarts the game, and that card
+  // would otherwise be drawn twice.
+  return skipsFirstDraw(state) ? kept : draw(kept, 1)
 }
+
+/** Only the first player of a two-player game skips the turn-one draw. */
+export const skipsFirstDraw = (state) => Boolean(state.onPlay && !state.multiplayer)
 
 /** Draws from the top. An empty library is reported, not silently survived. */
 export function draw(state, count = 1) {

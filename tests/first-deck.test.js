@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   dialToColors, colorsToDial, pairKey, suggestColors, commanderQuery, stapleQueries,
-  roleCounts, basicSplit, fillPlan, ROLES, DIAL_MAX,
+  roleCounts, basicSplit, fillPlan, identityKeyOf, fitsIdentity, ROLES, DIAL_MAX,
 } from '../src/lib/first-deck.js'
 import { COLOR_PAGES, PAIRS, STYLE_AXES, FIRST_COMMANDERS, WHEEL } from '../src/data/colors.js'
 
@@ -162,5 +162,47 @@ describe('fillPlan', () => {
     const lands = plan.filter((a) => a.role === 'lands')
     expect(lands.filter((a) => a.card)).toHaveLength(6)
     expect(lands.filter((a) => a.basic)).toEqual([{ basic: 'Forest', role: 'lands', quantity: 30 }])
+  })
+
+  const total = (p) => p.reduce((n, a) => n + a.quantity, 0)
+  it('never grows the list past the cap', () => {
+    // 36 lands plus the twelve spells the candidates can supply: under the cap, by the candidates.
+    const capped = fillPlan(deck, lookup, candidates, { max: 50 })
+    expect(total(capped)).toBe(48)
+    expect(total(fillPlan(deck, lookup, candidates, { max: 40 }))).toBe(39)
+    expect(total(fillPlan(deck, lookup, candidates, { max: 1 }))).toBe(0)
+  })
+  it('gives the lands their room before the spells', () => {
+    const capped = fillPlan(deck, lookup, candidates, { max: 50 })
+    expect(total(capped.filter((a) => a.role === 'lands'))).toBe(36)
+    expect(total(capped.filter((a) => a.role !== 'lands'))).toBe(12)
+    const tight = fillPlan(deck, lookup, candidates, { max: 20 })
+    expect(total(tight)).toBe(19)
+    expect(tight.every((a) => a.role === 'lands')).toBe(true)
+  })
+  it('a role already over its target cannot push the total over', () => {
+    const heavy = { ...deck, main: [...Array.from({ length: 40 }, (_, i) => ({ cardId: `ramp${i}`, quantity: 1 }))] }
+    const look = (id) => (id.startsWith('ramp') ? card(id, { type_line: 'Artifact', oracle_text: '{T}: Add {C}.' }) : lookup(id))
+    const plan = fillPlan(heavy, look, candidates, { max: 99 })
+    expect(40 + total(plan)).toBeLessThanOrEqual(99)
+  })
+})
+
+describe('a commander\u2019s identity as the flow spells it', () => {
+  it('reads one colour, a pair in the game\u2019s spelling, or colourless', () => {
+    expect(identityKeyOf({ color_identity: ['G'] })).toBe('G')
+    expect(identityKeyOf({ color_identity: ['W', 'G'] })).toBe('GW')
+    expect(identityKeyOf({ color_identity: ['B', 'U'] })).toBe('UB')
+    expect(identityKeyOf({ color_identity: [] })).toBe('C')
+    expect(identityKeyOf({ color_identity: ['W', 'U', 'B'] })).toBeNull()
+    expect(identityKeyOf(undefined)).toBeNull()
+  })
+  it('says whether the dial\u2019s colours fit inside it', () => {
+    expect(fitsIdentity('G', 'GW')).toBe(true)
+    expect(fitsIdentity('GW', 'GW')).toBe(true)
+    expect(fitsIdentity('UB', 'GW')).toBe(false)
+    expect(fitsIdentity('G', 'UB')).toBe(false)
+    expect(fitsIdentity('C', 'C')).toBe(true)
+    expect(fitsIdentity('G', 'C')).toBe(false)
   })
 })

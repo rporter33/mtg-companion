@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   rng, shuffle, buildLibrary, newGame, mulligan, bottomCount, keep, draw, nextTurn,
-  describeHand, OPENING_HAND,
+  describeHand, skipsFirstDraw, OPENING_HAND,
 } from '../src/lib/goldfish.js'
 
 const LAND = { id: 'forest', name: 'Forest', type_line: 'Basic Land — Forest' }
@@ -211,5 +211,30 @@ describe('describeHand', () => {
 
   it('handles an empty hand', () => {
     expect(describeHand([], isLand)).toMatchObject({ size: 0, lands: 0, keepable: false })
+  })
+})
+
+describe('how many at the table', () => {
+  it('two players: the one going first skips the first draw', () => {
+    const game = keep(newGame(deck(), lookup, { seed: 3, onPlay: true, multiplayer: false }), [])
+    expect(game.hand).toHaveLength(7)
+    expect(skipsFirstDraw(game)).toBe(true)
+  })
+  it('two players: the one going second draws', () => {
+    const game = keep(newGame(deck(), lookup, { seed: 3, onPlay: false, multiplayer: false }), [])
+    expect(game.hand).toHaveLength(8)
+  })
+  it('three or more: nobody skips it, even on the play', () => {
+    const game = keep(newGame(deck(), lookup, { seed: 3, onPlay: true, multiplayer: true }), [])
+    expect(game.hand).toHaveLength(8)
+    expect(skipsFirstDraw(game)).toBe(false)
+  })
+  it('a mulligan remembers the table', () => {
+    const game = mulligan(newGame(deck(), lookup, { seed: 3, onPlay: true, multiplayer: true }), deck(), lookup)
+    expect(game.multiplayer).toBe(true)
+    expect(keep(game, [0]).hand).toHaveLength(7) // six kept, one drawn
+  })
+  it('defaults to the two-player rule when not told', () => {
+    expect(skipsFirstDraw(newGame(deck(), lookup, { seed: 1 }))).toBe(true)
   })
 })

@@ -66,6 +66,21 @@ const hand = () => page.locator('.hand-card').count()
 
 await openPlaytest()
 
+console.log('\nWhat the intro promises')
+// Independent of the app's own helper: P(at least two lands in seven) from
+// 99 cards holding 40 lands, straight from the hypergeometric distribution.
+const choose = (n, k) => { let r = 1; for (let i = 1; i <= k; i++) r = (r * (n - k + i)) / i; return r }
+const pLands = (k) => (choose(40, k) * choose(59, 7 - k)) / choose(99, 7)
+const expected = Math.round((1 - pLands(0) - pLands(1)) * 100)
+const intro = await page.locator('.app__main').innerText()
+const shown = Math.round(Number(intro.match(/holds at least two about ([\d.]+)%/)?.[1]))
+check('the odds of two lands in the opening seven are the real ones, not their complement',
+  Math.abs(shown - expected) <= 1, `shown ${shown}%, expected ${expected}%`)
+check('a Commander deck assumes a pod of three or more',
+  (await page.getByRole('button', { name: 'Three or more' }).getAttribute('aria-pressed')) === 'true')
+// The rest of this file is written for the two-player rule.
+await page.getByRole('button', { name: 'Two players' }).click()
+
 console.log('\nThe opening hand')
 await page.getByRole('button', { name: 'Draw a hand' }).click()
 await page.waitForTimeout(500)
@@ -117,6 +132,17 @@ await page.getByRole('button', { name: 'Keep', exact: true }).click()
 await page.waitForTimeout(400)
 // The player on the draw draws for turn one; that is the whole difference.
 check('keeping on the draw gives eight', (await hand()) === 8, String(await hand()))
+
+console.log('\nIn a pod')
+await page.getByRole('button', { name: 'On the draw' }).click()
+await page.waitForTimeout(400)
+await page.getByRole('button', { name: 'Two players' }).click()
+await page.waitForTimeout(500)
+check('switching to three or more reshuffles and says so',
+  (await chips()).includes('Three or more') && (await chips()).includes('On the play'), (await chips()).join(' | '))
+await page.getByRole('button', { name: 'Keep', exact: true }).click()
+await page.waitForTimeout(400)
+check('on the play in a pod, the first player still draws: eight', (await hand()) === 8, String(await hand()))
 
 console.log('\nWhile cards are still loading')
 {

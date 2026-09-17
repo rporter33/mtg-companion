@@ -122,32 +122,65 @@ export function basicSplit(colors, count) {
  * already in the deck up to the target; the land shortfall is met with a
  * few nonbasics and then basics. Nothing is added twice, singleton rules
  * hold, and the commander is never a candidate. Pure — the screen applies it.
+ *
+ * The list never grows past `max`: a role already over its target does not
+ * shrink the others' shortfalls, so without a cap a deck with thirty
+ * creatures could be filled to a hundred and four. Lands give way last,
+ * because a list short of lands is the one that never gets going.
  */
-export function fillPlan(deck, lookup, candidates, { nonbasicLands = 6 } = {}) {
+export function fillPlan(deck, lookup, candidates, { nonbasicLands = 6, max = null } = {}) {
   const inDeck = new Set([...(deck.main ?? []).map((e) => e.cardId), ...(deck.commanders ?? [])])
   const chosenNames = new Set((deck.main ?? []).map((e) => lookup?.(e.cardId)?.name).filter(Boolean))
+  const size = (deck.main ?? []).reduce((n, e) => n + (e.quantity ?? 1), 0)
+  let room = max === null ? Infinity : Math.max(0, max - size)
   const adds = []
   const take = (list, n) => {
     const out = []
     for (const card of list ?? []) {
-      if (out.length >= n) break
+      if (out.length >= n || room <= 0) break
       if (inDeck.has(card.id) || chosenNames.has(card.name)) continue
       inDeck.add(card.id); chosenNames.add(card.name)
       out.push(card)
+      room -= 1
     }
     return out
   }
   const counts = roleCounts(deck, lookup)
+  const lands = counts.find((r) => r.id === 'lands')
+  // Lands are reserved before the spells are dealt out, so the cap cannot
+  // eat them: whatever room remains after the land shortfall goes to spells.
+  const landRoom = Math.min(lands.short, room)
+  room -= landRoom
   for (const role of counts) {
     if (role.id === 'lands' || role.short === 0) continue
     for (const card of take(candidates[role.id], role.short)) adds.push({ card, role: role.id, quantity: 1 })
   }
-  const lands = counts.find((r) => r.id === 'lands')
-  if (lands.short > 0) {
-    const nonbasic = take(candidates.lands, Math.min(nonbasicLands, lands.short))
+  room += landRoom
+  if (landRoom > 0) {
+    const nonbasic = take(candidates.lands, Math.min(nonbasicLands, landRoom))
     for (const card of nonbasic) adds.push({ card, role: 'lands', quantity: 1 })
-    const basics = basicSplit(deck.colors ?? candidates.colors, lands.short - nonbasic.length)
+    const basics = basicSplit(deck.colors ?? candidates.colors, Math.min(landRoom - nonbasic.length, room))
     for (const b of basics) adds.push({ basic: b.name, role: 'lands', quantity: b.quantity })
   }
   return adds
+}
+
+/**
+ * A commander's colour identity as the key the flow uses: a single letter,
+ * a pair in the game's spelling, or 'C' for a colourless commander. Three
+ * or more colours are outside what the flow offers and come back as null.
+ */
+export function identityKeyOf(card) {
+  const identity = ['W', 'U', 'B', 'R', 'G'].filter((c) => (card?.color_identity ?? []).includes(c))
+  if (!card) return null
+  if (identity.length === 0) return 'C'
+  if (identity.length === 1) return identity[0]
+  if (identity.length === 2) return pairKey(identity[0], identity[1])
+  return null
+}
+
+/** Whether a chosen colour key fits inside a commander's identity key. */
+export function fitsIdentity(colors, identityKey) {
+  if (!identityKey || identityKey === 'C') return colors === identityKey
+  return (colors ?? '').split('').every((c) => identityKey.includes(c))
 }

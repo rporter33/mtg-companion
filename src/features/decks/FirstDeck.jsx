@@ -4,7 +4,7 @@ import { schoolsFor, schoolsForColor, SET_THEMES, LORE_SET } from '../../data/se
 import { decorFor, useThemeSet } from '../../lib/theme-set.js'
 import {
   DIAL_MAX, dialToColors, colorsToDial, describeColors, suggestColors, commanderQuery,
-  stapleQueries, ROLES, roleCounts, fillPlan,
+  stapleQueries, ROLES, roleCounts, fillPlan, identityKeyOf, fitsIdentity,
 } from '../../lib/first-deck.js'
 import { searchCards, getCardsByNames, getCardByName } from '../../lib/scryfall.js'
 import { createDeck, addCard, setCommanders } from '../../lib/deck.js'
@@ -29,6 +29,9 @@ import './first-deck.css'
  */
 const STEPS = ['Colours', 'How you play', 'Commander', 'Starting list']
 const CAPS = [2, 4, 10]
+const LIST = 99 // a Commander list, with the commander outside it
+/** "Selesnya (Green and White)", or "Green" for a single colour. */
+const name = (key) => (key.length === 1 ? COLOR_PAGES[key].name : `${PAIRS[key]?.name} (${key.split('').map((c) => COLOR_PAGES[c].name).join(' and ')})`)
 
 export default function FirstDeck({ onOpenCard }) {
   const [step, setStep] = useState(0)
@@ -71,6 +74,17 @@ export default function FirstDeck({ onOpenCard }) {
     setStep(3)
   }
 
+  // Once a commander exists, its colour identity is the law for the starting
+  // list, whatever the dial says: the steps can be revisited, and a dial
+  // moved to new colours after a commander was chosen would otherwise fetch
+  // staples the deck cannot play. The clash is shown and resolved out loud,
+  // never by quietly dropping the commander or the cards.
+  const commander = deck ? lookup(deck.commanders?.[0]) : null
+  const identityKey = commander ? identityKeyOf(commander) : null
+  const clash = Boolean(identityKey) && !fitsIdentity(colors, identityKey)
+  const keepCommander = () => { if (identityKey !== 'C') choosePair(identityKey) }
+  const startOver = () => { setDeck(null); setStep(2) }
+
   return (
     <div className="stack first-deck">
       <div className="row">
@@ -97,6 +111,21 @@ export default function FirstDeck({ onOpenCard }) {
         ))}
       </ol>
 
+      {clash && (
+        <div className="banner banner--warn stack stack--snug" role="status">
+          <span>
+            <strong>{commander.name}</strong> is {identityKey === 'C' ? 'colourless' : name(identityKey)}, and the
+            starting list follows the commander, not the dial. Keep {commander.name.split(',')[0]} and the colours
+            go back, or start over with a new commander in {name(colors)}. The deck you started stays in your list.
+          </span>
+          <div className="row row--wrap">
+            {identityKey !== 'C' && (
+              <button className="btn btn--sm" onClick={keepCommander}>Keep {commander.name.split(',')[0]}</button>
+            )}
+            <button className="btn btn--sm btn--ghost" onClick={startOver}>Start over in {name(colors)}</button>
+          </div>
+        </div>
+      )}
       {step === 0 && (
         <ColourStep dial={dial} colors={colors} chosen={chosen} onDial={chooseDial} onPair={choosePair} onOpenCard={onOpenCard} onNext={() => setStep(1)} />
       )}
@@ -111,7 +140,7 @@ export default function FirstDeck({ onOpenCard }) {
         <CommanderStep colors={colors} onOpenCard={onOpenCard} onStart={startWith} remember={remember} />
       )}
       {step === 3 && deck && (
-        <StaplesStep deck={deck} colors={colors} lookup={lookup} cap={cap} onCap={setCap} remember={remember} onChange={commit} onOpenCard={onOpenCard} />
+        <StaplesStep deck={deck} colors={identityKey ?? colors} lookup={lookup} cap={cap} onCap={setCap} remember={remember} onChange={commit} onOpenCard={onOpenCard} />
       )}
     </div>
   )
@@ -259,7 +288,6 @@ function SignatureCard({ name, onOpenCard }) {
 
 function StyleStep({ answers, colors, onAnswer, onSuggest, onNext }) {
   const suggestion = suggestColors(answers)
-  const name = (key) => (key.length === 1 ? COLOR_PAGES[key].name : `${PAIRS[key]?.name} (${key.split('').map((c) => COLOR_PAGES[c].name).join(' and ')})`)
   return (
     <div className="stack">
       <section className="panel stack">
@@ -427,7 +455,7 @@ function StaplesStep({ deck, colors, lookup, cap, onCap, remember, onChange, onO
     try {
       const candidates = Object.fromEntries(ROLES.map((r) => [r.id, lists[r.id]?.cards ?? []]))
       candidates.colors = colors
-      const plan = fillPlan({ ...deck, colors }, lookup, candidates)
+      const plan = fillPlan({ ...deck, colors }, lookup, candidates, { max: LIST })
       const basicNames = [...new Set(plan.filter((a) => a.basic).map((a) => a.basic))]
       const basics = basicNames.length ? await getCardsByNames(basicNames) : new Map()
       remember([...basics.values()])

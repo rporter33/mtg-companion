@@ -35,6 +35,8 @@ const staples = {
   removal: Array.from({ length: 12 }, (_, i) => card(`Kill Spell ${i}`, { type_line: 'Instant', oracle_text: 'Destroy target creature.' })),
   theme: Array.from({ length: 40 }, (_, i) => card(`Theme Card ${i}`)),
 }
+// Staples are colourless here, so they are legal under whichever commander the run picks.
+for (const list of Object.values(staples)) for (const c of list) { c.color_identity = []; c.colors = [] }
 const basics = Object.fromEntries(['Plains', 'Island', 'Swamp', 'Mountain', 'Forest']
   .map((n) => [n, card(n, { type_line: `Basic Land — ${n}`, mana_cost: '', color_identity: [], colors: [] })]))
 const queries = []
@@ -50,7 +52,9 @@ await page.route('**/api.scryfall.com/cards/named**', (route) => {
 })
 await page.route('**/api.scryfall.com/cards/collection', (route) => {
   const { identifiers } = JSON.parse(route.request().postData() ?? '{"identifiers":[]}')
-  const data = identifiers.map(({ name }) => basics[name] ?? legend(name))
+  // The recommended commanders are looked up by name; Phenax is Dimir, as the real card is.
+  const data = identifiers.map(({ name }) => basics[name]
+    ?? (/Phenax/.test(name) ? card(name, { type_line: 'Legendary Creature — God', color_identity: ['U', 'B'], colors: ['U', 'B'] }) : legend(name)))
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data, not_found: [] }) })
 })
 await page.route('**/api.scryfall.com/cards/search**', (route) => {
@@ -130,6 +134,21 @@ await page.waitForTimeout(1200)
 
 console.log('\nThe starting list')
 check('a deck exists now, named after the commander', /Phenax deck/.test(await body()))
+
+console.log('\nMoving the dial after a commander exists')
+await page.locator('.steps__button', { hasText: 'Colours' }).click()
+await page.waitForTimeout(200)
+await page.getByLabel('Colour dial').fill('0')
+await page.waitForTimeout(200)
+check('the list follows the commander, so the clash is said out loud',
+  /Phenax[^\n]*is Dimir/.test(await body()) && /follows the commander, not the dial/.test(await body()),
+  (await body()).match(/Phenax[^\n]*/)?.[0])
+await page.getByRole('button', { name: 'Keep Phenax' }).click()
+await page.waitForTimeout(200)
+check('keeping the commander puts the colours back',
+  /Dimir/.test(await page.getByLabel('Colour dial').getAttribute('aria-valuetext')) && !/follows the commander/.test(await body()))
+await page.locator('.steps__button', { hasText: 'Starting list' }).click()
+await page.waitForTimeout(600)
 check('roles show what is short', /Lands[^\n]*\n?0\/36/.test(await body()) || (await page.locator('.role').count()) === 5)
 check('staples are asked for under four dollars, in identity, without commanders',
   queries.some((q) => /id<=ub/.test(q) && /usd<=4/.test(q) && /-is:commander/.test(q)), queries.slice(-6).join(' | '))

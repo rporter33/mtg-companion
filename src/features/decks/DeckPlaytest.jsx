@@ -4,6 +4,7 @@ import {
   newGame, mulligan, keep, draw, nextTurn, bottomCount, describeHand, OPENING_HAND,
 } from '../../lib/goldfish.js'
 import { isLandCard } from '../../lib/deck.js'
+import { getFormat } from '../../lib/formats.js'
 import { openingHandOdds, percent } from '../../lib/probability.js'
 
 /**
@@ -15,6 +16,9 @@ import { openingHandOdds, percent } from '../../lib/probability.js'
  */
 export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
   const [onPlay, setOnPlay] = useState(true)
+  // Commander is usually a pod of three or more, where nobody skips the
+  // first draw; every other format defaults to the two-player rule.
+  const [multiplayer, setMultiplayer] = useState(() => getFormat(deck.formatId)?.group === 'commander')
   const [game, setGame] = useState(null)
   const [chosen, setChosen] = useState(new Set())
 
@@ -29,9 +33,9 @@ export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
     (n, e) => n + (lookup(e.cardId) && isLandCard(lookup(e.cardId)) ? e.quantity : 0), 0,
   )
 
-  const start = (play = onPlay) => {
+  const start = (play = onPlay, pod = multiplayer) => {
     setChosen(new Set())
-    setGame(newGame(deck, lookup, { onPlay: play }))
+    setGame(newGame(deck, lookup, { onPlay: play, multiplayer: pod }))
   }
 
   if (size < OPENING_HAND) {
@@ -48,16 +52,27 @@ export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
       <div className="stack">
         <p className="muted">
           Shuffle and look. {lands} of {size} cards in this deck are lands, so an opening seven
-          holds at least two about {percent(1 - openingHandOdds(size, lands, 2))} of the time —
+          holds at least two about {percent(openingHandOdds(size, lands, 2))} of the time —
           {' '}but that is the average of a thousand games, and you only get to play this one.
         </p>
-        <div className="row row--wrap">
+        <div className="row row--wrap" role="group" aria-label="Table">
           {[[true, 'On the play'], [false, 'On the draw']].map(([value, label]) => (
             <button
               key={label}
               className={`chip ${onPlay === value ? 'chip--active' : ''}`}
               aria-pressed={onPlay === value}
               onClick={() => setOnPlay(value)}
+            >
+              {label}
+            </button>
+          ))}
+          {[[false, 'Two players'], [true, 'Three or more']].map(([value, label]) => (
+            <button
+              key={label}
+              className={`chip ${multiplayer === value ? 'chip--active' : ''}`}
+              aria-pressed={multiplayer === value}
+              title={value ? 'With three or more players, nobody skips the first draw' : 'The player going first skips the first draw'}
+              onClick={() => setMultiplayer(value)}
             >
               {label}
             </button>
@@ -97,9 +112,16 @@ export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
         <button
           className="chip"
           title="Switch sides and shuffle up again"
-          onClick={() => { setOnPlay(!game.onPlay); start(!game.onPlay) }}
+          onClick={() => { setOnPlay(!game.onPlay); start(!game.onPlay, game.multiplayer) }}
         >
           {game.onPlay ? 'On the play' : 'On the draw'}
+        </button>
+        <button
+          className="chip"
+          title={game.multiplayer ? 'Three or more players: nobody skips the first draw. Switch to two and shuffle up again' : 'Two players: the first player skips the first draw. Switch to a pod and shuffle up again'}
+          onClick={() => { setMultiplayer(!game.multiplayer); start(game.onPlay, !game.multiplayer) }}
+        >
+          {game.multiplayer ? 'Three or more' : 'Two players'}
         </button>
       </div>
 
