@@ -91,15 +91,37 @@ export const ROLES = rolesFor(getFormat('commander'))
  * community-maintained and a slug can change, so each role lists a fallback;
  * the screen uses the first query that returns anything.
  */
-export function stapleQueries(colors, roleId, { capUsd = 4 } = {}) {
+export function stapleQueries(colors, roleId, { capUsd = 4, strategy = null } = {}) {
   const base = `legal:commander game:paper id<=${idOf(colors)} -is:commander usd<=${capUsd}`
   switch (roleId) {
     case 'lands': return [`${base} t:land -t:basic`]
     case 'ramp': return [`${base} otag:ramp`, `${base} otag:mana-ramp`, `${base} (t:artifact o:"add {") -t:land`]
     case 'draw': return [`${base} otag:card-draw`, `${base} otag:draw`, `${base} o:"draw a card" -t:land`]
     case 'removal': return [`${base} otag:removal`, `${base} otag:spot-removal`, `${base} (o:destroy or o:exile) -t:land`]
-    default: return [`${base} -t:land`]
+    // "Does your thing": with a plan chosen, its own searches come first and
+    // the broad one stays as the last resort, so a renamed tag never leaves
+    // the role empty. The eligibility filters are in the base of every one.
+    default: return [
+      ...(strategy?.queries ?? []).map((q) => `${base} (${q}) -t:land`),
+      `${base} -t:land`,
+    ]
   }
+}
+
+/**
+ * Why a card is on the list, from the evidence that put it there and
+ * nothing else: the role it was searched under, the plan it matched if one
+ * was chosen, that the list is ordered by how played the card is, and what
+ * you already own. No claim of synergy with the commander is made, because
+ * none was checked.
+ */
+export function whyFor({ role, strategy = null, matchedPlan = false, owned = 0, quantity = 1 } = {}) {
+  const parts = []
+  if (role) parts.push(role)
+  if (strategy && matchedPlan) parts.push(`fits ${strategy.name.toLowerCase()}`)
+  else parts.push('popular in your colours')
+  if (owned > 0) parts.push(owned >= quantity ? 'you own it' : `you own ${owned}`)
+  return parts.join(' · ')
 }
 
 /** Cards in each role, by the coach's own classifiers, with the target beside. */

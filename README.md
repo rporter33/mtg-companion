@@ -47,7 +47,13 @@ recommendation, and the most played list live from Scryfall. Choosing one
 makes the deck. Then a starting list by role, lands, ramp, draw, removal and
 "does your thing", each with a target, a progress bar, and popular cards in
 your colours under a price cap that defaults to four dollars, with a button to
-fill the rest and open the deck in the editor.
+fill the rest and open the deck in the editor. A plan (tokens, mill, blink and
+so on, two or three per colour choice, written by this app) steers the "does
+your thing" role, every listed card says why it is there from the evidence
+that put it there, and a purchase budget for the cards you do not own is
+checked against quantities, with unpriced cards counted apart. The flow
+remembers where you were: each step has an address, and an unfinished deck is
+offered back from the Decks screen.
 
 **Decks** — Build for Standard, Pioneer, Modern, Legacy, Vintage, Pauper,
 Commander, Duel Commander, Brawl, or Oathbreaker. The deck is validated against

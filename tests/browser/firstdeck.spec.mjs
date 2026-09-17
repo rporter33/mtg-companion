@@ -177,6 +177,36 @@ await page.waitForTimeout(600)
 check('roles show what is short', /Lands[^\n]*\n?0\/36/.test(await body()) || (await page.locator('.role').count()) === 5)
 check('staples are asked for under four dollars, in identity, without commanders',
   queries.some((q) => /id<=ub/.test(q) && /usd<=4/.test(q) && /-is:commander/.test(q)), queries.slice(-6).join(' | '))
+console.log('\nA plan, and why each card is here')
+const planGroup = page.getByRole('group', { name: 'Your plan' })
+check('the colours offer their plans, with Any as the default',
+  (await planGroup.getByRole('button').count()) >= 3
+  && (await planGroup.getByRole('button', { name: 'Any' }).getAttribute('aria-pressed')) === 'true')
+const before = queries.length
+await planGroup.getByRole('button', { name: 'Mill' }).click()
+await page.waitForTimeout(900)
+check('choosing a plan puts its search first for the "does your thing" role, inside the same filters',
+  queries.slice(before).some((q) => /id<=ub/.test(q) && /usd<=/.test(q) && /(otag:mill|o:mill)/.test(q) && /-t:land/.test(q)),
+  queries.slice(before).join(' | '))
+check('the plan is described as this app\u2019s own suggestion', /This app\u2019s own suggestion, not a ranking/.test(await body()))
+await page.getByRole('tab', { name: /Does your thing/ }).click()
+await page.waitForTimeout(300)
+check('each card says why it is on the list, from the evidence',
+  /Does your thing · fits mill/.test(await page.locator('.staple__why').first().innerText()),
+  await page.locator('.staple__why').first().innerText())
+await page.getByRole('tab', { name: /Ramp/ }).click()
+await page.waitForTimeout(300)
+check('another role says it is popular, not that it fits',
+  /Ramp · popular in your colours/.test(await page.locator('.staple__why').first().innerText()),
+  await page.locator('.staple__why').first().innerText())
+await page.reload({ waitUntil: 'networkidle' })
+await page.waitForTimeout(900)
+check('the plan is remembered', (await page.getByRole('group', { name: 'Your plan' }).getByRole('button', { name: 'Mill' }).getAttribute('aria-pressed')) === 'true')
+
+console.log('\nA budget for what you do not own')
+// The commander is a card too, and not yet owned.
+check('the list says what it would cost to buy, apart from what it is worth', /To buy: \$1\.00 for 1 card\b/.test(await body()), (await body()).match(/To buy[^\n]*/)?.[0])
+await page.getByLabel('Budget for cards you do not own').selectOption('25')
 await page.getByRole('tab', { name: /Ramp/ }).click()
 await page.waitForTimeout(300)
 await page.getByRole('button', { name: 'Add Mana Rock 0' }).click()
@@ -188,6 +218,9 @@ check('the price cap is a real query change', queries.some((q) => /usd<=2/.test(
 await page.getByRole('button', { name: 'Fill the rest with staples' }).click()
 await page.waitForTimeout(1500)
 check('fill brings the list to 99', /99\/99/.test(await body()), (await body()).match(/\d+\/99/)?.[0])
+// 99 cards at a dollar each, less the five free basics: far over a $25 budget, and it says so.
+check('the purchase budget is checked against quantities and says how far over',
+  /To buy: \$\d+\.\d\d for \d+ cards · \$\d+\.\d\d over/.test(await body()), (await body()).match(/To buy[^\n]*/)?.[0])
 check('with basics making up the lands', /Open the deck$/m.test(await body()) || (await page.getByRole('button', { name: 'Open the deck' }).count()) === 1)
 await page.getByRole('button', { name: /Open the deck/ }).click()
 await page.waitForTimeout(900)

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { STRATEGIES, strategiesFor, strategyById } from '../src/data/strategies.js'
 import {
   dialToColors, colorsToDial, pairKey, suggestColors, commanderQuery, stapleQueries,
-  roleCounts, basicSplit, fillPlan, identityKeyOf, fitsIdentity, ROLES, DIAL_MAX,
+  roleCounts, basicSplit, fillPlan, identityKeyOf, fitsIdentity, whyFor, ROLES, DIAL_MAX,
 } from '../src/lib/first-deck.js'
 import { COLOR_PAGES, PAIRS, STYLE_AXES, FIRST_COMMANDERS, WHEEL } from '../src/data/colors.js'
 
@@ -204,5 +205,50 @@ describe('a commander\u2019s identity as the flow spells it', () => {
     expect(fitsIdentity('G', 'UB')).toBe(false)
     expect(fitsIdentity('C', 'C')).toBe(true)
     expect(fitsIdentity('G', 'C')).toBe(false)
+  })
+})
+
+
+describe('plans for a first deck', () => {
+  it('offers two or three plans for every colour and every pair, each with a search', () => {
+    for (const key of ['W', 'U', 'B', 'R', 'G', 'WU', 'UB', 'BR', 'RG', 'GW', 'WB', 'UR', 'BG', 'RW', 'GU']) {
+      const plans = strategiesFor(key)
+      expect(plans.length, key).toBeGreaterThanOrEqual(2)
+      expect(plans.length, key).toBeLessThanOrEqual(3)
+      expect(new Set(plans.map((p) => p.id)).size).toBe(plans.length)
+      for (const p of plans) {
+        expect(p.name).toBeTruthy()
+        expect(p.does).toMatch(/\.$/)
+        expect(p.queries.length).toBeGreaterThan(0)
+      }
+    }
+    expect(strategiesFor('C')).toEqual([])
+    expect(strategiesFor('WUB')).toEqual([])
+  })
+  it('finds a plan by id, and nothing for a plan the colours do not offer', () => {
+    expect(strategyById('GW', 'tokens')?.name).toBe('Tokens')
+    expect(strategyById('GW', 'mill')).toBeNull()
+    expect(strategyById('GW', null)).toBeNull()
+  })
+  it('a plan\u2019s searches lead the theme role, inside the same eligibility filters, with the broad search last', () => {
+    const plan = strategyById('GW', 'tokens')
+    const queries = stapleQueries('GW', 'theme', { capUsd: 4, strategy: plan })
+    expect(queries).toHaveLength(plan.queries.length + 1)
+    for (const q of queries) expect(q).toMatch(/legal:commander game:paper id<=gw -is:commander usd<=4/)
+    expect(queries[0]).toContain(`(${plan.queries[0]}) -t:land`)
+    expect(queries.at(-1)).toBe('legal:commander game:paper id<=gw -is:commander usd<=4 -t:land')
+  })
+  it('other roles ignore the plan', () => {
+    const plan = strategyById('GW', 'tokens')
+    expect(stapleQueries('GW', 'ramp', { strategy: plan })).toEqual(stapleQueries('GW', 'ramp'))
+  })
+  it('says why a card is listed from the evidence, and never claims synergy', () => {
+    const plan = strategyById('GW', 'tokens')
+    expect(whyFor({ role: 'Ramp' })).toBe('Ramp · popular in your colours')
+    expect(whyFor({ role: 'Does your thing', strategy: plan, matchedPlan: true })).toBe('Does your thing · fits tokens')
+    expect(whyFor({ role: 'Does your thing', strategy: plan, matchedPlan: false })).toBe('Does your thing · popular in your colours')
+    expect(whyFor({ role: 'Draw', owned: 1 })).toBe('Draw · popular in your colours · you own it')
+    expect(whyFor({ role: 'Lands', owned: 2, quantity: 4 })).toBe('Lands · popular in your colours · you own 2')
+    expect(whyFor({})).not.toMatch(/synergy/)
   })
 })

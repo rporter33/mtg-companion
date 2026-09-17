@@ -4,8 +4,12 @@ import { schoolsFor, schoolsForColor, SET_THEMES, LORE_SET } from '../../data/se
 import { decorFor, useThemeSet } from '../../lib/theme-set.js'
 import {
   DIAL_MAX, dialToColors, colorsToDial, describeColors, suggestColors, commanderQuery,
-  stapleQueries, ROLES, roleCounts, fillPlan, identityKeyOf, fitsIdentity,
+  stapleQueries, ROLES, roleCounts, fillPlan, identityKeyOf, fitsIdentity, whyFor,
 } from '../../lib/first-deck.js'
+import { strategiesFor, strategyById } from '../../data/strategies.js'
+import { useCollection } from '../../lib/collection-store.js'
+import { ownedOf, missingFor, missingCost } from '../../lib/collection.js'
+import { formatPrice } from '../../lib/prices.js'
 import { searchCards, getCardsByNames, getCardByName } from '../../lib/scryfall.js'
 import { createDeck, addCard, setCommanders } from '../../lib/deck.js'
 import { saveDeck, getDeck, getPrefs, setPref } from '../../lib/storage.js'
@@ -30,6 +34,7 @@ import './first-deck.css'
  */
 const STEPS = ['Colours', 'How you play', 'Commander', 'Starting list']
 const CAPS = [2, 4, 10]
+const BUDGETS = [0, 25, 50, 100, 200] // for the cards you do not own; 0 is none
 const LIST = 99 // a Commander list, with the commander outside it
 /** "Selesnya (Green and White)", or "Green" for a single colour. */
 const name = (key) => (key.length === 1 ? COLOR_PAGES[key].name : `${PAIRS[key]?.name} (${key.split('').map((c) => COLOR_PAGES[c].name).join(' and ')})`)
@@ -64,6 +69,13 @@ export default function FirstDeck({ onOpenCard }) {
   const [deck, setDeck] = useState(restored)
   const [cards, setCards] = useState(() => new Map())
   const [cap, setCap] = useState(4)
+  // The plan and the purchase budget are remembered like the colours; a plan
+  // is only honoured while it belongs to the colours the list is built for.
+  const [strategyId, setStrategyId] = useState(() => getPrefs().firstDeckStrategy ?? null)
+  const chooseStrategy = (id) => { setStrategyId(id); setPref('firstDeckStrategy', id) }
+  const [budget, setBudget] = useState(() => getPrefs().firstDeckBudget ?? 0)
+  const chooseBudget = (n) => { setBudget(n); setPref('firstDeckBudget', n) }
+  const [collection] = useCollection()
   // A restored deck's cards are fetched once; cards chosen in this visit are
   // remembered as they arrive.
   const restoredCards = useDeckCards(restored)
@@ -181,7 +193,12 @@ export default function FirstDeck({ onOpenCard }) {
         <CommanderStep colors={colors} onOpenCard={onOpenCard} onStart={startWith} remember={remember} />
       )}
       {step === 3 && deck && (
-        <StaplesStep deck={deck} colors={identityKey ?? colors} lookup={lookup} cap={cap} onCap={setCap} remember={remember} onChange={commit} onOpenCard={onOpenCard} />
+        <StaplesStep
+          deck={deck} colors={identityKey ?? colors} lookup={lookup} cap={cap} onCap={setCap}
+          strategy={strategyById(identityKey ?? colors, strategyId)} onStrategy={chooseStrategy}
+          budget={budget} onBudget={chooseBudget} collection={collection}
+          remember={remember} onChange={commit} onOpenCard={onOpenCard}
+        />
       )}
     </div>
   )
@@ -451,25 +468,43 @@ function CommanderCard({ card, why, onOpenCard, onStart }) {
 
 // --- step 4: staples by role --------------------------------------------------
 
-function StaplesStep({ deck, colors, lookup, cap, onCap, remember, onChange, onOpenCard }) {
+function StaplesStep({
+  deck, colors, lookup, cap, onCap, strategy, onStrategy, budget, onBudget, collection,
+  remember, onChange, onOpenCard,
+}) {
   const [role, setRole] = useState('lands')
-  const [lists, setLists] = useState({}) // roleId -> { status, cards }
+  const [lists, setLists] = useState({}) // roleId -> { status, cards, fromPlan }
   const [filling, setFilling] = useState(false)
   const counts = useMemo(() => roleCounts(deck, lookup), [deck, lookup])
   const total = deck.main.reduce((n, e) => n + e.quantity, 0)
   const inDeck = new Set(deck.main.map((e) => e.cardId))
+  const plans = strategiesFor(colors)
 
-  /** Loads a role's staples once per cap; tries each query until one answers. */
+  // What the list would cost to complete from what you own, as distinct from
+  // what it is worth: quantities against owned copies, unpriced cards counted
+  // apart. Scryfall's prices are a daily estimate, never a checkout total.
+  const toBuy = useMemo(() => {
+    const missing = missingFor(deck, lookup, collection)
+    return { ...missingCost(missing, 'usd'), cards: missing.reduce((n, m) => n + m.quantity, 0) }
+  }, [deck, lookup, collection])
+  const overBy = budget > 0 && toBuy.total > budget ? toBuy.total - budget : 0
+
+  /**
+   * Loads a role's staples once per cap and plan; tries each query until one
+   * answers, and remembers whether it was the plan's own search that did.
+   */
   const load = async (roleId, signal) => {
-    for (const query of stapleQueries(colors, roleId, { capUsd: cap })) {
+    const queries = stapleQueries(colors, roleId, { capUsd: cap, strategy })
+    const planQueries = roleId === 'theme' ? (strategy?.queries?.length ?? 0) : 0
+    for (const [i, query] of queries.entries()) {
       try {
         const result = await searchCards(query, { order: 'edhrec', signal })
-        if (result.cards.length) return result.cards.slice(0, 40)
+        if (result.cards.length) return { cards: result.cards.slice(0, 40), fromPlan: i < planQueries }
       } catch (error) {
         if (error.name === 'AbortError') throw error
       }
     }
-    return []
+    return { cards: [], fromPlan: false }
   }
 
   useEffect(() => {
@@ -478,15 +513,15 @@ function StaplesStep({ deck, colors, lookup, cap, onCap, remember, onChange, onO
     setLists({})
     ;(async () => {
       for (const r of ROLES) {
-        const cards = await load(r.id, controller.signal).catch(() => [])
+        const { cards, fromPlan } = await load(r.id, controller.signal).catch(() => ({ cards: [], fromPlan: false }))
         if (cancelled) return
         remember(cards)
-        setLists((prev) => ({ ...prev, [r.id]: { status: 'done', cards } }))
+        setLists((prev) => ({ ...prev, [r.id]: { status: 'done', cards, fromPlan } }))
       }
     })()
     return () => { cancelled = true; controller.abort() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colors, cap])
+  }, [colors, cap, strategy?.id])
 
   const add = (card, quantity = 1) => onChange(addCard(deck, card.id, quantity, 'main'))
   const remove = (card) => onChange(addCard(deck, card.id, -1, 'main'))
@@ -528,6 +563,48 @@ function StaplesStep({ deck, colors, lookup, cap, onCap, remember, onChange, onO
         <p className="muted tiny m0">
           A Commander deck is 99 cards plus the commander. This is the usual skeleton; the numbers are a guide, not a rule.
         </p>
+        {plans.length > 0 && (
+          <div className="stack stack--tight">
+            <div className="row row--wrap" role="group" aria-label="Your plan">
+              <span className="tiny muted">Your plan:</span>
+              {plans.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`chip ${strategy?.id === p.id ? 'chip--active' : ''}`}
+                  aria-pressed={strategy?.id === p.id}
+                  title={p.does}
+                  onClick={() => onStrategy(strategy?.id === p.id ? null : p.id)}
+                >
+                  {p.name}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={`chip ${!strategy ? 'chip--active' : ''}`}
+                aria-pressed={!strategy}
+                onClick={() => onStrategy(null)}
+              >
+                Any
+              </button>
+            </div>
+            <p className="tiny m0">
+              {strategy
+                ? <><strong>{strategy.name}.</strong> {strategy.does} Look for: {strategy.look} This app&rsquo;s own suggestion, not a ranking.</>
+                : 'Pick a plan and the “does your thing” role searches for cards that fit it. Or leave it open and see what is popular.'}
+            </p>
+          </div>
+        )}
+        <div className="row row--wrap row--middle">
+          <select className="chip" aria-label="Budget for cards you do not own" value={budget} onChange={(e) => onBudget(Number(e.target.value))}>
+            {BUDGETS.map((b) => <option key={b} value={b}>{b ? `Budget $${b} to buy` : 'No budget'}</option>)}
+          </select>
+          <span className={`chip ${overBy ? 'chip--warn' : ''}`} title="What the cards you do not own would cost, from Scryfall's daily estimate">
+            To buy: {formatPrice(toBuy.total, 'usd')} for {toBuy.cards} card{toBuy.cards === 1 ? '' : 's'}
+            {toBuy.unpriced ? ` · ${toBuy.unpriced} unpriced` : ''}
+            {overBy ? ` · ${formatPrice(overBy, 'usd')} over` : ''}
+          </span>
+        </div>
         <div className="roles" role="tablist" aria-label="Roles">
           {counts.map((r) => (
             <button
@@ -543,17 +620,28 @@ function StaplesStep({ deck, colors, lookup, cap, onCap, remember, onChange, onO
             </button>
           ))}
         </div>
-        <p className="tiny m0">{ROLES.find((r) => r.id === role)?.blurb}</p>
+        <p className="tiny m0">
+          {ROLES.find((r) => r.id === role)?.blurb}
+          {role === 'theme' && strategy && current?.fromPlan && ` These fit ${strategy.name.toLowerCase()}.`}
+          {role === 'theme' && strategy && current && !current.fromPlan && ` Nothing under this price matched ${strategy.name.toLowerCase()}, so these are simply popular in your colours.`}
+        </p>
         {!current && <p className="faint tiny">Looking up popular {ROLES.find((r) => r.id === role)?.label.toLowerCase()} in your colours…</p>}
         {current && current.cards.length === 0 && <p className="faint tiny">Nothing came back under this price. Try a higher cap.</p>}
         <div className="staples">
           {(current?.cards ?? []).map((card) => {
             const have = deck.main.find((e) => e.cardId === card.id)?.quantity ?? 0
+            const why = whyFor({
+              role: ROLES.find((r) => r.id === role)?.label,
+              strategy: role === 'theme' ? strategy : null,
+              matchedPlan: role === 'theme' && current?.fromPlan,
+              owned: ownedOf(collection, card),
+            })
             return (
               <div key={card.id} className={`staple ${have ? 'staple--in' : ''}`}>
                 <button className="staple__name" onClick={() => onOpenCard?.(card)}>{card.name}</button>
                 <ManaCost cost={card.mana_cost || card.card_faces?.[0]?.mana_cost || ''} />
                 <span className="faint tiny">{priceLabel(card, 'usd')}</span>
+                <span className="staple__why faint tiny">{why}</span>
                 {have
                   ? <button className="btn btn--sm btn--ghost" onClick={() => remove(card)} aria-label={`Remove ${card.name}`}>In deck ✓</button>
                   : <button className="btn btn--sm" onClick={() => add(card)} aria-label={`Add ${card.name}`}>Add</button>}

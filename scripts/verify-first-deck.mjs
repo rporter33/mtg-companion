@@ -11,6 +11,8 @@
  * one fewer good suggestion for someone's first deck.
  */
 import { COLOR_PAGES, FIRST_COMMANDERS } from '../src/data/colors.js'
+import { STRATEGIES } from '../src/data/strategies.js'
+import { stapleQueries } from '../src/lib/first-deck.js'
 
 const API = process.env.SCRYFALL_API || 'https://api.scryfall.com'
 const UA = 'mtg-companion-first-deck-verifier/1.0 (+https://github.com/rporter33/mtg-companion)'
@@ -40,8 +42,34 @@ for (let i = 0; i < names.length; i += 75) {
   await new Promise((r) => setTimeout(r, 120))
 }
 
-console.log(`${names.length} names checked.`)
+// Every plan's searches, for every colour choice that offers it, at the
+// default price cap: the first query that answers is the one the app will
+// use, and a plan with no answering query would leave the role on its
+// broad fallback without saying so here.
+const silent = []
+let plansChecked = 0
+for (const [colors, plans] of Object.entries(STRATEGIES)) {
+  for (const plan of plans) {
+    plansChecked++
+    const queries = stapleQueries(colors, 'theme', { capUsd: 4, strategy: plan }).slice(0, plan.queries.length)
+    let answered = false
+    for (const q of queries) {
+      const response = await fetch(`${API}/cards/search?q=${encodeURIComponent(q)}&order=edhrec&unique=cards`, {
+        headers: { Accept: 'application/json', 'User-Agent': UA },
+      })
+      await new Promise((r) => setTimeout(r, 120))
+      if (response.status === 404) continue // Scryfall's "no cards match"
+      if (!response.ok) { console.error(`Scryfall answered ${response.status} for ${q}`); process.exit(2) }
+      const payload = await response.json()
+      if ((payload.data ?? []).length) { answered = true; break }
+    }
+    if (!answered) silent.push(`${colors} ${plan.id}: ${queries.join(' | ')}`)
+  }
+}
+
+console.log(`${names.length} names checked, ${plansChecked} plan searches checked.`)
 if (unknown.length) console.log(`Unknown to Scryfall:\n  ${unknown.join('\n  ')}`)
 if (notCommander.length) console.log(`Not a legal commander:\n  ${notCommander.join('\n  ')}`)
-if (!unknown.length && !notCommander.length) console.log('All good.')
-process.exit(unknown.length || notCommander.length ? 1 : 0)
+if (silent.length) console.log(`Plan searches that return nothing under $4:\n  ${silent.join('\n  ')}`)
+if (!unknown.length && !notCommander.length && !silent.length) console.log('All good.')
+process.exit(unknown.length || notCommander.length || silent.length ? 1 : 0)
