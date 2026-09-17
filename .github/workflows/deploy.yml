@@ -26,6 +26,16 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      # The browser suite drives the built app in a real Chromium. It has
+      # caught every real regression so far and used to run only by hand,
+      # which meant a bug in routing or storage could deploy green.
+      - run: npx playwright install --with-deps chromium
+      - name: Browser suite against the build
+        run: |
+          npx vite preview --port 4173 --strictPort >/tmp/preview.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://localhost:4173/ >/dev/null && break; sleep 1; done
+          curl -sf -o /dev/null http://localhost:4173/ || { echo "preview did not start"; cat /tmp/preview.log; exit 1; }
+          npm run test:browser
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:
