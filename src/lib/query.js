@@ -238,6 +238,9 @@ export function clearFilters(filters) {
 
 export const SORT_OPTIONS = [
   { id: 'name', label: 'Name', order: 'name', defaultDir: 'asc' },
+  // Scryfall's EDHREC rank: how many Commander decks run the card. Ascending
+  // is most played first, which is what "popular" means to a builder.
+  { id: 'edhrec', label: 'Most played', order: 'edhrec', defaultDir: 'asc' },
   { id: 'cmc', label: 'Mana value', order: 'cmc', defaultDir: 'asc' },
   { id: 'usd', label: 'Price', order: 'usd', defaultDir: 'asc' },
   { id: 'released', label: 'Release date', order: 'released', defaultDir: 'desc' },

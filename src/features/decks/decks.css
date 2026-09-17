@@ -359,3 +359,14 @@ select.chip { width: auto; max-width: 8rem; }
   mask-image: none;
 }
 .deck-tile--backed > :not(.deck-art) { position: relative; }
+
+/* Add cards: what the deck needs, quick filters, and rows that show value. */
+.needs { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; }
+.needs__chip { cursor: pointer; }
+.quick { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+.quick__group { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); }
+.chip--sm { padding: 2px 8px; font-size: 0.75rem; }
+.search-row__main { flex: 1 1 10rem; min-width: 0; display: flex; flex-direction: column; }
+.search-row__main .deck-row__name { flex: none; }
+.search-row__type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-row--in { border-left-color: var(--ok, var(--accent)); }

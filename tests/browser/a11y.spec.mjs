@@ -226,7 +226,17 @@ await scanState('first deck: how you play', async () => (await page.getByRole('b
 await page.evaluate(() => { location.hash = '#/decks/a11y-deck' })
 await page.waitForTimeout(900)
 
+await scanState('add cards', async () => {
+  const tab = page.getByRole('tab', { name: 'Add cards' })
+  if (!await tab.count()) return false
+  await tab.click()
+  await page.waitForTimeout(400)
+  return (await page.getByLabel('Search cards to add').count()) > 0 && (await page.getByRole('group', { name: 'Quick filters' }).count()) > 0
+})
+
 await scanState('deck text view', async () => {
+  await page.getByRole('tab', { name: 'List' }).click()
+  await page.waitForTimeout(300)
   const text = page.getByRole('button', { name: 'Text', exact: true })
   if (!await text.count()) return false
   await text.click()

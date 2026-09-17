@@ -2,20 +2,47 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { searchCards } from '../../lib/scryfall.js'
 import { addCard, setCommanders } from '../../lib/deck.js'
 import { getFormat, canBeCommander, cardLegality, effectiveCopyLimit } from '../../lib/formats.js'
-import { combinedCounts, unionColorIdentity } from '../../lib/deck.js'
-import { parseQuery, serialiseQuery, clearFilters, hasActiveFilters } from '../../lib/query.js'
+import { combinedCounts, unionColorIdentity, deckSize } from '../../lib/deck.js'
+import { parseQuery, serialiseQuery, clearFilters, hasActiveFilters, SORT_OPTIONS, getSort } from '../../lib/query.js'
+import { getPrefs, setPref } from '../../lib/storage.js'
+import { priceLabel, priceFor } from '../../lib/prices.js'
+import { useCollection } from '../../lib/collection-store.js'
+import { ownedOf } from '../../lib/collection.js'
+import { roleCounts } from '../../lib/first-deck.js'
+import { artUrl } from '../../lib/deck-art.js'
 import SearchFilters from '../cards/SearchFilters.jsx'
 import '../cards/filters.css'
 import { pinCards } from '../../lib/cache.js'
 import ManaCost from '../../components/ManaCost.jsx'
+import DeckArt from '../../components/DeckArt.jsx'
 import { identityAttr } from '../../components/CardFace.jsx'
 
 /**
  * In-deck search. Scopes the query to the deck's format by default, since 90%
  * of the time while building you only want cards you can actually play — and
  * shows why a card is blocked rather than just hiding it.
+ *
+ * Results are sorted by how played each card is unless asked otherwise,
+ * because "what do people run in these colours" is the question a builder
+ * is asking; every row carries its price in the deck's market and its type,
+ * so the value of a pick is visible before it is added. The quick chips
+ * write into the same query the search box shows, so nothing hidden is
+ * filtering; "Not in deck" and "Owned" are the two exceptions, and they are
+ * applied here to what came back rather than sent to Scryfall, since Scryfall
+ * does not know your deck.
  */
-export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards, seedQuery }) {
+const TYPE_CHIPS = ['Creature', 'Instant', 'Sorcery', 'Artifact', 'Enchantment', 'Land', 'Planeswalker']
+const PRICE_CHIPS = [1, 4, 10]
+/** Role queries, in the coach's own wording, so a chip and the coach agree. */
+const ROLE_QUERIES = {
+  lands: 't:land',
+  ramp: '(o:"add {" or o:"search your library for a basic land") -t:land',
+  draw: 'o:"draw" -o:"opponent draws" -t:land',
+  removal: '(o:"destroy target" or o:"exile target" or o:"destroy all" or o:"deals damage to any target") -t:land',
+  theme: '-t:land',
+}
+
+export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards, seedQuery, market = 'usd', art = false }) {
   const [query, setQuery] = useState('')
   const [scoped, setScoped] = useState(true)
   const [identityScoped, setIdentityScoped] = useState(true)
@@ -23,12 +50,23 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
   const [results, setResults] = useState(null)
   const [status, setStatus] = useState('idle')
   const [error, setError] = useState(null)
+  const [sortId, setSortId] = useState(() => getPrefs().deckSortId ?? 'edhrec')
+  const [dir, setDir] = useState(() => getPrefs().deckSortDir ?? null)
+  const [hideInDeck, setHideInDeck] = useState(false)
+  const [ownedOnly, setOwnedOnly] = useState(false)
+  const [collection] = useCollection()
   const abortRef = useRef(null)
 
   const format = getFormat(deck.formatId)
   const counts = combinedCounts(deck)
   const filters = useMemo(() => parseQuery(query), [query])
   const seededRef = useRef(null)
+  const sort = getSort(sortId)
+  const direction = dir ?? sort.defaultDir
+  const lookup = useCallback((id) => cards?.get?.(id), [cards])
+  const needs = useMemo(() => (format.group === 'commander' ? roleCounts(deck, lookup) : null), [deck, lookup, format])
+  const total = deckSize(deck, format)
+  const target = format?.deck.max ?? format?.deck.min ?? 60
 
   /**
    * A commander fixes what the deck may legally contain, so searching inside
@@ -48,7 +86,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
   }, [deck.commanders, cards, format])
 
   /**
-   * Scoping is passed in rather than read from state.
+   * Scoping and sorting are passed in rather than read from state.
    *
    * A toggle that calls `setX(false)` and then `run(query)` in the same handler
    * runs the *previous* callback, which still closes over the old value — so
@@ -60,6 +98,8 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
     if (!q) return
     const useFormatScope = overrides.scoped ?? scoped
     const useIdentityScope = overrides.identityScoped ?? identityScoped
+    const useSort = getSort(overrides.sortId ?? sortId)
+    const useDir = overrides.dir ?? dir ?? useSort.defaultDir
 
     abortRef.current?.abort()
     const controller = new AbortController()
@@ -78,7 +118,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
     }
 
     try {
-      const result = await searchCards(parts.join(' '), { signal: controller.signal })
+      const result = await searchCards(parts.join(' '), { order: useSort.order, dir: useDir, signal: controller.signal })
       setResults(result)
       setStatus('done')
     } catch (err) {
@@ -86,7 +126,27 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
       setError(err)
       setStatus('error')
     }
-  }, [scoped, identityScoped, commanderIdentity, format.legalityKey])
+  }, [scoped, identityScoped, commanderIdentity, format.legalityKey, sortId, dir])
+
+  const rewrite = (next) => {
+    const rewritten = serialiseQuery(next)
+    setQuery(rewritten)
+    if (rewritten.trim()) run(rewritten)
+  }
+  const chooseSort = (id) => {
+    setSortId(id); setDir(null); setPref('deckSortId', id); setPref('deckSortDir', null)
+    if (query.trim()) run(query, { sortId: id, dir: null })
+  }
+  const flipDir = () => {
+    const next = direction === 'asc' ? 'desc' : 'asc'
+    setDir(next); setPref('deckSortDir', next)
+    if (query.trim()) run(query, { dir: next })
+  }
+  const askRole = (roleId) => {
+    const q = ROLE_QUERIES[roleId] ?? ROLE_QUERIES.theme
+    setQuery(q)
+    run(q)
+  }
 
   const add = (card, asCommander = false) => {
     onChange(asCommander
@@ -107,8 +167,32 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedQuery])
 
+  const shown = useMemo(() => (results?.cards ?? []).filter((card) => {
+    if (hideInDeck && (counts.get(card.id) ?? 0) > 0) return false
+    if (ownedOnly && ownedOf(collection, card) === 0) return false
+    return true
+  }), [results, hideInDeck, ownedOnly, counts, collection])
+  const hiddenCount = (results?.cards?.length ?? 0) - shown.length
+  const shownValue = shown.reduce((n, c) => n + (priceFor(c, market).value ?? 0), 0)
+
   return (
     <div className="stack">
+      {needs && (
+        <div className="needs" role="group" aria-label="What this deck still needs">
+          <span className={`chip ${total === target ? 'chip--ok' : ''}`} title="Cards in the deck, commander included">{total}/{target}</span>
+          {needs.map((role) => (
+            <button
+              key={role.id}
+              className={`chip needs__chip ${role.short === 0 ? 'chip--ok' : ''}`}
+              onClick={() => askRole(role.id)}
+              title={role.short === 0 ? `${role.label}: the usual count is met` : `${role.label}: ${role.short} short of the usual ${role.target}. Search for some.`}
+            >
+              {role.label} {role.have}/{role.target}
+            </button>
+          ))}
+        </div>
+      )}
+
       <form className="search" onSubmit={(e) => { e.preventDefault(); run(query) }} role="search">
         <input
           type="search"
@@ -142,6 +226,64 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
           />
           Legal in {format.name}
         </label>
+        <span className="spacer" />
+        <label className="row tiny muted" style={{ gap: 'var(--space-1)', width: 'auto' }}>
+          Sort
+          <select className="chip" aria-label="Sort results" value={sortId} onChange={(e) => chooseSort(e.target.value)}>
+            {SORT_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </label>
+        <button
+          className="chip"
+          onClick={flipDir}
+          aria-label={`Sort direction: ${direction === 'asc' ? 'ascending' : 'descending'}`}
+          title={direction === 'asc' ? 'Ascending — press for descending' : 'Descending — press for ascending'}
+        >
+          {direction === 'asc' ? '↑' : '↓'}
+        </button>
+      </div>
+
+      {/* Quick chips write into the query itself; nothing hidden is filtering. */}
+      <div className="quick" role="group" aria-label="Quick filters">
+        <span className="quick__group">
+          {TYPE_CHIPS.map((type) => {
+            const on = filters.types.some((t) => t.toLowerCase() === type.toLowerCase())
+            return (
+              <button
+                key={type}
+                className={`chip chip--sm ${on ? 'chip--active' : ''}`}
+                aria-pressed={on}
+                onClick={() => rewrite({
+                  ...filters,
+                  types: on ? filters.types.filter((t) => t.toLowerCase() !== type.toLowerCase()) : [...filters.types, type.toLowerCase()],
+                })}
+              >
+                {type}
+              </button>
+            )
+          })}
+        </span>
+        <span className="quick__group">
+          {PRICE_CHIPS.map((cap) => (
+            <button
+              key={cap}
+              className={`chip chip--sm ${filters.maxPrice === cap ? 'chip--active' : ''}`}
+              aria-pressed={filters.maxPrice === cap}
+              onClick={() => rewrite({ ...filters, maxPrice: filters.maxPrice === cap ? null : cap })}
+              title={`Only cards under $${cap} (Scryfall's USD price)`}
+            >
+              ≤ ${cap}
+            </button>
+          ))}
+        </span>
+        <span className="quick__group">
+          <button className={`chip chip--sm ${hideInDeck ? 'chip--active' : ''}`} aria-pressed={hideInDeck} onClick={() => setHideInDeck(!hideInDeck)}>
+            Not in deck
+          </button>
+          <button className={`chip chip--sm ${ownedOnly ? 'chip--active' : ''}`} aria-pressed={ownedOnly} onClick={() => setOwnedOnly(!ownedOnly)} title="Only cards in your collection">
+            Owned
+          </button>
+        </span>
       </div>
 
       {commanderIdentity && identityScoped && (
@@ -179,16 +321,8 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
         <>
           <SearchFilters
             filters={filters}
-            onChange={(next) => {
-              const rewritten = serialiseQuery(next)
-              setQuery(rewritten)
-              if (rewritten.trim()) run(rewritten)
-            }}
-            onClear={() => {
-              const rewritten = serialiseQuery(clearFilters(filters))
-              setQuery(rewritten)
-              if (rewritten.trim()) run(rewritten)
-            }}
+            onChange={rewrite}
+            onClear={() => rewrite(clearFilters(filters))}
             locked={identityScoped && !!commanderIdentity}
           />
           {identityScoped && commanderIdentity && (
@@ -206,30 +340,39 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
         </div>
       )}
 
-      {results?.cards?.length === 0 && status === 'done' && (
-        <p className="faint">No cards matched.</p>
+      {status === 'loading' && <p className="faint tiny" style={{ margin: 0 }}>Searching…</p>}
+
+      {results && status === 'done' && (
+        <p className="faint tiny results-line" style={{ margin: 0 }}>
+          {results.cards.length === 0
+            ? 'No cards matched.'
+            : `${shown.length} shown${hiddenCount ? ` (${hiddenCount} hidden by Not in deck or Owned)` : ''}${results.totalCards > results.cards.length ? ` of ${results.totalCards}` : ''} · sorted by ${sort.label.toLowerCase()}${direction === 'desc' ? ', descending' : ''} · ${priceLabel({ prices: { [market]: String(shownValue) } }, market)} shown in total`}
+        </p>
       )}
 
       <div className="stack" style={{ gap: 'var(--space-1)' }}>
-        {results?.cards?.map((card) => {
+        {shown.map((card) => {
           const inDeck = counts.get(card.id) ?? 0
+          const owned = ownedOf(collection, card)
           const limit = effectiveCopyLimit(card, format)
-          const status = cardLegality(card, format)
-          const blocked = status === 'banned' || status === 'not_legal'
+          const legality = cardLegality(card, format)
+          const blocked = legality === 'banned' || legality === 'not_legal'
           const atLimit = inDeck >= limit
           const commanderOk = format.commander?.required
             && deck.commanders.length < format.commander.max
             && canBeCommander(card, format).ok
+          const artSrc = art ? artUrl(card) : null
 
           return (
-            <div className="deck-row" key={card.id} data-identity={identityAttr(card)}>
+            <div className={`deck-row search-row ${inDeck ? 'search-row--in' : ''} ${artSrc ? 'deck-row--art' : ''}`} key={card.id} data-identity={identityAttr(card)}>
+              {artSrc && <DeckArt src={artSrc} cardId={card.id} className="deck-art--row" />}
               <button
                 className="btn btn--sm btn--primary"
                 onClick={() => add(card)}
                 disabled={blocked || atLimit}
                 aria-label={`Add ${card.name}`}
                 title={
-                  blocked ? `${status === 'banned' ? 'Banned' : 'Not legal'} in ${format.name}`
+                  blocked ? `${legality === 'banned' ? 'Banned' : 'Not legal'} in ${format.name}`
                     : atLimit ? `Already at the limit of ${limit}` : undefined
                 }
               >
@@ -238,13 +381,16 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
               {commanderOk && (
                 <button className="btn btn--sm" onClick={() => add(card, true)} title="Set as commander">★</button>
               )}
-              <button className="deck-row__name" onClick={() => onOpenCard(card)}>
-                {card.name}
-                {inDeck > 0 && <span className="faint tiny"> · {inDeck} in deck</span>}
-              </button>
+              <span className="search-row__main">
+                <button className="deck-row__name" onClick={() => onOpenCard(card)}>{card.name}</button>
+                <span className="search-row__type faint tiny">{card.type_line}</span>
+              </span>
               <ManaCost cost={card.mana_cost || card.card_faces?.[0]?.mana_cost || ''} />
+              <span className="deck-row__price faint tiny" title="Scryfall's daily price in the deck's market">{priceLabel(card, market)}</span>
+              {inDeck > 0 && <span className="chip chip--sm chip--ok" title="Already in this deck">{inDeck} in deck</span>}
+              {owned > 0 && <span className="chip chip--sm" title="In your collection">own {owned}</span>}
               {blocked && (
-                <span className="chip chip--error tiny">{status === 'banned' ? 'banned' : 'not legal'}</span>
+                <span className="chip chip--error tiny">{legality === 'banned' ? 'banned' : 'not legal'}</span>
               )}
             </div>
           )

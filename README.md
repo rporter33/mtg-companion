@@ -341,6 +341,20 @@ category that is not one of Archidekt's type defaults becomes a section; the
 falls back to the name, still in bulk. The slow path still exists for names
 nothing else can place, and it now says which name it is on.
 
+**Add cards shows the value of a pick before it is added.** Results sort by
+how played each card is unless asked otherwise, because "what do people run
+in these colours" is the question a builder is asking; Scryfall carries that
+rank on every card. Price in the deck's market, mana value, name and release
+date are a select away, with a direction button, and the choice is
+remembered. Every row carries its price and type, whether it is already in
+the deck, and how many you own, and the results line totals what is shown.
+Quick chips for type and price write into the query the box shows, so nothing
+hidden is filtering; "Not in deck" and "Owned" are applied to what came back,
+since Scryfall does not know your deck, and the line says how many they hid.
+A strip above the box says where the deck stands by role, in the coach's own
+counts, and pressing a role searches for it in the coach's own wording, so a
+chip and the coach never disagree.
+
 **The first-deck flow invents nothing.** The colour writing is the app's own
 and says so on screen. The recommended commanders are a list written for this
 app with a reason each, and `npm run firstdeck:verify` checks every name and

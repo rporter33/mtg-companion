@@ -217,6 +217,7 @@ export default function DeckEditor({
         <DeckSearch
           deck={deck} onChange={commit} onOpenCard={onOpenCard}
           offline={offline} cards={cards} seedQuery={coachQuery}
+          market={market} art={showImages && rowArt}
         />
       )}
       {tab === 'coach' && (
