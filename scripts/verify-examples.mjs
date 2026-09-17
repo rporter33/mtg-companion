@@ -82,6 +82,45 @@ async function ask(chunk) {
   process.exit(2)
 }
 
+const TODAY = new Date().toISOString().slice(0, 10)
+
+/** Has this printing's set not come out yet? */
+function isUnreleased(card) {
+  return Boolean(card?.released_at) && card.released_at > TODAY
+}
+
+/**
+ * What did they probably mean?
+ *
+ * Fuzzy naming gives one confident guess; autocomplete gives a list. Both are
+ * printed and neither is applied, because a fuzzy match is confidently wrong
+ * often enough that a person has to look at it.
+ */
+async function suggest(name) {
+  const get = async (path) => {
+    try {
+      const response = await fetch(`${API}${path}`, {
+        headers: { Accept: 'application/json', 'User-Agent': UA },
+        signal: AbortSignal.timeout(15000),
+      })
+      return response.ok ? response.json() : null
+    } catch { return null }
+  }
+
+  const fuzzy = await get(`/cards/named?fuzzy=${encodeURIComponent(name)}`)
+  await sleep(120)
+  // Drop the last word: "Awesome Android" finds nothing, "Awesome" finds the
+  // family of names it might belong to.
+  const stem = name.split(/\s+/).slice(0, 2).join(' ')
+  const auto = await get(`/cards/autocomplete?q=${encodeURIComponent(stem)}`)
+  await sleep(120)
+
+  return {
+    best: fuzzy?.name ?? null,
+    candidates: (auto?.data ?? []).filter((candidate) => candidate !== fuzzy?.name),
+  }
+}
+
 const cards = new Map()
 const missing = []
 
@@ -111,9 +150,15 @@ if (missing.length) {
   console.log(c.bad(missing.length === 1
     ? '1 name Scryfall does not know:'
     : `${missing.length} names Scryfall does not know:`))
+  console.log(c.dim('  Scryfall matches names exactly here, so a subtitle or a stray word is'))
+  console.log(c.dim('  enough to miss. Closest matches are looked up for each one.\n'))
   for (const name of missing) {
     const owners = EXAMPLE_DECKS.filter((deck) => namesIn(deck).includes(name)).map((deck) => deck.id)
-    console.log(`  ${name} ${c.dim(`(in ${owners.join(', ')})`)}`)
+    console.log(`  ${c.head(name)} ${c.dim(`(in ${owners.join(', ')})`)}`)
+    const { best, candidates } = await suggest(name)
+    if (best) console.log(`    closest: ${c.ok(best)}`)
+    if (candidates.length) console.log(`    ${c.dim(`also: ${candidates.slice(0, 5).join(' | ')}`)}`)
+    if (!best && !candidates.length) console.log(`    ${c.dim('no close match — it may be a token, not a card')}`)
   }
   console.log()
 }
@@ -124,10 +169,18 @@ for (const deck of EXAMPLE_DECKS) {
   const unresolved = entries.filter((name) => !cards.has(name))
   const wrongSize = deck.formatId === 'commander' && size !== 100
 
+  // A card from a set that has not come out yet is "not_legal" everywhere. That
+  // is a release date, not a deck problem, and reporting it as one would bury
+  // the real bans in noise — a preview deck would show thirty failures and none
+  // of them actionable.
   const illegal = []
+  const unreleased = []
   for (const { name } of deck.main) {
-    const legality = cards.get(name)?.legalities?.[deck.formatId]
-    if (legality && legality !== 'legal' && legality !== 'restricted') illegal.push(`${name} (${legality})`)
+    const card = cards.get(name)
+    const legality = card?.legalities?.[deck.formatId]
+    if (!legality || legality === 'legal' || legality === 'restricted') continue
+    if (legality === 'not_legal' && isUnreleased(card)) unreleased.push(name)
+    else illegal.push(`${name} (${legality})`)
   }
 
   // A colourless commander has an empty identity and every coloured card is off
@@ -149,6 +202,13 @@ for (const deck of EXAMPLE_DECKS) {
   const mark = bad ? c.bad('✗') : c.ok('✓')
   console.log(`${mark} ${deck.name} ${c.dim(`— ${size} cards, ${entries.length - unresolved.length}/${entries.length} names known`)}`)
   if (wrongSize) console.log(`    ${c.warn('not 100 cards')} ${c.dim(deck.note || '(no note explaining why)')}`)
+  if (unreleased.length) {
+    const soonest = unreleased
+      .map((name) => cards.get(name)?.released_at)
+      .filter(Boolean)
+      .sort()[0]
+    console.log(`    ${c.warn(`${unreleased.length} cards not released yet`)} ${c.dim(`(from ${soonest} onward) — legal once their set is out`)}`)
+  }
   for (const entry of illegal) console.log(`    ${c.bad('not legal in ' + deck.formatId)}: ${entry}`)
   if (offColor.length) {
     console.log(`    ${c.bad('outside the commander\'s colour identity')}: ${offColor.join(', ')}`)
