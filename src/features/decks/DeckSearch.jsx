@@ -43,7 +43,7 @@ const ROLE_QUERIES = {
   theme: '-t:land',
 }
 
-export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards, seedQuery, market = 'usd', art = false }) {
+export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards, seedQuery, onSeeded, market = 'usd', art = false }) {
   const [query, setQuery] = useState('')
   const [scoped, setScoped] = useState(true)
   const [identityScoped, setIdentityScoped] = useState(true)
@@ -156,8 +156,10 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
     pinCards([card.id])
   }
 
-  // A query handed over by the coach runs once on arrival. The coach already
-  // scopes to format and colour identity, so its query goes out as written.
+  // A query handed over by the coach or the deck list runs once on arrival,
+  // then is handed back consumed, so the next visit to this tab starts
+  // clean. The coach already scopes to format and colour identity, so its
+  // query goes out as written.
   useEffect(() => {
     if (!seedQuery || seededRef.current === seedQuery) return
     seededRef.current = seedQuery
@@ -165,6 +167,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
     setScoped(false)
     setIdentityScoped(false)
     run(seedQuery, { scoped: false, identityScoped: false })
+    onSeeded?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedQuery])
 

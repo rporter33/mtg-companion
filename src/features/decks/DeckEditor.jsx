@@ -1,4 +1,4 @@
-import { Suspense, lazy, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import useDeckCards from './useDeckCards.js'
 import DeckAnalysis from './DeckAnalysis.jsx'
 import DeckCoach from './DeckCoach.jsx'
@@ -17,7 +17,7 @@ const DeckPlaytest = lazy(() => import('./DeckPlaytest.jsx'))
 const DeckHistory = lazy(() => import('./DeckHistory.jsx'))
 const DeckImportExport = lazy(() => import('./DeckImportExport.jsx'))
 import { useCollection } from '../../lib/collection-store.js'
-import { missingFor, missingCost, ownEverythingIn } from '../../lib/collection.js'
+import { missingFor, missingCost, ownEverythingIn, keyOf } from '../../lib/collection.js'
 
 /** "USD via TCGplayer" — the label alone does not say where a number came from. */
 const getMarketLabel = (id) => {
@@ -72,7 +72,21 @@ export default function DeckEditor({
 
   const [collection, setCollection] = useCollection()
   const notOwned = useMemo(() => missingFor(deck, lookup, collection), [deck, cards, collection])
+  const needed = useMemo(() => new Set(notOwned.map((m) => keyOf(m.card))), [notOwned])
   const toBuy = useMemo(() => missingCost(notOwned, market), [notOwned, market])
+
+  // The tab strip scrolls sideways on a phone; the open tab must be in view,
+  // or a deck opened on Import / export shows a strip with nothing selected.
+  const tabsRef = useRef(null)
+  useEffect(() => {
+    const nav = tabsRef.current
+    const chip = nav?.querySelector('[aria-selected="true"]')
+    if (!nav || !chip) return
+    const n = nav.getBoundingClientRect()
+    const c = chip.getBoundingClientRect()
+    if (c.left < n.left) nav.scrollLeft += c.left - n.left - 8
+    else if (c.right > n.right) nav.scrollLeft += c.right - n.right + 8
+  }, [tab])
 
   const money = useMemo(
     () => totalFor(groups.flatMap((g) => g.entries).filter((e) => e.card), market),
@@ -181,7 +195,7 @@ export default function DeckEditor({
         <div className="banner banner--warn tiny">{warnings[0].message}</div>
       )}
 
-      <nav className="row" role="tablist">
+      <nav className="row tabs" role="tablist" aria-label="Deck" ref={tabsRef}>
         {[['list', 'List'], ['add', 'Add cards'], ['coach', 'Coach'], ['analysis', 'Analysis'], ['hand', 'Playtest'], ['history', 'History'], ['io', 'Import / export']]
           .map(([id, label]) => (
             <button
@@ -199,16 +213,18 @@ export default function DeckEditor({
       <Suspense fallback={<div className="view-loading" aria-busy="true" />}>
       {tab === 'list' && (
         <DeckList
+          key={deck.id}
           deck={deck} groups={groups} format={format} market={market} lookup={lookup}
           art={showImages && rowArt} artSwitch={showImages ? toggleRowArt : null}
-          collection={collection}
+          collection={collection} needed={needed}
           onChange={commit} onOpenCard={onOpenCard} validation={validation}
+          onFindElsewhere={(query) => { setCoachQuery(query); setTab('add') }}
         />
       )}
       {tab === 'add' && (
         <DeckSearch
           deck={deck} onChange={commit} onOpenCard={onOpenCard}
-          offline={offline} cards={cards} seedQuery={coachQuery}
+          offline={offline} cards={cards} seedQuery={coachQuery} onSeeded={() => setCoachQuery(null)}
           market={market} art={showImages && rowArt}
         />
       )}

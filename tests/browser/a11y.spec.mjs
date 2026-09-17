@@ -247,6 +247,26 @@ await scanState('deck text view', async () => {
   return (await page.locator('.text-row').count()) > 0
 })
 
+await scanState('deck list, searching', async () => {
+  await page.getByRole('button', { name: 'List', exact: true }).click()
+  await page.waitForTimeout(300)
+  const box = page.getByLabel('Find a card in this deck')
+  if (!await box.count()) return false
+  await box.fill('elf')
+  await page.waitForTimeout(300)
+  return (await page.locator('.deck-row').count()) > 0 && (await page.locator('.section-title').count()) > 0
+})
+
+await scanState('deck find, nothing matches', async () => {
+  const box = page.getByLabel('Find a card in this deck')
+  await box.fill('zzz')
+  await page.waitForTimeout(300)
+  const ok = (await page.locator('.deck-find__empty').count()) === 1
+  return ok
+})
+await page.getByLabel('Find a card in this deck').fill('')
+await page.waitForTimeout(200)
+
 await scanState('playtest hand', async () => {
   const tab = page.getByRole('tab', { name: 'Playtest' })
   if (!await tab.count()) return false

@@ -60,7 +60,9 @@ or Arena export pastes in as it is: the set and collector number pick the exact
 printing, and a section you named on the other site is a section here. Read
 the deck as a list, a grid of card art, or as text: the whole deck on one
 screen, sections flowing into columns, with the card under the pointer shown
-large beside it.
+large beside it. A bar pinned above the list finds a card as you type, by
+name or type line with accents ignored, or narrows the deck to what you still
+need to buy; a miss offers to search every card instead.
 
 **Play** — A life counter for games with physical cards. One to six players,
 per-format starting life, commander damage tracked per source, poison, energy,

@@ -122,6 +122,17 @@ for (let i = 0; i < 5; i++) { await row.getByRole('button', { name: /One more/ }
 const keys = await page.evaluate(() => ({ long: window.__longTasks.length, longMs: Math.round(window.__longTasks.reduce((a, b) => a + b, 0)) }))
 console.log(`${'5× quantity clicks in list'.padEnd(34)} ${String(Date.now() - k0).padStart(6)} ms   per click ${Math.round((Date.now() - k0) / 5)} ms   long ${keys.long} (${keys.longMs} ms)`)
 
+// Finding a card: the filter runs per keystroke over the whole deck, so a
+// slow one would be felt on every character.
+await page.evaluate(() => { window.__longTasks = [] })
+const f0 = Date.now()
+const find = page.getByLabel('Find a card in this deck')
+await find.type('test card 09', { delay: 10 })
+await page.waitForFunction(() => document.querySelectorAll('.deck-row').length <= 20)
+const finding = await page.evaluate(() => ({ long: window.__longTasks.length, longMs: Math.round(window.__longTasks.reduce((a, b) => a + b, 0)) }))
+console.log(`${'typing 12 chars in deck search'.padEnd(34)} ${String(Date.now() - f0).padStart(6)} ms   per char ${Math.round((Date.now() - f0) / 12)} ms   long ${finding.long} (${finding.longMs} ms)`)
+await settle('clear the search (100 rows back)', () => find.fill(''), () => document.querySelectorAll('.deck-row:not(.deck-row--missing)').length >= 100)
+
 await settle('Analysis tab', tab('Analysis'), () => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent === 'Analysis' && document.querySelectorAll('.app__main *').length > 50)
 await settle('Coach tab', tab('Coach'), () => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent === 'Coach' && document.querySelectorAll('.app__main *').length > 50)
 await settle('Playtest: draw a hand', async () => { await tab('Playtest')(); await page.getByRole('button', { name: 'Draw a hand' }).click() }, () => document.querySelectorAll('.hand-card').length === 7)

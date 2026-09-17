@@ -40,6 +40,9 @@ input, select, textarea {
   padding: var(--space-2) var(--space-3);
   width: 100%;
 }
+/* The browser's default placeholder grey is 4.1:1 on the input surface, under
+   the 4.5:1 line, and a placeholder is often the only visible label. */
+input::placeholder, textarea::placeholder { color: var(--text-faint); opacity: 1; }
 input:focus-visible, select:focus-visible, textarea:focus-visible,
 button:focus-visible, [tabindex]:focus-visible {
   outline: 2px solid var(--mtg-u);
@@ -59,10 +62,11 @@ button:focus-visible, [tabindex]:focus-visible {
 }
 
 .app__main {
+  --main-pad: var(--space-4);
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-4);
-  padding-top: calc(var(--space-4) + var(--safe-top));
+  padding: var(--main-pad);
+  padding-top: calc(var(--main-pad) + var(--safe-top));
   max-width: 1200px;
   width: 100%;
   margin: 0 auto;
@@ -218,7 +222,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
   }
   .app__nav button { flex: 0 0 auto; border-top: none; border-left: 2px solid transparent; }
   .app__nav button[aria-current="page"] { border-left-color: var(--accent); border-top-color: transparent; }
-  .app__main { padding: var(--space-6); }
+  .app__main { --main-pad: var(--space-6); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -252,6 +256,22 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .banner--button { text-align: left; cursor: pointer; width: 100%; }
 .stack--mid { gap: var(--space-3); }
 .ml-auto { margin-left: auto; }
+
+/* A strip of tabs that is wider than a phone scrolls sideways within itself
+   rather than pushing the whole screen wider; the scrollbar is hidden
+   because the chips themselves show there is more. */
+.tabs {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  /* Room inside the scroll box for a focus ring (2px, offset 2px), which an
+     overflow box would otherwise clip; the negative margin keeps the layout. */
+  padding: 4px;
+  margin: -4px;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tabs > * { flex-shrink: 0; }
 
 /* Hero art behind a panel: the picture keeps to the right on a wide screen
    and sits behind the bottom-aligned copy on a phone, with a scrim either way

@@ -8,11 +8,13 @@ import { priceLabel } from '../../../lib/prices.js'
  * Pinned beside the list on a wide screen and absent on a narrow or touch
  * one, where there is no pointer to follow and the card sheet already does
  * this on a tap. It is a live region so a screen reader hears the name
- * change as focus moves down the list.
+ * change as focus moves down the list — except while a search is typed,
+ * when the count line is already announcing and two voices would talk over
+ * each other.
  */
-export default function DeckPreview({ card, market, owned, onOpenCard }) {
+export default function DeckPreview({ card, market, owned, onOpenCard, live = 'polite' }) {
   return (
-    <aside className="deck-preview" aria-live="polite" aria-label="Card under the pointer">
+    <aside className="deck-preview" aria-live={live} aria-label="Card under the pointer">
       {card ? (
         <div className="stack stack--snug">
           <CardImage card={card} size="normal" onClick={() => onOpenCard(card)} />

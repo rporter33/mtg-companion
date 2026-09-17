@@ -381,3 +381,99 @@ select.chip { width: auto; max-width: 8rem; }
 /* A deck with no face art yet shows the card back, small, where the art would sit. */
 .deck-card__back { position: absolute; right: var(--space-3); top: var(--space-3); width: 40px; height: 56px; opacity: 0.55; }
 .deck-card--back .deck-card__open { padding-right: 56px; }
+
+/* --- Find in deck --------------------------------------------------------
+   Pinned above the sections inside the scrolling main area. Chromium pins a
+   sticky box at the scroll container's content edge, so `top` backs out the
+   main area's own padding to sit flush with the screen; the padding-top also
+   carries the safe-area inset, which leaves the bar exactly under the notch
+   in the standalone app, and the strip above it (::before) is painted the
+   same so rows never scroll through the notch. The surface is frosted: rows
+   and their art show faintly as they pass under. The hairline beneath is the
+   deck's colour identity, one segment a colour, and doubles as the bar's
+   bottom edge. */
+.deck-find {
+  --find-height: 58px;
+  position: sticky;
+  top: calc(-1 * var(--main-pad, var(--space-4)));
+  z-index: 3;
+  padding-top: var(--space-2);
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+}
+.deck-find::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  bottom: 100%;
+  height: var(--safe-top);
+  /* Opaque: nothing should be readable under the status bar. */
+  background: var(--bg);
+}
+/* Keyboard focus that scrolls a control into view lands below the bar, not
+   under it: the scroller's own padding is what the browser's "already
+   visible" test honours, a margin on the row wrapper is not. */
+.app__main:has(.deck-find) { scroll-padding-top: 68px; }
+/* The list takes focus on a click so "/" works from a blank spot; no ring for that. */
+.stack:focus:not(:focus-visible) { outline: none; }
+.deck-find__row { display: flex; align-items: center; gap: var(--space-2); }
+.deck-find__field {
+  position: relative;
+  flex: 1 1 12rem;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.deck-find__glass {
+  position: absolute;
+  left: 12px;
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.deck-find__input {
+  padding-left: 36px;
+  padding-right: 40px;
+  min-height: 40px;
+  border-radius: 999px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.deck-find__input::-webkit-search-cancel-button,
+.deck-find__input::-webkit-search-decoration { -webkit-appearance: none; display: none; }
+.deck-find__field--filled .deck-find__glass { color: var(--accent); }
+.deck-find__clear {
+  position: absolute;
+  right: 4px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+.deck-find__clear:hover { background: var(--bg-overlay); color: var(--text); }
+.deck-find__identity {
+  display: flex;
+  height: 2px;
+  margin-top: var(--space-2);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.deck-find__identity i { flex: 1; background: var(--identity, var(--border)); }
+.deck-find__actions { justify-content: center; flex-wrap: wrap; margin-top: var(--space-3); }
+/* The words typed are quoted back; an unbroken string must wrap, not widen the screen. */
+.deck-find__empty h3, .deck-find__empty .btn { overflow-wrap: anywhere; min-width: 0; white-space: normal; }
+/* Thumb-sized on a touch screen: the field and the chip beside it. */
+@media (hover: none) {
+  .deck-find__input { min-height: 44px; padding-right: 44px; }
+  .deck-find .chip { min-height: 44px; padding-inline: var(--space-3); }
+  .deck-find__clear { width: 44px; height: 44px; right: 0; }
+}
+/* The text view's card panel is sticky too; it now sits under the bar. */
+@media (hover: hover) and (min-width: 760px) {
+  .deck-preview { top: calc(var(--find-height, 58px) + var(--space-3) - var(--main-pad, var(--space-6))); }
+}
