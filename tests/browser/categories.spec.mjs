@@ -116,6 +116,39 @@ check('the cards go back to being filed by type',
   (await sections()).includes('Instants') && !(await sections()).includes('Interaction'),
   (await sections()).join(','))
 
+console.log('\nGrid view')
+await page.getByRole('button', { name: 'Grid', exact: true }).click()
+await page.waitForTimeout(600)
+check('the list becomes tiles', (await page.locator('.deck-tile').count()) > 0
+  && (await page.locator('.deck-row').count()) === 0,
+  `${await page.locator('.deck-tile').count()} tiles, ${await page.locator('.deck-row').count()} rows`)
+check('every tile still carries all three prices',
+  (await page.locator('.deck-tile .prices__cell').count())
+    === (await page.locator('.deck-tile').count()) * 3)
+check('the commander is marked rather than counted',
+  (await page.locator('.deck-tile__qty').first().innerText()) === '★')
+
+// The badge sat top-left over the card's own name when there was no image —
+// "1|anowar Elves" — which is exactly the state an offline player sees.
+const covered = await page.locator('.deck-tile').first().evaluate((tile) => {
+  const badge = tile.querySelector('.deck-tile__qty')?.getBoundingClientRect()
+  const name = tile.querySelector('[class*="name"]')?.getBoundingClientRect()
+  if (!badge || !name) return 'missing'
+  return !(badge.bottom < name.top || badge.top > name.bottom)
+})
+check('the quantity badge does not cover the card name', covered === false, String(covered))
+
+check('it stays on grid after a reload', await (async () => {
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForTimeout(600)
+  await openDeck()
+  return (await page.locator('.deck-tile').count()) > 0
+})())
+
+await page.getByRole('button', { name: 'List', exact: true }).click()
+await page.waitForTimeout(500)
+check('and back to a list on request', (await page.locator('.deck-row').count()) > 0)
+
 check('no console errors throughout', errors.length === 0, errors.join('; '))
 console.log(`\n${pass} passed, ${fail} failed`)
 await browser.close()

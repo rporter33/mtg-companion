@@ -19,6 +19,8 @@ import {
 } from '../../lib/categories.js'
 import { getPrefs, setPref } from '../../lib/storage.js'
 import { totalFor, formatPrice, priceLabel, MARKETS } from '../../lib/prices.js'
+import CardImage from '../../components/CardImage.jsx'
+import PriceRow from '../../components/PriceRow.jsx'
 
 
 /** "USD via TCGplayer" — the label alone does not say where a number came from. */
@@ -186,6 +188,12 @@ function DeckList({ deck, groups, format, market, lookup, onChange, onOpenCard, 
     validation.violations.filter((v) => v.severity === 'error' && v.cardId).map((v) => v.cardId),
   )
 
+  // Two ways to read the same deck. The list is faster to edit and survives a
+  // narrow screen; the grid is how a deck is actually recognised, because
+  // players know their cards by art long before they read the name.
+  const [view, setView] = useState(() => getPrefs().deckView ?? 'list')
+  const chooseView = (next) => { setView(next); setPref('deckView', next) }
+
   if (!groups.length) {
     return (
       <div className="empty">
@@ -197,6 +205,22 @@ function DeckList({ deck, groups, format, market, lookup, onChange, onOpenCard, 
 
   return (
     <div className="stack">
+      <div className="row">
+        <span className="spacer" />
+        <div className="row" role="group" aria-label="How to show the deck">
+          {[['list', 'List'], ['grid', 'Grid']].map(([id, label]) => (
+            <button
+              key={id}
+              className={`chip ${view === id ? 'chip--active' : ''}`}
+              aria-pressed={view === id}
+              onClick={() => chooseView(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {groups.map(({ name, entries, count, price, chosen }) => (
         <section key={name}>
           <div className="section-title">
@@ -218,8 +242,26 @@ function DeckList({ deck, groups, format, market, lookup, onChange, onOpenCard, 
               />
             )}
           </div>
-          <div className="deck-rows">
+          <div className={view === 'grid' ? 'deck-grid' : 'deck-rows'}>
             {entries.map(({ cardId, quantity, card, zone, isCommander }) => (
+              view === 'grid' ? (
+                <DeckTile
+                  key={`${zone}:${cardId}`}
+                  card={card}
+                  cardId={cardId}
+                  quantity={quantity}
+                  market={market}
+                  isCommander={isCommander}
+                  flagged={problemIds.has(cardId)}
+                  onOpen={() => card && onOpenCard(card)}
+                  onSet={(n) => onChange(setQuantity(deck, cardId, n, zone))}
+                  onRemove={() => onChange(
+                    isCommander
+                      ? setCommanders(deck, deck.commanders.filter((id) => id !== cardId))
+                      : removeCard(deck, cardId, zone),
+                  )}
+                />
+              ) : (
               <DeckRow
                 key={`${zone}:${cardId}`}
                 card={card}
@@ -241,10 +283,58 @@ function DeckList({ deck, groups, format, market, lookup, onChange, onOpenCard, 
                     : removeCard(deck, cardId, zone),
                 )}
               />
+              )
             ))}
           </div>
         </section>
       ))}
+    </div>
+  )
+}
+
+/**
+ * One card in the grid view.
+ *
+ * The quantity sits on the art, the way it does on a physical stack and on
+ * every deckbuilding site, rather than in a column beside it. Controls stay
+ * visible rather than appearing on hover — hover does not exist on the phone
+ * this is mostly used on.
+ */
+function DeckTile({ card, cardId, quantity, market, isCommander, flagged, onOpen, onSet, onRemove }) {
+  if (!card) {
+    return (
+      <div className="deck-tile deck-tile--missing">
+        <span className="faint tiny">Card not loaded</span>
+        <span className="faint tiny mono">{cardId.slice(0, 8)}…</span>
+        <button className="btn btn--sm btn--ghost btn--danger" onClick={onRemove}>Remove</button>
+      </div>
+    )
+  }
+
+  return (
+    <div className={`deck-tile ${flagged ? 'deck-tile--flagged' : ''}`} data-identity={identityAttr(card)}>
+      <div className="deck-tile__art">
+        <CardImage card={card} size="normal" onClick={onOpen} />
+        <span className={`deck-tile__qty ${isCommander ? 'deck-tile__qty--commander' : ''}`}>
+          {isCommander ? '★' : quantity}
+        </span>
+      </div>
+
+      <PriceRow card={card} size="sm" />
+
+      <div className="deck-tile__controls">
+        {isCommander ? (
+          <span className="faint tiny">Commander</span>
+        ) : (
+          <>
+            <button className="deck-row__step" onClick={() => onSet(quantity - 1)} aria-label={`One fewer ${card.name}`}>−</button>
+            <span className="deck-row__qty">{quantity}</span>
+            <button className="deck-row__step" onClick={() => onSet(quantity + 1)} aria-label={`One more ${card.name}`}>+</button>
+          </>
+        )}
+        <span className="spacer" />
+        <button className="btn btn--sm btn--ghost btn--danger" onClick={onRemove} aria-label={`Remove ${card.name}`}>✕</button>
+      </div>
     </div>
   )
 }

@@ -119,3 +119,47 @@
 /* A <select> stretches to its container by default, which put the market picker
    on a line of its own beside chips it belongs with. */
 select.chip { width: auto; max-width: 8rem; }
+
+/* Grid view. Narrower minimum than the card search grid because a deck tile
+   carries controls under the art and still has to fit two across on a phone. */
+.deck-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+.deck-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  border-left: 3px solid var(--identity, var(--border));
+  background: var(--bg-raised);
+}
+.deck-tile--flagged { border-color: var(--error); }
+.deck-tile--missing { align-items: flex-start; gap: var(--space-2); padding: var(--space-3); }
+.deck-tile__art { position: relative; }
+.deck-tile__art .cardimage { width: 100%; }
+
+/* On the art, as on a physical stack — not in a column beside it.
+   Bottom-left, not top-left: when there is no image the CSS-rendered face puts
+   the card's NAME across the top, and a badge there covered it — "1|anowar
+   Elves". The bottom of a card frame carries only collector text. */
+.deck-tile__qty {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  min-width: 1.5rem;
+  padding: 1px 5px;
+  text-align: center;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: rgb(0 0 0 / 0.78);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+.deck-tile__qty--commander { color: var(--accent); }
+.deck-tile__controls { display: flex; align-items: center; gap: var(--space-1); }
