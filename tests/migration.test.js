@@ -40,6 +40,16 @@ describe('migrate', () => {
     expect(migrate(state).collection).toEqual({ 'o-ring': 3 })
   })
 
+  it('gives every deck somewhere to record its history', () => {
+    expect(migrate(v1()).decks[0].versions).toEqual([])
+  })
+
+  it('does not discard a history a deck already has', () => {
+    const state = { ...v1(), version: 3, collection: {} }
+    state.decks[0].versions = [{ id: 'v_keep', at: '2026-01-01T00:00:00Z', label: 'kept', auto: false, main: [], sideboard: [], commanders: [] }]
+    expect(migrate(state).decks[0].versions[0].id).toBe('v_keep')
+  })
+
   it('gives every deck somewhere to record a category order', () => {
     expect(migrate(v1()).decks[0].categoryOrder).toEqual([])
   })

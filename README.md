@@ -55,7 +55,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 651 unit tests
+npm test               # 685 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -212,6 +212,19 @@ Counts are not allocated across decks either. One Sol Ring covers a Sol Ring in
 every deck, because you own a Sol Ring. Splitting a collection between decks is
 a different question — "can I sleeve all of these at once" — and answering it
 with this data would overstate what you are missing.
+
+**Deck history stores lists, not cards.** A version is ids and quantities with
+a label and a time — a few kilobytes — so a deck carries thirty without
+troubling the storage cap. Names resolve at display time from the cache.
+
+Versions are taken when you ask, and automatically before the two edits that
+rewrite a list at once: applying an import, and restoring an older version. Not
+on every change; a history of "+1, −1, +1" is noise, and those edits are already
+reversible by editing back. Automatic checkpoints are the first to be pruned.
+
+Restore is its own undo. It captures the list it is leaving first, so the
+version you just left is one restore away. There is no separate undo to get
+wrong.
 
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a

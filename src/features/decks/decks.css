@@ -200,3 +200,31 @@ select.chip { width: auto; max-width: 8rem; }
   border: 1px solid var(--warn);
   border-radius: var(--radius-sm);
 }
+
+/* History. A version is a row you can open; the diff reads like a decklist
+   with a sign in front of each line. */
+.version {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  border-left: 3px solid var(--border);
+}
+.version__label {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  font-weight: 600;
+  text-align: left;
+  cursor: text;
+}
+.diff__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.diff__row { display: flex; align-items: baseline; gap: var(--space-2); font-size: 0.85rem; }
+.diff__sign { width: 1ch; font-family: var(--mono); font-weight: 700; }
+.diff__row--in .diff__sign { color: var(--ok); }
+.diff__row--out .diff__sign { color: var(--error); }
+.diff__row--change .diff__sign { color: var(--warn); }
+.diff__name { flex: 1 1 auto; min-width: 0; }

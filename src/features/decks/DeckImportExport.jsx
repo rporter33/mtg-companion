@@ -7,6 +7,7 @@ import { toExampleEntry } from '../../data/example-decks.js'
 import { addCard, setCommanders } from '../../lib/deck.js'
 import { getFormat, frontTypeLine } from '../../lib/formats.js'
 import { parseDecklist } from '../../lib/decklist.js'
+import { captureVersion } from '../../lib/versions.js'
 import { pinCards } from '../../lib/cache.js'
 import { exportAll } from '../../lib/storage.js'
 import { exampleToDecklist } from '../../data/example-decks.js'
@@ -84,7 +85,10 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
   }
 
   const applyPreview = () => {
-    let next = deck
+    // An import rewrites the list at once, so the list as it stood is kept
+    // first. This is one of the two places a version is taken automatically;
+    // the other is a restore. Everything else is reversible by editing back.
+    let next = captureVersion(deck, { label: 'Before import', auto: true })
     for (const { quantity, section, card } of preview.resolved) {
       pinCards([card.id])
       // A card picked as the commander goes to the command zone instead of the

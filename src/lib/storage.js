@@ -39,7 +39,7 @@ export function backendName() {
  * a stale service worker can serve an old bundle against new data, and
  * downgrading it would discard fields the newer build is still using.
  */
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 const MIGRATIONS = {
   // 1 → 2: decks gained per-card categories and an order to show them in.
@@ -55,6 +55,13 @@ const MIGRATIONS = {
   // whatever printing it is. Nobody owned anything before this, so an empty
   // object is the whole migration.
   3: (state) => ({ collection: {}, ...state }),
+
+  // 3 → 4: every deck can carry a history. Nothing had one before, so each
+  // deck gets an empty list; a deck that somehow already has one keeps it.
+  4: (state) => ({
+    ...state,
+    decks: (state.decks ?? []).map((deck) => ({ versions: [], ...deck })),
+  }),
 }
 
 export function migrate(state) {

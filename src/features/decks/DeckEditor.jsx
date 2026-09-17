@@ -21,6 +21,7 @@ import { totalFor, formatPrice, priceLabel, MARKETS } from '../../lib/prices.js'
 import CardImage from '../../components/CardImage.jsx'
 import PriceRow from '../../components/PriceRow.jsx'
 import DeckPlaytest from './DeckPlaytest.jsx'
+import DeckHistory from './DeckHistory.jsx'
 import { useCollection } from '../../lib/collection-store.js'
 import { missingFor, missingCost, ownEverythingIn, ownedOf } from '../../lib/collection.js'
 
@@ -160,7 +161,7 @@ export default function DeckEditor({
       )}
 
       <nav className="row" role="tablist">
-        {[['list', 'List'], ['add', 'Add cards'], ['coach', 'Coach'], ['analysis', 'Analysis'], ['hand', 'Playtest'], ['io', 'Import / export']]
+        {[['list', 'List'], ['add', 'Add cards'], ['coach', 'Coach'], ['analysis', 'Analysis'], ['hand', 'Playtest'], ['history', 'History'], ['io', 'Import / export']]
           .map(([id, label]) => (
             <button
               key={id}
@@ -200,6 +201,10 @@ export default function DeckEditor({
       )}
       {tab === 'hand' && (
         <DeckPlaytest deck={deck} lookup={lookup} cards={cards} onOpenCard={onOpenCard} />
+      )}
+
+      {tab === 'history' && (
+        <DeckHistory deck={deck} lookup={lookup} market={market} onChange={commit} />
       )}
 
       {tab === 'io' && (
