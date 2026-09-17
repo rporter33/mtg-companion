@@ -55,7 +55,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 584 unit tests
+npm test               # 615 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -189,6 +189,17 @@ for good. Steps are additive, run in order, and only bump the version once they
 have run. State written by a *newer* build is left alone rather than forced
 backwards — a stale service worker can serve an old bundle against new data, and
 downgrading it would discard fields the newer build is still using.
+
+**Sample hands shuffle ninety-nine, not a hundred.** The commander begins in the
+command zone, so it is not in the library — an off-by-one that would skew every
+number the Playtest tab produces, and one that is invisible once made.
+
+Mulligans are London: a fresh seven every time, and the cards go to the bottom
+only when the hand is kept. Which cards to bottom is the decision being
+practised, so the app refuses a wrong count rather than choosing for you.
+
+The shuffle is seeded. Not to fake randomness, but because a test that cannot
+fix the shuffle cannot check the mulligan arithmetic.
 
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a

@@ -163,3 +163,24 @@ select.chip { width: auto; max-width: 8rem; }
 }
 .deck-tile__qty--commander { color: var(--accent); }
 .deck-tile__controls { display: flex; align-items: center; gap: var(--space-1); }
+
+/* A hand is read left to right and has to fit on one screen, so the cards are
+   smaller than a deck tile and the grid is denser. */
+.hand-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: var(--space-2);
+}
+.hand-card {
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+  min-width: 0;
+}
+.hand-card .cardimage { width: 100%; }
+/* Chosen-to-bottom reads as removal, not selection: dimmed and struck out of
+   the hand rather than highlighted as if it were being kept. */
+.hand-card--chosen { border-color: var(--warn); opacity: 0.45; }
+.hand-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -21,6 +21,7 @@ import { getPrefs, setPref } from '../../lib/storage.js'
 import { totalFor, formatPrice, priceLabel, MARKETS } from '../../lib/prices.js'
 import CardImage from '../../components/CardImage.jsx'
 import PriceRow from '../../components/PriceRow.jsx'
+import DeckPlaytest from './DeckPlaytest.jsx'
 
 
 /** "USD via TCGplayer" — the label alone does not say where a number came from. */
@@ -136,7 +137,7 @@ export default function DeckEditor({
       )}
 
       <nav className="row" role="tablist">
-        {[['list', 'List'], ['add', 'Add cards'], ['coach', 'Coach'], ['analysis', 'Analysis'], ['io', 'Import / export']]
+        {[['list', 'List'], ['add', 'Add cards'], ['coach', 'Coach'], ['analysis', 'Analysis'], ['hand', 'Playtest'], ['io', 'Import / export']]
           .map(([id, label]) => (
             <button
               key={id}
@@ -173,6 +174,10 @@ export default function DeckEditor({
       {tab === 'analysis' && (
         <DeckAnalysis deck={deck} lookup={lookup} cardCount={cards.size} />
       )}
+      {tab === 'hand' && (
+        <DeckPlaytest deck={deck} lookup={lookup} cards={cards} onOpenCard={onOpenCard} />
+      )}
+
       {tab === 'io' && (
         <DeckImportExport
           deck={deck} lookup={lookup} onChange={commit}
