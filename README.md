@@ -60,7 +60,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 750 unit tests
+npm test               # 767 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -272,6 +272,19 @@ sets that do not exist yet. The accent is computed from the set code rather than
 hand-picked, because the app cannot know a set's art direction and should not
 pretend to.
 
+**Each deck is a document of its own.** The first store was one blob under
+one key, rewritten whole on every quantity tap. Now a root document holds the
+small whole-app things (schema version, collection, games, guide progress,
+preferences) and each deck sits under its own key with its own `updatedAt`. A
+save writes the one deck that changed; a corrupt root no longer takes the decks
+down with it, and a corrupt deck is set aside on its own; and the layout is
+what a sync backend needs to reconcile, which is why it was done before any
+backend exists. The old blob is split into documents the first time it is
+read, and only rewritten once every deck has landed, so a refused write leaves
+the old layout intact. The backup file's shape is unchanged: decks inline, as
+before. Another tab writing the same storage is noticed through the browser's
+`storage` event, which clears this tab's copy and announces the change.
+
 **Where you are is in the address bar.** `#/decks/<id>/analysis` is a deck's
 analysis tab, `#/cards?q=t:instant` is a search, and `?card=<id>` on any of
 them is the card sheet. A reload keeps the screen, a deck has a link you can
@@ -363,8 +376,9 @@ trade-offs.
 
 Honest edges, stated rather than discovered.
 
-- **Tab isolation.** Ownership and settings sync within one tab. Another tab
-  writing the same storage is not noticed until reload.
+- **Tab isolation.** Another tab's write is noticed on the next read and
+  announced, but a screen already open does not redraw itself until you
+  navigate. The plumbing is there; the screens do not listen yet.
 - **Saved data and browser storage.** Everything lives in `localStorage`, which
   browsers cap at a few megabytes and never say exactly how many. The Your-data
   screen shows use against the common limit; a browser with more room simply

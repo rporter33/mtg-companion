@@ -14,11 +14,12 @@ beforeEach(() => {
 describe('backend interface', () => {
   it('round-trips through the memory backend', () => {
     const b = memoryBackend()
-    expect(b.read()).toBeNull()
-    expect(b.write('hello')).toBe(true)
-    expect(b.read()).toBe('hello')
-    b.remove()
-    expect(b.read()).toBeNull()
+    expect(b.read('k')).toBeNull()
+    expect(b.write('k', 'hello')).toBe(true)
+    expect(b.read('k')).toBe('hello')
+    expect(b.keys()).toEqual(['k'])
+    b.remove('k')
+    expect(b.read('k')).toBeNull()
   })
 
   it('survives a localStorage that throws on every access', () => {
@@ -32,9 +33,10 @@ describe('backend interface', () => {
     Object.defineProperty(globalThis, 'localStorage', { value: hostile, configurable: true })
     try {
       const b = localStorageBackend('k')
-      expect(b.read()).toBeNull()
-      expect(b.write('x')).toBe(false)
-      expect(() => b.remove()).not.toThrow()
+      expect(b.read('k')).toBeNull()
+      expect(b.write('k', 'x')).toBe(false)
+      expect(() => b.remove('k')).not.toThrow()
+      expect(b.keys()).toEqual([])
     } finally {
       Object.defineProperty(globalThis, 'localStorage', { value: original, configurable: true })
     }

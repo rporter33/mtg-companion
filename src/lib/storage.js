@@ -2,16 +2,27 @@
 //
 // localStorage rather than IndexedDB because this data is small, synchronous
 // reads keep first paint simple, and — the real reason — it is trivially
-// exportable. Everything lives under one versioned key so "export my data"
-// is one JSON file the user owns, matching the no-accounts promise.
+// exportable. "Export my data" is one JSON file the user owns, matching the
+// no-accounts promise, and that file's shape is unchanged by anything below.
+//
+// HOW IT IS LAID OUT. One root document holds the small, whole-app things:
+// schema version, collection, games, guide progress, preferences. Each deck
+// is its own document under its own key. The first version kept everything
+// in one blob and rewrote all of it on every quantity tap; splitting the
+// decks out means a save touches one deck's bytes, a corrupt root no longer
+// takes the decks down with it, and — the reason it was done now — a deck
+// with its own updatedAt is what a sync backend needs to reconcile. The old
+// blob is split into documents the first time it is read.
 
 import { defaultBackend, memoryBackend } from './storage-backend.js'
 import { dropOldestCheckpoint } from './data-safety.js'
 
 const KEY = 'mtg-companion:v1'
+const DECK_PREFIX = `${KEY}:deck:`
+const deckKey = (id) => `${DECK_PREFIX}${id}`
 
 // The backend is swappable: `useBackend()` lets tests run against memory and
-// lets a future IndexedDB backend drop in without touching anything below.
+// lets an IndexedDB or server backend drop in without touching anything below.
 let backend = null
 const store = () => (backend ??= defaultBackend(KEY))
 
@@ -19,7 +30,7 @@ export function useBackend(next) {
   backend = next ?? memoryBackend()
   // A new backend is a new session: nothing carried in memory from the last
   // one belongs to it, and neither does a save failure it never had.
-  memoryFallback = null
+  cache = null
   persistFailed = false
   return backend
 }
@@ -91,88 +102,174 @@ const EMPTY = {
   },
 }
 
-let memoryFallback = null
 let persistFailed = false
 
-function read() {
-  try {
-    const raw = store().read()
-    if (!raw) return memoryFallback ?? { ...EMPTY }
-    const parsed = JSON.parse(raw)
-    // Merge against EMPTY so a state file written by an older build still loads
-    // with any newly added sections present.
-    const state = migrate(parsed)
-    return {
-      ...EMPTY,
-      ...state,
-      guide: { ...EMPTY.guide, ...(state.guide ?? {}) },
-      prefs: { ...EMPTY.prefs, ...(state.prefs ?? {}) },
+/**
+ * The in-memory copy of everything, read from storage once and kept until
+ * something invalidates it: our own write updates it in place; another tab's
+ * write (the `storage` event) clears it so the next read re-reads. Reads are
+ * therefore free after the first, and object identity is stable between
+ * reads, which is what lets a save write only the deck that changed.
+ */
+let cache = null // { root, decks: Map<id, deck>, state }
+
+function parseOr(raw, onCorrupt) {
+  if (!raw) return null
+  try { return JSON.parse(raw) } catch { onCorrupt?.(raw); return null }
+}
+
+function load() {
+  if (cache) return cache
+  const s = store()
+  const rootRaw = s.read(KEY)
+  let root = parseOr(rootRaw, () => preserveCorrupt(KEY, rootRaw))
+  const decks = new Map()
+
+  // A file from before decks had documents of their own: split it. The
+  // documents are written first and the blob rewritten without its decks
+  // only once every one of them landed, so a refused write leaves the old
+  // layout intact and the decks are served from memory meanwhile.
+  if (root && Array.isArray(root.decks)) {
+    const legacy = root.decks
+    const { decks: _drop, ...rest } = root
+    for (const deck of legacy) if (deck?.id) decks.set(deck.id, deck)
+    let landed = true
+    for (const deck of decks.values()) {
+      if (!s.write(deckKey(deck.id), JSON.stringify(deck))) { landed = false; break }
     }
-  } catch {
-    // Private mode, disabled storage, or corrupted JSON. Keep working in memory
-    // rather than refusing to start — but first keep the broken text. The next
-    // save would otherwise write a fresh empty state straight over the top of
-    // whatever a truncated write or a bad extension left there, and that text
-    // is often mostly a person's decks.
-    preserveCorrupt()
-    return memoryFallback ?? { ...EMPTY }
+    if (landed && s.write(KEY, JSON.stringify(rest))) root = rest
+  }
+
+  for (const key of (s.keys?.() ?? [])) {
+    if (!key.startsWith(DECK_PREFIX) || key.endsWith(':corrupt')) continue
+    const id = key.slice(DECK_PREFIX.length)
+    if (decks.has(id)) continue
+    const raw = s.read(key)
+    const deck = parseOr(raw, () => preserveCorrupt(key, raw))
+    if (deck && typeof deck === 'object') decks.set(id, { ...deck, id: deck.id ?? id })
+  }
+
+  cache = { root: root ?? null, decks, state: null }
+  cache.state = assemble(cache)
+  return cache
+}
+
+const byCreation = (a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? ''))
+  || String(a.name ?? '').localeCompare(String(b.name ?? ''))
+
+/** The whole state as callers see it: root plus decks, migrated and defaulted. */
+function assemble({ root, decks }) {
+  const merged = migrate({ ...(root ?? {}), decks: [...decks.values()].sort(byCreation) })
+  return {
+    ...EMPTY,
+    ...merged,
+    guide: { ...EMPTY.guide, ...(merged.guide ?? {}) },
+    prefs: { ...EMPTY.prefs, ...(merged.prefs ?? {}) },
   }
 }
 
-const CORRUPT_KEY = `${KEY}:corrupt`
+function read() {
+  return load().state
+}
 
-function preserveCorrupt() {
+/** Unparseable text is set aside under its own key rather than overwritten. */
+function preserveCorrupt(key, raw) {
   try {
-    const raw = store().read()
-    if (raw && typeof localStorage !== 'undefined' && !localStorage.getItem(CORRUPT_KEY)) {
-      localStorage.setItem(CORRUPT_KEY, raw)
-    }
+    const at = `${key}:corrupt`
+    if (raw && typeof localStorage !== 'undefined' && !localStorage.getItem(at)) localStorage.setItem(at, raw)
   } catch { /* nowhere to keep it; nothing more can be done */ }
+}
+
+const corruptKeys = () => {
+  try {
+    const out = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k && k.startsWith(KEY) && k.endsWith(':corrupt')) out.push(k)
+    }
+    return out.sort((a, b) => a.length - b.length)
+  } catch { return [] }
 }
 
 /** Unparseable state that was set aside rather than overwritten, if any. */
 export function corruptBackup() {
-  try { return localStorage.getItem(CORRUPT_KEY) } catch { return null }
+  try {
+    const [first] = corruptKeys()
+    return first ? localStorage.getItem(first) : null
+  } catch { return null }
 }
 
 export function discardCorruptBackup() {
-  try { localStorage.removeItem(CORRUPT_KEY) } catch { /* nothing to do */ }
+  try { for (const k of corruptKeys()) localStorage.removeItem(k) } catch { /* nothing to do */ }
 }
 
 const PERSIST_EVENT = 'mtg:persist-failed'
 
 let lastRoomMade = 0
 
-function write(state) {
-  // The in-memory copy is updated first and unconditionally, so a failed
-  // persist costs durability across a reload rather than the current session.
-  memoryFallback = state
-  let ok = store().write(JSON.stringify(state))
+/**
+ * Persists a whole next state, writing only what changed: the root when its
+ * text differs, each deck whose object is not the one already stored, and a
+ * removal for each deck no longer present. The in-memory copy is updated
+ * first and unconditionally, so a failed persist costs durability across a
+ * reload rather than the current session.
+ */
+function write(next) {
+  const prev = cache ?? { root: null, decks: new Map(), state: null }
+  const s = store()
+  const { decks: nextDecks = [], ...nextRoot } = next
+  const changes = []
 
-  // A refused write gets one more chance: drop automatic version checkpoints
-  // — the only thing in the store the app made on its own — and try again.
-  // If that lands, the change is saved and the person is told what was
-  // thinned rather than told nothing and losing the change on reload.
-  // The browser does not say how much it would have accepted, so there is no
-  // size to shrink toward — the write is the only oracle. Drop one checkpoint,
-  // try again, and stop the moment it lands or there is nothing left to drop.
-  // Bounded by the number of automatic checkpoints in the store.
-  if (!ok) {
-    let current = state
-    let removed = 0
+  const rootText = JSON.stringify(nextRoot)
+  if (!prev.root || JSON.stringify(prev.root) !== rootText) changes.push({ key: KEY, text: rootText })
+
+  const nextMap = new Map()
+  for (const deck of nextDecks) {
+    if (!deck?.id) continue
+    nextMap.set(deck.id, deck)
+    if (prev.decks.get(deck.id) !== deck) changes.push({ key: deckKey(deck.id), text: JSON.stringify(deck), deckId: deck.id })
+  }
+  for (const id of prev.decks.keys()) if (!nextMap.has(id)) s.remove(deckKey(id))
+
+  cache = { root: nextRoot, decks: nextMap, state: null }
+  cache.state = assemble(cache)
+
+  let ok = true
+  let removed = 0
+  let current = next
+  for (const change of changes) {
+    if (s.write(change.key, change.text)) continue
+    // A refused write gets more chances: drop automatic version checkpoints
+    // — the only thing in the store the app made on its own — one at a time,
+    // writing the deck that shrank, and retry. The browser does not say how
+    // much it would have accepted, so the write itself is the only oracle.
+    // Bounded by the number of automatic checkpoints in the store.
+    let landed = false
     for (;;) {
       const step = dropOldestCheckpoint(current)
       if (step.removed === 0) break
       current = step.state
       removed += step.removed
-      if (store().write(JSON.stringify(current))) { ok = true; break }
-    }
-    if (ok) {
-      memoryFallback = current
-      lastRoomMade = removed
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent(ROOM_MADE_EVENT, { detail: { removed } }))
+      // Write every deck that changed since the last attempt (the one that
+      // shrank), then retry the refused key with its current text.
+      for (const deck of current.decks) {
+        if (nextMap.get(deck.id) !== deck) {
+          nextMap.set(deck.id, deck)
+          s.write(deckKey(deck.id), JSON.stringify(deck))
+        }
       }
+      const text = change.deckId ? JSON.stringify(nextMap.get(change.deckId)) : change.text
+      if (s.write(change.key, text)) { landed = true; break }
+    }
+    if (!landed) { ok = false; break }
+  }
+
+  if (removed > 0 && ok) {
+    cache = { root: nextRoot, decks: nextMap, state: null }
+    cache.state = assemble(cache)
+    lastRoomMade = removed
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(ROOM_MADE_EVENT, { detail: { removed } }))
     }
   }
 
@@ -187,6 +284,17 @@ function write(state) {
   return ok
 }
 
+// Another tab writing the same storage: forget what this one read, so the
+// next read sees the other tab's work, and say so for anything listening.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === null || String(e.key).startsWith(KEY)) {
+      cache = null
+      window.dispatchEvent(new CustomEvent(STORAGE_CHANGED_EVENT))
+    }
+  })
+}
+
 /** Whether the most recent save reached storage. */
 export function lastSaveSucceeded() {
   return !persistFailed
@@ -194,6 +302,8 @@ export function lastSaveSucceeded() {
 
 export const PERSIST_FAILED_EVENT = PERSIST_EVENT
 export const ROOM_MADE_EVENT = 'mtg:room-made'
+/** Fired when another tab changed this app's storage. */
+export const STORAGE_CHANGED_EVENT = 'mtg:storage-changed'
 
 /** How many automatic checkpoints the last save had to drop to fit. */
 export function checkpointsDroppedToFit() {
@@ -225,10 +335,14 @@ export function getDeck(id) {
 }
 
 export function saveDeck(deck) {
+  // Every deck document carries when it last changed. Deck mutators set it;
+  // this is the backstop for anything that did not, since a sync between
+  // devices has nothing else to go on.
+  const stamped = deck.updatedAt ? deck : { ...deck, updatedAt: new Date().toISOString() }
   return update((state) => {
-    const decks = state.decks.some((d) => d.id === deck.id)
-      ? state.decks.map((d) => (d.id === deck.id ? deck : d))
-      : [...state.decks, deck]
+    const decks = state.decks.some((d) => d.id === stamped.id)
+      ? state.decks.map((d) => (d.id === stamped.id ? stamped : d))
+      : [...state.decks, stamped]
     return { ...state, decks }
   })
 }
@@ -366,8 +480,11 @@ export function importAll(json, { replace = false } = {}) {
 }
 
 export function clearAll() {
-  memoryFallback = { ...EMPTY }
-  store().remove()
+  const s = store()
+  for (const key of (s.keys?.() ?? [])) if (key === KEY || key.startsWith(DECK_PREFIX)) s.remove(key)
+  s.remove(KEY)
+  cache = { root: null, decks: new Map(), state: null }
+  cache.state = assemble(cache)
   return { ...EMPTY }
 }
 

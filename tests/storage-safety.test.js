@@ -42,7 +42,8 @@ describe('a save that does not reach storage', () => {
 
   it('clears once a later save succeeds', () => {
     let allow = false
-    const flaky = { ...memoryBackend(), write(v) { if (!allow) return false; this.value = v; return true } }
+    const inner = memoryBackend()
+    const flaky = { ...inner, write(key, v) { if (!allow) return false; return inner.write(key, v) } }
     useBackend(flaky)
     update((s) => s)
     expect(lastSaveSucceeded()).toBe(false)

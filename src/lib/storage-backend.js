@@ -1,25 +1,25 @@
 // Storage backends.
 //
-// App state is small and benefits from synchronous reads at first paint, so
-// localStorage is the right default today. Putting it behind this interface
-// means moving to IndexedDB — if a user ever builds enough decks to approach
-// the ~5MB limit — is one swap here rather than a rewrite of every caller.
+// App state benefits from synchronous reads at first paint, so localStorage
+// is the right default today. Putting it behind this interface means moving
+// to IndexedDB, or to a server, is one swap here rather than a rewrite of
+// every caller.
 //
-// A backend is: { read(): string|null, write(value: string): boolean, remove(): void }
-// It deals in strings only. Serialisation belongs to the caller.
+// A backend is a keyed string store:
+//   { name, read(key): string|null, write(key, value): boolean,
+//     remove(key): void, keys(): string[] }
+// It deals in strings only. Serialisation belongs to the caller. `write`
+// returns false rather than throwing when the browser refuses — quota, or
+// storage disabled — because the caller has something it can do about that.
 
 /** localStorage, with every access guarded — private mode throws on access. */
-export function localStorageBackend(key) {
+export function localStorageBackend(prefix = '') {
   return {
     name: 'localStorage',
-    read() {
-      try {
-        return localStorage.getItem(key)
-      } catch {
-        return null
-      }
+    read(key) {
+      try { return localStorage.getItem(key) } catch { return null }
     },
-    write(value) {
+    write(key, value) {
       try {
         localStorage.setItem(key, value)
         return true
@@ -29,22 +29,38 @@ export function localStorageBackend(key) {
         return false
       }
     },
-    remove() {
+    remove(key) {
+      try { localStorage.removeItem(key) } catch { /* nothing to do */ }
+    },
+    keys() {
       try {
-        localStorage.removeItem(key)
-      } catch { /* nothing to do */ }
+        const out = []
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i)
+          if (k !== null && k.startsWith(prefix)) out.push(k)
+        }
+        return out
+      } catch {
+        return []
+      }
     },
   }
 }
 
-/** In-memory only. Used when localStorage is unavailable, and by tests. */
-export function memoryBackend(initial = null) {
-  let value = initial
+/**
+ * In-memory only. Used when localStorage is unavailable, and by tests.
+ * `initial`, when given, seeds the root document — the one key the old
+ * single-blob store had — so a test can start from a file's contents.
+ */
+export function memoryBackend(initial = null, rootKey = 'mtg-companion:v1') {
+  const values = new Map()
+  if (initial !== null && initial !== undefined) values.set(rootKey, initial)
   return {
     name: 'memory',
-    read: () => value,
-    write(next) { value = next; return true },
-    remove() { value = null },
+    read: (key) => values.get(key) ?? null,
+    write(key, value) { values.set(key, value); return true },
+    remove(key) { values.delete(key) },
+    keys: () => [...values.keys()],
   }
 }
 
@@ -53,12 +69,12 @@ export function memoryBackend(initial = null) {
  * `typeof localStorage !== 'undefined'` is true in Safari private mode right
  * up until the write throws.
  */
-export function defaultBackend(key) {
+export function defaultBackend(prefix) {
   try {
-    const probe = `${key}:probe`
+    const probe = `${prefix}:probe`
     localStorage.setItem(probe, '1')
     localStorage.removeItem(probe)
-    return localStorageBackend(key)
+    return localStorageBackend(prefix)
   } catch {
     return memoryBackend()
   }

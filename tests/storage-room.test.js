@@ -10,9 +10,19 @@ import { memoryBackend } from '../src/lib/storage-backend.js'
  * away to make it fit: automatic version checkpoints. This is the behaviour
  * of that retry, against a backend that refuses anything over a size.
  */
+// The cap is on the whole store, across keys, as a browser's quota is.
 const cappedBackend = (cap) => {
   const inner = memoryBackend()
-  return { ...inner, name: 'capped', write(v) { if (v.length > cap) return false; return inner.write(v) } }
+  const total = () => inner.keys().reduce((n, k) => n + (inner.read(k)?.length ?? 0), 0)
+  return {
+    ...inner,
+    name: 'capped',
+    write(key, v) {
+      const after = total() - (inner.read(key)?.length ?? 0) + v.length
+      if (after > cap) return false
+      return inner.write(key, v)
+    },
+  }
 }
 
 const version = (id, auto, at) => ({ id, auto, at, label: auto ? '' : id, main: [{ cardId: 'x', quantity: 1 }], sideboard: [], commanders: [] })
@@ -30,7 +40,7 @@ afterEach(() => vi.restoreAllMocks())
 
 describe('a write the browser refuses', () => {
   it('is retried after dropping automatic checkpoints, and lands', () => {
-    useBackend(cappedBackend(1800))
+    useBackend(cappedBackend(1900))
     const made = vi.fn()
     window.addEventListener(ROOM_MADE_EVENT, made)
     saveDeck(bigDeck())
@@ -41,19 +51,19 @@ describe('a write the browser refuses', () => {
   })
 
   it('keeps the change that was being saved', () => {
-    useBackend(cappedBackend(1800))
+    useBackend(cappedBackend(1900))
     saveDeck(bigDeck())
     expect(listDecks()[0].name).toBe('Big')
   })
 
   it('never drops a labelled version to make room', () => {
-    useBackend(cappedBackend(1800))
+    useBackend(cappedBackend(1900))
     saveDeck(bigDeck())
     expect(listDecks()[0].versions.map((v) => v.id)).toContain('keep')
   })
 
   it('drops the oldest checkpoints, not the newest', () => {
-    useBackend(cappedBackend(1800))
+    useBackend(cappedBackend(1900))
     saveDeck(bigDeck())
     const left = listDecks()[0].versions.filter((v) => v.auto).map((v) => v.id)
     expect(left).toContain('auto0')
@@ -61,7 +71,7 @@ describe('a write the browser refuses', () => {
   })
 
   it('says how many it dropped', () => {
-    useBackend(cappedBackend(1800))
+    useBackend(cappedBackend(1900))
     let detail = null
     const onMade = (e) => { detail = e.detail }
     window.addEventListener(ROOM_MADE_EVENT, onMade)
@@ -72,7 +82,7 @@ describe('a write the browser refuses', () => {
 
   // Nothing disposable left: this is the failure the banner exists for.
   it('still announces a failure when there is nothing left to drop', () => {
-    useBackend(cappedBackend(50))
+    useBackend(cappedBackend(400))
     const failed = vi.fn()
     window.addEventListener(PERSIST_FAILED_EVENT, failed)
     saveDeck({ ...bigDeck(), versions: [version('keep', false, '2026-03-01')] })

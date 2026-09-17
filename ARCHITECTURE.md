@@ -386,15 +386,28 @@ are the parts a browser client *can* comply with, and does.
 ### localStorage for app state, IndexedDB for cards
 
 App state — decks, games, guide progress — is small, benefits from synchronous
-reads at first paint, and above all needs to be trivially exportable. It lives
-under one versioned key so "download all data" is one JSON file the user owns,
-which is what makes the no-accounts promise real rather than a limitation.
+reads at first paint, and above all needs to be trivially exportable.
+"Download all data" is one JSON file the user owns, which is what makes the
+no-accounts promise real rather than a limitation.
+
+It is laid out as documents, not one blob: a root document for the small
+whole-app things (schema version, collection, games, guide, preferences) and
+one document per deck, each with its own `updatedAt`. The first version kept
+everything under one key and rewrote all of it on every edit. Splitting the
+decks out means a save touches one deck's bytes, a corrupt root no longer
+takes the decks with it, and — the reason it was done before any backend
+exists — a deck with its own timestamp is the unit a sync service can
+reconcile. The old blob is split on first read. Reads are served from an
+in-memory copy that the browser's `storage` event invalidates, so another
+tab's write is seen on the next read.
 
 Card data is much larger and needs indexed lookup and eviction, so it lives in
 IndexedDB.
 
 *Revisit if:* someone builds enough decks to approach the ~5MB localStorage
-limit. Decks store ids and quantities only, so this is thousands of decks away.
+limit, or when accounts arrive. The backend interface is a keyed string store
+(`read`, `write`, `remove`, `keys`), so IndexedDB or a server is one swap; the
+document layout means the swap carries per-deck timestamps with it.
 
 ## Known trade-offs
 

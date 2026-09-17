@@ -80,7 +80,12 @@ await page.waitForTimeout(400)
 check('and gone from the Decks screen', !/no backup yet/.test(await body()))
 
 console.log('\nPutting it back')
-await page.evaluate(() => localStorage.setItem('mtg-companion:v1', JSON.stringify({ version: 4, decks: [], collection: {}, games: [], guide: { completedLessons: [], tutorialState: null, seenGlossary: [] }, prefs: {} })))
+// Starting from nothing means every document gone, not an empty root beside
+// deck documents that still exist — those would rightly be read back.
+await page.evaluate(() => {
+  for (const k of Object.keys(localStorage)) if (k.startsWith('mtg-companion:v1')) localStorage.removeItem(k)
+  localStorage.setItem('mtg-companion:v1', JSON.stringify({ version: 4, collection: {}, games: [], guide: { completedLessons: [], tutorialState: null, seenGlossary: [] }, prefs: {} }))
+})
 await page.reload({ waitUntil: 'networkidle' })
 await goDecks()
 check('starting from nothing', !/Kept Deck/.test(await body()))
@@ -118,13 +123,15 @@ await page.waitForTimeout(300)
 // fills storage has to be topped up finely, or the leftover headroom is
 // bigger than the write and nothing is refused. Saving a labelled version
 // is a real action that grows the store by a whole version.
-await page.evaluate(() => {
-  const raw = JSON.parse(localStorage.getItem('mtg-companion:v1'))
+// Decks are documents of their own now, so the fixture edits the deck's key.
+const DECK_KEY = 'mtg-companion:v1:deck:d1'
+await page.evaluate((DECK_KEY) => {
+  const deck = JSON.parse(localStorage.getItem(DECK_KEY))
   // The current list must differ from the newest version, or "Save version"
   // is correctly disabled as a duplicate and there is nothing to squeeze in.
-  raw.decks[0].main[0].quantity = 3
-  raw.decks[0].versions = [
-    ...raw.decks[0].versions,
+  deck.main[0].quantity = 3
+  deck.versions = [
+    ...deck.versions,
     // Under MAX_VERSIONS (30) on purpose. At the cap, captureVersion's own
     // pruning drops a fat checkpoint while adding a small version — a net
     // shrink the browser accepts — and the refusal this tests never happens.
@@ -133,21 +140,21 @@ await page.evaluate(() => {
       main: Array.from({ length: 40 }, (_, j) => ({ cardId: `filler-${j}`, quantity: 1 })), sideboard: [], commanders: [],
     })),
   ]
-  localStorage.setItem('mtg-companion:v1', JSON.stringify(raw))
+  localStorage.setItem(DECK_KEY, JSON.stringify(deck))
   const fill = (size, prefix) => {
     for (let i = 0; i < 4000; i++) {
       try { localStorage.setItem(`${prefix}-${i}`, 'x'.repeat(size)) } catch { return }
     }
   }
   fill(256 * 1024, 'big'); fill(4 * 1024, 'mid'); fill(64, 'small')
-})
+}, DECK_KEY)
 await page.reload({ waitUntil: 'networkidle' })
 await goDecks()
 await page.locator('.deck-card__open').first().click()
 await page.waitForTimeout(800)
 await page.getByRole('tab', { name: 'History' }).click()
 await page.waitForTimeout(400)
-const versionsBefore = await page.evaluate(() => JSON.parse(localStorage.getItem('mtg-companion:v1')).decks[0].versions.length)
+const versionsBefore = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)).versions.length, DECK_KEY)
 await page.getByLabel('Version label').fill('Squeezed in when storage was full')
 await page.getByRole('button', { name: 'Save version' }).click()
 await page.waitForTimeout(900)
@@ -155,15 +162,15 @@ const after = await body()
 const rescued = /checkpoints? (was|were) dropped to make room/.test(after)
 const refused = /could not be saved/.test(after)
 check('the refusal is either rescued by thinning history or announced — never silent', rescued || refused, after.slice(0, 240).replace(/\n/g, ' | '))
-const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('mtg-companion:v1')))
+const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), DECK_KEY)
 if (rescued) {
-  check('the new version itself was saved', stored.decks[0].versions.some((v) => v.label === 'Squeezed in when storage was full'))
+  check('the new version itself was saved', stored.versions.some((v) => v.label === 'Squeezed in when storage was full'))
   // Adding one and ending with no more than before means at least one went.
   check('room was made by dropping automatic checkpoints, not labelled ones',
-    stored.decks[0].versions.length <= versionsBefore && stored.decks[0].versions.some((v) => v.label === 'first'),
-    `${versionsBefore} before, ${stored.decks[0].versions.length} after`)
+    stored.versions.length <= versionsBefore && stored.versions.some((v) => v.label === 'first'),
+    `${versionsBefore} before, ${stored.versions.length} after`)
 } else {
-  check('and a refused save leaves what was stored untouched', stored.decks[0].versions.length === versionsBefore)
+  check('and a refused save leaves what was stored untouched', stored.versions.length === versionsBefore)
 }
 await page.evaluate(() => { for (const k of Object.keys(localStorage)) if (/^(big|mid|small)-/.test(k)) localStorage.removeItem(k) })
 
