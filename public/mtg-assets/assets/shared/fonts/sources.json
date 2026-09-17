@@ -1,0 +1,58 @@
+[
+  {
+    "family": "Cinzel",
+    "file": "cinzel-0.woff2",
+    "subset": "latin",
+    "source": "https://fonts.gstatic.com/s/cinzel/v26/8vIJ7ww63mVu7gt79mT7.woff2",
+    "cssSource": "https://fonts.googleapis.com/css2?family=Cinzel%3Awght%40400..700&display=swap",
+    "bytes": 25904
+  },
+  {
+    "family": "Source Sans 3",
+    "file": "sourcesans3-0.woff2",
+    "subset": "latin",
+    "source": "https://fonts.gstatic.com/s/sourcesans3/v19/nwpStKy2OAdR1K-IwhWudF-R3w8aZQ.woff2",
+    "cssSource": "https://fonts.googleapis.com/css2?family=Source%20Sans%203%3Awght%40400..700&display=swap",
+    "bytes": 28740
+  },
+  {
+    "family": "Source Serif 4",
+    "file": "sourceserif4-0.woff2",
+    "subset": "latin",
+    "source": "https://fonts.gstatic.com/s/sourceserif4/v14/vEFH2_tTDB4M7-auWDN0ahZJW1ge6NmXpVAHV83Bfb_US0r6aX0.woff2",
+    "cssSource": "https://fonts.googleapis.com/css2?family=Source%20Serif%204%3Aital%2Cwght%400%2C400..700%3B1%2C400..700&display=swap",
+    "bytes": 51516
+  },
+  {
+    "family": "Source Serif 4",
+    "file": "sourceserif4-1.woff2",
+    "subset": "latin",
+    "source": "https://fonts.gstatic.com/s/sourceserif4/v14/vEFF2_tTDB4M7-auWDN0ahZJW3IX2ih5nk3AucvUHf6kDXr4.woff2",
+    "cssSource": "https://fonts.googleapis.com/css2?family=Source%20Serif%204%3Aital%2Cwght%400%2C400..700%3B1%2C400..700&display=swap",
+    "bytes": 50824
+  },
+  {
+    "family": "Cormorant Garamond",
+    "file": "cormorantgaramond-0.woff2",
+    "subset": "latin",
+    "source": "https://fonts.gstatic.com/s/cormorantgaramond/v21/co3ZmX5slCNuHLi8bLeY9MK7whWMhyjYrEtImSo.woff2",
+    "cssSource": "https://fonts.googleapis.com/css2?family=Cormorant%20Garamond%3Aital%2Cwght%400%2C400..700%3B1%2C400..700&display=swap",
+    "bytes": 39260
+  },
+  {
+    "family": "Cormorant Garamond",
+    "file": "cormorantgaramond-1.woff2",
+    "subset": "latin",
+    "source": "https://fonts.gstatic.com/s/cormorantgaramond/v21/co3bmX5slCNuHLi8bLeY9MK7whWMhyjYqXtK.woff2",
+    "cssSource": "https://fonts.googleapis.com/css2?family=Cormorant%20Garamond%3Aital%2Cwght%400%2C400..700%3B1%2C400..700&display=swap",
+    "bytes": 37640
+  },
+  {
+    "family": "IBM Plex Mono",
+    "file": "ibmplexmono-0.woff2",
+    "subset": "latin",
+    "source": "https://fonts.gstatic.com/s/ibmplexmono/v20/-F63fjptAgt5VM-kVkqdyU8n1i8q1w.woff2",
+    "cssSource": "https://fonts.googleapis.com/css2?family=IBM%20Plex%20Mono%3Awght%40400&display=swap",
+    "bytes": 14708
+  }
+]

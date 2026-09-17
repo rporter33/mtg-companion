@@ -122,3 +122,10 @@
   .season--fracture::before,
   .season--fracture::after { display: none; }
 }
+
+/* A curated set brings its own art: the banner grows into a hero. */
+.season--art { position: relative; overflow: hidden; min-height: 200px; align-items: flex-end; }
+.season--art .season__art { z-index: 0; }
+.season--art .season__icon, .season--art .season__body, .season--art .season__actions { position: relative; z-index: 1; }
+.season__tagline { font-family: var(--font-heading); font-size: 1.05rem; margin: 0 0 var(--space-1); color: var(--text); }
+@media (min-width: 701px) { .season--art .season__body { max-width: 52%; } }

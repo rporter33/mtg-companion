@@ -1,3 +1,4 @@
+import { curatedThemeFor } from '../data/set-themes.js'
 // Set-aware theming.
 //
 // Magic releases a new set every few months, and the app should feel like it
@@ -150,9 +151,11 @@ export function buildSeasonTheme(sets, now = undefined, colorProfile = null) {
   const focus = season.next ?? season.current
   if (!focus) return null
 
-  // Prefer the set's real colour distribution; fall back to the code hash,
-  // which is stable but carries no information about the set itself.
-  const accent = accentFromColorProfile(colorProfile)
+  // A theme someone designed comes first; then the set's real colour
+  // distribution; then the code hash, which is stable but carries no
+  // information about the set itself.
+  const accent = curatedThemeFor(focus.code)
+    ?? accentFromColorProfile(colorProfile)
     ?? { ...accentForSet(focus.code), derivedFrom: 'code' }
 
   const isUpcoming = focus === season.next

@@ -7,6 +7,8 @@ import SeasonBanner from './SeasonBanner.jsx'
 import Commanders from './Commanders.jsx'
 import Term, { TermBody } from '../../components/Term.jsx'
 import { navigate } from '../../lib/router.js'
+import HeroArt from '../../components/HeroArt.jsx'
+import { decorFor } from '../../lib/theme-set.js'
 import Sheet from '../../components/Sheet.jsx'
 import './guide.css'
 
@@ -62,8 +64,9 @@ export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onSt
 
       <SeasonBanner onExplore={onExploreQuery} />
 
-      <section className="hero" onClick={() => setMode('tutorial')} role="button" tabIndex={0}
+      <section className="hero hero--art" onClick={() => setMode('tutorial')} role="button" tabIndex={0}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setMode('tutorial') }}>
+        <HeroArt wide={decorFor(null).coreHero.wide} portrait={decorFor(null).coreHero.portrait} />
         <div className="hero__label">Start here</div>
         <h2>Play your first game</h2>
         <p>

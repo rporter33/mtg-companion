@@ -13,11 +13,12 @@
     "test:watch": "vitest",
     "validate:live": "node scripts/validate-live.mjs",
     "deck:fetch": "node scripts/fetch-deck.mjs",
+    "tokens:check": "node scripts/check-tokens.mjs",
     "firstdeck:verify": "node scripts/verify-first-deck.mjs",
     "examples:verify": "node scripts/verify-examples.mjs",
     "coach:measure": "node scripts/measure-coach.mjs",
     "perf:measure": "node scripts/measure-perf.mjs",
-    "test:browser": "node tests/browser/zoom.spec.mjs && node tests/browser/routing.spec.mjs && node tests/browser/search.spec.mjs && node tests/browser/explain.spec.mjs && node tests/browser/coach.spec.mjs && node tests/browser/import.spec.mjs && node tests/browser/prices.spec.mjs && node tests/browser/categories.spec.mjs && node tests/browser/textview.spec.mjs && node tests/browser/deckart.spec.mjs && node tests/browser/firstdeck.spec.mjs && node tests/browser/addcards.spec.mjs && node tests/browser/playtest.spec.mjs && node tests/browser/collection.spec.mjs && node tests/browser/history.spec.mjs && node tests/browser/data.spec.mjs && node tests/browser/a11y.spec.mjs && node tests/browser/bundle.spec.mjs"
+    "test:browser": "node tests/browser/zoom.spec.mjs && node tests/browser/routing.spec.mjs && node tests/browser/search.spec.mjs && node tests/browser/explain.spec.mjs && node tests/browser/coach.spec.mjs && node tests/browser/import.spec.mjs && node tests/browser/prices.spec.mjs && node tests/browser/categories.spec.mjs && node tests/browser/textview.spec.mjs && node tests/browser/deckart.spec.mjs && node tests/browser/firstdeck.spec.mjs && node tests/browser/addcards.spec.mjs && node tests/browser/theme.spec.mjs && node tests/browser/playtest.spec.mjs && node tests/browser/collection.spec.mjs && node tests/browser/history.spec.mjs && node tests/browser/data.spec.mjs && node tests/browser/a11y.spec.mjs && node tests/browser/bundle.spec.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

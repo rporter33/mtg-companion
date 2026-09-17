@@ -121,6 +121,8 @@ button:focus-visible, [tabindex]:focus-visible {
 .tiny  { font-size: 0.75rem; }
 .mono  { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .display { font-family: var(--font-display); }
+h1, h2, h3 { font-family: var(--font-heading); }
+.section-title h2 { font-family: var(--font-body); }
 .center { text-align: center; }
 
 .btn {
@@ -250,3 +252,22 @@ button:focus-visible, [tabindex]:focus-visible {
 .banner--button { text-align: left; cursor: pointer; width: 100%; }
 .stack--mid { gap: var(--space-3); }
 .ml-auto { margin-left: auto; }
+
+/* Hero art behind a panel: the picture keeps to the right on a wide screen
+   and sits behind the bottom-aligned copy on a phone, with a scrim either way
+   so the text never depends on the picture staying dark. */
+.hero-art { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.hero-art img { width: 100%; height: 100%; object-fit: cover; object-position: 73% 48%; display: block; }
+.hero-art::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, var(--bg-raised) 0%, color-mix(in srgb, var(--bg-raised) 88%, transparent) 38%, color-mix(in srgb, var(--bg-raised) 20%, transparent) 70%, transparent 100%);
+}
+@media (max-width: 700px) {
+  .hero-art img { object-position: 50% 42%; }
+  .hero-art::after { background: linear-gradient(180deg, color-mix(in srgb, var(--bg-raised) 35%, transparent) 0%, color-mix(in srgb, var(--bg-raised) 80%, transparent) 45%, var(--bg-raised) 100%); }
+}
+.hero--art { position: relative; overflow: hidden; min-height: 220px; }
+.hero--art > :not(.hero-art) { position: relative; z-index: 1; }
+@media (min-width: 701px) { .hero--art > :not(.hero-art) { max-width: 55%; } }
+
+.empty__art { display: block; margin: 0 auto var(--space-2); opacity: 0.9; }

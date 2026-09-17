@@ -25,7 +25,9 @@ const PlayView = lazy(VIEWS.play)
 const GuideView = lazy(VIEWS.guide)
 import { loadState, PERSIST_FAILED_EVENT, ROOM_MADE_EVENT } from './lib/storage.js'
 import { useRoute, navigate } from './lib/router.js'
-import { getCardById } from './lib/scryfall.js'
+import { getCardById, getSets } from './lib/scryfall.js'
+import { buildSeasonTheme } from './lib/season.js'
+import { applyThemeSet } from './lib/theme-set.js'
 import { checkForUpdate, reloadForUpdate, minutesAgo } from './lib/version.js'
 
 const TABS = [
@@ -97,6 +99,40 @@ export default function App() {
       clearTimeout(timer)
       document.removeEventListener('visibilitychange', onVisible)
     }
+  }, [])
+
+  // A curated theme for the season's focus set applies to the whole app, not
+  // just the banner: the accent and, if it names one, the display face. A
+  // derived accent stays in the banner, because a hash is not art direction.
+  // Runs after first paint and never blocks it; offline, nothing changes.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const controller = new AbortController()
+    const root = document.documentElement
+    const clear = () => {
+      root.style.removeProperty('--accent')
+      root.style.removeProperty('--accent-soft')
+      root.style.removeProperty('--font-display')
+      root.style.removeProperty('--font-heading')
+      applyThemeSet(null)
+    }
+    const idle = window.requestIdleCallback ?? ((fn) => setTimeout(fn, 1500))
+    idle(() => {
+      getSets({ signal: controller.signal })
+        .then((sets) => {
+          const theme = buildSeasonTheme(sets)
+          if (theme?.derivedFrom !== 'curated') { clear(); return }
+          // The shell's colours live in tokens.css under the attribute; only
+          // what a curated entry can vary per set is written here.
+          applyThemeSet(theme.set.code)
+          root.style.setProperty('--accent', theme.accent)
+          root.style.setProperty('--accent-soft', theme.accentDim)
+          if (theme.displayFont) root.style.setProperty('--font-display', theme.displayFont)
+          if (theme.headingFont) root.style.setProperty('--font-heading', theme.headingFont)
+        })
+        .catch(() => { /* offline or unreachable: the default theme stands */ })
+    })
+    return () => controller.abort()
   }, [])
 
   useEffect(() => {

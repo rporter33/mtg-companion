@@ -76,3 +76,16 @@
 .staple:hover { background: var(--bg-overlay); }
 .staple--in { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .staple__name { flex: 1 1 8rem; min-width: 0; text-align: left; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.colour-page__school dd { color: var(--text); }
+
+/* Emblems always sit beside a name; an emblem alone never carries the meaning. */
+.colour-page__emblem { width: 28px; height: 28px; vertical-align: middle; }
+.school {
+  display: flex; gap: var(--space-3); align-items: flex-start;
+  padding: var(--space-3); border-radius: var(--radius-sm);
+  border: 1px solid var(--border); border-left: 4px solid var(--school-a, var(--border-strong));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--school-b, transparent) 12%, var(--bg-overlay)), var(--bg-overlay));
+}
+.school__emblem { width: 48px; height: 48px; flex-shrink: 0; }
+.school__emblem--inline { width: 18px; height: 18px; vertical-align: -3px; margin-right: 4px; }
+.school__name { font-size: 0.95rem; }

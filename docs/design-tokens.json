@@ -1,0 +1,92 @@
+{
+  "metadata": {
+    "status": "Original implementation palette; not an official Wizards brand specification",
+    "sourceDate": "2026-09-17"
+  },
+  "core": {
+    "ink-950": "#0B0C0E",
+    "ink-900": "#121418",
+    "ink-800": "#1B1F24",
+    "slate-650": "#3E4852",
+    "mist-300": "#B8C0C7",
+    "parchment-100": "#EFE7D5",
+    "parchment-50": "#F8F3E8",
+    "gold-500": "#B89446",
+    "gold-300": "#D8C17A",
+    "mana-white": "#F2E6B6",
+    "mana-blue": "#3B82B8",
+    "mana-black": "#5B5263",
+    "mana-red": "#C64A36",
+    "mana-green": "#3F7D55",
+    "mana-colorless": "#9AA3A8",
+    "mana-gold": "#B89446"
+  },
+  "reality-fracture": {
+    "rf-void": "#080812",
+    "rf-ink": "#111326",
+    "rf-indigo": "#24245F",
+    "rf-jace": "#3E5FD1",
+    "rf-azure": "#6FA7FF",
+    "rf-cyan": "#77E4EF",
+    "rf-amethyst": "#8B5DDB",
+    "rf-magenta": "#D05AAE",
+    "rf-mirror": "#D8E2F0",
+    "rf-white": "#F3F2F7",
+    "rf-slate": "#7C849F",
+    "rf-warning": "#E65B55",
+    "rf-gold": "#C6A45B"
+  },
+  "schools": {
+    "fatehold": {
+      "colors": [
+        "#E9E1C8",
+        "#72A9D8",
+        "#B8A064"
+      ],
+      "pair": "WU",
+      "description": "Future History"
+    },
+    "theorix": {
+      "colors": [
+        "#3158B8",
+        "#15111E",
+        "#764FC2"
+      ],
+      "pair": "UB",
+      "description": "Esoteric Mathematics"
+    },
+    "stingerquill": {
+      "colors": [
+        "#21151F",
+        "#B83D4A",
+        "#D86A83"
+      ],
+      "pair": "BR",
+      "description": "Painful Words"
+    },
+    "konstrari": {
+      "colors": [
+        "#B75537",
+        "#426C45",
+        "#D08B3D"
+      ],
+      "pair": "RG",
+      "description": "Constructive Arts"
+    },
+    "vigorbloom": {
+      "colors": [
+        "#5D8A55",
+        "#E8E2CE",
+        "#B9C95A"
+      ],
+      "pair": "GW",
+      "description": "Invasive Healing"
+    }
+  },
+  "rarity": {
+    "common": "#B4BABF",
+    "uncommon": "#D4E5EC",
+    "rare": "#D8B46A",
+    "mythic": "#F39351"
+  }
+}

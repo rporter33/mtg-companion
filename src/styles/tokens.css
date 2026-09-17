@@ -1,32 +1,123 @@
 /* Design tokens.
-   Dark neutral base with Magic's five colours as the accent system. Deck and
-   card chrome pulls its colour from actual colour identity, so the interface
-   is tinted by what you are looking at rather than by a fixed brand palette. */
+   The shell is the universe reference's core theme — neutral charcoal and
+   parchment with restrained antique gold — and the five colours are the
+   accent system. Deck and card chrome pulls its colour from actual colour
+   identity, so the interface is tinted by what you are looking at rather than
+   by a fixed brand palette. Primitives come from docs/, verbatim, under the
+   names the documents use; the app's own semantic tokens map onto them, so
+   `npm run tokens:check` can hold the two to each other. */
 
 :root {
-  /* Neutrals — cool, slightly blue-shifted so the colour pie reads warm against it. */
-  --bg:            #0b0e14;
-  --bg-raised:     #131822;
-  --bg-overlay:    #1a2130;
-  --bg-input:      #0e131c;
-  --border:        #242c3b;
-  --border-strong: #35405480;
+  color-scheme: dark;
 
-  --text:          #e6eaf2;
-  --text-muted:    #98a3b8;
-  /* 4.51:1 against the lightest surface this text ever lands on, including the
-     set-derived accent tint, where it is not a fixed colour and the worst case
-     has to be assumed. The original #64708a was 3.58 and failed on every view.
-     Three tiers of grey on a dark theme means the bottom tier is always the one
-     that fails, so faint now separates from muted by very little — it is a
-     legible colour first and a quiet one second. */
-  --text-faint:    #939fb9;
+  /* --- Reference primitives: core (docs/MTG_UNIVERSE_AND_DESIGN_REFERENCE.md §10) --- */
+  --ink-950: #0B0C0E;
+  --ink-900: #121418;
+  --ink-800: #1B1F24;
+  --slate-650: #3E4852;
+  --mist-300: #B8C0C7;
+  --parchment-100: #EFE7D5;
+  --parchment-50: #F8F3E8;
+  --gold-500: #B89446;
+  --gold-300: #D8C17A;
 
-  --accent:        #c9a227;   /* aged gold — the card frame, not a logo colour */
-  --accent-soft:   #c9a22722;
+  --mana-white: #F2E6B6;
+  --mana-blue: #3B82B8;
+  --mana-black: #5B5263;
+  --mana-red: #C64A36;
+  --mana-green: #3F7D55;
+  --mana-colorless: #9AA3A8;
+  --mana-gold: #B89446;
 
-  /* The colour pie. Chosen to stay legible on a dark field rather than to match
-     the printed mana symbols exactly, which are far too pale for this. */
+  --surface-base: var(--ink-950);
+  --surface-raised: var(--ink-900);
+  --surface-card: var(--ink-800);
+  --text-primary: var(--parchment-50);
+  --text-secondary: var(--mist-300);
+  --border-subtle: rgba(239, 231, 213, 0.16);
+  --focus-ring: #8CC8FF;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1.25rem;
+  --shadow-card: 0 12px 32px rgba(0, 0, 0, 0.38);
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.563rem;
+  --text-2xl: 1.953rem;
+  --text-3xl: 2.441rem;
+  --text-4xl: clamp(3rem, 7vw, 5.96rem);
+
+  /* Safe typography stacks (§9.2); the files are self-hosted under
+     public/mtg-assets, loaded by index.html, licensed under the OFL. */
+  --font-display: "Cinzel", "Cormorant SC", Georgia, serif;
+  --font-heading: "Source Serif 4", "Noto Serif", Georgia, serif;
+  --font-body: "Source Sans 3", Inter, system-ui, sans-serif;
+  --font-rules: "Source Serif 4", Charter, Georgia, serif;
+  --font-data: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* --- Reference primitives: Reality Fracture (docs/REALITY_FRACTURE_SET_REFERENCE.md §15) --- */
+  --rf-void: #080812;
+  --rf-ink: #111326;
+  --rf-indigo: #24245F;
+  --rf-jace: #3E5FD1;
+  --rf-azure: #6FA7FF;
+  --rf-cyan: #77E4EF;
+  --rf-amethyst: #8B5DDB;
+  --rf-magenta: #D05AAE;
+  --rf-mirror: #D8E2F0;
+  --rf-white: #F3F2F7;
+  --rf-slate: #7C849F;
+  --rf-warning: #E65B55;
+  --rf-gold: #C6A45B;
+
+  --rf-bg: var(--rf-void);
+  --rf-surface: var(--rf-ink);
+  --rf-text: var(--rf-white);
+  --rf-text-muted: #AEB6CE;
+  --rf-border: rgba(216, 226, 240, 0.18);
+  --rf-border-active: rgba(119, 228, 239, 0.72);
+  --rf-focus: #9DD8FF;
+
+  --rf-font-display: "Cinzel", "Cormorant SC", Georgia, serif;
+  --rf-font-theory: "Cormorant Garamond", "Source Serif 4", Georgia, serif;
+  --rf-font-interface: "Source Sans 3", Inter, system-ui, sans-serif;
+  --rf-font-equation: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
+
+  --rf-radius: 0.625rem;
+  --rf-shadow: 0 18px 56px rgba(0, 0, 0, 0.48);
+  --rf-seam: linear-gradient(180deg, var(--rf-cyan), var(--rf-amethyst), var(--rf-magenta));
+  --rf-gradient-sanctum: radial-gradient(circle at 50% 0%, #3E5FD1 0%, #24245F 35%, #080812 78%);
+  --rf-gradient-fracture: linear-gradient(115deg, #77E4EF 0%, #6FA7FF 30%, #8B5DDB 66%, #D05AAE 100%);
+  --rf-gradient-mirror: linear-gradient(145deg, rgba(243,242,247,.92), rgba(111,167,255,.28) 40%, rgba(139,93,219,.22) 70%, rgba(8,8,18,.15));
+
+  /* --- The app's semantic tokens, mapped onto the core theme --- */
+  --bg:            var(--surface-base);
+  --bg-raised:     var(--surface-raised);
+  --bg-overlay:    var(--surface-card);
+  --bg-input:      #0e1013;
+  --border:        #252a31;
+  --border-strong: #3e485280;
+
+  --text:          var(--text-primary);
+  --text-muted:    var(--text-secondary);
+  /* Three tiers of grey on a dark theme means the bottom tier is always the
+     one that fails; faint separates from muted by very little and clears
+     4.5:1 on every surface it lands on, the accent tint included. */
+  --text-faint:    #9ea6ae;
+
+  /* Restrained antique gold: rarity, ceremony, the primary action. Overuse
+     destroys meaning, so it is the accent and nothing else. */
+  --accent:        var(--gold-300);
+  --accent-soft:   #d8c17a22;
+
+  /* The colour pie as drawn on mana symbols. These stay a touch brighter than
+     the reference's identity accents because a symbol carries dark text on top
+     of the colour and has to keep 4.5:1 there; the identity accents below are
+     borders and tints, and use the reference values as given. */
   --mtg-w: #f0e3c2;
   --mtg-u: #5aa9e6;
   --mtg-b: #9b7fc4;   /* black mana rendered as violet; true black is invisible here */
@@ -46,15 +137,11 @@
   --error: #e06c5f;
 
   --radius:    10px;
-  --radius-sm: 6px;
-  --radius-lg: 16px;
-
   --shadow: 0 2px 8px #00000066;
-  --shadow-lg: 0 12px 36px #000000aa;
+  --shadow-lg: var(--shadow-card);
 
-  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font: var(--font-body);
+  --font-mono: var(--font-data);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -69,13 +156,35 @@
   --safe-top: env(safe-area-inset-top, 0px);
 }
 
+/* The Reality Fracture shell, while that set is the season's focus. App.jsx
+   sets data-theme-set from the curated theme (src/data/set-themes.js); when
+   the season moves on, the attribute goes and the core shell returns. Indigo
+   and silver as the master system, cyan as the one accent; the five colours
+   stay localised to what they identify (set reference §5, §11). */
+:root[data-theme-set="fra"] {
+  --bg:          var(--rf-bg);
+  --bg-raised:   var(--rf-surface);
+  --bg-overlay:  #1D2342;
+  --bg-input:    #0c0e1c;
+  --border:      #262c4a;
+  --border-strong: #626d9180;
+  --text:        var(--rf-text);
+  --text-muted:  var(--rf-text-muted);
+  --text-faint:  #a3abc4;
+  --accent:      var(--rf-cyan);
+  --accent-soft: #77e4ef22;
+  --font-display: var(--rf-font-display);
+  --font-heading: var(--rf-font-theory);
+  --shadow-lg:   var(--rf-shadow);
+}
+
 /* Colour-identity helpers. An element carrying data-identity gets its accent
    from the deck or card it represents; multicolour falls back to gold, which is
    what the game itself does. */
-[data-identity="W"] { --identity: var(--mtg-w); --identity-dim: var(--mtg-w-dim); }
+[data-identity="W"] { --identity: var(--mana-white); --identity-dim: var(--mtg-w-dim); }
 [data-identity="U"] { --identity: var(--mtg-u); --identity-dim: var(--mtg-u-dim); }
 [data-identity="B"] { --identity: var(--mtg-b); --identity-dim: var(--mtg-b-dim); }
 [data-identity="R"] { --identity: var(--mtg-r); --identity-dim: var(--mtg-r-dim); }
 [data-identity="G"] { --identity: var(--mtg-g); --identity-dim: var(--mtg-g-dim); }
 [data-identity="C"] { --identity: var(--mtg-c); --identity-dim: var(--mtg-c-dim); }
-[data-identity="M"] { --identity: var(--accent); --identity-dim: var(--accent-soft); }
+[data-identity="M"] { --identity: var(--mana-gold); --identity-dim: var(--accent-soft); }

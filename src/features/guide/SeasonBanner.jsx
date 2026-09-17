@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getSets, getSetColorProfile } from '../../lib/scryfall.js'
 import { buildSeasonTheme } from '../../lib/season.js'
+import HeroArt from '../../components/HeroArt.jsx'
 import { mechanicsForSet, curationAgeDays } from '../../data/set-mechanics.js'
 import Sheet from '../../components/Sheet.jsx'
 import Term from '../../components/Term.jsx'
@@ -50,6 +51,14 @@ export default function SeasonBanner({ onExplore }) {
 
   if (!theme) return null
   const { set, isUpcoming, countdown, accent, accentDim } = theme
+  // A curated theme brings its own art and voice (src/data/set-themes.js);
+  // a derived one gets the plain banner, because a hash is not art direction.
+  const curatedTheme = theme.derivedFrom === 'curated' ? theme : null
+  const withBase = (art) => (art ? {
+    ...art,
+    src: `${import.meta.env.BASE_URL}${art.src}`,
+    srcset: art.srcset.split(',').map((part) => `${import.meta.env.BASE_URL}${part.trim()}`).join(', '),
+  } : null)
 
   // Art-direction treatment, only where we actually know the set's. A set with
   // no curated entry gets the plain banner rather than a guessed aesthetic.
@@ -63,9 +72,11 @@ export default function SeasonBanner({ onExplore }) {
     // which rendered the modal as a clipped strip inside the banner.
     <>
     <section
-      className={`season ${treatment ? `season--${treatment}` : ''}`}
+      className={`season ${treatment ? `season--${treatment}` : ''} ${curatedTheme?.art ? 'season--art' : ''}`}
       style={{ '--season-accent': accent, '--season-dim': accentDim }}
+      data-theme-source={theme.derivedFrom}
     >
+      {curatedTheme?.art && <HeroArt wide={withBase(curatedTheme.art.wide)} portrait={withBase(curatedTheme.art.portrait)} className="season__art" />}
       {set.iconSvgUri && !iconFailed && (
         // A broken-image glyph is worse than no icon at all, and a set icon is
         // decoration — the banner reads perfectly without one.
@@ -85,10 +96,12 @@ export default function SeasonBanner({ onExplore }) {
           {countdown && <span className="season__countdown"> · {countdown}</span>}
         </div>
         <h2>{set.name}</h2>
+        {curatedTheme?.voice?.tagline && <p className="season__tagline">{curatedTheme.voice.tagline}</p>}
         <p className="muted tiny">
           {isUpcoming
             ? `Releases ${formatDate(set.releasedAt)}.`
             : `Released ${formatDate(set.releasedAt)}${set.cardCount ? ` · ${set.cardCount} cards` : ''}.`}
+          {curatedTheme?.provisional && ' Colours and lore here are the app\u2019s own reading of public previews, not official.'}
         </p>
       </div>
 

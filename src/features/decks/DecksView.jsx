@@ -13,6 +13,7 @@ import DeckArt from '../../components/DeckArt.jsx'
 import { artUrl, faceIdFor } from '../../lib/deck-art.js'
 import { getCard } from '../../lib/cache.js'
 import { getPrefs } from '../../lib/storage.js'
+import { decorFor, useThemeSet } from '../../lib/theme-set.js'
 import './decks.css'
 
 /*
@@ -43,6 +44,7 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
   const [creating, setCreating] = useState(false)
   const [pending, setPending] = useState(null)
   const { report, summary, dismiss } = useLegalityWatch({ enabled: !offline })
+  const themeSet = useThemeSet()
 
   // Which deck is open, and whether the data screen is, come from the URL.
   const editingId = route?.deckId ?? null
@@ -146,6 +148,7 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
 
       {!decks.length && !creating && (
         <div className="empty stack row--middle">
+          <img className="empty__art" src={decorFor(themeSet).emptyState} alt="" aria-hidden="true" width="160" height="120" />
           <h3>No decks yet</h3>
           <p>
             Never built one? Pick a colour, say how you like to play, choose a commander, and
@@ -200,10 +203,13 @@ function DeckCard({ deck, onOpen, onDelete }) {
   const target = format?.deck.max ?? format?.deck.min ?? 60
   const identity = deck.identity ?? 'C'
   const art = useFaceArt(deck)
+  const themeSet = useThemeSet()
 
   return (
-    <div className={`panel panel--tinted deck-card ${art ? 'deck-card--art' : ''}`} data-identity={identity}>
-      {art && <DeckArt src={art.src} cardId={art.id} className="deck-art--card" />}
+    <div className={`panel panel--tinted deck-card ${art ? 'deck-card--art' : 'deck-card--back'}`} data-identity={identity}>
+      {art
+        ? <DeckArt src={art.src} cardId={art.id} className="deck-art--card" />
+        : <img className="deck-card__back" src={decorFor(themeSet).cardBack} alt="" aria-hidden="true" width="40" height="56" loading="lazy" />}
       <button className="deck-card__open" onClick={onOpen}>
         <h3>{deck.name}</h3>
         <div className="row row--wrap mt2">

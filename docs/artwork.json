@@ -1,0 +1,58 @@
+[
+  {
+    "id": "worlds-hero",
+    "theme": "core",
+    "orientation": "wide",
+    "width": 1672,
+    "height": 941,
+    "sourceFile": "assets/core/art/worlds-hero.png",
+    "webFile": "assets/core/art/worlds-hero.webp",
+    "focalPoint": [
+      0.73,
+      0.48
+    ],
+    "safeTextArea": "left 35%; use CSS scrim"
+  },
+  {
+    "id": "echoverse-hero",
+    "theme": "reality-fracture",
+    "orientation": "wide",
+    "width": 1672,
+    "height": 941,
+    "sourceFile": "assets/reality-fracture/art/echoverse-hero.png",
+    "webFile": "assets/reality-fracture/art/echoverse-hero.webp",
+    "focalPoint": [
+      0.73,
+      0.48
+    ],
+    "safeTextArea": "left 35%; use CSS scrim"
+  },
+  {
+    "id": "atlas-portrait",
+    "theme": "core",
+    "orientation": "portrait",
+    "width": 1122,
+    "height": 1402,
+    "sourceFile": "assets/core/art/atlas-portrait.png",
+    "webFile": "assets/core/art/atlas-portrait.webp",
+    "focalPoint": [
+      0.5,
+      0.42
+    ],
+    "safeTextArea": "bottom; use CSS scrim"
+  },
+  {
+    "id": "sanctum-portrait",
+    "theme": "reality-fracture",
+    "orientation": "portrait",
+    "width": 1122,
+    "height": 1402,
+    "sourceFile": "assets/reality-fracture/art/sanctum-portrait.png",
+    "webFile": "assets/reality-fracture/art/sanctum-portrait.webp",
+    "focalPoint": [
+      0.5,
+      0.42
+    ],
+    "safeTextArea": "bottom; use CSS scrim"
+  }
+]

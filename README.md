@@ -73,7 +73,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 809 unit tests
+npm test               # 819 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -278,6 +278,37 @@ which reproduces the accepted ratios: 24 sources for 60 cards, 16 for 40, 40 for
 state, so it cannot desync, cannot present an illegal board, and needs no
 network. A real rules engine covering even ten cards correctly is a much larger
 project, and it would not teach any better.
+
+**The look comes from two written references, and the app can prove it.**
+`docs/` holds a universe and design reference and a Reality Fracture set
+reference, written for this app, with the art direction and token files that
+came with them and a provenance note on every asset. The shell is the
+references' core theme: neutral charcoal and parchment with restrained antique
+gold, the five colours as the accent system, self-hosted open fonts (Cinzel,
+Source Serif 4, Source Sans 3, IBM Plex Mono, Cormorant Garamond) under the
+SIL Open Font License in the roles the references give them. The references'
+tokens sit in `tokens.css` verbatim under their own names and the app's
+semantic tokens map onto them, so `npm run tokens:check` can diff the documents
+against the stylesheet. Original artwork, colour and school emblems, and the
+decorative vectors are the pack's own interface designs, never official
+glyphs, and every emblem is shown with a text label beside it. `CLAUDE.md` at
+the root points every future session at the same rules.
+
+**A set someone designed for gets a curated theme; every other set gets a
+derived one.** `src/data/set-themes.js` is the one place a theme is written by
+hand: an accent, a display face, and the lore hooks the rest of the app can
+show, dated and marked provisional like the mechanics. While that set is the
+season's focus it takes precedence over the derived accent and applies to the
+whole app, not just the banner; when the season moves on to a set with no
+entry, the derived accent returns on its own. Reality Fracture is written in
+from its reference: an indigo and silver shell with cyan as the one accent,
+Cormorant Garamond for headings, the set's own illustration and tagline on the
+banner, and Hexhaven's five schools, which are the five allied colour pairs,
+beside the colours in the first-deck flow with their disciplines, virtues and
+horrors. The banner says the colours and lore are the app's reading of public
+previews, not official, and the alias "Shattered Reality" is accepted as input
+and never shown. A browser spec drives both shells: with the set as focus and
+with another set, on a desktop and a phone.
 
 **The set banner is derived, not hardcoded.** Which set is next, when it lands
 and its official icon all come from Scryfall at runtime, so it stays correct for

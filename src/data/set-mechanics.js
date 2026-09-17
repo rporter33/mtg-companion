@@ -19,7 +19,7 @@ export const SET_MECHANICS = {
     curatedAt: '2026-09-16',
     provisional: true,
     premise:
-      'Jace Beleren has decided the Multiverse is broken, and is building a replacement in his own image — the Echoverse. The set is full of "what if?" versions of familiar characters.',
+      'Jace Beleren imagined a Multiverse without its catastrophes — no Phyrexians, no Eldrazi, no Bolas — and when his own identity fractured, the self that remained, the Theorist, built it: the Echoverse, a mirrored reality where familiar people and places return as elegant but unstable opposites. He means to lay it over the old one. The set is full of "what if?" versions of familiar characters, and its question is what remains of a person when the suffering that shaped them is removed — and who gets to decide.',
     sources: [
       'https://magic.wizards.com/en/news/feature/reality-fracture-mechanics',
       'https://magic.wizards.com/en/news/feature/enter-the-echoverse-with-reality-fracture-design',
@@ -43,6 +43,15 @@ export const SET_MECHANICS = {
         forNewPlayers:
           'This app counts anything that produces mana toward your mana base, not just lands — so a deck making Heartwood tokens genuinely needs fewer lands.',
         seeAlso: ['ramp', 'artifact'],
+      },
+      {
+        id: 'prepare',
+        term: 'Prepare',
+        short: 'A creature that carries a spell it can cast later.',
+        long: 'A preparation card is a creature with a second, smaller spell printed on it. When the creature becomes prepared, a copy of that spell waits in exile until you cast it, until the creature leaves the battlefield, or until it becomes unprepared. The creature, its prepared state and the waiting copy belong together, so the app shows them together.',
+        forNewPlayers:
+          'Think of it as training: the creature has learned a trick, and the trick stays learned until the creature is gone.',
+        seeAlso: ['exile'],
       },
       {
         id: 'echoedPairs',

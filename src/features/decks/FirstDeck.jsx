@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { COLOR_PAGES, PAIRS, STYLE_AXES, FIRST_COMMANDERS, WHEEL } from '../../data/colors.js'
+import { schoolsFor, schoolsForColor, SET_THEMES, LORE_SET } from '../../data/set-themes.js'
+import { decorFor, useThemeSet } from '../../lib/theme-set.js'
 import {
   DIAL_MAX, dialToColors, colorsToDial, describeColors, suggestColors, commanderQuery,
   stapleQueries, ROLES, roleCounts, fillPlan,
@@ -120,6 +122,14 @@ export default function FirstDeck({ onOpenCard }) {
 const SWATCH = { W: 'var(--mtg-w)', U: 'var(--mtg-u)', B: 'var(--mtg-b)', R: 'var(--mtg-r)', G: 'var(--mtg-g)' }
 
 function ColourStep({ dial, colors, chosen, onDial, onPair, onOpenCard, onNext }) {
+  // Hexhaven's schools are the five allied pairs, so a pair shows its school
+  // and a single colour shows the two it belongs to. Every emblem carries the
+  // school's name beside it; the emblem alone never says which school.
+  const schools = schoolsFor()
+  const school = chosen.kind === 'pair' ? schools?.[chosen.id] : null
+  const decor = decorFor(useThemeSet())
+  const withBase = (path) => `${import.meta.env.BASE_URL}${path}`
+  const setName = SET_THEMES[LORE_SET]?.setName ?? 'the current set'
   const label = chosen.kind === 'mono'
     ? COLOR_PAGES[chosen.id].name
     : `${COLOR_PAGES[chosen.id[0]].name} and ${COLOR_PAGES[chosen.id[1]].name} — ${chosen.pair?.name ?? ''}`
@@ -172,14 +182,44 @@ function ColourStep({ dial, colors, chosen, onDial, onPair, onOpenCard, onNext }
         {chosen.kind === 'pair' && chosen.pair && (
           <p className="colour-pages__does">{chosen.pair.does}</p>
         )}
+        {school && (
+          <aside className="school" style={{ '--school-a': school.accents[0], '--school-b': school.accents[1], '--school-c': school.accents[2] }}>
+            <img className="school__emblem" src={withBase(school.emblem)} alt="" aria-hidden="true" width="48" height="48" />
+            <div className="stack stack--tight min0">
+              <div className="school__name">
+                <strong>{school.name}</strong>
+                <span className="faint tiny"> · {school.discipline} · {setName}</span>
+              </div>
+              <div className="tiny"><span className="muted">Virtue:</span> {school.virtue}</div>
+              <div className="tiny"><span className="muted">Horror:</span> {school.horror}</div>
+            </div>
+          </aside>
+        )}
         <div className={`colour-pages__grid ${pages.length === 2 ? 'colour-pages__grid--two' : ''}`}>
           {pages.map((page) => (
             <article key={page.id} className="colour-page" style={{ '--swatch': SWATCH[page.id] }}>
-              <h3><span className="colour-page__dot" aria-hidden="true" />{page.name}</h3>
+              <h3>
+                <img className="colour-page__emblem" src={decor.colorEmblem(page.id)} alt="" aria-hidden="true" width="28" height="28" />
+                {page.name}
+              </h3>
               <dl className="facts">
                 <div><dt>Cares about</dt><dd>{page.values}</dd></div>
                 <div><dt>Wins by</dt><dd>{page.wins}</dd></div>
                 <div><dt>Bad at</dt><dd>{page.weak}</dd></div>
+                {schoolsForColor(page.id).length > 0 && (
+                  <div className="colour-page__school">
+                    <dt>At Hexhaven</dt>
+                    <dd>
+                      {schoolsForColor(page.id).map((sc, i) => (
+                        <span key={sc.id}>
+                          {i > 0 && ' and '}
+                          <img className="school__emblem school__emblem--inline" src={withBase(sc.emblem)} alt="" aria-hidden="true" width="18" height="18" />
+                          <strong>{sc.name}</strong> ({sc.discipline})
+                        </span>
+                      ))}
+                    </dd>
+                  </div>
+                )}
               </dl>
               <div className="row row--wrap">
                 {page.signature.map((name) => (
