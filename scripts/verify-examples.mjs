@@ -15,7 +15,7 @@
  * requested pace.
  */
 
-import { EXAMPLE_DECKS, exampleSize } from '../src/data/example-decks.js'
+import { EXAMPLE_DECKS, exampleSize, unverifiedIn } from '../src/data/example-decks.js'
 import { readFileSync, writeFileSync } from 'node:fs'
 
 const FIX = process.argv.includes('--fix')
@@ -191,7 +191,7 @@ async function suggest(name) {
 }
 
 const cards = new Map()
-const missing = []
+let missing = []
 
 for (let i = 0; i < names.length; i += 75) {
   const chunk = names.slice(i, i + 75)
@@ -216,6 +216,22 @@ const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const repairs = []
 let problems = 0
+
+const declared = new Set(EXAMPLE_DECKS.flatMap(unverifiedIn))
+const stale = [...declared].filter((name) => cards.has(name))
+if (stale.length) {
+  console.log(c.warn('These are marked unverified but Scryfall now knows them — drop the flag:'))
+  for (const name of stale) console.log(`  ${name}`)
+  console.log()
+}
+
+const known = missing.filter((name) => declared.has(name))
+missing = missing.filter((name) => !declared.has(name))
+if (known.length) {
+  console.log(c.dim(`${known.length} names are declared unverified in the data and are not counted:`))
+  for (const name of known) console.log(c.dim(`  ${name}`))
+  console.log()
+}
 
 if (missing.length) {
   problems += missing.length
@@ -252,7 +268,7 @@ if (missing.length) {
 for (const deck of EXAMPLE_DECKS) {
   const size = exampleSize(deck)
   const entries = namesIn(deck)
-  const unresolved = entries.filter((name) => !cards.has(name))
+  const unresolved = entries.filter((name) => !cards.has(name) && !declared.has(name))
   const wrongSize = deck.formatId === 'commander' && size !== 100
 
   // A card from a set that has not come out yet is "not_legal" everywhere. That
@@ -306,7 +322,16 @@ for (const deck of EXAMPLE_DECKS) {
 // the answer down. Only unambiguous repairs are applied, and every one is
 // printed, so nothing changes quietly.
 if (repairs.length) {
-  const confident = repairs.filter((r) => r.score >= 2.5 || r.token)
+  // 3.2 is close to a whole-word match. Below that the suggestions are real
+  // cards that merely share a word — Loki's Double scored 2.6 against Loki's
+  // Scepter, a different card already in that same deck. A rename to a card the
+  // deck already holds is never right, so that is refused outright.
+  const confident = repairs.filter((r) => {
+    if (r.token) return true
+    if (r.score < 3.2) return false
+    const holders = EXAMPLE_DECKS.filter((deck) => r.deckIds.includes(deck.id))
+    return !holders.some((deck) => deck.main.some((card) => card.name === r.to))
+  })
   const unsure = repairs.filter((r) => !confident.includes(r))
 
   console.log()
@@ -321,7 +346,9 @@ if (repairs.length) {
     let file = readFileSync(EXAMPLES_FILE, 'utf8')
     let applied = 0
     for (const r of confident) {
-      const line = new RegExp(`^ *\\{ name: ${escapeRe(JSON.stringify(r.from))}, quantity: \\d+ \\},\\n`, 'm')
+      // \r?\n, not \n: git checks this file out with CRLF on Windows, and the
+      // first version silently matched nothing there while reporting success.
+      const line = new RegExp(`^ *\\{ name: ${escapeRe(JSON.stringify(r.from))}, quantity: \\d+ \\},\\r?\\n`, 'm')
       if (r.token) {
         if (line.test(file)) { file = file.replace(line, ''); applied++ }
       } else {

@@ -103,7 +103,15 @@ the commanders browser in Learn.
 
 `npm run examples:verify` checks every name in every shipped example against
 Scryfall in one pass, and also reports anything banned in the deck's own format
-or outside its commander's colour identity. Unit tests cannot catch a wrong card
+or outside its commander's colour identity. Add `--fix` and it applies what it
+finds — renaming a card that gained a subtitle, rewriting a back face to its
+full `Front // Back` name, deleting a token the export swept up — rather than
+printing instructions for a human to retype.
+
+A supplied list can also carry a name that is no card at all. Those stay in the
+deck and are listed in its `unverified` field: deleting them loses information,
+and pretending they resolve is worse. The importer already shows unresolved
+lines with alternatives, so a reader sees the truth either way. Unit tests cannot catch a wrong card
 name — it is only wrong relative to a database that is not in this repo — so
 that check lives in a script and has to be run deliberately.
 

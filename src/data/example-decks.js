@@ -24,7 +24,12 @@ export const EXAMPLE_DECKS = [
     commanders: ["Doctor Doom, King of Latveria"],
     signatureSpell: null,
     credit: "Rob Porter",
-    note: "",
+    note: "Three names in the source list match no card, token or card face in Scryfall, so those lines will not resolve on import. They are listed in unverified below.",
+    unverified: [
+      "Awesome Android",
+      "Lady Loki's Manifestation",
+      "Loki's Double",
+    ],
     addedAt: "2026-09-17",
     main: [
       { name: "Abomination, World Ravager", quantity: 1 },
@@ -531,7 +536,12 @@ export const EXAMPLE_DECKS = [
     commanders: ["Captain America, Team Leader"],
     signatureSpell: null,
     credit: "Rob Porter",
-    note: "",
+    note: "Three names in the source list match no card, token or card face in Scryfall, so those lines will not resolve on import. They are listed in unverified below.",
+    unverified: [
+      "Avengers Monitoring Station",
+      "Raise Repulsor Shields",
+      "S.H.I.E.L.D. Spy Satellite",
+    ],
     addedAt: "2026-09-17",
     main: [
       { name: "Ant-Man, Elusive Avenger", quantity: 1 },
@@ -739,6 +749,19 @@ function commanderKeys(name) {
   const full = String(name ?? '').toLowerCase().trim()
   const front = full.split('//')[0].trim()
   return front && front !== full ? [full, front] : [full]
+}
+
+/**
+ * Names in an example that resolve to nothing.
+ *
+ * A supplied decklist can carry a name that is not a card — a spoiler-era
+ * spelling, a hand-typed line, something that never shipped. Deleting it loses
+ * information and pretending it resolves is worse, so it stays in the list and
+ * declares itself. The importer already shows unresolved lines with
+ * alternatives, so the reader sees the truth either way.
+ */
+export function unverifiedIn(example) {
+  return example?.unverified ?? []
 }
 
 export function exampleDecksFor(commanderName) {

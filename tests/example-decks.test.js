@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  EXAMPLE_DECKS, exampleDecksFor, exampleToDecklist, exampleSize,
+  EXAMPLE_DECKS, exampleDecksFor, exampleToDecklist, exampleSize, unverifiedIn,
 } from '../src/data/example-decks.js'
 import { parseDecklist } from '../src/lib/decklist.js'
 import { FORMATS } from '../src/lib/formats.js'
@@ -54,6 +54,21 @@ describe('the shipped example decks', () => {
     },
   )
 
+  // An unverified entry that no longer matches a line in the deck is a stale
+  // flag, and a stale flag suppresses a real failure.
+  it.each(EXAMPLE_DECKS.filter((d) => d.unverified?.length).map((d) => [d.id, d]))(
+    '%s only marks names it actually contains as unverified', (_id, deck) => {
+      const names = new Set([...deck.main, ...deck.sideboard].map((c) => c.name))
+      for (const name of deck.unverified) expect(names.has(name)).toBe(true)
+    },
+  )
+
+  it.each(EXAMPLE_DECKS.filter((d) => d.unverified?.length).map((d) => [d.id, d]))(
+    '%s explains why it has unverified names', (_id, deck) => {
+      expect(deck.note).toBeTruthy()
+    },
+  )
+
   it('gives every deck a unique id', () => {
     const ids = EXAMPLE_DECKS.map((d) => d.id)
     expect(new Set(ids).size).toBe(ids.length)
@@ -99,5 +114,17 @@ describe('exampleDecksFor', () => {
     expect(exampleDecksFor('Atraxa, Praetors\' Voice')).toEqual([])
     expect(exampleDecksFor('')).toEqual([])
     expect(exampleDecksFor(null)).toEqual([])
+  })
+})
+
+describe('unverifiedIn', () => {
+  it('reads the declared list', () => {
+    const marked = EXAMPLE_DECKS.find((d) => d.unverified?.length)
+    expect(unverifiedIn(marked)).toEqual(marked.unverified)
+  })
+
+  it('is empty for a deck that declares none, and for nothing at all', () => {
+    expect(unverifiedIn({ })).toEqual([])
+    expect(unverifiedIn(null)).toEqual([])
   })
 })

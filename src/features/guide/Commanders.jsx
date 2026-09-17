@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getSets, searchCards } from '../../lib/scryfall.js'
 import { findSeason } from '../../lib/season.js'
-import { EXAMPLE_DECKS, exampleDecksFor, exampleSize } from '../../data/example-decks.js'
+import { EXAMPLE_DECKS, exampleDecksFor, exampleSize, unverifiedIn } from '../../data/example-decks.js'
 import CardImage from '../../components/CardImage.jsx'
 import './commanders.css'
 
@@ -134,12 +134,26 @@ export default function Commanders({ onOpenCard, onBuild }) {
             precious.
           </p>
           <div className="row row--wrap">
-            {EXAMPLE_DECKS.map((example) => (
-              <button key={example.id} className="chip" onClick={() => onBuild?.(example)}>
-                {example.name}
-                <span className="faint">&nbsp;({exampleSize(example)})</span>
-              </button>
-            ))}
+            {EXAMPLE_DECKS.map((example) => {
+              const unresolved = unverifiedIn(example).length
+              return (
+                <button
+                  key={example.id}
+                  className="chip"
+                  onClick={() => onBuild?.(example)}
+                  // Saying so up front beats the importer reporting it as a
+                  // surprise: the reader knows before opening that some lines
+                  // will not match, and that it is the list's fault not theirs.
+                  title={example.note || undefined}
+                >
+                  {example.name}
+                  <span className="faint">&nbsp;({exampleSize(example)})</span>
+                  {unresolved > 0 && (
+                    <span className="faint">&nbsp;· {unresolved} won&rsquo;t match</span>
+                  )}
+                </button>
+              )
+            })}
           </div>
         </div>
       )}
