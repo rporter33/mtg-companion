@@ -57,7 +57,7 @@ export default function Commanders({ onOpenCard, onBuild }) {
   // is unreachable, took the offline content down with the online content. An
   // app that claims to work offline has to mean it.
   const examples = EXAMPLE_DECKS.length > 0 && (
-    <div className="stack" style={{ gap: 'var(--space-2)' }}>
+    <div className="stack stack--snug">
       <div className="section-title"><h3>Example decks</h3></div>
       <p className="muted tiny" style={{ marginTop: -4 }}>
         Complete lists, exactly as they were built. Open one to read every card, see what

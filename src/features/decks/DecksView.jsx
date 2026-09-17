@@ -114,18 +114,16 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
   return (
     <div className="stack">
       <div className="row">
-        <h1 style={{ flex: 1 }}>Decks</h1>
+        <h1 className="grow">Decks</h1>
         <button className="btn btn--ghost btn--sm" onClick={() => showData(true)}>Your data</button>
         <button className="btn btn--sm" onClick={() => navigate({ tab: 'decks', starting: true })}>Start a deck</button>
         <button className="btn btn--primary" onClick={() => setCreating(true)}>New deck</button>
       </div>
       {(backup.level === 'never' || backup.level === 'stale') && (
-        <button className="banner banner--warn tiny" style={{ textAlign: 'left', cursor: 'pointer', width: '100%' }} onClick={() => showData(true)}>
+        <button className="banner banner--warn tiny banner--button" onClick={() => showData(true)}>
           <BackupNudge backup={backup} /> Tap to download one.
         </button>
       )}
-      <div style={{ display: 'none' }}>
-      </div>
 
       <LegalityChanges
         report={report}
@@ -147,7 +145,7 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
       )}
 
       {!decks.length && !creating && (
-        <div className="empty stack" style={{ alignItems: 'center' }}>
+        <div className="empty stack row--middle">
           <h3>No decks yet</h3>
           <p>
             Never built one? Pick a colour, say how you like to play, choose a commander, and
@@ -208,7 +206,7 @@ function DeckCard({ deck, onOpen, onDelete }) {
       {art && <DeckArt src={art.src} cardId={art.id} className="deck-art--card" />}
       <button className="deck-card__open" onClick={onOpen}>
         <h3>{deck.name}</h3>
-        <div className="row row--wrap" style={{ marginTop: 'var(--space-2)' }}>
+        <div className="row row--wrap mt2">
           <span className="chip">{format?.name ?? deck.formatId}</span>
           <span className={`chip ${count === target ? 'chip--ok' : ''}`}>
             {count}/{target} cards
@@ -235,16 +233,16 @@ function NewDeckForm({ onCreate, onCancel }) {
         onCreate(createDeck({ name: name.trim() || 'Untitled deck', formatId }))
       }}
     >
-      <label className="stack" style={{ gap: 'var(--space-1)' }}>
+      <label className="stack stack--tight">
         <span className="faint tiny">Deck name</span>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Untitled deck" autoFocus />
       </label>
 
-      <div className="stack" style={{ gap: 'var(--space-2)' }}>
+      <div className="stack stack--snug">
         <span className="faint tiny">Format</span>
         {FORMAT_GROUPS.map((group) => (
           <div key={group.id}>
-            <div className="faint tiny" style={{ marginBottom: 4 }}>{group.label}</div>
+            <div className="faint tiny mb1">{group.label}</div>
             <div className="row row--wrap">
               {formatsInGroup(group.id).map((f) => (
                 <button
@@ -264,7 +262,7 @@ function NewDeckForm({ onCreate, onCancel }) {
       {format && (
         <div className="banner banner--info">
           <strong>{format.name}.</strong> {format.blurb}
-          <div style={{ marginTop: 'var(--space-2)' }} className="tiny">
+          <div className="tiny mt2">
             {format.deck.max === format.deck.min
               ? `Exactly ${format.deck.min} cards`
               : `At least ${format.deck.min} cards`}

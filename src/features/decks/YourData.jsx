@@ -87,7 +87,7 @@ export default function YourData({ onClose, onChanged }) {
 
       <section className="panel stack">
         <h3>Backup</h3>
-        <p className="muted tiny" style={{ margin: 0 }}>
+        <p className="muted tiny m0">
           There are no accounts. This browser holds the only copy of your decks, and a browser can
           be cleared, replaced or lost. A backup is one JSON file with everything in it — decks,
           their history, your collection and your guide progress — and it is yours to keep.
@@ -106,8 +106,8 @@ export default function YourData({ onClose, onChanged }) {
           </label>
         </div>
         {pendingFile && (
-          <div className="panel stack" style={{ borderColor: 'var(--accent)' }}>
-            <p style={{ margin: 0 }}>
+          <div className="panel stack panel--accent">
+            <p className="m0">
               <strong>{pendingFile.name}</strong> — merge it into what is here, or replace everything
               with it? Merging never overwrites a deck you have; a clashing id is kept as a copy.
             </p>
@@ -125,7 +125,7 @@ export default function YourData({ onClose, onChanged }) {
         <div className="meter" aria-label={`Storage used: ${pct}% of the assumed limit`} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
           <div className="meter__fill" style={{ width: `${pct}%`, background: `var(--${level})` }} />
         </div>
-        <p className="muted tiny" style={{ margin: 0 }}>
+        <p className="muted tiny m0">
           {formatBytes(usage.total)} of about {formatBytes(usage.cap)}. Browsers do not say exactly
           how much they allow, so this assumes the common limit; a browser with more room simply
           fails later than this predicts. If a save is ever refused, the app drops automatic
@@ -143,7 +143,7 @@ export default function YourData({ onClose, onChanged }) {
 
       <section className="panel stack">
         <h3>Card cache</h3>
-        <p className="muted tiny" style={{ margin: 0 }}>
+        <p className="muted tiny m0">
           Cards and images you have looked at, kept so the app works offline. Separate from your
           data: clearing it loses nothing of yours, and anything a deck needs is fetched again.
         </p>
@@ -161,15 +161,15 @@ export default function YourData({ onClose, onChanged }) {
             Clear card cache
           </button>
         </div>
-        <p className="faint tiny" style={{ margin: 0 }} data-build={BUILD.id}>
+        <p className="faint tiny m0" data-build={BUILD.id}>
           Build {describeBuild()}. When a newer one is published, a banner at the top offers a reload.
         </p>
       </section>
 
       {corrupt && (
-        <section className="panel stack" style={{ borderColor: 'var(--warn)' }}>
+        <section className="panel stack panel--warn">
           <h3>A file that could not be read</h3>
-          <p className="muted tiny" style={{ margin: 0 }}>
+          <p className="muted tiny m0">
             At some point this browser held saved data the app could not parse — usually a write
             cut short. It was set aside rather than written over. It is {formatBytes(corrupt.length)};
             download it and it may be recoverable by hand, or discard it if you have a backup.

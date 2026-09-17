@@ -129,10 +129,10 @@ function SetMechanics({ entry }) {
       <p className="term__short">{entry.premise}</p>
 
       {entry.mechanics.map((mechanic) => (
-        <section className="panel stack" key={mechanic.id} style={{ gap: 'var(--space-2)' }}>
+        <section className="panel stack stack--snug" key={mechanic.id}>
           <h3>{mechanic.term}</h3>
-          <p style={{ margin: 0 }}>{mechanic.short}</p>
-          <p className="muted tiny" style={{ margin: 0 }}>{mechanic.long}</p>
+          <p className="m0">{mechanic.short}</p>
+          <p className="muted tiny m0">{mechanic.long}</p>
           {mechanic.forNewPlayers && (
             <p className="tiny" style={{ margin: 0, color: 'var(--season-accent, var(--accent))' }}>
               New to Magic? {mechanic.forNewPlayers}
@@ -148,9 +148,9 @@ function SetMechanics({ entry }) {
       ))}
 
       {entry.art && (
-        <section className="panel stack" style={{ gap: 'var(--space-2)' }}>
+        <section className="panel stack stack--snug">
           <h3>{entry.art.headline}</h3>
-          <p className="muted tiny" style={{ margin: 0 }}>{entry.art.description}</p>
+          <p className="muted tiny m0">{entry.art.description}</p>
         </section>
       )}
 
@@ -164,7 +164,7 @@ function SetMechanics({ entry }) {
         {entry.provisional && ', and wording sometimes changes before release'}.
         {' '}Everything else in this app is read live from Scryfall; this section is not.
         {entry.sources?.length > 0 && (
-          <div style={{ marginTop: 'var(--space-2)' }}>
+          <div className="mt2">
             {entry.sources.map((url) => (
               <div key={url}>
                 <a href={url} target="_blank" rel="noreferrer noopener">{shortHost(url)}</a>

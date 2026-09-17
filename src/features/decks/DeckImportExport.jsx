@@ -190,7 +190,7 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
     <div className="stack">
       <section className="panel stack">
         <h3>Paste a decklist</h3>
-        <p className="faint tiny" style={{ margin: 0 }}>
+        <p className="faint tiny m0">
           One card per line. <code className="mono">4 Lightning Bolt</code>. A line reading
           {' '}<code className="mono">Sideboard</code> or <code className="mono">Commander</code>
           {' '}switches which section the lines below it go into. An Archidekt or Moxfield
@@ -210,7 +210,7 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
         {urlPlan && (
           <div className={`banner banner--${urlPlan.kind === 'fetch' ? 'info' : 'warn'} tiny`}>
             <strong>{urlPlan.message}</strong>
-            {urlPlan.hint && <div style={{ marginTop: 'var(--space-2)' }}>{urlPlan.hint}</div>}
+            {urlPlan.hint && <div className="mt2">{urlPlan.hint}</div>}
           </div>
         )}
 
@@ -223,7 +223,7 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
             {busy ? 'Reading…' : urlPlan?.kind === 'fetch' ? 'Fetch this deck' : 'Review import'}
           </button>
         </div>
-        <p className="faint tiny" style={{ margin: 0 }}>
+        <p className="faint tiny m0">
           Nothing is added until you have seen what will land. Names are looked up
           in bulk, 75 at a time, so a whole Commander deck is two requests.
         </p>
@@ -244,7 +244,7 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
           <button className="btn" onClick={download}>Download all data</button>
           <button className="btn btn--ghost btn--sm" onClick={copyAsExample}>Copy as example</button>
         </div>
-        <p className="faint tiny" style={{ margin: 0 }}>
+        <p className="faint tiny m0">
           There are no accounts here, so &ldquo;download all data&rdquo; is the backup. It is a
           plain JSON file containing every deck and your guide progress — yours to keep.
         </p>
@@ -352,13 +352,13 @@ function ImportPreview({ preview, onApply, onCancel, onResolve, needsCommander, 
       </div>
 
       {preview.failed.length > 0 && (
-        <div className="stack" style={{ gap: 'var(--space-2)' }}>
-          <p className="faint tiny" style={{ margin: 0 }}>
+        <div className="stack stack--snug">
+          <p className="faint tiny m0">
             These names did not match a card. Most import failures are a typo or a
             punctuation difference — pick the right one, or leave it out.
           </p>
           {preview.failed.map((line, i) => (
-            <div className="stack" key={i} style={{ gap: 'var(--space-1)' }}>
+            <div className="stack stack--tight" key={i}>
               <span className="tiny mono">{line.quantity} {line.name}</span>
               <div className="row row--wrap">
                 {line.candidates?.length
@@ -381,8 +381,8 @@ function ImportPreview({ preview, onApply, onCancel, onResolve, needsCommander, 
         here and so are its legendary creatures, so offer them.
       */}
       {needsCommander && commanderCandidates(preview.resolved).length > 0 && (
-        <div className="stack" style={{ gap: 'var(--space-2)' }}>
-          <p className="faint tiny" style={{ margin: 0 }}>
+        <div className="stack stack--snug">
+          <p className="faint tiny m0">
             This list has no <code className="mono">Commander</code> line. Pick the commander and
             the rest becomes the deck, or add it later from the list.
           </p>

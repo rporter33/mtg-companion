@@ -229,3 +229,24 @@ button:focus-visible, [tabindex]:focus-visible {
 .view-loading { min-height: 60vh; }
 
 .input--sm { padding: 3px 6px; font-size: 0.8rem; }
+
+/* Layout modifiers, so a panel never has to say its spacing inline.
+   The stack and row gaps are the two rhythms in the app; everything else
+   is a nudge with a name. */
+.stack--tight { gap: var(--space-1); }
+.stack--snug  { gap: var(--space-2); }
+.row--tight   { gap: var(--space-1); }
+.row--middle  { align-items: center; }
+.row--fit     { width: auto; }
+.m0   { margin: 0; }
+.mt2  { margin-top: var(--space-2); }
+.mb1  { margin-bottom: 4px; }
+.min0 { min-width: 0; }
+.grow { flex: 1; }
+.self-start { align-self: flex-start; }
+.input--inline { width: auto; }
+.panel--warn   { border-color: var(--warn); }
+.panel--accent { border-color: var(--accent); }
+.banner--button { text-align: left; cursor: pointer; width: 100%; }
+.stack--mid { gap: var(--space-3); }
+.ml-auto { margin-left: auto; }

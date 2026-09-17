@@ -1,3 +1,4 @@
+import Stepper from '../../../components/Stepper.jsx'
 import { memo } from 'react'
 import ManaCost from '../../../components/ManaCost.jsx'
 import DeckArt from '../../../components/DeckArt.jsx'
@@ -31,13 +32,7 @@ const DeckRow = memo(function DeckRow({
       {art && <DeckArt src={art} cardId={card.id} className="deck-art--row" />}
       {isCommander
         ? <span className="deck-row__qty deck-row__qty--commander" title="Commander">★</span>
-        : (
-          <div className="deck-row__stepper">
-            <button className="deck-row__step" onClick={() => onSet(quantity - 1)} aria-label={`One fewer ${card.name}`}>−</button>
-            <span className="deck-row__qty">{quantity}</span>
-            <button className="deck-row__step" onClick={() => onSet(quantity + 1)} aria-label={`One more ${card.name}`}>+</button>
-          </div>
-        )}
+        : <Stepper value={quantity} name={card.name} onChange={onSet} />}
 
       <button className="deck-row__name" onClick={onOpen}>{card.name}</button>
       <ManaCost cost={card.mana_cost || card.card_faces?.[0]?.mana_cost || ''} />

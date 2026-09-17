@@ -99,7 +99,7 @@ export default function DeckEditor({
           onChange={(e) => onChange({ ...deck, name: e.target.value })}
           aria-label="Deck name"
         />
-        <div className="row row--wrap" style={{ marginTop: 'var(--space-2)' }}>
+        <div className="row row--wrap mt2">
           <span className="chip">{format?.name}</span>
           <span className={`chip ${total === target ? 'chip--ok' : ''}`}>{total}/{target}</span>
           {deck.sideboard.length > 0 && (
@@ -168,7 +168,7 @@ export default function DeckEditor({
       )}
 
       {errors.length > 0 && (
-        <div className="banner banner--error stack" style={{ gap: 'var(--space-2)' }}>
+        <div className="banner banner--error stack stack--snug">
           <strong>This deck is not legal in {format?.name} yet.</strong>
           <ul className="violation-list">
             {errors.slice(0, 8).map((v, i) => <li key={i}>{v.message}</li>)}

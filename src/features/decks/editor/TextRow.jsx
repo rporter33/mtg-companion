@@ -1,3 +1,4 @@
+import Stepper from '../../../components/Stepper.jsx'
 import { memo } from 'react'
 import ManaCost from '../../../components/ManaCost.jsx'
 import { identityAttr } from '../../../components/CardFace.jsx'
@@ -41,10 +42,7 @@ const TextRow = memo(function TextRow({
       <button className="text-row__name" onClick={onOpen} onFocus={show}>{card.name}</button>
       <ManaCost cost={card.mana_cost || card.card_faces?.[0]?.mana_cost || ''} />
       {!isCommander && (
-        <span className="text-row__edit">
-          <button className="text-row__step" onClick={() => onSet(quantity - 1)} aria-label={`One fewer ${card.name}`}>−</button>
-          <button className="text-row__step" onClick={() => onSet(quantity + 1)} aria-label={`One more ${card.name}`}>+</button>
-        </span>
+        <Stepper compact value={quantity} name={card.name} onChange={onSet} className="text-row__edit" />
       )}
     </div>
   )

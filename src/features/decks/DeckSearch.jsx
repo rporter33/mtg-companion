@@ -1,3 +1,4 @@
+import Chip from '../../components/Chip.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { searchCards } from '../../lib/scryfall.js'
 import { addCard, setCommanders } from '../../lib/deck.js'
@@ -214,7 +215,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
         >
           Filters{hasActiveFilters(filters) ? ' · on' : ''}
         </button>
-        <label className="row tiny muted" style={{ gap: 'var(--space-2)', width: 'auto' }}>
+        <label className="row tiny muted row--fit">
           <input
             type="checkbox"
             checked={scoped}
@@ -227,7 +228,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
           Legal in {format.name}
         </label>
         <span className="spacer" />
-        <label className="row tiny muted" style={{ gap: 'var(--space-1)', width: 'auto' }}>
+        <label className="row tiny muted row--fit row--tight">
           Sort
           <select className="chip" aria-label="Sort results" value={sortId} onChange={(e) => chooseSort(e.target.value)}>
             {SORT_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
@@ -249,40 +250,36 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
           {TYPE_CHIPS.map((type) => {
             const on = filters.types.some((t) => t.toLowerCase() === type.toLowerCase())
             return (
-              <button
+              <Chip
                 key={type}
-                className={`chip chip--sm ${on ? 'chip--active' : ''}`}
-                aria-pressed={on}
+                small
+                pressed={on}
                 onClick={() => rewrite({
                   ...filters,
                   types: on ? filters.types.filter((t) => t.toLowerCase() !== type.toLowerCase()) : [...filters.types, type.toLowerCase()],
                 })}
               >
                 {type}
-              </button>
+              </Chip>
             )
           })}
         </span>
         <span className="quick__group">
           {PRICE_CHIPS.map((cap) => (
-            <button
+            <Chip
               key={cap}
-              className={`chip chip--sm ${filters.maxPrice === cap ? 'chip--active' : ''}`}
-              aria-pressed={filters.maxPrice === cap}
+              small
+              pressed={filters.maxPrice === cap}
               onClick={() => rewrite({ ...filters, maxPrice: filters.maxPrice === cap ? null : cap })}
               title={`Only cards under $${cap} (Scryfall's USD price)`}
             >
               ≤ ${cap}
-            </button>
+            </Chip>
           ))}
         </span>
         <span className="quick__group">
-          <button className={`chip chip--sm ${hideInDeck ? 'chip--active' : ''}`} aria-pressed={hideInDeck} onClick={() => setHideInDeck(!hideInDeck)}>
-            Not in deck
-          </button>
-          <button className={`chip chip--sm ${ownedOnly ? 'chip--active' : ''}`} aria-pressed={ownedOnly} onClick={() => setOwnedOnly(!ownedOnly)} title="Only cards in your collection">
-            Owned
-          </button>
+          <Chip small pressed={hideInDeck} onClick={() => setHideInDeck(!hideInDeck)}>Not in deck</Chip>
+          <Chip small pressed={ownedOnly} onClick={() => setOwnedOnly(!ownedOnly)} title="Only cards in your collection">Owned</Chip>
         </span>
       </div>
 
@@ -306,8 +303,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
 
       {commanderIdentity && !identityScoped && (
         <button
-          className="btn btn--sm btn--ghost"
-          style={{ alignSelf: 'flex-start' }}
+          className="btn btn--sm btn--ghost self-start"
           onClick={() => {
             setIdentityScoped(true)
             if (query.trim()) run(query, { identityScoped: true })
@@ -326,7 +322,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
             locked={identityScoped && !!commanderIdentity}
           />
           {identityScoped && commanderIdentity && (
-            <p className="faint tiny" style={{ margin: 0 }}>
+            <p className="faint tiny m0">
               Colour identity is set by your commander. Remove the chip above to filter it
               yourself.
             </p>
@@ -340,17 +336,17 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
         </div>
       )}
 
-      {status === 'loading' && <p className="faint tiny" style={{ margin: 0 }}>Searching…</p>}
+      {status === 'loading' && <p className="faint tiny m0">Searching…</p>}
 
       {results && status === 'done' && (
-        <p className="faint tiny results-line" style={{ margin: 0 }}>
+        <p className="faint tiny results-line m0">
           {results.cards.length === 0
             ? 'No cards matched.'
             : `${shown.length} shown${hiddenCount ? ` (${hiddenCount} hidden by Not in deck or Owned)` : ''}${results.totalCards > results.cards.length ? ` of ${results.totalCards}` : ''} · sorted by ${sort.label.toLowerCase()}${direction === 'desc' ? ', descending' : ''} · ${priceLabel({ prices: { [market]: String(shownValue) } }, market)} shown in total`}
         </p>
       )}
 
-      <div className="stack" style={{ gap: 'var(--space-1)' }}>
+      <div className="stack stack--tight">
         {shown.map((card) => {
           const inDeck = counts.get(card.id) ?? 0
           const owned = ownedOf(collection, card)

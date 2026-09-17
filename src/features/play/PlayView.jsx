@@ -35,7 +35,7 @@ function GameSetup({ onStart }) {
         <span className="faint tiny">Format</span>
         {FORMAT_GROUPS.map((group) => (
           <div key={group.id}>
-            <div className="faint tiny" style={{ marginBottom: 4 }}>{group.label}</div>
+            <div className="faint tiny mb1">{group.label}</div>
             <div className="row row--wrap">
               {formatsInGroup(group.id).map((f) => (
                 <button
@@ -136,7 +136,7 @@ function GameBoard({ game, setGame, onQuit }) {
       </div>
 
       {!over && (
-        <div className="panel stack" style={{ gap: 'var(--space-3)' }}>
+        <div className="panel stack stack--mid">
           <div className="row">
             <span className="faint tiny">Turn {game.turn}</span>
             <span className="spacer" />
@@ -253,7 +253,7 @@ function CountersPanel({ game, playerId, onChange }) {
     <div className="stack">
       {COUNTER_TYPES.map((type) => (
         <div className="row" key={type.id}>
-          <div style={{ flex: 1 }}>
+          <div className="grow">
             <strong>{type.label}</strong>
             {type.hint && <div className="faint tiny">{type.hint}</div>}
           </div>
@@ -283,7 +283,7 @@ function CommanderDamagePanel({ game, playerId, onChange }) {
         const damage = player.commanderDamage[other.id] ?? 0
         return (
           <div className="row" key={other.id}>
-            <span style={{ flex: 1 }}>{other.name}&rsquo;s commander</span>
+            <span className="grow">{other.name}&rsquo;s commander</span>
             <button className="btn btn--sm" onClick={() => onChange(other.id, -1)} disabled={damage === 0}>−</button>
             <span className={`mono ${damage >= game.commanderDamageThreshold ? 'chip--error' : ''}`} style={{ minWidth: 30, textAlign: 'center' }}>
               {damage}
@@ -300,7 +300,7 @@ function PlayerPanelSettings({ game, playerId, onRename, onConcede }) {
   const player = game.players[playerId]
   return (
     <div className="stack">
-      <label className="stack" style={{ gap: 'var(--space-1)' }}>
+      <label className="stack stack--tight">
         <span className="faint tiny">Name</span>
         <input value={player.name} onChange={(e) => onRename(e.target.value)} />
       </label>
@@ -313,7 +313,7 @@ function HistoryPanel({ game }) {
   const entries = describeLog(game)
   if (!entries.length) return <p className="faint">Nothing has happened yet.</p>
   return (
-    <div className="stack" style={{ gap: 'var(--space-1)' }}>
+    <div className="stack stack--tight">
       {entries.map((entry) => (
         <div className="row tiny" key={entry.seq}>
           <span className="faint mono" style={{ minWidth: 42 }}>T{entry.turn}</span>
@@ -332,7 +332,7 @@ function DiceRoller() {
   }
   return (
     <div className="panel row row--wrap">
-      <span className="faint tiny" style={{ flex: 1 }}>{result ?? 'Dice and coin'}</span>
+      <span className="faint tiny grow">{result ?? 'Dice and coin'}</span>
       <button className="btn btn--sm" onClick={() => roll(2)}>Coin</button>
       <button className="btn btn--sm" onClick={() => roll(6)}>d6</button>
       <button className="btn btn--sm" onClick={() => roll(20)}>d20</button>

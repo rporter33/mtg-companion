@@ -53,7 +53,7 @@ export default class ErrorBoundary extends Component {
               Reload the app
             </button>
           </div>
-          <p className="faint tiny" style={{ margin: 0 }}>
+          <p className="faint tiny m0">
             If it keeps happening, the full details are in your browser&rsquo;s console.
           </p>
         </div>

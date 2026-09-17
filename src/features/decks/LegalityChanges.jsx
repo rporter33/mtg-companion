@@ -14,9 +14,9 @@ export default function LegalityChanges({ report, summary, onDismiss, onOpenDeck
   const hasBad = report.some((entry) => entry.changes.some((c) => c.severity === 'error'))
 
   return (
-    <div className={`banner banner--${hasBad ? 'error' : 'info'} stack`} style={{ gap: 'var(--space-2)' }}>
+    <div className={`banner banner--${hasBad ? 'error' : 'info'} stack stack--snug`}>
       <div className="row">
-        <strong style={{ flex: 1 }}>{summary}</strong>
+        <strong className="grow">{summary}</strong>
         <button className="btn btn--sm btn--ghost" onClick={() => setOpen(!open)}>
           {open ? 'Hide' : 'Details'}
         </button>
@@ -24,7 +24,7 @@ export default function LegalityChanges({ report, summary, onDismiss, onOpenDeck
       </div>
 
       {open && (
-        <div className="stack" style={{ gap: 'var(--space-3)' }}>
+        <div className="stack stack--mid">
           {report.map((entry) => (
             <div key={entry.deckId}>
               <button className="btn btn--sm btn--ghost" onClick={() => onOpenDeck?.(entry.deckId)}>
@@ -40,7 +40,7 @@ export default function LegalityChanges({ report, summary, onDismiss, onOpenDeck
               </ul>
             </div>
           ))}
-          <p className="faint tiny" style={{ margin: 0 }}>
+          <p className="faint tiny m0">
             Checked against Scryfall&rsquo;s current legality data, not a list baked into this app.
             You will only be told once per change.
           </p>

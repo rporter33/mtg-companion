@@ -79,7 +79,7 @@ export default function DeckHistory({ deck, lookup: editorLookup, market, onChan
     <div className="stack">
       <div className="panel stack">
         <h3>Save a version</h3>
-        <p className="muted tiny" style={{ margin: 0 }}>
+        <p className="muted tiny m0">
           A version is the list as it stands, with a name. Restoring one later puts the list back
           and keeps the one you left, so nothing here is one-way.
         </p>
@@ -204,7 +204,7 @@ const VersionRow = memo(function VersionRow({ version, previous, lookup, market,
 
 function Diff({ from, to, lookup, market, sinceLabel }) {
   const d = diffVersions(from, to, lookup, market, priceFor)
-  if (d.empty) return <p className="faint tiny" style={{ margin: 0 }}>Identical.</p>
+  if (d.empty) return <p className="faint tiny m0">Identical.</p>
 
   const Row = ({ r, sign }) => (
     <li className={`diff__row diff__row--${sign}`}>
@@ -220,7 +220,7 @@ function Diff({ from, to, lookup, market, sinceLabel }) {
   return (
     <div className="diff stack">
       {d.price && d.price.delta !== 0 && (
-        <p className="faint tiny" style={{ margin: 0 }}>
+        <p className="faint tiny m0">
           {formatPrice(d.price.before, market)} → {formatPrice(d.price.after, market)}
           {' '}({d.price.delta > 0 ? '+' : '−'}{formatPrice(Math.abs(d.price.delta), market)}) to {sinceLabel}
         </p>

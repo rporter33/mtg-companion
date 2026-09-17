@@ -67,7 +67,7 @@ function CardDetailBody({ card, onOpenCard }) {
         <div className="stack">
           <div>
             <div className="row">
-              <h2 style={{ flex: 1 }}>{activeFace.name ?? card.name}</h2>
+              <h2 className="grow">{activeFace.name ?? card.name}</h2>
               <ManaCost cost={cost} />
             </div>
             <p className="muted tiny" style={{ marginTop: 4 }}>{type}</p>
@@ -146,7 +146,7 @@ function CardDetailBody({ card, onOpenCard }) {
           <div className="panel stack">
             <h3>Prices</h3>
             <PriceRow card={card} />
-            <p className="faint tiny" style={{ margin: 0 }}>
+            <p className="faint tiny m0">
               {/* Naming the source matters: these are three different markets, not
                   three opinions about one. */}
               {MARKETS.map((m) => `${m.label} from ${m.source}`).join(' · ')}. Scryfall aggregates

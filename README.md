@@ -422,6 +422,15 @@ per format and the one reading of what role a card fills; the coach's checks,
 the first-deck roles and the Add cards strip all read it, and a test asserts
 they agree so they cannot drift apart without a test saying so.
 
+**Layout has names, not numbers.** The deck screens said their spacing inline,
+165 `style` props across the app, so three views looked related by effort
+rather than by system. A stepper, a section header and a chip are shared
+components now, used by every row, list and filter strip, so the labels a
+screen reader hears and the buttons a test presses are the same everywhere;
+and the two rhythms the app has, the stack and the row, carry named modifiers
+in the base stylesheet. What is left inline is data, such as a colour swatch
+or a bar's height, which belongs there.
+
 **The rarer deck screens load on demand.** The Decks chunk had grown to
 121 KB and all of it loaded to open the deck list. The first-deck flow, the
 data screen, the playtest, history and import tabs are their own chunks now,

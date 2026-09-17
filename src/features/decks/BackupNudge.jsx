@@ -16,7 +16,7 @@ export default function BackupNudge({ backup }) {
     )
   }
   if (backup.level === 'fresh' && backup.last) {
-    return <p className="faint tiny" style={{ margin: 0 }}>Last backup {new Date(backup.last).toLocaleDateString()} — nothing has changed since.</p>
+    return <p className="faint tiny m0">Last backup {new Date(backup.last).toLocaleDateString()} — nothing has changed since.</p>
   }
   return null
 }

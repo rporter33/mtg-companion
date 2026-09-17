@@ -1,3 +1,5 @@
+import Chip from '../../../components/Chip.jsx'
+import SectionHeader from '../../../components/SectionHeader.jsx'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { setQuantity, removeCard, setCommanders } from '../../../lib/deck.js'
 import {
@@ -79,10 +81,7 @@ export default function DeckList({ deck, groups, format, market, lookup, collect
   const rowsClass = { grid: 'deck-grid', text: 'text-rows', list: 'deck-rows' }[view]
   const sectionsMarkup = groups.map(({ name, entries, count, price, chosen }) => (
         <section key={name} className={view === 'text' ? 'text-section' : ''}>
-          <div className="section-title">
-            <h2>{name}</h2>
-            <span className="faint">{count}</span>
-            <span className="spacer" />
+          <SectionHeader title={name} count={count}>
             <span className="faint tiny">{formatPrice(price.total, market)}</span>
             {name !== COMMANDER_CATEGORY && name !== 'Sideboard' && (
               <SectionMenu
@@ -97,7 +96,7 @@ export default function DeckList({ deck, groups, format, market, lookup, collect
                 onDissolve={() => onChange(clearCategory(deck, name))}
               />
             )}
-          </div>
+          </SectionHeader>
           <div className={rowsClass}>
             {entries.map(({ cardId, quantity, card, zone, isCommander }) => {
               const key = `${zone}:${cardId}`
@@ -165,24 +164,10 @@ export default function DeckList({ deck, groups, format, market, lookup, collect
         <span className="spacer" />
         <div className="row" role="group" aria-label="How to show the deck">
           {VIEWS.map(([id, label]) => (
-            <button
-              key={id}
-              className={`chip ${view === id ? 'chip--active' : ''}`}
-              aria-pressed={view === id}
-              onClick={() => chooseView(id)}
-            >
-              {label}
-            </button>
+            <Chip key={id} pressed={view === id} onClick={() => chooseView(id)}>{label}</Chip>
           ))}
           {artSwitch && view !== 'text' && (
-            <button
-              className={`chip ${art ? 'chip--active' : ''}`}
-              aria-pressed={art}
-              title="Show each card's painting behind its row or tile"
-              onClick={artSwitch}
-            >
-              Art
-            </button>
+            <Chip pressed={art} title="Show each card's painting behind its row or tile" onClick={artSwitch}>Art</Chip>
           )}
         </div>
       </div>

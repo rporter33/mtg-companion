@@ -129,7 +129,7 @@ function ColourStep({ dial, colors, chosen, onDial, onPair, onOpenCard, onNext }
     <div className="stack">
       <section className="panel stack">
         <h3>Pick a colour, or the pair between two</h3>
-        <p className="muted tiny" style={{ margin: 0 }}>
+        <p className="muted tiny m0">
           Drag along the wheel. Between two colours you get the pair, which is where most first decks should be.
           The writing here is this app&rsquo;s own summary of each colour, not anything official.
         </p>
@@ -167,7 +167,7 @@ function ColourStep({ dial, colors, chosen, onDial, onPair, onOpenCard, onNext }
 
       <section className="panel stack colour-pages" data-colors={colors}>
         <div className="row">
-          <h2 style={{ margin: 0 }}>{label}</h2>
+          <h2 className="m0">{label}</h2>
         </div>
         {chosen.kind === 'pair' && chosen.pair && (
           <p className="colour-pages__does">{chosen.pair.does}</p>
@@ -224,9 +224,9 @@ function StyleStep({ answers, colors, onAnswer, onSuggest, onNext }) {
     <div className="stack">
       <section className="panel stack">
         <h3>Four questions, no wrong answers</h3>
-        <p className="muted tiny" style={{ margin: 0 }}>Each answer leans toward the colours that play that way. You can always drag the dial somewhere else.</p>
+        <p className="muted tiny m0">Each answer leans toward the colours that play that way. You can always drag the dial somewhere else.</p>
         {STYLE_AXES.map((axis) => (
-          <div key={axis.id} className="stack" style={{ gap: 'var(--space-1)' }} role="group" aria-label={axis.question}>
+          <div key={axis.id} className="stack stack--tight" role="group" aria-label={axis.question}>
             <span className="tiny">{axis.question}</span>
             <div className="row row--wrap">
               {axis.options.map((o) => (
@@ -242,7 +242,7 @@ function StyleStep({ answers, colors, onAnswer, onSuggest, onNext }) {
             </div>
           </div>
         ))}
-        <div className="row row--wrap" style={{ alignItems: 'center' }}>
+        <div className="row row--wrap row--middle">
           {suggestion ? (
             <>
               <span className="tiny">Your answers lean <strong>{name(suggestion)}</strong>.</span>
@@ -297,7 +297,7 @@ function CommanderStep({ colors, onOpenCard, onStart, remember }) {
       {picks.length > 0 && (
         <section className="panel stack">
           <h3>Good first commanders</h3>
-          <p className="muted tiny" style={{ margin: 0 }}>
+          <p className="muted tiny m0">
             Chosen for this app because the plan fits on one line and the deck is cheap to build. A recommendation, not a ranking.
           </p>
           <div className="commander-picks">
@@ -309,7 +309,7 @@ function CommanderStep({ colors, onOpenCard, onStart, remember }) {
       )}
       <section className="panel stack">
         <h3>Most played in these colours</h3>
-        <p className="muted tiny" style={{ margin: 0 }}>Live from Scryfall, ordered by how many Commander decks run each one.</p>
+        <p className="muted tiny m0">Live from Scryfall, ordered by how many Commander decks run each one.</p>
         {popular.status === 'loading' && <p className="faint tiny">Looking them up…</p>}
         {popular.status === 'error' && <p className="faint tiny">Scryfall could not be reached. The recommended list above still works offline once seen.</p>}
         {popular.status === 'done' && popular.cards.length === 0 && <p className="faint tiny">Nothing came back for exactly these colours.</p>}
@@ -327,11 +327,11 @@ function CommanderCard({ card, why, onOpenCard, onStart }) {
   return (
     <div className="commander-pick">
       <CardImage card={card} size="small" onClick={() => onOpenCard?.(card)} />
-      <div className="stack" style={{ gap: 'var(--space-1)', minWidth: 0 }}>
+      <div className="stack stack--tight min0">
         <strong className="commander-pick__name">{card.name}</strong>
         <ManaCost cost={card.mana_cost || card.card_faces?.[0]?.mana_cost || ''} />
         <span className="faint tiny">{card.type_line}</span>
-        {why && <p className="tiny" style={{ margin: 0 }}>{why}</p>}
+        {why && <p className="tiny m0">{why}</p>}
         <div>
           <button className="btn btn--sm btn--primary" onClick={() => onStart(card)}>Start with {card.name.split(',')[0]}</button>
         </div>
@@ -408,15 +408,15 @@ function StaplesStep({ deck, colors, lookup, cap, onCap, remember, onChange, onO
   return (
     <div className="stack">
       <section className="panel stack">
-        <div className="row row--wrap" style={{ alignItems: 'center' }}>
-          <h3 style={{ margin: 0 }}>A starting list for {deck.name}</h3>
+        <div className="row row--wrap row--middle">
+          <h3 className="m0">A starting list for {deck.name}</h3>
           <span className="spacer" />
           <span className={`chip ${total === 99 ? 'chip--ok' : ''}`}>{total}/99</span>
           <select className="chip" aria-label="Price cap per card" value={cap} onChange={(e) => onCap(Number(e.target.value))}>
             {CAPS.map((c) => <option key={c} value={c}>Under ${c} a card</option>)}
           </select>
         </div>
-        <p className="muted tiny" style={{ margin: 0 }}>
+        <p className="muted tiny m0">
           A Commander deck is 99 cards plus the commander. This is the usual skeleton; the numbers are a guide, not a rule.
         </p>
         <div className="roles" role="tablist" aria-label="Roles">
@@ -434,7 +434,7 @@ function StaplesStep({ deck, colors, lookup, cap, onCap, remember, onChange, onO
             </button>
           ))}
         </div>
-        <p className="tiny" style={{ margin: 0 }}>{ROLES.find((r) => r.id === role)?.blurb}</p>
+        <p className="tiny m0">{ROLES.find((r) => r.id === role)?.blurb}</p>
         {!current && <p className="faint tiny">Looking up popular {ROLES.find((r) => r.id === role)?.label.toLowerCase()} in your colours…</p>}
         {current && current.cards.length === 0 && <p className="faint tiny">Nothing came back under this price. Try a higher cap.</p>}
         <div className="staples">
@@ -467,7 +467,7 @@ function StaplesStep({ deck, colors, lookup, cap, onCap, remember, onChange, onO
           Open the deck{total < 99 ? ` (${99 - total} short)` : ''}
         </button>
       </div>
-      <p className="faint tiny" style={{ margin: 0 }}>
+      <p className="faint tiny m0">
         The editor&rsquo;s Coach tab checks the same skeleton and says what is still missing. {inDeck.size > 0 ? 'Everything here is saved as you go.' : ''}
       </p>
     </div>

@@ -14,7 +14,7 @@ export default function DeckPreview({ card, market, owned, onOpenCard }) {
   return (
     <aside className="deck-preview" aria-live="polite" aria-label="Card under the pointer">
       {card ? (
-        <div className="stack" style={{ gap: 'var(--space-2)' }}>
+        <div className="stack stack--snug">
           <CardImage card={card} size="normal" onClick={() => onOpenCard(card)} />
           <div>
             <div className="deck-preview__name">{card.name}</div>

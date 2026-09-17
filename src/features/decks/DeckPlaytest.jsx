@@ -106,7 +106,7 @@ export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
       {game.error && <div className="banner banner--warn tiny">{game.error}</div>}
 
       {!game.kept && needed > 0 && (
-        <p className="faint tiny" style={{ margin: 0 }}>
+        <p className="faint tiny m0">
           A London mulligan draws a fresh seven every time. Keeping this one means putting
           {' '}{needed} card{needed === 1 ? '' : 's'} on the bottom — tap the ones to lose.
           {' '}{chosen.size} of {needed} chosen.
@@ -158,7 +158,7 @@ export default function DeckPlaytest({ deck, lookup, cards, onOpenCard }) {
       </div>
 
       {game.kept && game.bottomed.length > 0 && (
-        <p className="faint tiny" style={{ margin: 0 }}>
+        <p className="faint tiny m0">
           Bottomed: {game.bottomed.map((c) => c.name).join(', ')}.
         </p>
       )}

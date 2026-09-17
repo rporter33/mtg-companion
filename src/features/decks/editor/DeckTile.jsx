@@ -1,3 +1,4 @@
+import Stepper from '../../../components/Stepper.jsx'
 import { memo } from 'react'
 import CardImage from '../../../components/CardImage.jsx'
 import PriceRow from '../../../components/PriceRow.jsx'
@@ -49,11 +50,7 @@ const DeckTile = memo(function DeckTile({
         {isCommander ? (
           <span className="faint tiny">Commander</span>
         ) : (
-          <>
-            <button className="deck-row__step" onClick={() => onSet(quantity - 1)} aria-label={`One fewer ${card.name}`}>−</button>
-            <span className="deck-row__qty">{quantity}</span>
-            <button className="deck-row__step" onClick={() => onSet(quantity + 1)} aria-label={`One more ${card.name}`}>+</button>
-          </>
+          <Stepper value={quantity} name={card.name} onChange={onSet} />
         )}
         <span className="spacer" />
         <button className="btn btn--sm btn--ghost btn--danger" onClick={onRemove} aria-label={`Remove ${card.name}`}>✕</button>

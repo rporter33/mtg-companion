@@ -155,7 +155,7 @@ export default function CardsView({ onOpenCard, offline, seedQuery }) {
           Filters{hasActiveFilters(filters) ? ' · on' : ''}
         </button>
 
-        <label className="row" style={{ gap: 'var(--space-1)', width: 'auto' }}>
+        <label className="row row--fit row--tight">
           <span className="faint tiny">Sort</span>
           <select
             className="sort-select"
@@ -210,7 +210,7 @@ export default function CardsView({ onOpenCard, offline, seedQuery }) {
           </div>
           <div className="panel">
             <h3>New to this?</h3>
-            <p className="muted" style={{ marginTop: 'var(--space-2)' }}>
+            <p className="muted mt2">
               Every card here shows its full rules text, its official <Term id="stack">rulings</Term>,
               which formats it is legal in, and what it costs. Tap any card to open it, then
               zoom in to read it properly.
@@ -291,7 +291,7 @@ function SearchError({ error, offline }) {
     return (
       <div className="banner banner--error">
         <strong>Scryfall could not read that query.</strong>
-        <div style={{ marginTop: 'var(--space-2)' }}>{error.message}</div>
+        <div className="mt2">{error.message}</div>
       </div>
     )
   }

@@ -51,7 +51,7 @@ function Curve({ curve }) {
           )
         })}
       </div>
-      <p className="faint tiny" style={{ marginTop: 'var(--space-2)', marginBottom: 0 }}>
+      <p className="faint tiny mt2 m0">
         Lands are excluded — they are all mana value zero and would swamp the chart.
       </p>
     </section>
@@ -63,7 +63,7 @@ function Colors({ colors }) {
     return (
       <section className="panel">
         <div className="section-title"><h2>Colour requirements</h2></div>
-        <p className="faint" style={{ margin: 0 }}>This deck is entirely colourless.</p>
+        <p className="faint m0">This deck is entirely colourless.</p>
       </section>
     )
   }
@@ -71,7 +71,7 @@ function Colors({ colors }) {
   return (
     <section className="panel">
       <div className="section-title"><h2>Colour requirements</h2></div>
-      <div className="stack" style={{ gap: 'var(--space-3)' }}>
+      <div className="stack stack--mid">
         {colors.map((row) => (
           <div key={row.color}>
             <div className="row tiny">
@@ -157,7 +157,7 @@ function Odds({ odds }) {
           </tr>
         </tbody>
       </table>
-      <p className="faint tiny" style={{ marginTop: 'var(--space-2)', marginBottom: 0 }}>
+      <p className="faint tiny mt2 m0">
         Both no-land hands are <Term id="mulligan">mulligans</Term>. If either number looks
         high, that is the land count telling you something.
       </p>
@@ -170,11 +170,11 @@ function Types({ types, size }) {
   return (
     <section className="panel">
       <div className="section-title"><h2>Card types</h2></div>
-      <div className="stack" style={{ gap: 'var(--space-2)' }}>
+      <div className="stack stack--snug">
         {rows.map(([type, count]) => (
           <div key={type}>
             <div className="row tiny">
-              <span style={{ flex: 1 }}>{type}</span>
+              <span className="grow">{type}</span>
               <span className="mono faint">{count} · {Math.round((count / size) * 100)}%</span>
             </div>
             <div className="meter" style={{ marginTop: 4 }}>
@@ -211,7 +211,7 @@ function Price({ price, priciest }) {
         <div className="stack" style={{ gap: 'var(--space-1)', marginTop: 'var(--space-2)' }}>
           {priciest.map(({ card, quantity, total, foil }) => (
             <div className="row tiny" key={card.id}>
-              <span style={{ flex: 1 }}>
+              <span className="grow">
                 {quantity > 1 && `${quantity}× `}{card.name}
                 {foil && <span className="faint"> · foil only</span>}
               </span>

@@ -370,3 +370,10 @@ select.chip { width: auto; max-width: 8rem; }
 .search-row__main .deck-row__name { flex: none; }
 .search-row__type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-row--in { border-left-color: var(--ok, var(--accent)); }
+
+/* The shared stepper inside a text row keeps that row's quiet look. */
+.text-row .deck-row__stepper { border: 0; background: none; gap: 2px; }
+.text-row .deck-row__step {
+  width: 22px; height: 22px; font-size: 0.9rem;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-raised);
+}

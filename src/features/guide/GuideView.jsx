@@ -95,7 +95,7 @@ export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onSt
                 <span className="track__name">{track.name}</span>
                 <p className="muted tiny">{track.blurb}</p>
                 <div className="row">
-                  <div className="meter" style={{ flex: 1 }}>
+                  <div className="meter grow">
                     <div className="meter__fill" style={{
                       width: `${(done / track.lessons.length) * 100}%`, background: 'var(--accent)',
                     }} />
@@ -146,14 +146,14 @@ export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onSt
 function Track({ track, progress, onOpen, onBack }) {
   return (
     <div className="stack">
-      <button className="btn btn--ghost btn--sm" style={{ alignSelf: 'flex-start' }} onClick={onBack}>
+      <button className="btn btn--ghost btn--sm self-start" onClick={onBack}>
         ← Learn
       </button>
       <div>
         <h1>{track.name}</h1>
         <p className="muted">{track.blurb}</p>
       </div>
-      <div className="stack" style={{ gap: 'var(--space-2)' }}>
+      <div className="stack stack--snug">
         {track.lessons.map((id, i) => {
           const lesson = LESSONS[id]
           const done = progress.completedLessons.includes(id)
@@ -179,7 +179,7 @@ function Lesson({ lesson, done, onComplete, onReset, onBack }) {
 
   return (
     <div className="stack">
-      <button className="btn btn--ghost btn--sm" style={{ alignSelf: 'flex-start' }} onClick={onBack}>
+      <button className="btn btn--ghost btn--sm self-start" onClick={onBack}>
         ← Back
       </button>
 
@@ -193,7 +193,7 @@ function Lesson({ lesson, done, onComplete, onReset, onBack }) {
       </div>
 
       {lesson.interactive === 'firstDeck' && (
-        <div className="panel row row--wrap" style={{ alignItems: 'center' }}>
+        <div className="panel row row--wrap row--middle">
           <span className="tiny">Try it: the colour dial walks the wheel and names each pair.</span>
           <button className="btn btn--sm" onClick={() => navigate({ tab: 'decks', starting: true })}>Open the colour dial</button>
         </div>
@@ -207,8 +207,8 @@ function Lesson({ lesson, done, onComplete, onReset, onBack }) {
 
       <section className="panel stack">
         <h3>Check yourself</h3>
-        <p style={{ margin: 0 }}>{lesson.quiz.question}</p>
-        <div className="stack" style={{ gap: 'var(--space-2)' }}>
+        <p className="m0">{lesson.quiz.question}</p>
+        <div className="stack stack--snug">
           {lesson.quiz.options.map((option, i) => {
             const isChosen = answered === i
             const state = answered == null ? '' : option.correct ? 'quiz-option--correct'
@@ -233,7 +233,7 @@ function Lesson({ lesson, done, onComplete, onReset, onBack }) {
           <div className={`banner banner--${chosen.correct ? 'info' : 'warn'}`}>
             <strong>{chosen.correct ? 'Right.' : 'Not quite.'}</strong> {chosen.why}
             {!chosen.correct && (
-              <div style={{ marginTop: 'var(--space-2)' }}>
+              <div className="mt2">
                 The answer is <strong>{lesson.quiz.options.find((o) => o.correct).text}</strong>
                 {' — '}{lesson.quiz.options.find((o) => o.correct).why}
               </div>
@@ -264,7 +264,7 @@ function Glossary({ onBack }) {
 
   return (
     <div className="stack">
-      <button className="btn btn--ghost btn--sm" style={{ alignSelf: 'flex-start' }} onClick={onBack}>
+      <button className="btn btn--ghost btn--sm self-start" onClick={onBack}>
         ← Learn
       </button>
       <h1>Glossary</h1>
@@ -287,7 +287,7 @@ function Glossary({ onBack }) {
         return (
           <section key={section.title}>
             <div className="section-title"><h2>{section.title}</h2></div>
-            <div className="stack" style={{ gap: 'var(--space-1)' }}>
+            <div className="stack stack--tight">
               {keys.map((key) => {
                 const entry = lookupTerm(key)
                 return (

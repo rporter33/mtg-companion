@@ -235,7 +235,7 @@ function ColorGroup({
       </div>
 
       {(state.values.length > 0 || state.colorless) && (
-        <div className="row row--wrap" style={{ marginTop: 'var(--space-2)' }}>
+        <div className="row row--wrap mt2">
           {COLOR_MODES.map((option) => (
             <button
               key={option.id}

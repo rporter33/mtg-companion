@@ -99,7 +99,7 @@ export default function TutorialGame({ onExit }) {
         </div>
         <p className="coach__text">{beat.coach}</p>
         {beat.term && (
-          <p className="tiny" style={{ margin: 0 }}>
+          <p className="tiny m0">
             <Term id={beat.term}>More about this</Term>
           </p>
         )}

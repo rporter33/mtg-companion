@@ -33,7 +33,7 @@ export default function AddToDeck({ card }) {
   }
 
   return (
-    <div className="stack" style={{ gap: 'var(--space-2)' }}>
+    <div className="stack stack--snug">
       <span className="faint tiny">Add to a deck</span>
       {decks.map((deck) => {
         const format = getFormat(deck.formatId)
@@ -42,7 +42,7 @@ export default function AddToDeck({ card }) {
         const commanderOk = format.commander?.required && canBeCommander(card, format).ok
 
         return (
-          <div className="row" key={deck.id} style={{ gap: 'var(--space-1)' }}>
+          <div className="row stack--tight" key={deck.id}>
             <button
               className="btn btn--sm"
               style={{ flex: 1, justifyContent: 'flex-start' }}
@@ -51,7 +51,7 @@ export default function AddToDeck({ card }) {
             >
               {deck.name}
               <span className="faint tiny" style={{ marginLeft: 6 }}>{format.name}</span>
-              {blocked && <span className="chip chip--error tiny" style={{ marginLeft: 'auto' }}>illegal</span>}
+              {blocked && <span className="chip chip--error tiny ml-auto">illegal</span>}
             </button>
             {commanderOk && (
               <button className="btn btn--sm" onClick={() => add(deck, true)} title="Set as commander">

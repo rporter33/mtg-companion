@@ -26,10 +26,10 @@ export default function DeckCoach({ deck, lookup, cardCount, onSearch }) {
     <section className="coach">
       <div className="coach__head">
         <div className="row">
-          <h2 style={{ flex: 1 }}>Deck coach</h2>
+          <h2 className="grow">Deck coach</h2>
           <span className="faint tiny">{passed}/{checks.length}</span>
         </div>
-        <div className="meter" style={{ marginTop: 'var(--space-2)' }}>
+        <div className="meter mt2">
           <div
             className="meter__fill"
             style={{ width: `${progress * 100}%`, background: progress === 1 ? 'var(--ok)' : 'var(--accent)' }}
