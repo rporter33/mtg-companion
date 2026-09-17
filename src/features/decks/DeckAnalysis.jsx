@@ -6,6 +6,9 @@ import Term from '../../components/Term.jsx'
 
 const COLOR_VAR = { W: 'var(--mtg-w)', U: 'var(--mtg-u)', B: 'var(--mtg-b)', R: 'var(--mtg-r)', G: 'var(--mtg-g)' }
 
+const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six']
+const count = (n) => WORDS[n] ?? String(n)
+
 export default function DeckAnalysis({ deck, lookup, cardCount }) {
   const analysis = useMemo(() => analyzeDeck(deck, lookup), [deck, cardCount])
 
@@ -18,7 +21,7 @@ export default function DeckAnalysis({ deck, lookup, cardCount }) {
       <Curve curve={analysis.curve} />
       <Colors colors={analysis.colors} />
       <Lands lands={analysis.lands} />
-      <Odds odds={analysis.odds} />
+      <Odds odds={analysis.odds} librarySize={analysis.librarySize} commandZone={analysis.commandZone} />
       <Types types={analysis.types} size={analysis.size} />
       <Price price={analysis.price} priciest={analysis.priciest} />
     </div>
@@ -92,19 +95,25 @@ function Colors({ colors }) {
                 }}
               />
             </div>
-            {!row.healthy && (
-              <p className="tiny muted" style={{ margin: '6px 0 0' }}>
-                You want this colour by turn {row.earliestTurn}. Add {row.shortfall} more
-                {' '}{COLOR_NAMES[row.color].toLowerCase()} source{row.shortfall === 1 ? '' : 's'} to
-                cast those spells on time nine games in ten.
-              </p>
-            )}
+            <p className="tiny muted" style={{ margin: '6px 0 0' }}>
+              {row.want > 1
+                ? `The hardest ask is ${count(row.want)} ${COLOR_NAMES[row.color].toLowerCase()} by turn ${row.turn}`
+                : `You want ${COLOR_NAMES[row.color].toLowerCase()} by turn ${row.turn}`}
+              {row.accelSources > 0
+                ? `: ${row.landSources} land${row.landSources === 1 ? '' : 's'} and ${row.accelSources} ${row.accelSources === 1 ? 'rock or dork' : 'rocks and dorks'} online by then.`
+                : '.'}
+              {!row.healthy && ` Add ${row.shortfall} more ${COLOR_NAMES[row.color].toLowerCase()} source${row.shortfall === 1 ? '' : 's'} to cast those spells on time nine games in ten.`}
+            </p>
           </div>
         ))}
       </div>
       <p className="faint tiny" style={{ marginTop: 'var(--space-3)', marginBottom: 0 }}>
-        &ldquo;Needed&rdquo; is solved from this deck&rsquo;s actual size rather than taken from a
-        published table, so a 100-card deck is judged as a 100-card deck.
+        Every spell is an ask: this many pips of a colour by the turn of its mana value, and
+        &ldquo;needed&rdquo; is solved for the hardest one from the library&rsquo;s real size, not a published
+        table. A rock or dork counts from the turn after it is cast; a ritual never counts. Hybrid
+        and Phyrexian pips count for every colour they could be paid with, which asks for more
+        sources rather than fewer. Tapped lands, cost reduction and the mana a rock costs to cast
+        are not modelled.
       </p>
     </section>
   )
@@ -117,7 +126,10 @@ function Lands({ lands }) {
       <div className="section-title"><h2>Mana base</h2></div>
       <div className="row row--wrap">
         <span className="chip"><Term id="land">Lands</Term>: {lands.landCount}</span>
-        {lands.nonLandSources > 0 && <span className="chip"><Term id="ramp">Other sources</Term>: {lands.nonLandSources}</span>}
+        {lands.modalLands > 0 && <span className="chip" title="Spells you may play as a land instead">Modal lands: {lands.modalLands}</span>}
+        {lands.rocks > 0 && <span className="chip" title="Artifacts and enchantments that make mana, online the turn after they are cast"><Term id="ramp">Rocks</Term>: {lands.rocks}</span>}
+        {lands.dorks > 0 && <span className="chip" title="Creatures that make mana, online the turn after they are cast">Dorks: {lands.dorks}</span>}
+        {lands.rituals > 0 && <span className="chip" title="One-shot mana; not counted as a source">Rituals: {lands.rituals}, not counted</span>}
         <span className={`chip chip--${tone}`}>Recommended: {lands.recommended} sources</span>
       </div>
       <p className="muted tiny" style={{ marginTop: 'var(--space-3)', marginBottom: 0 }}>
@@ -131,10 +143,13 @@ function Lands({ lands }) {
   )
 }
 
-function Odds({ odds }) {
+function Odds({ odds, librarySize, commandZone }) {
   return (
     <section className="panel">
-      <div className="section-title"><h2>Draw odds</h2></div>
+      <div className="section-title">
+        <h2>Draw odds</h2>
+        <span className="faint">{librarySize} in the library{commandZone > 0 ? `, ${commandZone} in the command zone` : ''}</span>
+      </div>
       <table className="odds">
         <thead>
           <tr><th>By turn</th><th>On the play</th><th>On the draw</th></tr>
@@ -158,8 +173,9 @@ function Odds({ odds }) {
         </tbody>
       </table>
       <p className="faint tiny mt2 m0">
-        Both no-land hands are <Term id="mulligan">mulligans</Term>. If either number looks
-        high, that is the land count telling you something.
+        Lands only: a rock in the opening seven is not a land drop. Both no-land hands are
+        {' '}<Term id="mulligan">mulligans</Term>. If either number looks high, that is the land
+        count telling you something.
       </p>
     </section>
   )

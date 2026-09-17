@@ -54,8 +54,12 @@ Commander, Duel Commander, Brawl, or Oathbreaker. The deck is validated against
 the format's real construction rules as you build, with specific messages rather
 than a pass/fail — *"Commander decks must be exactly 100 cards. This deck has 99
 — 1 short"*, *"Counterspell is outside your commander's colour identity (U)"*.
-Analysis covers the mana curve, colour requirements against actual sources, a
-land recommendation, hypergeometric draw odds, and price. An Archidekt, Moxfield
+Analysis covers the mana curve, colour requirements against the sources that
+are actually online by the turn each spell asks for them (a rock counts from
+the turn after it is cast, a ritual never does, a double-pip spell asks for
+more), a land recommendation, hypergeometric draw odds drawn from the library
+the commander is not in, and price, with every approximation named on the
+screen. An Archidekt, Moxfield
 or Arena export pastes in as it is: the set and collector number pick the exact
 printing, and a section you named on the other site is a section here. Read
 the deck as a list, a grid of card art, or as text: the whole deck on one

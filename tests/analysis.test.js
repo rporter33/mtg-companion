@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   resolveEntries, manaCurve, typeBreakdown, colorSources,
-  colorConsistency, landAdvice, deckPrice, priciestCards, analyzeDeck, countManaSources,
+  colorConsistency, landAdvice, deckPrice, priciestCards, analyzeDeck, countManaSources, manaBase,
 } from '../src/lib/analysis.js'
+import { openingHandOdds, minimumSourcesFor } from '../src/lib/probability.js'
 import { createDeck, addCard, setCommanders } from '../src/lib/deck.js'
 import { priceOf } from '../src/lib/analysis.js'
 import { isModalLand, isTrueLand } from '../src/lib/formats.js'
@@ -264,5 +265,103 @@ describe('foil-only pricing (found by live validation)', () => {
     expect(priceOf(card({ id: 'z', prices: { usd: '0.00' } }))).toEqual({ value: 0, foil: false })
     expect(priceOf(card({ id: 'n', prices: { usd: null } })).value).toBeNull()
     expect(priceOf(card({ id: 'e', prices: {} })).value).toBeNull()
+  })
+})
+
+
+describe('the mana base by kind', () => {
+  const SWAMP = card({ id: 'swamp', name: 'Swamp', type_line: 'Basic Land — Swamp', cmc: 0, produced_mana: ['B'] })
+  const RING = card({ id: 'ring', name: 'Sol Ring', type_line: 'Artifact', cmc: 1, produced_mana: ['C'] })
+  const TALISMAN = card({ id: 'tal', name: 'Talisman of Dominance', type_line: 'Artifact', cmc: 2, produced_mana: ['C', 'U', 'B'] })
+  const ELVES = card({ id: 'elves', name: 'Llanowar Elves', type_line: 'Creature — Elf Druid', cmc: 1, mana_cost: '{G}', produced_mana: ['G'] })
+  const RITUAL = card({ id: 'ritual', name: 'Dark Ritual', type_line: 'Instant', cmc: 1, mana_cost: '{B}', produced_mana: ['B'] })
+  const BB_DROP = card({ id: 'bb', name: 'Two Black', mana_cost: '{B}{B}', cmc: 2, type_line: 'Creature — Vampire', color_identity: ['B'] })
+  const ONE_B = card({ id: 'ob', name: 'One Black', mana_cost: '{1}{B}', cmc: 2, type_line: 'Creature — Vampire', color_identity: ['B'] })
+  const LATE_B = card({ id: 'lb', name: 'Late Black', mana_cost: '{3}{B}', cmc: 4, type_line: 'Sorcery', color_identity: ['B'] })
+
+  it('tells lands, rocks, dorks and rituals apart', () => {
+    const base = manaBase([
+      { card: SWAMP, quantity: 30 }, { card: RING, quantity: 1 }, { card: TALISMAN, quantity: 2 },
+      { card: ELVES, quantity: 1 }, { card: RITUAL, quantity: 1 }, { card: MDFC, quantity: 1 },
+    ])
+    expect(base.lands).toBe(30)
+    expect(base.rocks).toBe(3)
+    expect(base.dorks).toBe(1)
+    expect(base.rituals).toBe(1)
+    expect(base.modalLands).toBe(1)
+    expect(base.total).toBe(35) // a ritual is not a source
+  })
+
+  it('puts a rock online the turn after it is cast', () => {
+    const base = manaBase([{ card: RING, quantity: 1 }, { card: TALISMAN, quantity: 1 }, { card: ELVES, quantity: 1 }])
+    const online = Object.fromEntries(base.accel.map((a) => [a.card.id, a.online]))
+    expect(online).toEqual({ ring: 2, tal: 3, elves: 2 })
+  })
+
+  it('a two-mana rock is not a source for a turn-two spell, and is for a turn-four one', () => {
+    const library = [{ card: SWAMP, quantity: 2 }, { card: TALISMAN, quantity: 8 }, { card: BEAR, quantity: 49 }]
+    const early = colorConsistency([...library, { card: ONE_B, quantity: 1 }], 60, { library })
+    const late = colorConsistency([...library, { card: LATE_B, quantity: 1 }], 60, { library })
+    const blackEarly = early.find((r) => r.color === 'B')
+    const blackLate = late.find((r) => r.color === 'B')
+    expect(blackEarly.sources).toBe(2) // the swamps alone
+    expect(blackEarly.accelSources).toBe(0)
+    expect(blackLate.sources).toBe(10)
+    expect(blackLate.accelSources).toBe(8)
+  })
+
+  it('a double-pip spell asks for more sources than a single-pip one at the same turn', () => {
+    const lands = [{ card: SWAMP, quantity: 20 }, { card: FOREST, quantity: 4 }]
+    const double = colorConsistency([...lands, { card: BB_DROP, quantity: 4 }], 60).find((r) => r.color === 'B')
+    const single = colorConsistency([...lands, { card: ONE_B, quantity: 4 }], 60).find((r) => r.color === 'B')
+    expect(double.want).toBe(2)
+    expect(single.want).toBe(1)
+    expect(double.needed).toBeGreaterThan(single.needed)
+    expect(double.needed).toBe(minimumSourcesFor({ deckSize: 60, turn: 2, want: 2, threshold: 0.9 }))
+  })
+
+  it('reports the ask that binds, and every ask beside it', () => {
+    const rows = colorConsistency([
+      { card: SWAMP, quantity: 12 }, { card: BB_DROP, quantity: 4 }, { card: LATE_B, quantity: 4 },
+    ], 60)
+    const black = rows[0]
+    expect(black.demands.map((d) => `${d.turn}:${d.want}`)).toEqual(['2:2', '4:1'])
+    expect(black.turn).toBe(2)
+    expect(black.want).toBe(2)
+    expect(black.earliestTurn).toBe(2)
+    expect(black.healthy).toBe(false)
+  })
+
+  it('a ritual never counts as a source', () => {
+    const rows = colorConsistency([{ card: RITUAL, quantity: 4 }, { card: ONE_B, quantity: 4 }, { card: FOREST, quantity: 20 }], 60)
+    expect(rows.find((r) => r.color === 'B').sources).toBe(0)
+  })
+
+  it('the commander is a demand but not a source, and not in the library', () => {
+    const DORK_COMMANDER = card({
+      id: 'dorkcmdr', name: 'Mana Legend', mana_cost: '{1}{G}', cmc: 2,
+      type_line: 'Legendary Creature — Elf Druid', color_identity: ['G'], produced_mana: ['G'],
+    })
+    const look = (id) => (id === 'dorkcmdr' ? DORK_COMMANDER : get(id))
+    let deck = setCommanders(createDeck({ formatId: 'commander' }), [DORK_COMMANDER.id])
+    deck = addCard(deck, FOREST.id, 36)
+    deck = addCard(deck, BEAR.id, 63)
+    const result = analyzeDeck(deck, look)
+    expect(result.size).toBe(100)
+    expect(result.librarySize).toBe(99)
+    expect(result.commandZone).toBe(1)
+    expect(result.lands.dorks).toBe(0) // the commander is not drawn
+    expect(result.colors[0].pips).toBeGreaterThan(0)
+    expect(result.odds.noLandHand).toBeCloseTo(openingHandOdds(99, 63, 7, 7), 12)
+    expect(result.lands.recommended).toBe(landAdvice([{ card: FOREST, quantity: 36 }, { card: BEAR, quantity: 63 }], 99, 'commander').recommended)
+  })
+
+  it('a sixty-card deck has no command zone', () => {
+    let deck = createDeck({ formatId: 'modern' })
+    deck = addCard(deck, FOREST.id, 24)
+    deck = addCard(deck, BEAR.id, 36)
+    const result = analyzeDeck(deck, get)
+    expect(result.librarySize).toBe(60)
+    expect(result.commandZone).toBe(0)
   })
 })

@@ -1,7 +1,7 @@
 // Deck analysis: curve, type breakdown, colour requirements vs. actual sources,
 // land recommendation, price totals, and draw odds.
 
-import { COLORS, aggregatePips, faceManaCost } from './mana.js'
+import { COLORS, aggregatePips, faceManaCost, countPips } from './mana.js'
 import { typeLineOf, getFormat, frontTypeLine, isModalLand } from './formats.js'
 import { isLandCard, isBasicLand } from './deck.js'
 import {
@@ -95,54 +95,127 @@ export function colorSources(resolved) {
 }
 
 /**
- * Compares what the deck demands in each colour against what it can actually
- * produce, and says which colours are short. The "needed" figure is solved from
- * the hypergeometric distribution at this deck's real size.
+ * The mana base by kind, because a two-mana rock is not an untapped land.
+ *
+ * Lands (and modal cards you may play as a land) are there from the turn
+ * they are drawn. A rock or a dork has to be cast first and then survive to
+ * the next untap, so it is "online" from the turn after its mana value at
+ * the earliest, and that is the turn it starts to count as a source. A
+ * ritual makes mana once and is not a source at all. None of this models
+ * tapped lands, cost reduction or the mana it takes to cast the rock; those
+ * are named as assumptions rather than folded in.
  */
-export function colorConsistency(resolved, deckSize) {
-  const pips = aggregatePips(resolved.map(({ card, quantity }) => ({ card, quantity })))
-  const { sources } = colorSources(resolved)
+export function manaBase(resolved) {
+  const base = { lands: 0, modalLands: 0, rocks: 0, dorks: 0, rituals: 0, total: 0, accel: [] }
+  for (const { card, quantity } of resolved) {
+    if (isLandCard(card)) { base.lands += quantity; continue }
+    if (isModalLand(card)) { base.modalLands += quantity; continue }
+    if (!(card.produced_mana?.length)) continue
+    const line = frontTypeLine(card) || typeLineOf(card)
+    if (/\b(Instant|Sorcery)\b/.test(line)) { base.rituals += quantity; continue }
+    const kind = /\bCreature\b/.test(line) ? 'dorks' : 'rocks'
+    const online = Math.max(1, Math.round(manaValueOf(card))) + 1
+    base[kind] += quantity
+    base.accel.push({ card, quantity, kind, online, colors: card.produced_mana.filter((c) => COLORS.includes(c) || c === 'C') })
+  }
+  base.total = base.lands + base.modalLands + base.rocks + base.dorks
+  return base
+}
 
-  // Earliest turn a colour is actually demanded — a splash you only need on
-  // turn five needs far fewer sources than a colour you want on turn one.
-  const earliestTurn = {}
-  for (const c of COLORS) earliestTurn[c] = null
+/** Sources of a colour that can be counted on by a turn: lands always, acceleration once online. */
+function sourcesByTurn(library, base, color, turn) {
+  let lands = 0
+  for (const { card, quantity } of library) {
+    if (!(isLandCard(card) || isModalLand(card))) continue
+    if ((card.produced_mana ?? []).includes(color)) lands += quantity
+  }
+  let accel = 0
+  for (const a of base.accel) if (a.online <= turn && a.colors.includes(color)) accel += a.quantity
+  return { lands, accel, total: lands + accel }
+}
+
+/**
+ * Compares what the deck demands in each colour against what it can produce
+ * in time, and says which colours are short.
+ *
+ * Every spell is a demand: how many pips of a colour, by which turn (its
+ * mana value, capped at six). The sources needed for each demand are solved
+ * from the hypergeometric distribution at the library's real size, wanting
+ * that many pips' worth by that turn nine games in ten — so a {B}{B} two-drop
+ * asks for more black than a {1}{B} one, and a colour first wanted on turn
+ * five asks for less than one wanted on turn one. What is on hand by that
+ * turn is lands plus whatever acceleration is online by then. The row
+ * reports the demand that binds: the largest shortfall, or the largest
+ * need when nothing is short.
+ *
+ * `library` is where sources are counted from; the commander is a demand
+ * (you want to cast it) but not a source (it is never drawn).
+ */
+export function colorConsistency(resolved, deckSize, { library = resolved } = {}) {
+  const pips = aggregatePips(resolved.map(({ card, quantity }) => ({ card, quantity })))
+  const base = manaBase(library)
+
+  const demands = {}
+  for (const c of COLORS) demands[c] = new Map()
   for (const { card } of resolved) {
     if (isLandCard(card)) continue
     const cost = faceManaCost(card)
-    const mv = Math.max(1, Math.round(manaValueOf(card)))
+    const perColor = countPips(cost)
+    const turn = Math.min(Math.max(1, Math.round(manaValueOf(card))), 6)
     for (const c of COLORS) {
-      if (!cost.includes(c)) continue
-      if (earliestTurn[c] === null || mv < earliestTurn[c]) earliestTurn[c] = mv
+      const want = perColor[c]
+      if (!want) continue
+      const key = `${turn}:${want}`
+      if (!demands[c].has(key)) demands[c].set(key, { turn, want })
     }
   }
 
-  return COLORS.filter((c) => pips[c] > 0).map((c) => {
-    const turn = Math.min(earliestTurn[c] ?? 3, 6)
-    const needed = minimumSourcesFor({ deckSize, turn, want: 1, threshold: 0.9 })
-    const have = sources[c]
+  // A colour with pips always has at least one demand: pips are counted
+  // from the same costs the demands are read from.
+  return COLORS.filter((c) => pips[c] > 0 && demands[c].size > 0).map((c) => {
+    const rows = [...demands[c].values()].map(({ turn, want }) => {
+      const needed = minimumSourcesFor({ deckSize, turn, want, threshold: 0.9 })
+      const have = sourcesByTurn(library, base, c, turn)
+      return { turn, want, needed, have: have.total, landSources: have.lands, accelSources: have.accel, short: Math.max(0, needed - have.total) }
+    })
+    const binding = rows.reduce((best, row) => (
+      row.short > best.short || (row.short === best.short && row.needed > best.needed) ? row : best
+    ))
     return {
       color: c,
       pips: pips[c],
-      sources: have,
-      needed,
-      earliestTurn: turn,
-      shortfall: Math.max(0, needed - have),
-      healthy: have >= needed,
+      sources: binding.have,
+      landSources: binding.landSources,
+      accelSources: binding.accelSources,
+      needed: binding.needed,
+      earliestTurn: Math.min(...rows.map((r) => r.turn)),
+      turn: binding.turn,
+      want: binding.want,
+      shortfall: binding.short,
+      healthy: binding.short === 0,
+      demands: rows.sort((a, b) => a.turn - b.turn || a.want - b.want),
     }
   })
 }
 
-export function landAdvice(resolved, deckSize, formatId) {
-  const { landCount } = colorSources(resolved)
+/**
+ * The mana base against what this curve usually wants.
+ *
+ * Every permanent that taps for mana counts toward the total, not just
+ * lands — a Commander deck's rocks and dorks are a real part of its mana
+ * base, and judging such a deck on land count alone always reads as "you
+ * are short on lands". Rituals do not count: they make mana once. The
+ * on-curve odds use lands alone, because a rock in the opening seven is
+ * not a land drop. `library` is where sources are counted; the curve is
+ * read from everything you cast, commander included.
+ */
+export function landAdvice(resolved, deckSize, formatId, { library = resolved } = {}) {
+  const base = manaBase(library)
+  const landCount = base.lands
   const curve = manaCurve(resolved)
   const format = getFormat(formatId)
 
-  // Every permanent that taps for mana counts, not just lands — a Commander
-  // deck's rocks and dorks are a real part of its mana base, and judging such a
-  // deck on land count alone always reads as "you are short on lands".
-  const totalSources = countManaSources(resolved)
-  const modalLands = resolved.reduce((n, e) => n + (isModalLand(e.card) ? e.quantity : 0), 0)
+  const totalSources = base.total
   const recommended = recommendedSourceCount({
     deckSize,
     averageManaValue: curve.averageManaValue,
@@ -152,7 +225,10 @@ export function landAdvice(resolved, deckSize, formatId) {
 
   return {
     landCount,
-    modalLands,
+    modalLands: base.modalLands,
+    rocks: base.rocks,
+    dorks: base.dorks,
+    rituals: base.rituals,
     nonLandSources: totalSources - landCount,
     totalSources,
     recommended,
@@ -268,23 +344,34 @@ export function drawOdds(resolved, deckSize, formatId) {
   }
 }
 
+/**
+ * The whole picture. The commander is part of the deck — its cost is on the
+ * curve and its colours are demanded — but it starts in the command zone,
+ * so every probability is drawn from the library without it: a 100-card
+ * Commander deck shuffles 99.
+ */
 export function analyzeDeck(deck, lookup) {
   const format = getFormat(deck.formatId)
-  const entries = [...deck.main]
-  for (const id of deck.commanders) entries.push({ cardId: id, quantity: 1 })
-  if (deck.signatureSpell) entries.push({ cardId: deck.signatureSpell, quantity: 1 })
+  const zone = []
+  for (const id of deck.commanders) zone.push({ cardId: id, quantity: 1 })
+  if (deck.signatureSpell) zone.push({ cardId: deck.signatureSpell, quantity: 1 })
 
-  const resolved = resolveEntries(entries, lookup)
+  const library = resolveEntries(deck.main, lookup)
+  const resolved = [...library, ...resolveEntries(zone, lookup)]
   const size = resolved.reduce((n, e) => n + e.quantity, 0)
+  const librarySize = library.reduce((n, e) => n + e.quantity, 0)
+  const population = librarySize || format?.deck.min || 60
 
   return {
     size,
+    librarySize,
+    commandZone: size - librarySize,
     curve: manaCurve(resolved),
     types: typeBreakdown(resolved),
-    colors: colorConsistency(resolved, size || format?.deck.min || 60),
-    lands: landAdvice(resolved, size || format?.deck.min || 60, deck.formatId),
+    colors: colorConsistency(resolved, population, { library }),
+    lands: landAdvice(resolved, population, deck.formatId, { library }),
     price: deckPrice(resolved),
     priciest: priciestCards(resolved),
-    odds: drawOdds(resolved, size || format?.deck.min || 60, deck.formatId),
+    odds: drawOdds(library, population, deck.formatId),
   }
 }
