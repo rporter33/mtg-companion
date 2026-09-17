@@ -35,7 +35,7 @@ export function backendName() {
  * a stale service worker can serve an old bundle against new data, and
  * downgrading it would discard fields the newer build is still using.
  */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 const MIGRATIONS = {
   // 1 → 2: decks gained per-card categories and an order to show them in.
@@ -46,6 +46,11 @@ const MIGRATIONS = {
     ...state,
     decks: (state.decks ?? []).map((deck) => ({ categoryOrder: [], ...deck })),
   }),
+
+  // 2 → 3: what the player owns, keyed by oracle id so a card is a card
+  // whatever printing it is. Nobody owned anything before this, so an empty
+  // object is the whole migration.
+  3: (state) => ({ collection: {}, ...state }),
 }
 
 export function migrate(state) {
@@ -63,6 +68,7 @@ export function migrate(state) {
 
 const EMPTY = {
   version: SCHEMA_VERSION,
+  collection: {},
   decks: [],
   games: [],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
@@ -188,6 +194,16 @@ export function resetLesson(lessonId) {
 
 export function saveTutorialState(tutorialState) {
   return update((state) => ({ ...state, guide: { ...state.guide, tutorialState } }))
+}
+
+// --- collection ----------------------------------------------------------
+
+export function getCollection() {
+  return read().collection ?? {}
+}
+
+export function saveCollection(collection) {
+  return update((state) => ({ ...state, collection }))
 }
 
 // --- prefs ---------------------------------------------------------------

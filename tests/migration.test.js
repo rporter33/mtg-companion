@@ -31,6 +31,15 @@ describe('migrate', () => {
     expect(out.prefs.showCardImages).toBe(false)
   })
 
+  it('gives the state somewhere to record a collection', () => {
+    expect(migrate(v1()).collection).toEqual({})
+  })
+
+  it('does not wipe a collection that already exists', () => {
+    const state = { ...v1(), version: 2, collection: { 'o-ring': 3 } }
+    expect(migrate(state).collection).toEqual({ 'o-ring': 3 })
+  })
+
   it('gives every deck somewhere to record a category order', () => {
     expect(migrate(v1()).decks[0].categoryOrder).toEqual([])
   })

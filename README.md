@@ -55,7 +55,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 615 unit tests
+npm test               # 643 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -200,6 +200,18 @@ practised, so the app refuses a wrong count rather than choosing for you.
 
 The shuffle is seeded. Not to fake randomness, but because a test that cannot
 fix the shuffle cannot check the mulligan arithmetic.
+
+**Ownership is per card, not per printing.** Owning a Sol Ring is owning a Sol
+Ring, whichever set it came from — keying on printing would tell a player with a
+Commander 2021 copy to buy the Battlebond one, which makes the whole feature
+useless. The cost of that choice is stated rather than hidden: this cannot value
+a collection, because it does not know which printings they are. It answers
+"what do I still need", which is the question people ask while building.
+
+Counts are not allocated across decks either. One Sol Ring covers a Sol Ring in
+every deck, because you own a Sol Ring. Splitting a collection between decks is
+a different question — "can I sleeve all of these at once" — and answering it
+with this data would overstate what you are missing.
 
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a

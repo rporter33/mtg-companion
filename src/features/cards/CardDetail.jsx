@@ -12,6 +12,8 @@ import { describeColors } from '../../lib/mana.js'
 import PriceRow from '../../components/PriceRow.jsx'
 import { MARKETS, priceLabel } from '../../lib/prices.js'
 import { getPrefs } from '../../lib/storage.js'
+import { useCollection } from '../../lib/collection-store.js'
+import { ownedOf, setOwned } from '../../lib/collection.js'
 
 const STATUS_LABEL = {
   legal: 'Legal', banned: 'Banned', restricted: 'Restricted',
@@ -138,6 +140,8 @@ function CardDetailBody({ card, onOpenCard }) {
             )}
             {card.reserved && <Fact label="Reserved list" value="Yes — never reprinted" />}
           </dl>
+
+          <OwnedControl card={card} />
 
           <div className="panel stack">
             <h3>Prices</h3>
@@ -273,6 +277,41 @@ function Printings({ card, onOpenCard, market = 'usd' }) {
           <span className="printing__price">{priceLabel(print, market)}</span>
         </button>
       ))}
+    </div>
+  )
+}
+
+/**
+ * How many of this card the player owns.
+ *
+ * Counted per card, not per printing — owning a Sol Ring is owning a Sol Ring
+ * whichever set it came from. It follows that this cannot value a collection,
+ * because it does not know which printings they are, and it does not pretend to.
+ */
+function OwnedControl({ card }) {
+  const [collection, setCollection] = useCollection()
+  const owned = ownedOf(collection, card)
+
+  return (
+    <div className="panel row">
+      <span>In your collection</span>
+      <span className="spacer" />
+      <button
+        className="deck-row__step"
+        onClick={() => setCollection(setOwned(collection, card, owned - 1))}
+        disabled={owned === 0}
+        aria-label={`One fewer ${card.name} owned`}
+      >
+        −
+      </button>
+      <span className="deck-row__qty" aria-live="polite">{owned}</span>
+      <button
+        className="deck-row__step"
+        onClick={() => setCollection(setOwned(collection, card, owned + 1))}
+        aria-label={`One more ${card.name} owned`}
+      >
+        +
+      </button>
     </div>
   )
 }

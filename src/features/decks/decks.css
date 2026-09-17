@@ -184,3 +184,19 @@ select.chip { width: auto; max-width: 8rem; }
    the hand rather than highlighted as if it were being kept. */
 .hand-card--chosen { border-color: var(--warn); opacity: 0.45; }
 .hand-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* "need 2" reads as a shortfall, not an error — not owning a card yet is the
+   normal state of a deck being built. */
+.deck-row__need, .deck-tile__need {
+  color: var(--warn);
+  white-space: nowrap;
+}
+.deck-tile__need {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  padding: 1px 5px;
+  background: rgb(0 0 0 / 0.78);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-sm);
+}

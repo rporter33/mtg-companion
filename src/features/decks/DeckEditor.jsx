@@ -22,6 +22,8 @@ import { totalFor, formatPrice, priceLabel, MARKETS } from '../../lib/prices.js'
 import CardImage from '../../components/CardImage.jsx'
 import PriceRow from '../../components/PriceRow.jsx'
 import DeckPlaytest from './DeckPlaytest.jsx'
+import { useCollection } from '../../lib/collection-store.js'
+import { missingFor, missingCost, ownEverythingIn, ownedOf } from '../../lib/collection.js'
 
 
 /** "USD via TCGplayer" — the label alone does not say where a number came from. */
@@ -59,6 +61,10 @@ export default function DeckEditor({
     () => deckSections(deck, lookup, { marketId: market }),
     [deck, cards, market],
   )
+
+  const [collection, setCollection] = useCollection()
+  const notOwned = useMemo(() => missingFor(deck, lookup, collection), [deck, cards, collection])
+  const toBuy = useMemo(() => missingCost(notOwned, market), [notOwned, market])
 
   const money = useMemo(
     () => totalFor(groups.flatMap((g) => g.entries).filter((e) => e.card), market),
@@ -103,6 +109,24 @@ export default function DeckEditor({
             <span className="chip chip--warn" title="These have no price for this market, so they are not in the total">
               {money.missing} unpriced
             </span>
+          )}
+          {/* What is left to buy, which is a different question from what the
+              deck is worth — and the one people actually ask while building. */}
+          {cards.size > 0 && (
+            notOwned.length === 0 ? (
+              <span className="chip chip--ok" title="Every card in this deck is in your collection">
+                You own this deck
+              </span>
+            ) : (
+              <button
+                className="chip chip--warn"
+                title="Mark every card in this deck as owned"
+                onClick={() => setCollection(ownEverythingIn(collection, deck, lookup))}
+              >
+                {notOwned.reduce((n, m) => n + m.quantity, 0)} to get
+                {toBuy.priced > 0 ? ` · ${formatPrice(toBuy.total, market)}` : ''}
+              </button>
+            )
           )}
           <select
             className="chip"
@@ -154,6 +178,7 @@ export default function DeckEditor({
       {tab === 'list' && (
         <DeckList
           deck={deck} groups={groups} format={format} market={market} lookup={lookup}
+          collection={collection}
           onChange={commit} onOpenCard={onOpenCard} validation={validation}
         />
       )}
@@ -188,7 +213,7 @@ export default function DeckEditor({
   )
 }
 
-function DeckList({ deck, groups, format, market, lookup, onChange, onOpenCard, validation }) {
+function DeckList({ deck, groups, format, market, lookup, collection, onChange, onOpenCard, validation }) {
   const problemIds = new Set(
     validation.violations.filter((v) => v.severity === 'error' && v.cardId).map((v) => v.cardId),
   )
@@ -256,6 +281,7 @@ function DeckList({ deck, groups, format, market, lookup, onChange, onOpenCard, 
                   cardId={cardId}
                   quantity={quantity}
                   market={market}
+                  owned={ownedOf(collection, card)}
                   isCommander={isCommander}
                   flagged={problemIds.has(cardId)}
                   onOpen={() => card && onOpenCard(card)}
@@ -271,6 +297,7 @@ function DeckList({ deck, groups, format, market, lookup, onChange, onOpenCard, 
                 key={`${zone}:${cardId}`}
                 card={card}
                 market={market}
+                owned={ownedOf(collection, card)}
                 section={name}
                 sections={categoryNames(deck, lookup)}
                 onCategory={(to) => onChange(setCategory(deck, cardId, to))}
@@ -305,7 +332,9 @@ function DeckList({ deck, groups, format, market, lookup, onChange, onOpenCard, 
  * visible rather than appearing on hover — hover does not exist on the phone
  * this is mostly used on.
  */
-function DeckTile({ card, cardId, quantity, market, isCommander, flagged, onOpen, onSet, onRemove }) {
+function DeckTile({
+  card, cardId, quantity, market, owned = 0, isCommander, flagged, onOpen, onSet, onRemove,
+}) {
   if (!card) {
     return (
       <div className="deck-tile deck-tile--missing">
@@ -323,6 +352,11 @@ function DeckTile({ card, cardId, quantity, market, isCommander, flagged, onOpen
         <span className={`deck-tile__qty ${isCommander ? 'deck-tile__qty--commander' : ''}`}>
           {isCommander ? '★' : quantity}
         </span>
+        {owned < quantity && (
+          <span className="deck-tile__need tiny" title={`You have ${owned} of ${quantity}`}>
+            need {quantity - owned}
+          </span>
+        )}
       </div>
 
       <PriceRow card={card} size="sm" />
@@ -419,7 +453,7 @@ function CategoryPicker({ card, section, sections, onCategory }) {
 }
 
 function DeckRow({
-  card, cardId, quantity, isCommander, flagged, market, zone, section, sections,
+  card, cardId, quantity, isCommander, flagged, market, owned = 0, zone, section, sections,
   onOpen, onSet, onRemove, onCategory,
 }) {
   if (!card) {
@@ -450,6 +484,11 @@ function DeckRow({
       <button className="deck-row__name" onClick={onOpen}>{card.name}</button>
       <ManaCost cost={card.mana_cost || card.card_faces?.[0]?.mana_cost || ''} />
       <span className="deck-row__price faint tiny">{priceLabel(card, market)}</span>
+      {owned < quantity && (
+        <span className="deck-row__need tiny" title={`You have ${owned} of ${quantity}`}>
+          need {quantity - owned}
+        </span>
+      )}
       {!isCommander && zone !== 'sideboard' && (
         <CategoryPicker card={card} section={section} sections={sections} onCategory={onCategory} />
       )}
