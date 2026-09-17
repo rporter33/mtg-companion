@@ -109,9 +109,11 @@ describe('groupDeck', () => {
     expect(groupDeck(resolved).find((g) => g.id === 'artifact').price.total).toBe(2)
   })
 
-  it('orders sections the same way every time', () => {
+  it('orders sections the same way every time, with lands last', () => {
+    // Lands are matched first so an artifact land is a land, but they are shown
+    // last — precedence and display are different orders.
     const ids = groupDeck(resolved, { pinned }).map((g) => g.id)
-    expect(ids).toEqual(['commander', 'land', 'creature', 'artifact'])
+    expect(ids).toEqual(['commander', 'creature', 'artifact', 'land'])
   })
 
   it('sorts within a section by name', () => {
@@ -138,7 +140,7 @@ describe('groupDeck', () => {
 
   it('falls back to type grouping rather than breaking on an unknown mode', () => {
     expect(getGrouping('nonsense').id).toBe('type')
-    expect(groupDeck(resolved, { groupBy: 'nonsense' })[0].id).toBe('land')
+    expect(groupDeck(resolved, { groupBy: 'nonsense' })[0].id).toBe('creature')
   })
 
   it('exposes every mode it supports', () => {

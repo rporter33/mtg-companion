@@ -21,6 +21,11 @@
 .deck-row {
   display: flex;
   align-items: center;
+  /* Wraps rather than squeezing. Adding the section picker to a single-line row
+     shrank card names to "Li…" and "Ll…" on a phone, which makes a decklist
+     unreadable — the one thing the list has to do. */
+  flex-wrap: wrap;
+  row-gap: var(--space-1);
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
@@ -34,7 +39,10 @@
 .deck-row--missing { opacity: 0.6; }
 
 .deck-row__name {
-  flex: 1;
+  /* A name never gives up space until everything else has. 9rem is about
+     "Lightning Bolt" — below that the row wraps instead of truncating. */
+  flex: 1 1 9rem;
+  min-width: 0;
   text-align: left;
   font-size: 0.88rem;
   overflow: hidden;
@@ -87,3 +95,27 @@
 .odds th { text-align: left; font-weight: 600; color: var(--text-faint); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; padding-bottom: var(--space-2); }
 .odds th:not(:first-child), .odds td:not(:first-child) { text-align: right; }
 .odds td { padding: var(--space-1) 0; border-top: 1px solid var(--border); }
+
+/* Section controls. The menu replaces the header's right-hand side while it is
+   open, rather than pushing the layout around. */
+.section-menu { gap: var(--space-1); flex-wrap: wrap; }
+.section-menu .input--sm { max-width: 11rem; }
+
+.deck-row__category {
+  /* Last to get space, first to wrap to its own line. */
+  flex: 0 1 auto;
+  order: 1;
+  max-width: 9rem;
+  font-size: 0.72rem;
+  padding: 2px 4px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.deck-row__category:hover { border-color: var(--border-strong); }
+.deck-row__remove { order: 2; margin-left: auto; }
+
+/* A <select> stretches to its container by default, which put the market picker
+   on a line of its own beside chips it belongs with. */
+select.chip { width: auto; max-width: 8rem; }

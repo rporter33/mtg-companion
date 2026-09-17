@@ -30,6 +30,20 @@ const TYPE_ORDER = [
   { id: 'enchantment', label: 'Enchantments', test: (line) => /\bEnchantment\b/.test(line) },
 ]
 
+/*
+ * Two different orders, and conflating them put Lands at the top of every deck.
+ *
+ * TYPE_ORDER above is PRECEDENCE: lands are tested first so an artifact land is
+ * a land rather than an artifact. This is DISPLAY: lands come last, because
+ * that is where a player looks for them and where every other view in this app
+ * puts them.
+ */
+export const TYPE_LABELS = ['Creatures', 'Planeswalkers', 'Battles', 'Instants',
+  'Sorceries', 'Artifacts', 'Enchantments', 'Lands', 'Other']
+
+const DISPLAY_IDS = ['creature', 'planeswalker', 'battle', 'instant', 'sorcery',
+  'artifact', 'enchantment', 'land', 'other']
+
 export function typeGroupOf(card) {
   // Front face only: a "Sorcery // Land" modal card is a sorcery you may play
   // as a land, and filing it under Lands would overstate the mana base — the
@@ -59,7 +73,7 @@ export function manaValueGroupOf(card) {
 }
 
 export const GROUPINGS = [
-  { id: 'type', label: 'Type', of: typeGroupOf, order: [...TYPE_ORDER.map((t) => t.id), 'other'] },
+  { id: 'type', label: 'Type', of: typeGroupOf, order: DISPLAY_IDS },
   {
     id: 'color',
     label: 'Colour',

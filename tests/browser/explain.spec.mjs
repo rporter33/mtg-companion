@@ -80,8 +80,12 @@ console.log('\nCross-links and reference data')
 check('keyword terms are tappable', (await page.locator('.explain .term').count()) > 0)
 await page.getByRole('tab', { name: 'Details' }).click()
 await page.waitForTimeout(250)
+// Prices moved to the shared PriceRow, so all three markets appear here too
+// rather than a bespoke list that only knew about dollars.
 check('Details still carries the facts and prices',
-  (await page.locator('.facts').count()) === 1 && (await page.locator('.price').count()) > 0)
+  (await page.locator('.facts').count()) === 1
+  && (await page.locator('.sheet .prices__cell').count()) === 3,
+  `${await page.locator('.facts').count()} facts, ${await page.locator('.sheet .prices__cell').count()} price cells`)
 await page.getByRole('tab', { name: 'Legality' }).click()
 await page.waitForTimeout(250)
 check('Legality still lists every format', (await page.locator('.legality').count()) >= 10)

@@ -23,8 +23,46 @@ export function backendName() {
   return store().name
 }
 
+/**
+ * The shape of stored data, and how older shapes become this one.
+ *
+ * There are no accounts here, so a user's decks exist in exactly one place:
+ * their browser. A migration that loses a deck loses it for good. So each step
+ * is additive, they run in order, and the version is only bumped once its step
+ * has run.
+ *
+ * State written by a NEWER build is left alone rather than forced backwards —
+ * a stale service worker can serve an old bundle against new data, and
+ * downgrading it would discard fields the newer build is still using.
+ */
+export const SCHEMA_VERSION = 2
+
+const MIGRATIONS = {
+  // 1 → 2: decks gained per-card categories and an order to show them in.
+  // Nothing needs rewriting, because an entry with no category derives one from
+  // the card's type. The version still moves, so a later migration knows what
+  // it is looking at.
+  2: (state) => ({
+    ...state,
+    decks: (state.decks ?? []).map((deck) => ({ categoryOrder: [], ...deck })),
+  }),
+}
+
+export function migrate(state) {
+  const from = Number(state?.version) || 1
+  if (from >= SCHEMA_VERSION) return state
+
+  let out = state
+  for (let v = from + 1; v <= SCHEMA_VERSION; v++) {
+    const step = MIGRATIONS[v]
+    if (step) out = step(out)
+    out = { ...out, version: v }
+  }
+  return out
+}
+
 const EMPTY = {
-  version: 1,
+  version: SCHEMA_VERSION,
   decks: [],
   games: [],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
@@ -44,12 +82,12 @@ function read() {
     const parsed = JSON.parse(raw)
     // Merge against EMPTY so a state file written by an older build still loads
     // with any newly added sections present.
+    const state = migrate(parsed)
     return {
       ...EMPTY,
-      ...parsed,
-      guide: { ...EMPTY.guide, ...(parsed.guide ?? {}) },
-      prefs: {
-    market: 'usd', ...EMPTY.prefs, ...(parsed.prefs ?? {}) },
+      ...state,
+      guide: { ...EMPTY.guide, ...(state.guide ?? {}) },
+      prefs: { ...EMPTY.prefs, ...(state.prefs ?? {}) },
     }
   } catch {
     // Private mode, disabled storage, or corrupted JSON. Keep working in memory
@@ -183,12 +221,17 @@ export function importAll(json, { replace = false } = {}) {
     throw new Error('That file does not look like an mtg-companion export.')
   }
 
+  // A backup can be older than the build restoring it, so it goes through the
+  // same migration as stored state. Pinning it to version 1 on replace, as this
+  // did, would have written the whole store back to an older schema.
+  const incoming = migrate(parsed)
+
   return update((state) => {
     if (replace) {
-      return { ...EMPTY, ...parsed, version: 1 }
+      return { ...EMPTY, ...incoming }
     }
     const byId = new Map(state.decks.map((d) => [d.id, d]))
-    for (const deck of parsed.decks) {
+    for (const deck of incoming.decks) {
       // On a collision, keep both — an imported deck should never silently
       // overwrite work the user did locally.
       if (byId.has(deck.id)) {
@@ -204,7 +247,7 @@ export function importAll(json, { replace = false } = {}) {
         ...state.guide,
         completedLessons: [...new Set([
           ...state.guide.completedLessons,
-          ...(parsed.guide?.completedLessons ?? []),
+          ...(incoming.guide?.completedLessons ?? []),
         ])],
       },
     }

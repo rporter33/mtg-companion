@@ -9,6 +9,9 @@ import ExplainCard from './ExplainCard.jsx'
 import { getRulings, getPrintings } from '../../lib/scryfall.js'
 import { FORMATS, FORMAT_IDS, typeLineOf, oracleTextOf } from '../../lib/formats.js'
 import { describeColors } from '../../lib/mana.js'
+import PriceRow from '../../components/PriceRow.jsx'
+import { MARKETS, priceLabel } from '../../lib/prices.js'
+import { getPrefs } from '../../lib/storage.js'
 
 const STATUS_LABEL = {
   legal: 'Legal', banned: 'Banned', restricted: 'Restricted',
@@ -112,17 +115,48 @@ function CardDetailBody({ card, onOpenCard }) {
             <Fact label="Mana value" value={card.cmc ?? 0} />
             <Fact label="Colour identity" value={describeColors(card.color_identity)} term="colorIdentity" />
             <Fact label="Rarity" value={card.rarity ? capitalise(card.rarity) : '—'} />
-            <Fact label="Set" value={card.set_name ?? '—'} />
+            <Fact
+              label="Printing"
+              value={card.set_name
+                ? `${card.set_name}${card.collector_number ? ` · #${card.collector_number}` : ''}`
+                : '—'}
+            />
+            {card.released_at && <Fact label="Released" value={card.released_at} />}
             {card.artist && <Fact label="Artist" value={card.artist} />}
+            {card.keywords?.length > 0 && <Fact label="Keywords" value={card.keywords.join(', ')} />}
+            {card.produced_mana?.length > 0 && (
+              <Fact label="Produces" value={describeColors(card.produced_mana)} />
+            )}
+            {card.finishes?.length > 0 && (
+              <Fact label="Finishes" value={card.finishes.map(capitalise).join(', ')} />
+            )}
+            {card.games?.length > 0 && (
+              <Fact label="Playable in" value={card.games.map((g) => GAME_NAMES[g] ?? g).join(', ')} />
+            )}
+            {Number.isFinite(card.edhrec_rank) && (
+              <Fact label="Commander rank" value={`#${card.edhrec_rank.toLocaleString()}`} />
+            )}
+            {card.reserved && <Fact label="Reserved list" value="Yes — never reprinted" />}
           </dl>
 
-          <Prices card={card} />
+          <div className="panel stack">
+            <h3>Prices</h3>
+            <PriceRow card={card} />
+            <p className="faint tiny" style={{ margin: 0 }}>
+              {/* Naming the source matters: these are three different markets, not
+                  three opinions about one. */}
+              {MARKETS.map((m) => `${m.label} from ${m.source}`).join(' · ')}. Scryfall aggregates
+              them once a day from listings — a guide, not a quote.
+            </p>
+          </div>
         </div>
       )}
 
       {tab === 'legality' && <Legality card={card} />}
       {tab === 'rulings' && <Rulings card={card} />}
-      {tab === 'printings' && <Printings card={card} onOpenCard={onOpenCard} />}
+      {tab === 'printings' && (
+        <Printings card={card} onOpenCard={onOpenCard} market={getPrefs().market ?? 'usd'} />
+      )}
 
       <CardZoom
         card={card}
@@ -139,37 +173,6 @@ function Fact({ label, value, term }) {
     <div className="fact">
       <dt>{term ? <Term id={term}>{label}</Term> : label}</dt>
       <dd>{value}</dd>
-    </div>
-  )
-}
-
-function Prices({ card }) {
-  const entries = [
-    ['usd', 'USD', card.prices?.usd],
-    ['usd_foil', 'Foil', card.prices?.usd_foil],
-    ['eur', 'EUR', card.prices?.eur],
-    ['tix', 'MTGO', card.prices?.tix],
-  ].filter(([, , value]) => value != null)
-
-  if (!entries.length) {
-    return <p className="faint">No price data for this printing.</p>
-  }
-
-  return (
-    <div>
-      <div className="price-row">
-        {entries.map(([key, label, value]) => (
-          <div className="price" key={key}>
-            <div className="price__value">
-              {key === 'eur' ? '€' : key === 'tix' ? '' : '$'}{value}{key === 'tix' ? ' tix' : ''}
-            </div>
-            <div className="price__label">{label}</div>
-          </div>
-        ))}
-      </div>
-      <p className="faint tiny" style={{ marginTop: 'var(--space-2)' }}>
-        Scryfall aggregates these once a day from market listings — treat them as a guide, not a quote.
-      </p>
     </div>
   )
 }
@@ -230,7 +233,7 @@ function Rulings({ card }) {
   )
 }
 
-function Printings({ card, onOpenCard }) {
+function Printings({ card, onOpenCard, market = 'usd' }) {
   const [printings, setPrintings] = useState(null)
   const [error, setError] = useState(null)
 
@@ -259,13 +262,21 @@ function Printings({ card, onOpenCard }) {
           <span className="printing__set">{print.set}</span>
           <span className="printing__name">
             {print.set_name}
+            <span className="faint printing__meta">
+              {print.collector_number ? `#${print.collector_number}` : ''}
+              {print.rarity ? ` · ${capitalise(print.rarity)}` : ''}
+              {print.released_at ? ` · ${print.released_at.slice(0, 4)}` : ''}
+              {print.finishes?.length && !print.finishes.includes('nonfoil') ? ' · foil only' : ''}
+            </span>
             {print.id === card.id && <span className="faint"> · showing</span>}
           </span>
-          <span className="printing__price">{print.prices?.usd ? `$${print.prices.usd}` : '—'}</span>
+          <span className="printing__price">{priceLabel(print, market)}</span>
         </button>
       ))}
     </div>
   )
 }
+
+const GAME_NAMES = { paper: 'Paper', arena: 'Arena', mtgo: 'Magic Online' }
 
 const capitalise = (s) => s.charAt(0).toUpperCase() + s.slice(1)

@@ -55,7 +55,7 @@ Works entirely offline and keeps the screen awake.
 npm install
 npm run dev
 npm run test:browser   # drives the real UI in a real browser, axe-core included
-npm test               # 543 unit tests
+npm test               # 584 unit tests
 npm run validate:live  # checks our assumptions against the live Scryfall API
 npm run deck:fetch     # turns a deck you own into a shippable example
 npm run examples:verify  # checks every shipped example against Scryfall
@@ -172,6 +172,23 @@ Every figure is a daily aggregate, not a live quote. A printing with no price is
 common, and absence renders as dashes — never as zero, because `Number(null)` is
 0 and that is how a two-hundred-dollar foil once read as free. A deck total says
 how many cards it could not price instead of quietly leaving them out.
+
+**Deck sections are derived until you change them.** A deck nobody has
+organised reads as Creatures / Instants / Lands, because those follow from the
+cards. Rename a section, move a card, and that choice is stored on the card
+instead — derived is a default, not a limitation.
+
+Renaming a derived section is the interesting case. Nothing says "Creatures"
+anywhere; those cards simply *are* creatures. So renaming one writes the new
+name onto the cards currently in it. Without that the rename silently does
+nothing, which is how a feature comes to feel broken rather than missing.
+
+**Stored data is versioned and migrated.** There are no accounts, so a deck
+exists in exactly one place: that browser. A migration that loses one loses it
+for good. Steps are additive, run in order, and only bump the version once they
+have run. State written by a *newer* build is left alone rather than forced
+backwards — a stale service worker can serve an old bundle against new data, and
+downgrading it would discard fields the newer build is still using.
 
 **Ban lists are not in this repo.** Banned and restricted status is read from
 Scryfall's per-card `legalities` object at validation time. Ban lists change on a

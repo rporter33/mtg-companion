@@ -227,3 +227,5 @@ button:focus-visible, [tabindex]:focus-visible {
    not bounce the layout. Deliberately blank: a spinner for something that
    usually takes one frame is more distracting than nothing. */
 .view-loading { min-height: 60vh; }
+
+.input--sm { padding: 3px 6px; font-size: 0.8rem; }

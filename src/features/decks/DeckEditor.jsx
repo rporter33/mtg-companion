@@ -13,20 +13,19 @@ import {
 import { getFormat, typeLineOf } from '../../lib/formats.js'
 import { manaValueOf } from '../../lib/analysis.js'
 import { captureSnapshot } from '../../lib/snapshot.js'
-import { typeGroupOf } from '../../lib/grouping.js'
+import {
+  deckSections, setCategory, renameCategory, clearCategory, moveCategory,
+  categoryNames, COMMANDER_CATEGORY,
+} from '../../lib/categories.js'
 import { getPrefs, setPref } from '../../lib/storage.js'
 import { totalFor, formatPrice, priceLabel, MARKETS } from '../../lib/prices.js'
 
-// Section titles and their order. The classification itself lives in
-// lib/grouping.js so there is one rule for "what type is this card", rather
-// than one here and another wherever else a deck gets split up.
+
+/** "USD via TCGplayer" — the label alone does not say where a number came from. */
 const getMarketLabel = (id) => {
   const market = MARKETS.find((m) => m.id === id)
   return market ? `${market.label} via ${market.source}` : id
 }
-
-const GROUP_ORDER = ['Commander', 'Creatures', 'Planeswalkers', 'Battles', 'Instants',
-  'Sorceries', 'Artifacts', 'Enchantments', 'Lands', 'Other']
 
 export default function DeckEditor({
   deck, onBack, onChange, onOpenCard, offline, pending, onPendingConsumed,
@@ -48,12 +47,15 @@ export default function DeckEditor({
   const total = deckSize(deck, format)
   const target = format?.deck.max ?? format?.deck.min ?? 60
 
-  const groups = useMemo(() => groupDeck(deck, lookup, format), [deck, cards, format])
-
   // Which market to price in. Stored, because a player in Europe should not
   // have to re-pick dollars-or-euros every time they open a deck.
   const [market, setMarket] = useState(() => getPrefs().market ?? 'usd')
   const chooseMarket = (id) => { setMarket(id); setPref('market', id) }
+
+  const groups = useMemo(
+    () => deckSections(deck, lookup, { marketId: market }),
+    [deck, cards, market],
+  )
 
   const money = useMemo(
     () => totalFor(groups.flatMap((g) => g.entries).filter((e) => e.card), market),
@@ -148,7 +150,7 @@ export default function DeckEditor({
 
       {tab === 'list' && (
         <DeckList
-          deck={deck} groups={groups} format={format} market={market}
+          deck={deck} groups={groups} format={format} market={market} lookup={lookup}
           onChange={commit} onOpenCard={onOpenCard} validation={validation}
         />
       )}
@@ -179,7 +181,7 @@ export default function DeckEditor({
   )
 }
 
-function DeckList({ deck, groups, format, market, onChange, onOpenCard, validation }) {
+function DeckList({ deck, groups, format, market, lookup, onChange, onOpenCard, validation }) {
   const problemIds = new Set(
     validation.violations.filter((v) => v.severity === 'error' && v.cardId).map((v) => v.cardId),
   )
@@ -195,15 +197,26 @@ function DeckList({ deck, groups, format, market, onChange, onOpenCard, validati
 
   return (
     <div className="stack">
-      {groups.map(({ title, entries, count }) => (
-        <section key={title}>
+      {groups.map(({ name, entries, count, price, chosen }) => (
+        <section key={name}>
           <div className="section-title">
-            <h2>{title}</h2>
+            <h2>{name}</h2>
             <span className="faint">{count}</span>
             <span className="spacer" />
-            <span className="faint tiny">
-              {formatPrice(totalFor(entries.filter((e) => e.card), market).total, market)}
-            </span>
+            <span className="faint tiny">{formatPrice(price.total, market)}</span>
+            {name !== COMMANDER_CATEGORY && name !== 'Sideboard' && (
+              <SectionMenu
+                name={name}
+                chosen={chosen}
+                onRename={(to) => onChange(renameCategory(
+                  deck, name, to, entries.map((e) => e.cardId),
+                ))}
+                onMove={(delta) => onChange(moveCategory(
+                  deck, name, delta, groups.map((g) => g.name),
+                ))}
+                onDissolve={() => onChange(clearCategory(deck, name))}
+              />
+            )}
           </div>
           <div className="deck-rows">
             {entries.map(({ cardId, quantity, card, zone, isCommander }) => (
@@ -211,6 +224,9 @@ function DeckList({ deck, groups, format, market, onChange, onOpenCard, validati
                 key={`${zone}:${cardId}`}
                 card={card}
                 market={market}
+                section={name}
+                sections={categoryNames(deck, lookup)}
+                onCategory={(to) => onChange(setCategory(deck, cardId, to))}
                 cardId={cardId}
                 quantity={quantity}
                 zone={zone}
@@ -233,7 +249,84 @@ function DeckList({ deck, groups, format, market, onChange, onOpenCard, validati
   )
 }
 
-function DeckRow({ card, cardId, quantity, isCommander, flagged, market, onOpen, onSet, onRemove }) {
+/**
+ * Rename, reorder or dissolve a section.
+ *
+ * A derived section can be renamed too — that is what turns it into one the
+ * player owns. "Dissolve" only appears for sections somebody made, because
+ * there is nothing to dissolve about being a creature.
+ */
+function SectionMenu({ name, chosen, onRename, onMove, onDissolve }) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState(name)
+
+  if (!open) {
+    return (
+      <button
+        className="btn btn--sm btn--ghost"
+        onClick={() => { setDraft(name); setOpen(true) }}
+        aria-label={`Edit the ${name} section`}
+      >
+        ⋯
+      </button>
+    )
+  }
+
+  const commit = () => { onRename(draft); setOpen(false) }
+
+  return (
+    <div className="row section-menu">
+      <input
+        className="input input--sm"
+        value={draft}
+        autoFocus
+        aria-label={`Rename ${name}`}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit()
+          if (e.key === 'Escape') setOpen(false)
+        }}
+      />
+      <button className="btn btn--sm" onClick={commit}>Rename</button>
+      <button className="btn btn--sm btn--ghost" onClick={() => onMove(-1)} aria-label={`Move ${name} up`}>↑</button>
+      <button className="btn btn--sm btn--ghost" onClick={() => onMove(1)} aria-label={`Move ${name} down`}>↓</button>
+      {chosen && (
+        <button className="btn btn--sm btn--ghost" onClick={onDissolve} title="Put these cards back under their card type">
+          Dissolve
+        </button>
+      )}
+      <button className="btn btn--sm btn--ghost" onClick={() => setOpen(false)}>Done</button>
+    </div>
+  )
+}
+
+/** Moves one card to another section, or to a new one. */
+function CategoryPicker({ card, section, sections, onCategory }) {
+  const NEW = '\u0000new'
+  const options = [...new Set([section, ...sections])].filter(Boolean)
+
+  return (
+    <select
+      className="deck-row__category"
+      value={section}
+      aria-label={`Section for ${card.name}`}
+      onChange={(e) => {
+        if (e.target.value !== NEW) return onCategory(e.target.value)
+        // eslint-disable-next-line no-alert
+        const typed = window.prompt(`Move ${card.name} to which section?`, section)
+        if (typed?.trim()) onCategory(typed.trim())
+      }}
+    >
+      {options.map((name) => <option key={name} value={name}>{name}</option>)}
+      <option value={NEW}>New section…</option>
+    </select>
+  )
+}
+
+function DeckRow({
+  card, cardId, quantity, isCommander, flagged, market, zone, section, sections,
+  onOpen, onSet, onRemove, onCategory,
+}) {
   if (!card) {
     return (
       <div className="deck-row deck-row--missing">
@@ -262,51 +355,19 @@ function DeckRow({ card, cardId, quantity, isCommander, flagged, market, onOpen,
       <button className="deck-row__name" onClick={onOpen}>{card.name}</button>
       <ManaCost cost={card.mana_cost || card.card_faces?.[0]?.mana_cost || ''} />
       <span className="deck-row__price faint tiny">{priceLabel(card, market)}</span>
-      <button className="btn btn--sm btn--ghost btn--danger" onClick={onRemove} aria-label={`Remove ${card.name}`}>✕</button>
+      {!isCommander && zone !== 'sideboard' && (
+        <CategoryPicker card={card} section={section} sections={sections} onCategory={onCategory} />
+      )}
+      <button
+        className="btn btn--sm btn--ghost btn--danger deck-row__remove"
+        onClick={onRemove}
+        aria-label={`Remove ${card.name}`}
+      >
+        ✕
+      </button>
     </div>
   )
 }
 
 /** Groups a deck the way a decklist is normally written: by card type. */
-function groupDeck(deck, lookup, format) {
-  const buckets = new Map()
-  const push = (title, entry) => {
-    if (!buckets.has(title)) buckets.set(title, [])
-    buckets.get(title).push(entry)
-  }
 
-  for (const cardId of deck.commanders) {
-    push('Commander', { cardId, quantity: 1, card: lookup(cardId), zone: 'main', isCommander: true })
-  }
-  if (deck.signatureSpell) {
-    push('Commander', {
-      cardId: deck.signatureSpell, quantity: 1,
-      card: lookup(deck.signatureSpell), zone: 'main', isCommander: true,
-    })
-  }
-
-  for (const { cardId, quantity } of deck.main) {
-    const card = lookup(cardId)
-    push(card ? typeGroupOf(card).label : 'Other', { cardId, quantity, card, zone: 'main' })
-  }
-  for (const { cardId, quantity } of deck.sideboard) {
-    push('Sideboard', { cardId, quantity, card: lookup(cardId), zone: 'sideboard' })
-  }
-
-  const order = [...GROUP_ORDER, 'Sideboard']
-  return order
-    .filter((title) => buckets.has(title))
-    .map((title) => {
-      const entries = buckets.get(title).sort(byManaThenName)
-      return { title, entries, count: entries.reduce((n, e) => n + e.quantity, 0) }
-    })
-}
-
-
-
-function byManaThenName(a, b) {
-  const av = a.card ? manaValueOf(a.card) : 99
-  const bv = b.card ? manaValueOf(b.card) : 99
-  if (av !== bv) return av - bv
-  return (a.card?.name ?? '').localeCompare(b.card?.name ?? '')
-}
