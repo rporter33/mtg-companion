@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { searchCards, getCardByName, autocomplete } from '../../lib/scryfall.js'
+import { searchCards, getCardByName, getCardsByNames, autocomplete } from '../../lib/scryfall.js'
 import {
   looksLikeUrl, planForUrl, fetchFromSource, toDecklistText,
 } from '../../lib/deck-sources.js'
 import { toExampleEntry } from '../../data/example-decks.js'
 import { addCard, setCommanders, createDeck } from '../../lib/deck.js'
+import { getFormat, frontTypeLine } from '../../lib/formats.js'
 import { parseDecklist } from '../../lib/decklist.js'
 import { pinCards } from '../../lib/cache.js'
 import { exportAll, importAll } from '../../lib/storage.js'
@@ -47,20 +48,29 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
     setBusy(true)
     setStatus({ tone: 'info', text: `Looking up ${lines.length} cards…` })
 
+    // One request per 75 names rather than one per card. The old loop was
+    // sequential and rate limited, so a Commander deck took twenty seconds when
+    // everything worked and stalled outright when it did not.
+    const cards = await getCardsByNames(lines.map((line) => line.name), {
+      onProgress: (done, total) => setStatus({
+        tone: 'info',
+        text: done < total ? `Looking up ${total} cards… ${done} done` : 'Checking the last few names…',
+      }),
+    })
+
     const resolved = []
     const failed = []
     for (const line of lines) {
-      try {
-        const card = await getCardByName(line.name, { exact: false })
-        resolved.push({ ...line, card })
-      } catch {
-        failed.push(line)
-      }
+      const card = cards.get(line.name)
+      if (card) resolved.push({ ...line, card })
+      else failed.push(line)
     }
 
     // Offer the closest matches for anything that did not resolve. Most import
-    // failures are a typo or a punctuation difference, not a missing card.
-    for (const line of failed) {
+    // failures are a typo or a punctuation difference, not a missing card. This
+    // is one request per failure, which is fine now that it runs over the few
+    // that actually failed rather than over every line in the deck.
+    for (const line of failed.slice(0, 20)) {
       try {
         line.candidates = (await autocomplete(line.name)).slice(0, 4)
       } catch {
@@ -77,8 +87,11 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
     let next = deck
     for (const { quantity, section, card } of preview.resolved) {
       pinCards([card.id])
-      if (section === 'commander') next = setCommanders(next, [...next.commanders, card.id])
-      else next = addCard(next, card.id, quantity, section === 'sideboard' ? 'sideboard' : 'main')
+      // A card picked as the commander goes to the command zone instead of the
+      // maindeck, not as well as it — otherwise the deck is 101 cards.
+      if (section === 'commander' || card.id === preview.commanderId) {
+        next = setCommanders(next, [...next.commanders, card.id])
+      } else next = addCard(next, card.id, quantity, section === 'sideboard' ? 'sideboard' : 'main')
     }
     onChange(next)
     setPreview(null)
@@ -190,8 +203,8 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
           </button>
         </div>
         <p className="faint tiny" style={{ margin: 0 }}>
-          Nothing is added until you have seen what will land. Each name is looked up
-          individually and rate limited, so a 100-card list takes about ten seconds.
+          Nothing is added until you have seen what will land. Names are looked up
+          in bulk, 75 at a time, so a whole Commander deck is two requests.
         </p>
       </section>
 
@@ -219,6 +232,10 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
       {preview && (
         <ImportPreview
           preview={preview}
+          needsCommander={Boolean(getFormat(deck.formatId)?.commander?.required)
+            && !deck.commanders.length
+            && !preview.resolved?.some((line) => line.section === 'commander')}
+          onPickCommander={(id) => setPreview((current) => ({ ...current, commanderId: id }))}
           onApply={applyPreview}
           onCancel={() => setPreview(null)}
           onResolve={(line, name) => {
@@ -263,7 +280,14 @@ export function toText(deck, lookup) {
 }
 
 /** Shows exactly what an import will do before it does any of it. */
-function ImportPreview({ preview, onApply, onCancel, onResolve }) {
+/** Legendary creatures in a list, which is what a commander can be. */
+function commanderCandidates(resolved) {
+  return resolved
+    .map((line) => line.card)
+    .filter((card) => /Legendary/.test(frontTypeLine(card)) && /Creature/.test(frontTypeLine(card)))
+}
+
+function ImportPreview({ preview, onApply, onCancel, onResolve, needsCommander, onPickCommander }) {
   const total = preview.resolved.reduce((n, line) => n + line.quantity, 0)
 
   if (preview.raw) {
@@ -313,6 +337,32 @@ function ImportPreview({ preview, onApply, onCancel, onResolve }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/*
+        A list exported without a "Commander" header — which is most of them —
+        used to import as a hundred cards with an empty command zone and a
+        legality error the reader had no obvious way to clear. The deck is right
+        here and so are its legendary creatures, so offer them.
+      */}
+      {needsCommander && commanderCandidates(preview.resolved).length > 0 && (
+        <div className="stack" style={{ gap: 'var(--space-2)' }}>
+          <p className="faint tiny" style={{ margin: 0 }}>
+            This list has no <code className="mono">Commander</code> line. Pick the commander and
+            the rest becomes the deck, or add it later from the list.
+          </p>
+          <div className="row row--wrap">
+            {commanderCandidates(preview.resolved).map((card) => (
+              <button
+                key={card.id}
+                className={`chip ${preview.commanderId === card.id ? 'chip--active' : ''}`}
+                onClick={() => onPickCommander(preview.commanderId === card.id ? null : card.id)}
+              >
+                {card.name}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

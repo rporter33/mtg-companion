@@ -49,6 +49,7 @@ await page.route('**/api.scryfall.com/cards/search**', (route) => route.fulfill(
     card('Test Commander Two', { type_line: 'Legendary Creature — Bear' }),
   ] }) }))
 await page.route('**/api.scryfall.com/cards/named**', (route) => {
+  namedCalls++
   const name = new URL(route.request().url()).searchParams.get('fuzzy')
     ?? new URL(route.request().url()).searchParams.get('exact')
   if (/nonexistent/i.test(name ?? '')) {
@@ -57,6 +58,25 @@ await page.route('**/api.scryfall.com/cards/named**', (route) => {
   }
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(card(name)) })
 })
+// The importer resolves names in bulk through the collection endpoint. A name
+// containing "nonexistent" comes back in not_found, exactly as Scryfall does it,
+// so the fuzzy fall-back and the failure reporting both get exercised.
+let collectionCalls = 0
+let namedCalls = 0
+await page.route('**/api.scryfall.com/cards/collection', async (route) => {
+  collectionCalls++
+  const { identifiers } = JSON.parse(route.request().postData() ?? '{"identifiers":[]}')
+  const data = []
+  const not_found = []
+  for (const { name } of identifiers) {
+    if (/nonexistent/i.test(name)) not_found.push({ name })
+    else if (/legend/i.test(name)) data.push(card(name, { type_line: 'Legendary Creature — Human' }))
+    else data.push(card(name))
+  }
+  return route.fulfill({ status: 200, contentType: 'application/json',
+    body: JSON.stringify({ object: 'list', data, not_found }) })
+})
+
 await page.route('**/api.scryfall.com/cards/autocomplete**', (route) => route.fulfill({
   status: 200, contentType: 'application/json',
   body: JSON.stringify({ data: ['Nonexistent Suggestion A', 'Nonexistent Suggestion B'] }) }))
@@ -142,6 +162,59 @@ check('opening an example loads its whole list, not a summary',
   `${exampleName.replace(/\s+/g, ' ')} -> ${totalCards} cards over ${cardLines.length} lines`)
 check('the example arrives with its commander named',
   /^Commander\n/.test(loaded), JSON.stringify(loaded.slice(0, 60)))
+
+console.log('\nA whole Commander deck at once')
+{
+  // The importer used to resolve one card per request, sequentially and rate
+  // limited. Ninety-nine names was ninety-nine round trips before the first
+  // result appeared — twenty seconds when nothing went wrong, and unbounded
+  // once a rate limit started the backoff compounding. It read as a hang.
+  const names = Array.from({ length: 99 }, (_, i) => `1 Bulk Card ${i}`).join('\n')
+  await page.getByRole('tab', { name: 'Import / export' }).click()
+  await page.waitForTimeout(300)
+  const bulkBox = page.locator('textarea').first()
+  collectionCalls = 0
+  namedCalls = 0
+
+  const started = Date.now()
+  await bulkBox.fill(names)
+  await page.waitForTimeout(200)
+  await page.getByRole('button', { name: 'Review import' }).click()
+  await page.getByRole('button', { name: /Add \d+ cards/ }).waitFor({ timeout: 20000 })
+  const elapsed = Date.now() - started
+
+  check('ninety-nine names resolve in two requests, not ninety-nine',
+    collectionCalls === 2, `${collectionCalls} collection calls, ${namedCalls} single lookups`)
+  check('nothing falls back to per-card lookups when every name is known',
+    namedCalls === 0, `${namedCalls} single lookups`)
+  check('the preview is ready in a couple of seconds', elapsed < 6000, `${elapsed}ms`)
+  check('every card is accounted for',
+    /99 cards found/.test(await page.locator('body').innerText()),
+    (await page.locator('.chip--ok').first().innerText().catch(() => '?')))
+
+  await page.getByRole('button', { name: /Add \d+ cards/ }).click()
+  await page.waitForTimeout(800)
+}
+
+console.log('\nA list with no Commander line')
+{
+  // What a Moxfield or EDHREC copy actually looks like: no section headers, the
+  // commander just another line. It used to import as a hundred cards with an
+  // empty command zone and a legality error the reader could not obviously fix.
+  await page.getByRole('tab', { name: 'Import / export' }).click()
+  await page.waitForTimeout(300)
+  const noHeader = page.locator('textarea').first()
+  await noHeader.fill('1 Headless Legend\n1 Plain Spell\n1 Another Spell')
+  await page.waitForTimeout(200)
+  await page.getByRole('button', { name: 'Review import' }).click()
+  await page.getByRole('button', { name: /Add \d+ cards/ }).waitFor({ timeout: 15000 })
+
+  const offered = page.locator('.chip', { hasText: 'Headless Legend' })
+  check('it offers the legendary creature as the commander', (await offered.count()) > 0,
+    await page.locator('body').innerText().then((t) => t.slice(0, 0)) || '')
+  check('it does not offer a non-legendary card',
+    (await page.locator('.chip', { hasText: 'Plain Spell' }).count()) === 0)
+}
 
 console.log('\nExamples survive Scryfall being unreachable')
 {

@@ -288,6 +288,71 @@ export async function getCardsByIds(ids, { signal } = {}) {
 }
 
 /**
+ * Bulk fetch by name, for importing a decklist.
+ *
+ * The importer used to resolve one card per request. A 100-card list was 100
+ * sequential calls at Scryfall's requested 100ms apart, plus one more for every
+ * name that missed — roughly twenty seconds when nothing went wrong, and minutes
+ * once a rate limit kicked in and the backoff compounded. In practice it looked
+ * like the import had hung, because it effectively had.
+ *
+ * The collection endpoint takes 75 names at a time, so a Commander deck is two
+ * requests. It matches names exactly though, where the old path matched fuzzily,
+ * so anything it does not find is retried one at a time — the slow path still
+ * exists, it just runs over the handful of names that need it instead of all of
+ * them.
+ *
+ * Returns a Map keyed by the name as it was asked for, not as Scryfall spells
+ * it, so the caller can line results back up with the lines the user typed.
+ */
+export async function getCardsByNames(names, { signal, onProgress } = {}) {
+  const wanted = [...new Set(names.filter(Boolean))]
+  const found = new Map()
+  const missed = []
+
+  for (let i = 0; i < wanted.length; i += 75) {
+    const chunk = wanted.slice(i, i + 75)
+    try {
+      const payload = await request('/cards/collection', {
+        method: 'POST',
+        body: { identifiers: chunk.map((name) => ({ name })) },
+        signal,
+      })
+      const cards = payload.data ?? []
+      await putCards(cards, { pinned: true })
+      for (const name of chunk) {
+        // Scryfall answers with its own spelling, and for a double-faced card
+        // that is "Front // Back" against a request for "Front".
+        const lower = name.toLowerCase()
+        const card = cards.find((c) => c.name.toLowerCase() === lower)
+          ?? cards.find((c) => c.name.toLowerCase().split(' // ')[0] === lower)
+        if (card) found.set(name, card)
+        else missed.push(name)
+      }
+    } catch (error) {
+      if (error.name === 'AbortError') throw error
+      // Fall back to the slow path for this chunk rather than losing it.
+      missed.push(...chunk)
+    }
+    onProgress?.(Math.min(i + 75, wanted.length), wanted.length)
+  }
+
+  // Only the leftovers pay the per-request cost, and fuzzy matching is what
+  // rescues a name with a typo or the wrong punctuation.
+  for (const name of missed) {
+    try {
+      found.set(name, await getCardByName(name, { exact: false, signal }))
+    } catch (error) {
+      if (error.name === 'AbortError') throw error
+      /* genuinely not found; the caller reports it */
+    }
+    onProgress?.(wanted.length, wanted.length)
+  }
+
+  return found
+}
+
+/**
  * The set list, used by the theming engine.
  *
  * Cached for a day like any other query, because set metadata changes on the
