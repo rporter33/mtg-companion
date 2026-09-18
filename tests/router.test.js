@@ -26,6 +26,11 @@ describe('parseRoute', () => {
     expect(parseRoute('#/guide/lesson')).toMatchObject({ guide: null })
     expect(parseRoute('#/guide/elsewhere')).toMatchObject({ tab: 'guide', guide: null })
   })
+  it('reads the practice table and its scenario', () => {
+    expect(parseRoute('#/practice')).toMatchObject({ tab: 'practice', scenarioId: null })
+    expect(parseRoute('#/practice/mana-guided')).toMatchObject({ tab: 'practice', scenarioId: 'mana-guided' })
+    expect(buildHash(parseRoute('#/practice/mana-guided'))).toBe('#/practice/mana-guided')
+  })
   it('carries the card overlay on any screen', () => {
     expect(parseRoute('#/decks/abc?card=xyz')).toMatchObject({ deckId: 'abc', cardId: 'xyz' })
     expect(parseRoute('#/guide?card=xyz')).toMatchObject({ tab: 'guide', cardId: 'xyz' })

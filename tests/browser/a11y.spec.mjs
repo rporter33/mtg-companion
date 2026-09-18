@@ -138,6 +138,19 @@ await scanState('card detail', async () => {
 await page.keyboard.press('Escape').catch(() => {})
 await page.waitForTimeout(300)
 
+// The practice table, mid-cast: the casting panel, the pool and the coach
+// are all on screen, and every card is a control.
+await scanState('practice table, casting', async () => {
+  await page.goto(`${TARGET}#/practice/mana-guided`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(500)
+  if (!await page.locator('.table').count()) return false
+  await page.locator('.hand__card .cardface').first().click()
+  await page.getByRole('button', { name: 'Cast', exact: true }).click()
+  await page.locator('.zone--you .permanent--land .cardface').first().click()
+  await page.waitForTimeout(300)
+  return (await page.locator('.cast').count()) === 1
+})
+
 // The scripted first game is the screen a brand new player meets first, and
 // the only place the zoom viewer is two clicks away.
 await scanState('tutorial', async () => {

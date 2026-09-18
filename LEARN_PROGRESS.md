@@ -63,6 +63,38 @@ resume from it. Milestones are the ones agreed on 18 September 2026 from the
   steps), 509.1 (blocking does not tap), 601.2 (casting pays costs), 704
   (state-based actions), 903 (Commander), 903.8 (commander tax).
 
+## M1 — the table model and the mana lesson (done)
+
+- `src/lib/table/`: `model.js` (state, instances, zones, pool, cost
+  payment, timing, targets, invariants), `reducer.js` (pure
+  `applyAction`: playLand, tapForMana, beginCast, chooseTarget, assign,
+  unassign, autoPay, commitCast, cancelCast, pass, declareAttackers,
+  declareBlockers, discard, concede; step and turn structure; priority
+  passing; resolution; fizzling; state-based actions; cleanup),
+  `mechanics.js` (the supported list and `unsupportedReason`),
+  `opponent.js` (passive and simple policies, both stated in words),
+  `runner.js` (act, settle, start, replay, passUntil), `objectives.js`
+  (goals judged from consequences), `scenarios/mana.js` (fixtures A, B,
+  wrong-colour, each with coach steps, hints, a why-question and a paper
+  prompt).
+- `src/data/practice-cards.js`: nineteen green and red cards with `rules`
+  blocks; source blocks to be filled by the verify script.
+- Screen at `#/practice` and `#/practice/<scenario>`: table, casting
+  panel with per-part assignment and pay-from-pool, coach with refusals in
+  the model's words, goals, hints, the why-question, undo (labelled
+  practice only) and reset. Phone stacked; coach beside the board from
+  900px.
+- Tests: `tests/table-mana.test.js` (MANA-01 to MANA-12, timing, turn
+  structure, fizzle, state-based actions, registry, 29 tests);
+  `tests/browser/practice.spec.mjs` (37 checks); the practice table added
+  to the accessibility sweep.
+- Narrowings, stated in the code: one blocker per attacker in shipped
+  scenarios; no tapped lands; no hybrid, phyrexian or variable costs; the
+  opponent's discard is the first cards in hand.
+- Rules relied on: 103.8a, 117.3–117.4, 302.6, 305.1–305.2, 307.1,
+  400.7, 405, 500.1, 500.4, 502.3–502.4, 504.1, 506–510, 508.8, 514.1–514.3,
+  601.2, 605.3, 608.2b, 611.2, 702.10, 704.
+
 ## Next
 
-M1 — the table domain model and the mana lesson.
+M2 — motion from events, replay, paper prompts, persistence and resume.

@@ -17,12 +17,14 @@ const VIEWS = {
   decks: () => import('./features/decks/DecksView.jsx'),
   play: () => import('./features/play/PlayView.jsx'),
   guide: () => import('./features/guide/GuideView.jsx'),
+  practice: () => import('./features/practice/PracticeView.jsx'),
 }
 
 const CardsView = lazy(VIEWS.cards)
 const DecksView = lazy(VIEWS.decks)
 const PlayView = lazy(VIEWS.play)
 const GuideView = lazy(VIEWS.guide)
+const PracticeView = lazy(VIEWS.practice)
 import { loadState, PERSIST_FAILED_EVENT, ROOM_MADE_EVENT } from './lib/storage.js'
 import { useRoute, navigate } from './lib/router.js'
 import { getCardById, getSets } from './lib/scryfall.js'
@@ -49,7 +51,7 @@ export default function App() {
   // Pressing the tab you are already on returns to that tab's own screen —
   // out of a deck, back to the deck list — as tab bars do on a phone.
   const setTab = useCallback((id) => navigate({
-    tab: id, deckId: null, deckTab: null, data: false, q: null, guide: null, trackId: null, lessonId: null,
+    tab: id, deckId: null, deckTab: null, data: false, q: null, guide: null, trackId: null, lessonId: null, scenarioId: null,
   }), [])
 
   const [detailCard, setDetailCard] = useState(null)
@@ -187,6 +189,7 @@ export default function App() {
         />
       )
       case 'play':  return <PlayView />
+      case 'practice': return <PracticeView route={route} onOpenCard={openCard} />
       default:      return (
         <GuideView
           onOpenCard={openCard}
