@@ -155,6 +155,10 @@ function Seat({ deck: initialDeck, onOpenCard }) {
   const [panel, setPanel] = useState(null)
   const [turnsOpen, setTurnsOpen] = useState(false)
   const reduced = prefersReducedMotion(prefs.reduceMotion ?? null)
+  // The same switch the deck views use: somebody who has turned card images
+  // off has done it for a reason, and a table is where the images are
+  // heaviest.
+  const showImages = prefs.showCardImages !== false
   const fieldRef = useRef(null)
   const actionsRef = useRef(null)
 
@@ -430,6 +434,7 @@ function Seat({ deck: initialDeck, onOpenCard }) {
             onSelect={select}
             onNudge={nudge}
             onBackground={() => { if (!justDragged()) { setSelected(null); setAiming(null) } }}
+            images={showImages}
           />
 
           {aiming && (
@@ -512,6 +517,7 @@ function Seat({ deck: initialDeck, onOpenCard }) {
                       inst={inst}
                       size="hand"
                       tilt={!reduced}
+                      images={showImages}
                       selected={selected === inst.id}
                       onPointerDown={(e) => begin(e, { id: inst.id, from: 'hand' })}
                       onClick={() => select(inst.id)}

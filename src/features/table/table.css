@@ -194,8 +194,22 @@
 }
 .actions__name { font-size: 0.95rem; }
 
-.tabletop__handrow { display: flex; gap: var(--space-2); overflow-x: auto; padding-bottom: var(--space-1); }
-.tabletop__handcard { width: 72px; flex: 0 0 auto; position: relative; }
+/*
+ * A card in hand is now all picture, so the gap between them can close and
+ * each can be wider in the same strip: the space that used to go on a name
+ * printed under the card goes on the card. The row scrolls sideways, so this
+ * costs nothing vertically — which is the direction the screen is short in.
+ */
+.tabletop__handrow {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  /* The costs sit above the cards, and a sideways scroller clips what
+     overflows it in both directions — so the row keeps a little headroom for
+     them rather than shearing them in half. */
+  padding: 0.7rem 0 var(--space-1);
+}
+.tabletop__handcard { width: 80px; flex: 0 0 auto; position: relative; }
 .tabletop__revealed { position: absolute; top: 2px; right: 2px; }
 
 .table-picker { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
@@ -235,7 +249,7 @@
   .tabletop__rail { display: flex; }
   .tabletop__more, .tablecoach__more { display: none; }
   .tablecoach__note:nth-child(n + 2) { display: flex; }
-  .tabletop__handcard { width: 96px; }
+  .tabletop__handcard { width: 104px; }
 }
 
 /* --- arrows, counters, dice and notes ------------------------------------ */
@@ -698,3 +712,66 @@
   outline-offset: -2px;
   border-radius: var(--radius-sm);
 }
+
+/* --- the card as it was printed ----------------------------------------- */
+/*
+ * Scryfall's face, edge to edge. The picture already carries the name, the
+ * cost, the type line and the printed numbers, so the card spends none of its
+ * height repeating them: what was a frame, a cropped painting, two lines of
+ * name and a row of stats is now one image the size of the whole card.
+ *
+ * A printed card has its own black border, so this adds none — a second
+ * border around the first reads as a sticker rather than a card. The corner
+ * radius is the real one, near enough: a card is 63mm across with a 3mm
+ * radius, so just under a twentieth of its width.
+ */
+.bcard--photo {
+  /* Not a column any more: the picture is the whole card, so it is one block
+     filling the box rather than a flex child that can be shrunk by it. */
+  display: block;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  /* No border of our own: a printed card already has a black one, and a
+     second around it reads as a sticker. Dropping it also gives the picture
+     the two pixels the border was taking in each direction. */
+  border: 0;
+  border-radius: 4.7%;
+  background: #000;
+}
+
+.bcard__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  /* The drag is handled by a pointer handler on the button; the browser's own
+     image drag would fight it and drop a ghost card on the desktop. */
+  -webkit-user-drag: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+/*
+ * Counters sit on the card because they are the one thing the printing cannot
+ * know. Along the bottom edge, over a scrim, so they read against any art.
+ */
+.bcard--photo .bcard__counters {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 2;
+  padding: 1px 3px 2px;
+  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.85) 45%);
+  color: #fff;
+  font-weight: 700;
+  text-align: center;
+  text-shadow: 0 1px 2px #000;
+  border-radius: 0 0 4.7% 4.7%;
+}
+
+.bcard--photo { position: relative; }
+
+/* A selected card is ringed outside its own border rather than inside the
+   art, which a printed border would otherwise swallow. */
+.bcard--photo.bcard--selected { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }

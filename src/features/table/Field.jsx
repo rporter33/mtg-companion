@@ -20,6 +20,7 @@ const NUDGE = 0.02
 
 export default function Field({
   fieldRef, board, lookup, player = 'you', selectedId, drag, aiming, onBegin, onSelect, onNudge, onBackground,
+  images = true,
 }) {
   const cards = stacked(board, player)
   const dragged = drag && drag.from === 'battlefield' && drag.moved ? drag.id : null
@@ -74,6 +75,7 @@ export default function Field({
                 dragging={Boolean(live)}
                 onPointerDown={(e) => onBegin(e, { id: inst.id, from: 'battlefield' })}
                 onClick={() => onSelect(inst.id)}
+                images={images}
               />
             </span>
             {inst.tapped && <span className="field__flag">tapped</span>}

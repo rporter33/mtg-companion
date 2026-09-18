@@ -20,7 +20,14 @@
  * shape where a position in fractions means the same thing horizontally and
  * vertically. The screen gives the leftover width to the piles instead.
  */
-export const CARD_W = 0.12
+/*
+ * 0.15 rather than 0.12: with four rows on the playmat each row is a quarter
+ * of the field, and at 0.12 a card filled two thirds of the row it sat in,
+ * which left the board looking mostly empty at the size a phone shows it.
+ * At 0.15 the card is a little over four fifths of its row — close enough to
+ * fill it, with room to see the row is a row.
+ */
+export const CARD_W = 0.15
 export const CARD_H = CARD_W * 1.4
 
 export const clamp01 = (n) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0)

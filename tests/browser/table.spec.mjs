@@ -28,9 +28,19 @@ const c = (id, name, type_line, extra = {}) => ({
   set_name: 'Test', collector_number: '1', legalities: { commander: 'legal' }, prices: { usd: '1.00' },
   ...extra,
 })
+/*
+ * A picture, inline, so a card can be drawn as its printed face without the
+ * suite reaching for the network. One green pixel: what matters is that the
+ * card renders as an image rather than as the drawn fallback.
+ */
+const PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAI+PjwAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw=='
+const FAKE_ART = { small: PIXEL, normal: PIXEL, large: PIXEL, art_crop: PIXEL, border_crop: PIXEL }
+
 const CARDS = [
   c('cmdr', 'Test Commander', 'Legendary Creature — Elf'),
-  c('forest', 'Forest', 'Basic Land — Forest', { mana_cost: '', cmc: 0, produced_mana: ['G'], finishes: ['nonfoil', 'foil'] }),
+  c('forest', 'Forest', 'Basic Land — Forest', {
+    mana_cost: '', cmc: 0, produced_mana: ['G'], finishes: ['nonfoil', 'foil'], image_uris: FAKE_ART,
+  }),
   c('elf', 'Llanowar Elves', 'Creature — Elf Druid', { power: '1', toughness: '1' }),
   c('bolt', 'Lightning Bolt', 'Instant', { mana_cost: '{R}', oracle_text: 'Deal 3 damage to any target.' }),
   c('walker', 'Test Planeswalker', 'Legendary Planeswalker — Test', { loyalty: '4' }),
@@ -490,7 +500,7 @@ check('and named in words, not only drawn',
 
 /** Plays whatever is named from hand, if it is there; returns whether it was. */
 const playNamed = async (name) => {
-  const held = page.locator('.tabletop__handcard .bcard', { hasText: name }).first()
+  const held = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(new RegExp(name)) }).locator('.bcard').first()
   if (!await held.count()) return false
   await held.click()
   await page.waitForTimeout(200)
@@ -498,7 +508,11 @@ const playNamed = async (name) => {
   await page.waitForTimeout(350)
   return true
 }
-const rowOf = async (name) => page.locator('.field__slot', { hasText: name }).first().evaluate((n) => n.style.top)
+const rowOf = async (name) => page
+  .locator('.field__slot')
+  .filter({ has: page.getByLabel(new RegExp(name)) })
+  .first()
+  .evaluate((n) => n.style.top)
 
 // Draw enough that one of each is in hand.
 for (let i = 0; i < 12; i++) await page.getByRole('button', { name: 'Draw', exact: true }).click()
@@ -516,7 +530,7 @@ if (await playNamed('Planeswalker')) {
 
 console.log('\nAn instant does not stay on the battlefield')
 {
-  const bolt = page.locator('.tabletop__handcard .bcard', { hasText: 'Lightning Bolt' }).first()
+  const bolt = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(/Lightning Bolt/) }).locator('.bcard').first()
   check('there is one in hand to try it with', (await bolt.count()) > 0)
   const onField = await page.locator('.field .bcard').count()
   await bolt.click()
@@ -625,6 +639,34 @@ await openRail()
   check('and it closes again', (await lib.locator('.zonebrowse').count()) === 0)
 }
 
+console.log('\nCards look like cards')
+{
+  // The Forest fixture is the one with a picture, so it is the one that
+  // should be drawn as its printed face rather than as the fallback tile.
+  const photo = page.locator('.field .bcard--photo').first()
+  const drawn = page.locator('.field .bcard:not(.bcard--photo)').first()
+  check('a card with a picture is drawn as the card', (await photo.count()) > 0)
+  check('with the whole face, not a cropped painting', (await photo.locator('.bcard__img').count()) === 1)
+  check('and no second copy of the name underneath',
+    (await photo.locator('.bcard__name').count()) === 0)
+  check('so nothing inside it is spent on text',
+    (await photo.innerText()).trim() === '', JSON.stringify((await photo.innerText()).trim()))
+  check('but it still says what it is out loud',
+    /Forest/.test(await photo.getAttribute('aria-label')), await photo.getAttribute('aria-label'))
+  check('and fills its whole box', await photo.evaluate((n) => {
+    const card = n.getBoundingClientRect()
+    const img = n.querySelector('.bcard__img').getBoundingClientRect()
+    return Math.abs(img.width - card.width) < 2 && Math.abs(img.height - card.height) < 2
+  }))
+
+  // A card with no picture must still read as a card, because that is what a
+  // token, a blank card and images-switched-off all are.
+  if (await drawn.count()) {
+    check('a card without one still reads as a card',
+      (await drawn.innerText()).trim().length > 0, JSON.stringify((await drawn.innerText()).trim()))
+  }
+}
+
 console.log('\nThe game log')
 await openRail()
 {
@@ -724,7 +766,7 @@ await page.getByRole('button', { name: /^Playmat/ }).click()
 await page.waitForTimeout(400)
 check('the rows come off', (await page.locator('.playmat__lane').count()) === 0)
 {
-  const bolt = page.locator('.tabletop__handcard .bcard', { hasText: 'Lightning Bolt' }).first()
+  const bolt = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(/Lightning Bolt/) }).locator('.bcard').first()
   if (await bolt.count()) {
     await bolt.click()
     await page.waitForTimeout(200)

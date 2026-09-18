@@ -1,22 +1,34 @@
 import { useRef, useState } from 'react'
 import { artUrl, treatmentOf, treatmentName } from '../../lib/board/art.js'
+import { imageUrl } from '../../components/CardImage.jsx'
 import { typeLineOf } from '../../lib/formats.js'
 
 /**
  * A card as it sits on the table.
  *
- * Deliberately not the app's CardFace, which is a readable rendition of a
- * card's text and is the right thing in a deck list. On a table you are
- * looking at twenty of them at once and you need to recognise them, not read
- * them: so this is the painting, the name, and whatever number matters. The
- * text is one tap away in the card sheet.
+ * It is the card. Scryfall serves the printed face and this shows it whole,
+ * edge to edge, the way it lies on a real table — which is also the least
+ * wasteful thing it could be, because the picture already carries the name,
+ * the cost, the type line and the printed numbers. Everything this used to
+ * spend height on saying underneath was a second, worse copy of what the card
+ * already says.
+ *
+ * What is drawn on top is only what the printing cannot know: counters, and
+ * the sheen on a foil. Printed power and toughness are left alone — they are
+ * on the card, in the corner, where a player already looks.
+ *
+ * The drawn version is still here and still matters. It is what a token is, a
+ * blank card with a name written on it, a face-down card, a card whose data
+ * has not arrived, and what anybody who turns card images off gets. It is a
+ * fallback that reads as a card rather than a hole.
  *
  * It is a real button with a spoken label, because rotating a card ninety
  * degrees says "tapped" to someone who can see it and nothing at all to
  * anyone else.
  */
 export default function BoardCard({
-  card, inst, name, size = 'field', selected = false, onPointerDown, onClick, dragging = false, tilt = false,
+  card, inst, name, size = 'field', selected = false, onPointerDown, onClick,
+  dragging = false, tilt = false, images = true,
 }) {
   const art = artUrl(card)
   const type = inst?.custom?.typeLine ?? typeLineOf(card ?? {})
@@ -25,17 +37,22 @@ export default function BoardCard({
   const finish = card ? finishOf(card, inst) : 'normal'
   const lean = useLean(tilt && !dragging)
   const counters = Object.entries(inst?.counters ?? {}).filter(([, n]) => n)
+  const photo = images && !inst?.faceDown && !inst?.custom ? faceUrls(card) : null
+
   // "tapped" is said in the spoken label and printed beside the card by
   // whatever is laying it out, never inside the card: the card is rotated,
   // and a rotated word is not a word anyone reads.
   const classes = [
     'bcard', `bcard--${size}`,
+    photo ? 'bcard--photo' : '',
     inst?.tapped ? 'bcard--tapped' : '',
     inst?.faceDown ? 'bcard--down' : '',
     selected ? 'bcard--selected' : '',
     dragging ? 'bcard--dragging' : '',
     finish !== 'normal' && !inst?.faceDown ? `bcard--${finish}` : '',
-    treatment && !inst?.faceDown ? `bcard--${treatment.replace(/\s+/g, '')}` : '',
+    // The treatments shape the drawn card. On the real one the frame is the
+    // treatment, so saying it again would only fight the picture.
+    !photo && treatment && !inst?.faceDown ? `bcard--${treatment.replace(/\s+/g, '')}` : '',
   ].filter(Boolean).join(' ')
 
   return (
@@ -50,17 +67,50 @@ export default function BoardCard({
       {...lean.handlers}
       style={lean.style}
     >
-      <span className="bcard__art" style={art && !inst?.faceDown ? { backgroundImage: `url("${art}")` } : undefined} aria-hidden="true">
-        {(!art || inst?.faceDown) && <span className="bcard__glyph">{inst?.faceDown ? '★' : glyphFor(type)}</span>}
-      </span>
-      <span className="bcard__name">{inst?.faceDown ? 'Face down' : (name ?? card?.name ?? 'Card')}</span>
-      {stats && !inst?.faceDown && <span className="bcard__stats">{stats}</span>}
+      {photo ? (
+        <img
+          className="bcard__img"
+          src={photo.src}
+          srcSet={photo.srcSet}
+          sizes={size === 'field' ? '20vw' : '96px'}
+          alt=""
+          draggable="false"
+          loading="lazy"
+          decoding="async"
+        />
+      ) : (
+        <>
+          <span className="bcard__art" style={art && !inst?.faceDown ? { backgroundImage: `url("${art}")` } : undefined} aria-hidden="true">
+            {(!art || inst?.faceDown) && <span className="bcard__glyph">{inst?.faceDown ? '★' : glyphFor(type)}</span>}
+          </span>
+          <span className="bcard__name">{inst?.faceDown ? 'Face down' : (name ?? card?.name ?? 'Card')}</span>
+          {stats && !inst?.faceDown && <span className="bcard__stats">{stats}</span>}
+        </>
+      )}
       {counters.length > 0 && (
         <span className="bcard__counters">{counters.map(([label, n]) => `${n > 0 ? '+' : ''}${n} ${label}`).join(' · ')}</span>
       )}
       {finish !== 'normal' && !inst?.faceDown && <span className="bcard__sheen" aria-hidden="true" />}
     </button>
   )
+}
+
+/**
+ * The printed face, at two sizes.
+ *
+ * `small` is 146px wide and a few kilobytes; `normal` is 488px and a hundred.
+ * A card on a phone is under a hundred points across, so the small one is the
+ * right default and the browser only reaches for the large one where the
+ * screen is dense enough to show the difference. A battlefield of thirty
+ * cards then costs a couple of hundred kilobytes rather than three megabytes,
+ * which is the difference between a table that opens on venue wifi and one
+ * that does not.
+ */
+function faceUrls(card) {
+  const src = imageUrl(card, 'small')
+  if (!src) return null
+  const big = imageUrl(card, 'normal')
+  return { src, srcSet: big ? `${src} 146w, ${big} 488w` : undefined }
 }
 
 /**
