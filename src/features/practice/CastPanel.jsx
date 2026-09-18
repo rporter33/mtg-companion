@@ -7,10 +7,10 @@ import { colourName } from '../../lib/table/reducer.js'
  * to each, the pool to pay from, and one button that commits. Nothing here
  * is paid until Cast is pressed, and a refused assignment says why.
  */
-export default function CastPanel({ state, highlight, onAssign, onUnassign, onAutoPay, onCommit, onCancel }) {
+export default function CastPanel({ state, player = 'you', highlight, onAssign, onUnassign, onAutoPay, onCommit, onCancel }) {
   const casting = state.casting
   const card = cardOf(state.cards[casting.instanceId])
-  const pool = state.pool.you
+  const pool = state.pool[player]
   const reservedOf = (k) => casting.assigned.filter((a) => a.from === k).length
   const paid = casting.cost.every((part, i) => casting.assigned.filter((a) => a.part === i).length >= (part.kind === 'generic' ? part.generic : 1))
   const needsTarget = casting.needsTarget && !casting.targets.length

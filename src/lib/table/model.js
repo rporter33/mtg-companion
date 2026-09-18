@@ -109,6 +109,9 @@ export function createState(scenario) {
     over: null,
     seq: 0,
     events: [],
+    mulligans: { you: 0, foe: 0 },
+    // A game starts with both players deciding their opening hand, first player first (103.5).
+    awaiting: setup.mulligan ? { kind: 'mulligan', player: setup.firstPlayer ?? 'you' } : null,
   }
 }
 

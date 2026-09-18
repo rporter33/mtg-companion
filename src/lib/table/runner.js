@@ -31,9 +31,12 @@ export function settle(state, scenario, limit = 200) {
     for (const action of list) {
       const result = applyAction(state, action)
       if (!result.ok) {
+        if (state.awaiting && state.awaiting.player !== 'foe') return { state, events, actions } // the table waits on the learner, not the opponent
         // A policy that asks for something illegal passes instead; the game must not stall on the opponent.
         const fallback = state.awaiting?.player === 'foe'
-          ? { type: state.awaiting.kind === 'attackers' ? 'declareAttackers' : state.awaiting.kind === 'blockers' ? 'declareBlockers' : 'discard', player: 'foe', attackers: [], blocks: {}, instanceIds: state.zones.hand.foe.slice(0, state.awaiting.count ?? 0) }
+          ? state.awaiting.kind === 'mulligan'
+            ? { type: 'keepHand', player: 'foe', bottom: state.zones.hand.foe.slice(0, Math.min(state.mulligans.foe, state.zones.hand.foe.length)) }
+            : { type: state.awaiting.kind === 'attackers' ? 'declareAttackers' : state.awaiting.kind === 'blockers' ? 'declareBlockers' : 'discard', player: 'foe', attackers: [], blocks: {}, instanceIds: state.zones.hand.foe.slice(0, state.awaiting.count ?? 0) }
           : state.casting?.player === 'foe' ? { type: 'cancelCast', player: 'foe' } : { type: 'pass', player: 'foe' }
         const retry = applyAction(state, fallback)
         if (!retry.ok) return { state, events, actions, stalled: result.reason }

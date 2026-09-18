@@ -202,7 +202,35 @@ resume from it. Milestones are the ones agreed on 18 September 2026 from the
 
 No session has been run yet. Nothing is recorded.
 
+## M5 — free play (done)
+
+- `src/data/practice-decks.js`: three thirty-card decks from the pool
+  (green, red, both), twelve lands each, called practice decks and not
+  legal decks on every screen that shows them.
+- `src/lib/table/game.js`: a game is a scenario built from two decks, a
+  seed and a mode. Shuffles come from the seed through the goldfish
+  engine's generator, so the action log replays. Both players start on a
+  London mulligan (103.5): `mulligan` shuffles the hand back and draws
+  seven, `keepHand` owes one card to the bottom per mulligan, first player
+  first, then turn one begins and the first player skips the draw.
+- Policies: `simplePolicy(seat)` for either seat (used for self-play in
+  tests), `human` for hot-seat (the table waits). A declaration hands
+  priority to the declaring player so no policy speaks out of turn.
+- Screens at `#/practice/play` (setup: mode, two decks, who goes first)
+  and `#/practice/game`: the table generalised to whichever player is
+  acting, the opening-hand panel, "To my main phase" and "End the turn",
+  concede, a hand-off panel in hot-seat that hides the next player's hand
+  until they reveal it, and a reload that resumes from the saved log.
+- Tests: `tests/table-game.test.js` (deck shape, seeded shuffles,
+  mulligan and keep, replay, five whole games between two simple policies
+  with the invariants checked after every action, the two-colour deck,
+  hot-seat waiting); browser spec walks a solo game and a hot-seat
+  hand-off; the setup and opening hand are in the accessibility sweep.
+- Rules relied on: 103.4–103.5, 103.8a, 500.1, 514.1 (discard to seven).
+
 ## Next
 
-M5 — free play on desktop: whole games against the practice opponent,
-hot-seat, practice decks from the pool.
+Portfolio write-up with screenshots. Then, when the prototype's source
+arrives, the fluid treatment on the colour explorer; and, on request,
+integration into the Learn tab (link Practice from Learn, retire or keep
+the scripted game, map the legacy tutorial record).

@@ -170,6 +170,16 @@ await scanState('colour explorer', async () => {
   await page.waitForTimeout(200)
   return (await page.locator('.explorer').count()) === 1
 })
+await scanState('free play setup', async () => {
+  await page.goto(`${TARGET}#/practice/play`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(400)
+  return (await page.getByRole('button', { name: 'Shuffle up and start' }).count()) === 1
+})
+await scanState('free play, opening hand', async () => {
+  await page.getByRole('button', { name: 'Shuffle up and start' }).click()
+  await page.waitForTimeout(600)
+  return (await page.getByRole('button', { name: 'Mulligan' }).count()) === 1
+})
 await scanState('practice home', async () => {
   await page.goto(`${TARGET}#/practice`, { waitUntil: 'networkidle' })
   await page.waitForTimeout(400)

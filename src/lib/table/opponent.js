@@ -15,7 +15,9 @@ export const PASSIVE = {
   id: 'passive',
   description: 'Passes on everything. Never attacks, never blocks.',
   decide(state) {
+    if (state.awaiting && state.awaiting.player !== 'foe') return null
     if (state.awaiting?.player === 'foe') {
+      if (state.awaiting.kind === 'mulligan') return { type: 'keepHand', player: 'foe', bottom: [] }
       if (state.awaiting.kind === 'attackers') return { type: 'declareAttackers', player: 'foe', attackers: [] }
       if (state.awaiting.kind === 'blockers') return { type: 'declareBlockers', player: 'foe', blocks: {} }
       if (state.awaiting.kind === 'discard') return { type: 'discard', player: 'foe', instanceIds: state.zones.hand.foe.slice(0, state.awaiting.count) }
@@ -33,13 +35,23 @@ export const PASSIVE = {
  * lethal. Burn goes at the biggest creature it can kill, else at the face
  * when that is lethal. Written so a learner can read it and predict it.
  */
-export const SIMPLE = {
+export function simplePolicy(me = 'foe') {
+  const them = me === 'foe' ? 'you' : 'foe'
+  return {
   id: 'simple',
   description: 'Plays a land, casts the biggest creature it can afford, attacks when the attacker would survive a block, blocks when the block kills or the hit would be lethal.',
   decide(state) {
-    const me = 'foe'
-    const them = 'you'
+    if (state.awaiting && state.awaiting.player !== me) return null
     if (state.awaiting?.player === me) {
+      if (state.awaiting.kind === 'mulligan') {
+        // Keeps a hand with two to five lands; mulligans once otherwise, then keeps whatever comes, bottoming the costliest cards.
+        const myHand = hand(state, me)
+        const lands = myHand.filter(isLand).length
+        if ((lands < 2 || lands > 5) && state.mulligans[me] < 1) return { type: 'mulligan', player: me }
+        const owed = Math.min(state.mulligans[me], myHand.length)
+        const bottom = [...myHand].sort((a, b) => cardOf(b).cmc - cardOf(a).cmc).slice(0, owed).map((c) => c.instanceId)
+        return { type: 'keepHand', player: me, bottom }
+      }
       if (state.awaiting.kind === 'attackers') {
         const mine = battlefield(state, me).filter((c) => isCreature(c) && !c.tapped && (!c.sick || hasKeyword(c, 'haste')))
         const theirs = battlefield(state, them).filter((c) => isCreature(c) && !c.tapped)
@@ -87,7 +99,10 @@ export const SIMPLE = {
     }
     return { type: 'pass', player: me }
   },
+  }
 }
+
+export const SIMPLE = simplePolicy('foe')
 
 /**
  * Blocks whenever it can: each attacker gets one untapped creature, in
@@ -98,6 +113,7 @@ export const BLOCKER = {
   id: 'blocker',
   description: 'Blocks every attacker it can with one untapped creature each. Never attacks.',
   decide(state) {
+    if (state.awaiting && state.awaiting.player !== 'foe') return null
     if (state.awaiting?.player === 'foe' && state.awaiting.kind === 'blockers') {
       const free = battlefield(state, 'foe').filter((c) => isCreature(c) && !c.tapped)
       const blocks = {}
@@ -131,7 +147,14 @@ export function scripted(id, description, rules) {
   }
 }
 
-export const POLICIES = { passive: PASSIVE, simple: SIMPLE, blocker: BLOCKER }
+/** A person at the same screen: the table waits, and the policy never decides. */
+export const HUMAN = {
+  id: 'human',
+  description: 'Another person at this screen. The table waits for them.',
+  decide() { return null },
+}
+
+export const POLICIES = { passive: PASSIVE, simple: SIMPLE, blocker: BLOCKER, human: HUMAN }
 
 /** A scenario's opponent: a policy id, or a policy object of its own. */
 export function policyFor(opponent) {

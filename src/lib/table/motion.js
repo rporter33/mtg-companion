@@ -48,6 +48,8 @@ export function narrate(event, state) {
     }
     case 'discarded': return `${who(event.player, true)} discarded ${name(state, event.instanceId)}.`
     case 'gameOver': return event.winner ? `${who(event.winner, true)} won.` : 'The game is a draw.'
+    case 'mulliganed': return `${who(event.player, true)} took a mulligan (${event.count}).`
+    case 'kept': return `${who(event.player, true)} kept ${event.size}${event.bottomed ? `, putting ${event.bottomed} on the bottom` : ''}.`
     case 'explained': return event.correct ? 'You answered the question correctly.' : 'You answered the question; not that one.'
     case 'predicted': return event.correct ? 'Your prediction was right.' : 'Your prediction was wrong.'
     default: return null

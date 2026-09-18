@@ -547,6 +547,28 @@ Honest edges, stated rather than discovered.
 - **Printings show the market chosen on a deck**, read once when the card sheet
   opens rather than live. Reopen the sheet after changing it.
 
+## The practice table
+
+At `#/practice`, reached by address while it is being built beside the Learn
+tab, is a table that plays by the rules: a small deterministic model over a
+listed pool of nineteen green and red cards, not a rules engine. One pure
+function takes a state and an action and returns the next state and its
+events, or a refusal with a reason the coach reads out. What the table does
+not model is written in `src/lib/table/mechanics.js` and refused by name.
+
+Lessons are exercises with goals judged from consequences: lands, mana and a
+first creature; attacking, blocking and damage; responding and the stack. Each
+asks its prediction before the moment it is about, ends with real cards as a
+self-report, and keeps viewed, practiced and demonstrated apart. The saved
+run is the action log, which replays to the same state, so a reload resumes
+and a replay shows the table as it was. Motion is derived from the model's
+events and can be reduced without changing what the screen says.
+
+Free play is a whole game from the same model: thirty-card practice decks
+from the pool, a London mulligan, solo against an opponent whose rules are on
+the screen, or two people at one screen with the device passed between them.
+The decks are practice decks, not legal decks for any format.
+
 ## Data
 
 Card data, images, rulings and prices come from [Scryfall](https://scryfall.com),

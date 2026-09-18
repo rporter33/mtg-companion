@@ -9,17 +9,17 @@ import { colourName } from '../../lib/table/reducer.js'
  * button; tapped, sick, attacking and blocking are classes and words, never
  * only a rotation.
  */
-export default function Table({ state, cues = {}, highlight, selected, chosen = [], casting, onSelectHand, onPermanent, onPlayer, onInspect }) {
+export default function Table({ state, cues = {}, highlight, selected, chosen = [], casting, onSelectHand, onPermanent, onPlayer, onInspect, me = 'you', labels = { you: 'You', foe: 'Opponent' }, hidden = false }) {
   const targeting = casting?.needsTarget && !casting.targets.length
   return (
     <div className="table">
-      <Strip state={state} player="foe" label="Opponent" targeting={targeting === 'any'} onPlayer={onPlayer} cue={cues.foe} />
+      <Strip state={state} player="foe" label={labels.foe} targeting={targeting === 'any'} onPlayer={onPlayer} cue={cues.foe} />
       <Zone state={state} player="foe" targeting={targeting} onPermanent={onPermanent} onInspect={onInspect} highlight={null} cues={cues} />
       <Stack state={state} cues={cues} />
       <Zone state={state} player="you" targeting={targeting} onPermanent={onPermanent} onInspect={onInspect} highlight={highlight?.kind === 'battlefield' ? highlight.cardId : null} cues={cues} chosen={chosen} />
-      <Strip state={state} player="you" label="You" targeting={targeting === 'any'} onPlayer={onPlayer} cue={cues.you} />
-      <Pool pool={state.pool.you} />
-      <Hand state={state} selected={selected} highlight={highlight?.kind === 'hand' ? highlight.cardId : null} onSelect={onSelectHand} onInspect={onInspect} disabled={!!casting} />
+      <Strip state={state} player="you" label={labels.you} targeting={targeting === 'any'} onPlayer={onPlayer} cue={cues.you} />
+      <Pool pool={state.pool[me]} owner={me === 'you' ? 'Your' : `${labels.foe}'s`} />
+      <Hand state={state} player={me} label={me === 'you' ? 'Your hand' : `${labels.foe}'s hand`} hidden={hidden} selected={selected} highlight={highlight?.kind === 'hand' ? highlight.cardId : null} onSelect={onSelectHand} onInspect={onInspect} disabled={!!casting} />
     </div>
   )
 }
@@ -135,10 +135,10 @@ function Permanent({ inst, small, targeting, highlight, onClick, onInspect, cue,
   )
 }
 
-function Pool({ pool }) {
+function Pool({ pool, owner = 'Your' }) {
   const parts = POOL_KEYS.filter((k) => pool[k] > 0)
   return (
-    <div className="row row--wrap practice__pool" aria-live="polite" aria-label="Your mana pool">
+    <div className="row row--wrap practice__pool" aria-live="polite" aria-label={`${owner} mana pool`}>
       <span className="faint tiny">Mana pool</span>
       {parts.length === 0 && <span className="chip tiny">empty</span>}
       {parts.map((k) => <span key={k} className="chip tiny" data-mana={k}>{pool[k]} {colourName(k)}</span>)}
@@ -146,12 +146,12 @@ function Pool({ pool }) {
   )
 }
 
-function Hand({ state, selected, highlight, onSelect, onInspect, disabled }) {
-  const cards = hand(state, 'you')
+function Hand({ state, player = 'you', label = 'Your hand', hidden = false, selected, highlight, onSelect, onInspect, disabled }) {
+  const cards = hand(state, player)
   return (
     <div className="hand">
-      <div className="hand__label faint tiny">Your hand{cards.length === 0 ? ': empty' : ''}</div>
-      {cards.length > 0 && (
+      <div className="hand__label faint tiny">{label}{cards.length === 0 ? ': empty' : hidden ? `: ${cards.length} cards, hidden` : ''}</div>
+      {cards.length > 0 && !hidden && (
         <div className="hand__cards">
           {cards.map((inst) => {
             const card = cardOf(inst)

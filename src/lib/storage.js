@@ -439,6 +439,8 @@ export function savePracticeRun(scenarioId, run) {
           log: (run.log ?? []).slice(-PRACTICE_LOG_LIMIT),
           hints: run.hints ?? [],
           explained: run.explained ?? null,
+          predictions: run.predictions ?? {},
+          config: run.config ?? null,
           savedAt: run.savedAt ?? new Date().toISOString(),
         },
       },

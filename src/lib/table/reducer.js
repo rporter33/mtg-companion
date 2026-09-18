@@ -21,6 +21,7 @@ import {
   cardOf, isCreature, isLand, hasKeyword, manaAbilities, costOf, payFromPool, stats, timingAllows, legalTargets, battlefield,
 } from './model.js'
 import { unsupportedReason } from './mechanics.js'
+import { rng, shuffle } from '../goldfish.js'
 
 const refuse = (code, message, extra = {}) => ({ ok: false, reason: { code, message, ...extra } })
 const clone = (state) => (typeof structuredClone === 'function' ? structuredClone(state) : JSON.parse(JSON.stringify(state)))
@@ -131,11 +132,15 @@ function enterStep(state, step) {
     const able = battlefield(state, active).filter((c) => isCreature(c) && !c.tapped && (!c.sick || hasKeyword(c, 'haste')))
     if (!able.length) { state.attackers = []; return enterStep(state, 'endCombat') } // 508.8
     state.awaiting = { kind: 'attackers', player: active }
+    state.priority = active // nobody has priority until the declaration; the field names who must act
+    state.passes = 0
     return
   }
   if (step === 'declareBlockers') {
     if (!state.attackers.length) return enterStep(state, 'endCombat')
     state.awaiting = { kind: 'blockers', player: other(active) }
+    state.priority = other(active)
+    state.passes = 0
     return
   }
   if (step === 'combatDamage') {
@@ -149,7 +154,7 @@ function enterStep(state, step) {
   }
   if (step === 'cleanup') {
     const handSize = state.zones.hand[active].length
-    if (handSize > 7) { state.awaiting = { kind: 'discard', player: active, count: handSize - 7 }; return }
+    if (handSize > 7) { state.awaiting = { kind: 'discard', player: active, count: handSize - 7 }; state.priority = active; return }
     return finishCleanup(state)
   }
   givePriority(state, active)
@@ -230,6 +235,7 @@ const HANDLERS = {
     if (!abilities.length) return refuse('noManaAbility', `${cardOf(inst).name} does not make mana.`)
     if (inst.tapped) return refuse('alreadyTapped', `${cardOf(inst).name} is already tapped. A tapped source makes no more mana until it untaps.`)
     if (isCreature(inst) && inst.sick && !hasKeyword(inst, 'haste')) return refuse('summoningSick', `${cardOf(inst).name} is summoning sick: it cannot use an ability with {T} in its cost until your next turn begins.`)
+    if (state.awaiting) return refuse('awaiting', 'A declaration is needed first.')
     const canNow = state.priority === player || state.casting?.player === player
     if (!canNow) return refuse('noPriority', 'You can make mana when you have priority or while paying for a spell.')
     const produces = abilities[0].produces
@@ -417,6 +423,51 @@ const HANDLERS = {
     for (const id of instanceIds) { moveTo(state, id, 'graveyard'); emit(state, { type: 'discarded', player, instanceId: id }) }
     state.awaiting = null
     finishCleanup(state)
+    return null
+  },
+
+  /** London mulligan (103.5): shuffle the hand back, draw seven again; the cards owed to the bottom are chosen on keeping. */
+  mulligan(state, { player }) {
+    const awaiting = state.awaiting
+    if (!awaiting || awaiting.kind !== 'mulligan') return refuse('notMulligan', 'The opening hands are already decided.')
+    if (awaiting.player !== player) return refuse('notYours', 'It is not your hand to decide.')
+    if (state.mulligans[player] >= 7) return refuse('noHandLeft', 'A mulligan to zero keeps no cards; there is nothing left to draw.')
+    const back = [...state.zones.hand[player]]
+    for (const id of back) { state.cards[id].zone = 'library' }
+    state.zones.hand[player] = []
+    state.mulligans[player] += 1
+    const salt = (player === 'you' ? 1 : 2) * 31 + state.mulligans[player]
+    state.zones.library[player] = shuffle([...state.zones.library[player], ...back], rng(((state.seed || 1) * 7919 + salt * 104729) >>> 0))
+    for (let i = 0; i < 7; i++) {
+      const id = state.zones.library[player].shift()
+      if (!id) break
+      state.cards[id].zone = 'hand'
+      state.zones.hand[player].push(id)
+    }
+    emit(state, { type: 'mulliganed', player, count: state.mulligans[player] })
+    return null
+  },
+
+  /** Keeps the hand, putting as many cards on the bottom as mulligans taken (103.5), then the next player decides, then turn one begins. */
+  keepHand(state, { player, bottom = [] }) {
+    const awaiting = state.awaiting
+    if (!awaiting || awaiting.kind !== 'mulligan') return refuse('notMulligan', 'The opening hands are already decided.')
+    if (awaiting.player !== player) return refuse('notYours', 'It is not your hand to decide.')
+    const owed = Math.min(state.mulligans[player], state.zones.hand[player].length)
+    if (bottom.length !== owed) return refuse('wrongCount', owed ? `Choose exactly ${owed} card${owed === 1 ? '' : 's'} to put on the bottom: one for each mulligan taken.` : 'This hand goes on the bottom of nothing: keep it as it is.')
+    for (const id of bottom) if (state.cards[id]?.zone !== 'hand' || state.cards[id].owner !== player) return refuse('notInHand', 'That card is not in your hand.')
+    for (const id of bottom) {
+      state.zones.hand[player].splice(state.zones.hand[player].indexOf(id), 1)
+      state.cards[id].zone = 'library'
+      state.zones.library[player].push(id)
+    }
+    emit(state, { type: 'kept', player, size: state.zones.hand[player].length, bottomed: bottom.length })
+    const next = other(player)
+    if (player === state.firstPlayer) { state.awaiting = { kind: 'mulligan', player: next }; state.priority = next; return null }
+    state.awaiting = null
+    state.turnsBy[state.active] = 1
+    emit(state, { type: 'turnBegan', turn: state.turn, active: state.active, ordinal: 1 })
+    enterStep(state, 'untap')
     return null
   },
 
