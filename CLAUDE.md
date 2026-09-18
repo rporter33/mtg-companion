@@ -25,6 +25,13 @@ Rules that hold in code:
 - Set-specific content is curated, dated and marked provisional until release
   (`src/data/set-mechanics.js`, `src/data/set-themes.js`). The season engine
   applies a curated theme only while that set is the focus.
+- Everything read back from storage is read forgivingly. A deck, a table or a
+  practice run in somebody's phone was written by an older build and has
+  whatever shape it had then: fill in what is missing, drop what cannot be
+  made sense of, and never let it reach a screen as a thrown error. Adding a
+  field, a zone or a step is a migration, not an edit — `upgrade` in
+  `src/lib/board/model.js` is the pattern, and `tests/board-restore.test.js`
+  the shape of its test.
 - Every change runs `npm test` and the browser suite (`npm run test:browser`
   against a built preview); CI gates the deploy on both.
 - `npm run tokens:check` after any change to `docs/` or `src/styles/tokens.css`.

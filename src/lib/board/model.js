@@ -17,7 +17,7 @@
  */
 import { clampToField, CARD_W, CARD_H } from './geometry.js'
 import { FINISHES } from './art.js'
-import { FIRST_STEP } from '../../data/turn-structure.js'
+import { FIRST_STEP, STEPS } from '../../data/turn-structure.js'
 
 export const ZONES = ['library', 'hand', 'battlefield', 'stack', 'graveyard', 'exile', 'command']
 export const ZONE_LABELS = {
@@ -142,16 +142,67 @@ export function stacked(board, player, zone = 'battlefield') {
 }
 
 /**
+ * A board saved by an older build, brought up to date.
+ *
+ * A table outlives the code that wrote it. Somebody leaves a game running on
+ * a phone, the app deploys twice, and they come back to it — and the board in
+ * their storage has whatever shape it had a week ago. This shipped broken
+ * once: a zone was added, `invariants` walked the new list of zones over an
+ * old board, and the screen died on a missing one. So the rule is the same as
+ * for the rest of storage: what comes back is read forgivingly, filled in,
+ * and never trusted to have the shape this build expects.
+ *
+ * A board from before the playmat existed opens as a bare table, which is
+ * exactly what it was when it was saved. Turning the playmat on re-reads the
+ * rows from the cards, which is the screen's job because only the screen has
+ * the cards.
+ */
+export function upgrade(board) {
+  if (!board || typeof board !== 'object') return null
+  const players = Array.isArray(board.players) && board.players.length ? board.players : ['you']
+  const zones = {}
+  for (const player of players) {
+    const had = board.zones?.[player] ?? {}
+    zones[player] = Object.fromEntries(ZONES.map((zone) => [zone, Array.isArray(had[zone]) ? had[zone] : []]))
+  }
+  const cards = {}
+  for (const [id, inst] of Object.entries(board.cards ?? {})) {
+    cards[id] = { ...makeInstance({ id, cardId: inst.cardId, owner: inst.owner ?? players[0] }), ...inst }
+  }
+  return {
+    ...createBoard({ players, seed: board.seed ?? 1 }),
+    ...board,
+    players,
+    zones,
+    cards,
+    // Before the playmat there was no `guided`, and a table that judged
+    // nothing is what that board was.
+    guided: typeof board.guided === 'boolean' ? board.guided : false,
+    step: STEPS.some((step) => step.id === board.step) ? board.step : FIRST_STEP,
+    nextId: board.nextId ?? 1,
+    nextZ: board.nextZ ?? 1,
+  }
+}
+
+/**
  * Things that must always hold. Checked in tests after every action: a
  * failure is a bug in the reducer, never something the player did, because
  * the player cannot do anything wrong on this table.
+ *
+ * It reports rather than throws, including on a board whose shape it does not
+ * recognise: this runs on whatever comes out of storage, and a diagnostic
+ * that dies on the thing it was meant to diagnose is worse than no
+ * diagnostic.
  */
 export function invariants(board) {
   const problems = []
+  if (!board || !Array.isArray(board.players) || !board.zones) return ['that is not a board']
   const seen = new Map()
   for (const player of board.players) {
     for (const zone of ZONES) {
-      for (const id of board.zones[player][zone]) {
+      const held = board.zones[player]?.[zone]
+      if (!Array.isArray(held)) { problems.push(`${player} has no ${zone}`); continue }
+      for (const id of held) {
         if (seen.has(id)) problems.push(`${id} is in ${seen.get(id)} and ${player}/${zone}`)
         seen.set(id, `${player}/${zone}`)
         const inst = board.cards[id]
@@ -159,40 +210,40 @@ export function invariants(board) {
         else if (inst.zone !== zone) problems.push(`${id} says ${inst.zone} but sits in ${zone}`)
       }
     }
-    if (!Number.isFinite(board.life[player])) problems.push(`${player} has a life total that is not a number`)
+    if (!Number.isFinite(board.life?.[player])) problems.push(`${player} has a life total that is not a number`)
   }
-  for (const id of Object.keys(board.cards)) if (!seen.has(id)) problems.push(`${id} is in no zone`)
-  for (const inst of Object.values(board.cards)) {
+  for (const id of Object.keys(board.cards ?? {})) if (!seen.has(id)) problems.push(`${id} is in no zone`)
+  for (const inst of Object.values(board.cards ?? {})) {
     if (inst.zone === 'battlefield') {
       if (inst.x < 0 || inst.x > 1 || inst.y < 0 || inst.y > 1) problems.push(`${inst.id} is off the field`)
     } else if (inst.tapped || inst.x !== 0.5 || inst.y !== 0.5) {
       problems.push(`${inst.id} carries battlefield state in the ${inst.zone}`)
     }
-    for (const [name, n] of Object.entries(inst.counters)) if (!Number.isFinite(n) || n === 0) problems.push(`${inst.id} has a ${name} counter of ${n}`)
+    for (const [name, n] of Object.entries(inst.counters ?? {})) if (!Number.isFinite(n) || n === 0) problems.push(`${inst.id} has a ${name} counter of ${n}`)
     if (inst.finish && !FINISHES.includes(inst.finish)) problems.push(`${inst.id} has a finish of ${inst.finish}`)
     if (board.guided && inst.zone === 'battlefield' && inst.lane === null) {
       problems.push(`${inst.id} is on the battlefield but belongs in no row`)
     }
     if (inst.attachedTo) {
-      const host = board.cards[inst.attachedTo]
+      const host = board.cards?.[inst.attachedTo]
       if (!host) problems.push(`${inst.id} is attached to nothing`)
       else if (host.zone !== 'battlefield' || inst.zone !== 'battlefield') problems.push(`${inst.id} is attached outside the battlefield`)
       if (inst.attachedTo === inst.id) problems.push(`${inst.id} is attached to itself`)
     }
   }
   // A chain of attachments has to end somewhere, or moving one would never stop.
-  for (const inst of Object.values(board.cards)) {
+  for (const inst of Object.values(board.cards ?? {})) {
     const seen = new Set([inst.id])
     let at = inst.attachedTo
     while (at) {
       if (seen.has(at)) { problems.push(`${inst.id} is in a loop of attachments`); break }
       seen.add(at)
-      at = board.cards[at]?.attachedTo ?? null
+      at = board.cards?.[at]?.attachedTo ?? null
     }
   }
-  for (const arrow of board.arrows) {
-    if (!board.cards[arrow.from] && !board.players.includes(arrow.from)) problems.push(`an arrow starts nowhere`)
-    if (!board.cards[arrow.to] && !board.players.includes(arrow.to)) problems.push(`an arrow ends nowhere`)
+  for (const arrow of board.arrows ?? []) {
+    if (!board.cards?.[arrow.from] && !board.players.includes(arrow.from)) problems.push('an arrow starts nowhere')
+    if (!board.cards?.[arrow.to] && !board.players.includes(arrow.to)) problems.push('an arrow ends nowhere')
   }
   return problems
 }

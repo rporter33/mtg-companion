@@ -12,7 +12,7 @@
  * action is small, serialisable and free of any clock.
  */
 import { apply } from './reducer.js'
-import { createBoard, invariants } from './model.js'
+import { createBoard, invariants, upgrade } from './model.js'
 
 export const UNDO_DEPTH = 40
 
@@ -59,10 +59,23 @@ export function snapshot(run, meta = {}) {
   return { version: 1, board: run.board, savedAt: new Date().toISOString(), ...meta }
 }
 
-/** Rebuilds a run from a snapshot, refusing anything that is not a board this build understands. */
+/**
+ * Rebuilds a run from a snapshot.
+ *
+ * Whatever is in storage, the worst outcome here is null — meaning "deal a
+ * fresh table" — and never a broken screen. A board saved by an older build
+ * is an ordinary thing and gets brought up to date; a board this build cannot
+ * make sense of is dropped. Wrapped, because a save can also be edited by
+ * hand, truncated by a full disk, or written by a version that does not exist
+ * yet, and none of those are worth losing the app over.
+ */
 export function restore(saved) {
-  if (!saved || saved.version !== 1 || !saved.board?.players?.length) return null
-  const board = saved.board
-  if (invariants(board).length) return null
-  return { ...newRun(board), restored: true }
+  try {
+    if (!saved || saved.version !== 1 || !saved.board?.players?.length) return null
+    const board = upgrade(saved.board)
+    if (!board || invariants(board).length) return null
+    return { ...newRun(board), restored: true }
+  } catch {
+    return null
+  }
 }
