@@ -99,6 +99,11 @@ const EMPTY = {
   // replays to the same state), paper practice by self-report, and the
   // evidence record. Bounded: a run keeps at most PRACTICE_LOG_LIMIT actions.
   practice: { runs: {}, paper: {}, evidence: {} },
+  // The free table: one saved board at a time, not one per deck. A board is
+  // a hundred instances and a table is played one at a time, so keeping
+  // every deck's last game would grow without a ceiling for no gain. No
+  // schema bump: a file without this gets the default from here.
+  table: { saved: null },
   prefs: {
     market: 'usd',
     currency: 'usd', showCardImages: true, lastFormat: 'commander',
@@ -169,6 +174,7 @@ function assemble({ root, decks }) {
     ...merged,
     guide: { ...EMPTY.guide, ...(merged.guide ?? {}) },
     practice: { ...EMPTY.practice, ...(merged.practice ?? {}) },
+    table: { ...EMPTY.table, ...(merged.table ?? {}) },
     prefs: { ...EMPTY.prefs, ...(merged.prefs ?? {}) },
   }
 }
@@ -496,6 +502,26 @@ export function recordCompletion(lessonId, scenarioId, { hints = 0 } = {}) {
 /** Clears practice progress only. Decks, collection, games, guide and prefs are untouched. */
 export function resetPractice() {
   return update((state) => ({ ...state, practice: { runs: {}, paper: {}, evidence: {} } }))
+}
+
+// --- the free table ------------------------------------------------------
+
+/** The saved board, or null. One at a time, whichever deck was last played. */
+export function getTable() {
+  return read().table.saved
+}
+
+/**
+ * Keeps a board. A snapshot, not a log: an unenforced table produces an
+ * action every time a card is nudged, and a three-hour game would be tens of
+ * thousands of them.
+ */
+export function saveTable(saved) {
+  return update((state) => ({ ...state, table: { saved } }))
+}
+
+export function clearTable() {
+  return update((state) => ({ ...state, table: { saved: null } }))
 }
 
 // --- collection ----------------------------------------------------------

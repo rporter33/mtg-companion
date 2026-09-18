@@ -86,8 +86,14 @@ const freshId = (board, prefix) => {
 }
 
 const HANDLERS = {
-  /** Deals a deck into a library. The only way cards get onto the table. */
-  seat(board, { player = 'you', cards = [], shuffle: doShuffle = true, seed }) {
+  /**
+   * Deals a deck out. The only way cards get onto the table.
+   *
+   * `command` is dealt to the command zone rather than the library, because a
+   * commander is not one of the ninety-nine and a shuffled-in commander would
+   * be a different deck.
+   */
+  seat(board, { player = 'you', cards = [], command = [], shuffle: doShuffle = true, seed }) {
     if (!board.players.includes(player)) return refuse('noSuchPlayer', 'There is no such seat at this table.')
     const gone = new Set()
     for (const zone of ZONES) for (const id of list(board, player, zone)) { gone.add(id); delete board.cards[id] }
@@ -95,12 +101,14 @@ const HANDLERS = {
     board.arrows = board.arrows.filter((a) => !gone.has(a.from) && !gone.has(a.to))
     board.revealed = board.revealed.filter((id) => !gone.has(id))
     const order = doShuffle ? shuffle(cards, rng(seed ?? board.seed)) : [...cards]
-    order.forEach((cardId, i) => {
-      const id = `${player}:${i}:${cardId}`
-      board.cards[id] = makeInstance({ id, cardId, owner: player, zone: 'library' })
-      board.zones[player].library.push(id)
-    })
-    emit(board, { type: 'seated', player, count: order.length })
+    const deal = (cardId, zone, i) => {
+      const id = `${player}:${zone === 'command' ? 'c' : ''}${i}:${cardId}`
+      board.cards[id] = makeInstance({ id, cardId, owner: player, zone })
+      board.zones[player][zone].push(id)
+    }
+    order.forEach((cardId, i) => deal(cardId, 'library', i))
+    command.forEach((cardId, i) => deal(cardId, 'command', i))
+    emit(board, { type: 'seated', player, count: order.length, command: command.length })
     return null
   },
 

@@ -1,0 +1,195 @@
+/* The table. The battlefield is square on purpose: see geometry.js.
+
+   Everything here is prefixed `tabletop` rather than `board`, which is what
+   it wants to be called: every view's stylesheet ends up in one document, and
+   `.board` already belongs to the life counter. A collision like that renders
+   as a layout that is simply wrong somewhere else in the app. */
+
+.tabletop__top { align-items: baseline; }
+.tabletop__name { font-size: 1.1rem; margin: 0; }
+
+.tabletop__layout { display: flex; flex-direction: column; gap: var(--space-3); }
+/* The table, what you picked up off it, and your hand: one column, in the
+   order you touch them. The counts and the buttons go beside, or below. */
+.tabletop__main { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+
+/* --- the battlefield ----------------------------------------------------- */
+
+.field {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.045), transparent 60%),
+    var(--bg-raised);
+  overflow: hidden;
+  touch-action: none;   /* a drag across the table must not scroll the page */
+  user-select: none;
+}
+
+.field__empty {
+  position: absolute; inset: auto var(--space-4) var(--space-4);
+  margin: 0; text-align: center; color: var(--text-faint); font-size: 0.8rem;
+}
+
+.field__slot {
+  position: absolute;
+  width: var(--card-w);
+  transform: translate(-50%, -50%);
+  display: block;
+}
+.field__turn { display: block; transition: transform 0.12s ease-out; }
+.field__turn--tapped { transform: rotate(84deg); }
+
+/* Upright, over the corner of a card that is lying on its side. */
+.field__flag {
+  position: absolute; top: 1px; right: 1px;
+  padding: 0 3px; border-radius: 3px;
+  font-size: 0.5rem; line-height: 1.5;
+  color: #1b1408; background: var(--warn);
+  pointer-events: none;
+}
+
+/* --- a card on the table ------------------------------------------------- */
+
+.bcard {
+  display: flex; flex-direction: column; gap: 2px;
+  width: 100%; padding: 3px;
+  font: inherit; color: var(--text); text-align: left;
+  background: linear-gradient(180deg, var(--frame-dim, #1b2029), #0d1117);
+  border: 1px solid var(--frame, var(--border-strong));
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  cursor: grab;
+  touch-action: none;
+  container-type: inline-size;
+}
+.bcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.bcard[data-identity='W'] { --frame: #d8c9a3; --frame-dim: #3a3527; }
+.bcard[data-identity='U'] { --frame: #7fb0d8; --frame-dim: #1d2c3a; }
+.bcard[data-identity='B'] { --frame: #9b93a8; --frame-dim: #23202a; }
+.bcard[data-identity='R'] { --frame: #d89383; --frame-dim: #3a2320; }
+.bcard[data-identity='G'] { --frame: #8ebd93; --frame-dim: #1f2d21; }
+.bcard[data-identity='M'] { --frame: #d6bd72; --frame-dim: #322b18; }
+.bcard[data-identity='C'] { --frame: #97a1ac; --frame-dim: #1e232a; }
+
+/* A card is 63 by 88, and on a square field that is exactly what CARD_W and
+   CARD_H describe. The art takes whatever is left once the name and the
+   numbers have their line. */
+.bcard--field, .bcard--hand { aspect-ratio: 63 / 88; }
+
+.bcard__art {
+  display: grid; place-items: center;
+  width: 100%; flex: 1 1 auto; min-height: 0;
+  border-radius: 4px;
+  background-color: #0a0d12;
+  background-size: cover;
+  background-position: center 30%;
+}
+.bcard__glyph { color: var(--frame); opacity: 0.45; font-size: clamp(0.7rem, 26cqw, 1.6rem); }
+
+.bcard__name {
+  font-size: clamp(0.5rem, 11cqw, 0.72rem);
+  line-height: 1.15;
+  font-weight: 600;
+  overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.bcard__stats, .bcard__counters {
+  font-size: clamp(0.45rem, 9cqw, 0.62rem);
+  color: var(--text-muted);
+}
+.bcard__counters { color: var(--accent); }
+
+.bcard--selected { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+.bcard--dragging { opacity: 0.85; cursor: grabbing; }
+.bcard--down .bcard__art { background-image: none; }
+
+/* Tapped is a rotation AND the word "tapped" on the card, because a rotation
+   alone says nothing to anyone who cannot see it. */
+.field__slot--tapped { transform: translate(-50%, -50%) rotate(84deg); }
+
+/* --- piles and the rail -------------------------------------------------- */
+
+.tabletop__rail { gap: var(--space-3); }
+
+.pile {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.pile__title {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin: 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.pile__title .btn { margin-left: auto; text-transform: none; letter-spacing: 0; }
+
+.pile__cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 12rem; overflow: auto; }
+.pile__card {
+  width: 100%; text-align: left; font: inherit; color: inherit;
+  background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+  padding: 4px 6px; font-size: 0.8rem; cursor: pointer;
+}
+.pile__card:hover, .pile__card:focus-visible { border-color: var(--accent); }
+.pile__card--selected { border-color: var(--accent); background: var(--accent-soft); }
+
+.life__row { align-items: center; gap: var(--space-2); }
+.life__total { font-size: 1.6rem; font-variant-numeric: tabular-nums; min-width: 2.5ch; text-align: center; }
+
+.peek { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.peek__card {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  font-size: 0.8rem; padding: 2px 0;
+}
+
+/* --- the action bar and the hand ---------------------------------------- */
+
+/* In flow, not stuck to anything. A bar pinned to the bottom of a phone
+   screen covers the hand it is talking about; this one sits between the
+   table and the hand, and the screen scrolls it into view when a card is
+   picked up from somewhere further down. */
+.actions {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  scroll-margin: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-overlay, var(--bg-raised));
+  backdrop-filter: blur(6px);
+}
+.actions__name { font-size: 0.95rem; }
+
+.tabletop__handrow { display: flex; gap: var(--space-2); overflow-x: auto; padding-bottom: var(--space-1); }
+.tabletop__handcard { width: 72px; flex: 0 0 auto; position: relative; }
+.tabletop__revealed { position: absolute; top: 2px; right: 2px; }
+
+.table-picker { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.table-picker__deck {
+  width: 100%; display: flex; flex-direction: column; gap: 2px;
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
+  padding: var(--space-3);
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.table-picker__deck:hover, .table-picker__deck:focus-visible { border-color: var(--accent); }
+
+@media (pointer: coarse) {
+  .pile__card { min-height: 40px; }
+}
+
+/* On a desktop the leftover width goes to the piles, not to a stretched
+   table: the field stays square so a position still means what it meant on
+   the phone it was arranged on. */
+@media (min-width: 900px) {
+  .tabletop__layout { flex-direction: row; align-items: start; }
+  /* The width belongs to the column, not to the field: the field is inside a
+     column of its own now, so a basis set on it would size its height and
+     the aspect ratio would take the width from that. */
+  .tabletop__main { flex: 0 0 min(62vh, 620px); }
+  .tabletop__rail { flex: 1 1 280px; min-width: 0; }
+  .tabletop__handcard { width: 96px; }
+}

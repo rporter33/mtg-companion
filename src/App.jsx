@@ -18,6 +18,7 @@ const VIEWS = {
   play: () => import('./features/play/PlayView.jsx'),
   guide: () => import('./features/guide/GuideView.jsx'),
   practice: () => import('./features/practice/PracticeView.jsx'),
+  table: () => import('./features/table/TableView.jsx'),
 }
 
 const CardsView = lazy(VIEWS.cards)
@@ -25,6 +26,7 @@ const DecksView = lazy(VIEWS.decks)
 const PlayView = lazy(VIEWS.play)
 const GuideView = lazy(VIEWS.guide)
 const PracticeView = lazy(VIEWS.practice)
+const TableView = lazy(VIEWS.table)
 import { loadState, PERSIST_FAILED_EVENT, ROOM_MADE_EVENT } from './lib/storage.js'
 import { useRoute, navigate } from './lib/router.js'
 import { getCardById, getSets } from './lib/scryfall.js'
@@ -36,6 +38,7 @@ const TABS = [
   { id: 'guide', label: 'Learn', icon: GuideIcon },
   { id: 'cards', label: 'Cards', icon: SearchIcon },
   { id: 'decks', label: 'Decks', icon: DeckIcon },
+  { id: 'table', label: 'Table', icon: TableIcon },
   { id: 'play',  label: 'Play',  icon: LifeIcon },
 ]
 
@@ -51,7 +54,7 @@ export default function App() {
   // Pressing the tab you are already on returns to that tab's own screen —
   // out of a deck, back to the deck list — as tab bars do on a phone.
   const setTab = useCallback((id) => navigate({
-    tab: id, deckId: null, deckTab: null, data: false, q: null, guide: null, trackId: null, lessonId: null, scenarioId: null,
+    tab: id, deckId: null, deckTab: null, data: false, q: null, guide: null, trackId: null, lessonId: null, scenarioId: null, tableDeckId: null,
   }), [])
 
   const [detailCard, setDetailCard] = useState(null)
@@ -190,6 +193,7 @@ export default function App() {
       )
       case 'play':  return <PlayView />
       case 'practice': return <PracticeView route={route} onOpenCard={openCard} />
+      case 'table': return <TableView route={route} onOpenCard={openCard} />
       default:      return (
         <GuideView
           onOpenCard={openCard}
@@ -293,6 +297,9 @@ function DeckIcon() {
 }
 function LifeIcon() {
   return <svg viewBox="0 0 24 24" {...stroke}><path d="M12 20s-7-4.5-7-9.5A3.8 3.8 0 0 1 12 8a3.8 3.8 0 0 1 7 2.5C19 15.5 12 20 12 20Z" /></svg>
+}
+function TableIcon() {
+  return <svg viewBox="0 0 24 24" {...stroke}><rect x="2.5" y="5" width="19" height="14" rx="2" /><rect x="6" y="8.5" width="4.5" height="7" rx="1" /><path d="M13.5 8.5h5M13.5 12h5M13.5 15.5h3" /></svg>
 }
 function GuideIcon() {
   return <svg viewBox="0 0 24 24" {...stroke}><path d="M4 5a2 2 0 0 1 2-2h5v18H6a2 2 0 0 0-2 2Z" /><path d="M20 5a2 2 0 0 0-2-2h-5v18h5a2 2 0 0 1 2 2Z" /></svg>

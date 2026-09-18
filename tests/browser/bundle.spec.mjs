@@ -22,7 +22,7 @@ const check = (label, ok, detail) => {
   else { fail++; console.log(`  FAIL  ${label}`); if (detail) console.log(`        ${detail}`) }
 }
 
-const VIEWS = ['CardsView', 'DecksView', 'PlayView', 'GuideView']
+const VIEWS = ['CardsView', 'DecksView', 'PlayView', 'GuideView', 'TableView']
 // Inside the Decks chunk, the rarer screens are lazy too and prefetched the
 // same way, so they must also be fetched without being visited.
 const DECK_SCREENS = ['FirstDeck', 'YourData', 'DeckPlaytest', 'DeckHistory', 'DeckImportExport']
@@ -89,7 +89,7 @@ console.log('\nNavigating still works')
   await page.goto(TARGET, { waitUntil: 'networkidle' })
   await page.waitForTimeout(600)
 
-  for (const [tab, marker] of [['Cards', 'input[type="search"]'], ['Decks', '.app__main'], ['Play', '.app__main'], ['Learn', '.app__main']]) {
+  for (const [tab, marker] of [['Cards', 'input[type="search"]'], ['Decks', '.app__main'], ['Table', '.app__main'], ['Play', '.app__main'], ['Learn', '.app__main']]) {
     await page.locator('.app__nav button', { hasText: tab }).click()
     await page.waitForTimeout(700)
     check(`${tab} renders after loading on demand`, (await page.locator(marker).count()) > 0)

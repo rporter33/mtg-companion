@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { createBoard, invariants, battlefield, handOf, librarySize, nameOf, stacked, ZONES } from '../src/lib/board/model.js'
+import { createBoard, invariants, battlefield, handOf, librarySize, nameOf, stacked, zoneOf, ZONES } from '../src/lib/board/model.js'
 import { apply } from '../src/lib/board/reducer.js'
 import { act, undo, newRun, applyAll, snapshot, restore, UNDO_DEPTH } from '../src/lib/board/runner.js'
 import { clampToField, overlaps, cardAt, freeSpot, tidy, pointToField, CARD_W, CARD_H } from '../src/lib/board/geometry.js'
 import { notesFor, manaAvailable, looksCastable } from '../src/lib/board/coach.js'
+import { libraryOf, dealAction, openingActions, mulliganActions, OPENING_HAND } from '../src/lib/board/deck.js'
 
 /**
  * The board is a table, not a judge, so almost none of these tests are about
@@ -575,5 +576,70 @@ describe('the coach', () => {
     const bear = battlefield(run.board, 'you')[0].id
     const tapped = act(run, { type: 'tap', id: bear })
     expect(notesFor(tapped.board, tapped.events, () => null)).toEqual([])
+  })
+})
+
+describe('one of your own decks', () => {
+  const deck = {
+    id: 'd1',
+    name: 'Bears',
+    commanders: ['big'],
+    main: [
+      { cardId: 'forest', quantity: 10 },
+      { cardId: 'bear', quantity: 2 },
+      { cardId: 'big', quantity: 1 },     // a commander also listed in the ninety-nine
+      { cardId: 'bolt', quantity: 0 },
+    ],
+  }
+
+  it('expands quantities and keeps the commander out of the library', () => {
+    const library = libraryOf(deck)
+    expect(library).toHaveLength(12)
+    expect(library.filter((id) => id === 'forest')).toHaveLength(10)
+    expect(library).not.toContain('big')
+    expect(library).not.toContain('bolt')
+  })
+
+  it('deals the commander to the command zone, where a game starts it', () => {
+    const board = ok(apply(createBoard({ seed: 2 }), dealAction(deck))).board
+    expect(board.zones.you.command.map((id) => board.cards[id].cardId)).toEqual(['big'])
+    expect(librarySize(board, 'you')).toBe(12)
+  })
+
+  it('opens with seven cards, from the same actions a reload would replay', () => {
+    const { run, refusal } = applyAll(newRun(createBoard({ seed: 2 })), openingActions(deck, { seed: 2 }))
+    expect(refusal).toBe(null)
+    expect(handOf(run.board, 'you')).toHaveLength(OPENING_HAND)
+    expect(librarySize(run.board, 'you')).toBe(12 - OPENING_HAND)
+    expect(invariants(run.board)).toEqual([])
+  })
+
+  it('deals nothing but a library for an empty deck, and does not try to draw', () => {
+    const actions = openingActions({ main: [], commanders: [] })
+    expect(actions).toHaveLength(1)
+    const { run } = applyAll(newRun(createBoard()), actions)
+    expect(librarySize(run.board, 'you')).toBe(0)
+  })
+
+  it('mulligans to seven again, with the old hand shuffled back in', () => {
+    let { run } = applyAll(newRun(createBoard({ seed: 2 })), openingActions(deck, { seed: 2 }))
+    const first = handOf(run.board, 'you').map((c) => c.cardId)
+    const again = applyAll(run, mulliganActions(run.board, { seed: 99 }))
+    expect(again.refusal).toBe(null)
+    run = again.run
+    expect(handOf(run.board, 'you')).toHaveLength(OPENING_HAND)
+    expect(librarySize(run.board, 'you')).toBe(12 - OPENING_HAND)
+    expect(invariants(run.board)).toEqual([])
+    // Whatever the new hand is, every one of the twelve cards is still in the
+    // deck: a mulligan that quietly loses a card is the bug worth catching.
+    const everywhere = [...handOf(run.board, 'you'), ...zoneOf(run.board, 'you', 'library')].map((c) => c.cardId).sort()
+    expect(everywhere).toHaveLength(12)
+    expect(first).toHaveLength(OPENING_HAND)
+  })
+
+  it('leaves the commander in the command zone across a mulligan', () => {
+    const { run } = applyAll(newRun(createBoard({ seed: 2 })), openingActions(deck, { seed: 2 }))
+    const after = applyAll(run, mulliganActions(run.board, { seed: 5 })).run
+    expect(after.board.zones.you.command.map((id) => after.board.cards[id].cardId)).toEqual(['big'])
   })
 })

@@ -86,6 +86,14 @@ one change worth trying, from the list rather than the hand, with the odds
 before and after under assumptions written next to the numbers; making it
 keeps the list as it was in History, one restore away.
 
+**Table** — One of your own decks dealt out on a table that enforces nothing.
+Drag a card out of your hand onto the battlefield and put it exactly where you
+want it; tap it, turn it over, move it to any zone, shuffle, mulligan, look at
+the top few and send one to the bottom. Positions are kept, so a board arranged
+on a phone opens arranged the same way on a desktop, and a reload comes back to
+the same table. It knows nothing about what any card does, which is what lets a
+hundred-card deck of cards this app has never parsed be played at all.
+
 **Play** — A life counter for games with physical cards. One to six players,
 per-format starting life, commander damage tracked per source, poison, energy,
 experience and rad counters, a turn and phase tracker, dice, and full undo.
@@ -568,6 +576,34 @@ Free play is a whole game from the same model: thirty-card practice decks
 from the pool, a London mulligan, solo against an opponent whose rules are on
 the screen, or two people at one screen with the device passed between them.
 The decks are practice decks, not legal decks for any format.
+
+## The free table
+
+At `#/table`, and on the Table tab, is the other half of the idea: a table that
+judges nothing. Where `src/lib/table/` knows nineteen cards completely and
+refuses what is illegal, `src/lib/board/` knows where every card is and never
+what a card does. That one restriction is what lets any card on Scryfall be
+played the moment it is fetched, rules text and all — the player enforces the
+rules, exactly as they do on a kitchen table.
+
+Every action is physical: move, tap, flip, draw, mill, shuffle, reveal, put on
+top or bottom, set life, add a counter, make a token, draw an arrow, roll a
+die, tidy up. The handful of refusals are about things that cannot happen
+rather than things that are not allowed — an empty library, a card that is not
+on the table, shuffling a pile whose order is open. A token that leaves the
+battlefield ceases to exist rather than filing itself in a graveyard, and
+leaving the battlefield forgets everything that only meant something there.
+
+A position is stored as a fraction of the battlefield, which is square for the
+same reason a fraction is used: only then does a position mean the same thing
+across and down, at any size, after turning a phone sideways. Ids come off a
+counter on the board rather than a module global and the only randomness is a
+seeded shuffle, so two devices replaying the same actions reach the same table.
+`src/lib/board/coach.js` is the one thing here that mentions a rule, and it
+only ever speaks: a second land this turn, a creature tapped the turn it
+arrived, untapped mana with something affordable in hand, a library running
+out. All of that comes from Scryfall's own fields, so it works for a whole
+deck rather than for cards something has been taught.
 
 ## Data
 

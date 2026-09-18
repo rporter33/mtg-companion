@@ -95,7 +95,7 @@ const go = async (tab) => {
 }
 
 console.log('\nScanning every view')
-for (const tab of ['Learn', 'Cards', 'Decks', 'Play']) {
+for (const tab of ['Learn', 'Cards', 'Decks', 'Table', 'Play']) {
   await go(tab)
   const n = await scan(tab)
   console.log(`  ${tab}: ${n} violation type(s)`)
@@ -335,6 +335,26 @@ await scanState('playtest hand', async () => {
   await drawBtn.click()
   await page.waitForTimeout(500)
   return (await page.locator('.hand-card').count()) === 7
+})
+
+// The free table, where every card is a draggable control. A rotation and a
+// position mean nothing to a screen reader, so the names are what carry it.
+await scanState('the free table', async () => {
+  await page.goto(`${TARGET}#/table`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(500)
+  const deck = page.locator('.table-picker__deck').first()
+  if (!await deck.count()) return false
+  await deck.click()
+  await page.waitForTimeout(900)
+  return (await page.locator('.field').count()) === 1
+})
+
+await scanState('the free table, a card picked up', async () => {
+  const held = page.locator('.tabletop__handcard .bcard').first()
+  if (!await held.count()) return false
+  await held.click()
+  await page.waitForTimeout(300)
+  return (await page.locator('.actions').count()) === 1
 })
 
 console.log('\nFindings')

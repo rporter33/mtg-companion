@@ -11,8 +11,16 @@
  * what overlaps what, and how to tidy up.
  */
 
-/** A card's size as a fraction of the field, so cards stay in proportion. */
-export const CARD_W = 0.11
+/**
+ * A card's size as a fraction of the field, so cards stay in proportion.
+ *
+ * 1.4 is a card's own aspect (88/63), which means these two numbers only
+ * agree with what is on screen if the field is square. It is, deliberately:
+ * a square table is what a table looks like from above, and it is the only
+ * shape where a position in fractions means the same thing horizontally and
+ * vertically. The screen gives the leftover width to the piles instead.
+ */
+export const CARD_W = 0.12
 export const CARD_H = CARD_W * 1.4
 
 export const clamp01 = (n) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0)
@@ -69,9 +77,13 @@ export function tidy(cards, { isLand = () => false, w = CARD_W, h = CARD_H, rows
     if (!list.length) return
     // Fill each row before starting another, so two lands sit side by side
     // rather than stacking into a column of one.
-    const fits = Math.max(1, Math.floor(1 / (w * 1.15)))
+    // The gap allows for a tapped card, which is turned sideways and so takes
+    // up its own height across. Rows that look right until something taps are
+    // rows a player has to straighten by hand.
+    const wide = w * 1.5
+    const fits = Math.max(1, Math.floor(1 / wide))
     const perRow = Math.max(Math.ceil(list.length / rows), Math.min(list.length, fits))
-    const gap = Math.min(w * 1.15, (1 - w) / Math.max(1, perRow - 1 || 1))
+    const gap = Math.min(wide, (1 - w) / Math.max(1, perRow - 1 || 1))
     list.forEach((card, i) => {
       const row = Math.floor(i / perRow)
       const col = i % perRow
