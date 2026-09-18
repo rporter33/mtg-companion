@@ -620,7 +620,11 @@ is read out of Scryfall's own fields (`frame_effects`, `border_color`,
 `finishes`, `full_art`) rather than a hand-maintained table that would be
 stale by the next set. Choosing a printing changes the copies already on the
 table and the card in the deck, because that is a fact about the deck and not
-a setting on one screen.
+a setting on one screen. The same picker is in the deck editor, under the row
+it belongs to — choosing art for a whole deck is something you sit down and
+do, and a comparison of covers three screens away from the card is not a
+comparison. Swapping a printing the deck already holds merges the two entries
+rather than listing the card twice.
 
 A foil is drawn rather than photographed: a wide hue-rotated gradient over the
 app's own frame under screen blending, tied to how far the card is leaning

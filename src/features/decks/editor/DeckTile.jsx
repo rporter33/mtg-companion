@@ -14,8 +14,8 @@ import { identityAttr } from '../../../components/CardFace.jsx'
  * this is mostly used on.
  */
 const DeckTile = memo(function DeckTile({
-  card, cardId, quantity, zone, market, owned = 0, isCommander, flagged, act, onOpenCard, art = null,
-  marked = false,
+  card, cardId, quantity, zone, market, owned = 0, isCommander, flagged, act, onOpenCard, onPrinting = null,
+  art = null, marked = false,
 }) {
   const onOpen = () => card && onOpenCard(card)
   const onSet = (n) => act('set', cardId, zone, n)
@@ -54,6 +54,16 @@ const DeckTile = memo(function DeckTile({
           <Stepper value={quantity} name={card.name} onChange={onSet} />
         )}
         <span className="spacer" />
+        {onPrinting && (
+          <button
+            className="btn btn--sm btn--ghost"
+            onClick={() => onPrinting(cardId)}
+            aria-label={`Choose which printing of ${card.name} is in this deck`}
+            title="Which printing"
+          >
+            ✦
+          </button>
+        )}
         <button className="btn btn--sm btn--ghost btn--danger" onClick={onRemove} aria-label={`Remove ${card.name}`}>✕</button>
       </div>
     </div>

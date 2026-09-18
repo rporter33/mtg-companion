@@ -15,7 +15,7 @@ import useDrag from './useDrag.js'
 import Field from './Field.jsx'
 import BoardCard from './BoardCard.jsx'
 import Coach from './Coach.jsx'
-import Printings from './Printings.jsx'
+import Printings from '../../components/Printings.jsx'
 import TokenMaker from './TokenMaker.jsx'
 import './table.css'
 

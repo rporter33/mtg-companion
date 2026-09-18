@@ -30,6 +30,12 @@ const c = (id, name, type_line, prices, art = PNG) => ({
 })
 const CARDS = [
   c('cmdr', 'Art Commander', 'Legendary Creature — Elf', { usd: '2.00' }),
+  // A second printing of the cheap elf, so there is a choice of cover.
+  {
+    ...c('cheap-showcase', 'Cheap Elf', 'Creature — Elf', { usd: '3.00' }),
+    oracle_id: 'o-cheap', set: 'shw', set_name: 'Showcase Set', collector_number: '211',
+    frame_effects: ['showcase'], finishes: ['nonfoil', 'foil'],
+  },
   c('cheap', 'Cheap Elf', 'Creature — Elf', { usd: '0.10' }),
   c('pricey', 'Pricey Dragon', 'Creature — Dragon', { usd: '40.00' }),
   c('noart', 'Plain Token', 'Creature — Token', { usd: '99.00' }, null),
@@ -57,6 +63,16 @@ await page.route('**/api.scryfall.com/**', (route) => route.fulfill({
   status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))
 await page.route('**/api.scryfall.com/cards/collection', (route) => route.fulfill({
   status: 200, contentType: 'application/json', body: JSON.stringify({ data: CARDS }) }))
+await page.route('**/api.scryfall.com/cards/search**', (route) => {
+  const query = decodeURIComponent(new URL(route.request().url()).searchParams.get('q') ?? '')
+  const data = query.includes('oracleid:o-cheap')
+    ? CARDS.filter((card) => card.oracle_id === 'o-cheap')
+    : []
+  return route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ object: 'list', data, total_cards: data.length, has_more: false }),
+  })
+})
 await page.goto(TARGET, { waitUntil: 'networkidle' })
 await page.evaluate((state) => localStorage.setItem('mtg-companion:v1', JSON.stringify(state)), STATE)
 // The app reads storage once and keeps it; a seed written underneath needs
@@ -154,6 +170,31 @@ await page.waitForTimeout(400)
 await back()
 check('after an edit the list agrees, because the editor recorded its answer',
   (await artOf('.deck-card:has-text("Headless Deck")')) === 'pricey', await artOf('.deck-card:has-text("Headless Deck")'))
+
+// Choosing art for a whole deck is something you sit down and do, so the
+// same list of covers the table offers is offered here, under the row.
+console.log('\nChoosing a printing in the editor')
+await openDeck('Led Deck')
+await page.locator('.deck-row', { hasText: 'Cheap Elf' })
+  .getByRole('button', { name: /Choose which printing/ }).click()
+await page.waitForTimeout(800)
+check('the covers are offered under the row they belong to',
+  (await page.locator('.printings__print').count()) === 2,
+  await page.locator('.printings').innerText().catch(() => 'no picker'))
+check('and it says what choosing one does here, not at a table',
+  (await page.locator('.printings').innerText()).includes('swaps this card in the deck'))
+await page.locator('.printings__print', { hasText: 'Showcase Set' }).click()
+await page.waitForTimeout(600)
+check('choosing one swaps the card in the deck',
+  await page.evaluate(() => {
+    const deck = JSON.parse(localStorage.getItem('mtg-companion:v1:deck:d1') ?? '{}')
+    return (deck.main ?? []).some((e) => e.cardId === 'cheap-showcase')
+      && !(deck.main ?? []).some((e) => e.cardId === 'cheap')
+  }))
+check('the picker closes once a copy is chosen', (await page.locator('.printings').count()) === 0)
+check('and the row is still one card, not two',
+  (await page.locator('.deck-row', { hasText: 'Cheap Elf' }).count()) === 1)
+await back()
 
 console.log('\nImages switched off')
 await page.evaluate(() => {

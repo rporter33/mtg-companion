@@ -8,7 +8,7 @@ import CategoryPicker from './CategoryPicker.jsx'
 
 const DeckRow = memo(function DeckRow({
   card, cardId, quantity, isCommander, flagged, market, owned = 0, zone, section, sections,
-  act, onOpenCard, art = null, marked = false,
+  act, onOpenCard, onPrinting = null, art = null, marked = false,
 }) {
   const onOpen = () => card && onOpenCard(card)
   const onSet = (n) => act('set', cardId, zone, n)
@@ -44,6 +44,16 @@ const DeckRow = memo(function DeckRow({
       )}
       {!isCommander && zone !== 'sideboard' && (
         <CategoryPicker card={card} section={section} sections={sections} onCategory={onCategory} />
+      )}
+      {onPrinting && (
+        <button
+          className="btn btn--sm btn--ghost"
+          onClick={() => onPrinting(cardId)}
+          aria-label={`Choose which printing of ${card.name} is in this deck`}
+          title="Which printing"
+        >
+          ✦
+        </button>
       )}
       <button
         className="btn btn--sm btn--ghost btn--danger deck-row__remove"

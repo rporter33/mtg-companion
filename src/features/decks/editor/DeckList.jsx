@@ -1,7 +1,7 @@
 import Chip from '../../../components/Chip.jsx'
 import SectionHeader from '../../../components/SectionHeader.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { setQuantity, removeCard, setCommanders, unionColorIdentity } from '../../../lib/deck.js'
+import { setQuantity, removeCard, setCommanders, unionColorIdentity, swapPrinting } from '../../../lib/deck.js'
 import {
   setCategory, renameCategory, clearCategory, moveCategory, categoryNames, COMMANDER_CATEGORY,
 } from '../../../lib/categories.js'
@@ -9,6 +9,7 @@ import { getPrefs, setPref } from '../../../lib/storage.js'
 import { formatPrice } from '../../../lib/prices.js'
 import { ownedOf, keyOf } from '../../../lib/collection.js'
 import { artUrl } from '../../../lib/deck-art.js'
+import Printings from '../../../components/Printings.jsx'
 import DeckRow from './DeckRow.jsx'
 import DeckTile from './DeckTile.jsx'
 import TextRow from './TextRow.jsx'
@@ -55,7 +56,24 @@ export default function DeckList({
       change(arg
         ? setCommanders(d, d.commanders.filter((id) => id !== cardId))
         : removeCard(d, cardId, zone))
+    } else if (kind === 'printing') {
+      // A different copy of the same card: the deck's entry changes, and if
+      // the deck already held that printing the two entries merge.
+      change(swapPrinting(d, cardId, arg))
     }
+  }, [])
+
+  /*
+   * Which card's printings are open, if any.
+   *
+   * One at a time and beneath the row it belongs to, because choosing art is
+   * a comparison — this cover against that one — and a list of covers three
+   * screens away from the card is not a comparison. The handler is stable so
+   * the memoised rows are not all re-rendered by opening one.
+   */
+  const [printingFor, setPrintingFor] = useState(null)
+  const onPrinting = useCallback((cardId) => {
+    setPrintingFor((open) => (open === cardId ? null : cardId))
   }, [])
 
   // Three ways to read the same deck. The list is faster to edit and survives
@@ -256,8 +274,17 @@ export default function DeckList({
           <div className={rowsClass}>
             {(shown ?? entries).map(({ cardId, quantity, card, zone, isCommander }) => {
               const key = `${zone}:${cardId}`
+              const picker = printingFor === cardId && card ? (
+                <Printings
+                  key={`${key}:printings`}
+                  card={card}
+                  note="Choosing one swaps this card in the deck. Prices and legality follow the printing you pick."
+                  onChoose={(print) => { act('printing', cardId, zone, print.id); setPrintingFor(null) }}
+                  onClose={() => setPrintingFor(null)}
+                />
+              ) : null
               if (view === 'grid') {
-                return (
+                return [
                   <DeckTile
                     key={key}
                     card={card}
@@ -271,9 +298,11 @@ export default function DeckList({
                     flagged={problemIds.has(cardId)}
                     marked={marked.includes(cardId)}
                     act={act}
+                    onPrinting={onPrinting}
                     onOpenCard={onOpenCard}
-                  />
-                )
+                  />,
+                  picker,
+                ]
               }
               if (view === 'text') {
                 return (
@@ -293,7 +322,7 @@ export default function DeckList({
                   />
                 )
               }
-              return (
+              return [
                 <DeckRow
                   key={key}
                   card={card}
@@ -309,9 +338,11 @@ export default function DeckList({
                   flagged={problemIds.has(cardId)}
                   marked={marked.includes(cardId)}
                   act={act}
+                  onPrinting={onPrinting}
                   onOpenCard={onOpenCard}
-                />
-              )
+                />,
+                picker,
+              ]
             })}
           </div>
         </section>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getPrintings } from '../../lib/scryfall.js'
-import { artUrl, describePrinting, orderPrintings, treatmentName, treatmentOf, finishFor } from '../../lib/board/art.js'
+import { getPrintings } from '../lib/scryfall.js'
+import { artUrl, describePrinting, orderPrintings, treatmentName, treatmentOf, finishFor } from '../lib/board/art.js'
+import './card.css'
 
 /**
  * Choosing which printing of a card is the one on your table.
@@ -15,9 +16,11 @@ import { artUrl, describePrinting, orderPrintings, treatmentName, treatmentOf, f
  *
  * The choice is written back to the deck rather than kept as a display
  * setting for this screen, because it is a fact about the deck: those are
- * the cards in the box.
+ * the cards in the box. Which is why this lives in components/ and not in
+ * either feature: it is the same question at the table and in the editor,
+ * and it deserves the same answer in both.
  */
-export default function Printings({ card, finish = 'normal', onChoose, onClose }) {
+export default function Printings({ card, finish = 'normal', note = null, onChoose, onClose }) {
   const [prints, setPrints] = useState(null)
   const [failed, setFailed] = useState(false)
 
@@ -78,7 +81,7 @@ export default function Printings({ card, finish = 'normal', onChoose, onClose }
         </ul>
       )}
       <p className="faint tiny">
-        Choosing one changes the copies on this table and the card in the deck, so it is still that printing next game.
+        {note ?? 'Choosing one changes the copies on this table and the card in the deck, so it is still that printing next game.'}
       </p>
     </section>
   )

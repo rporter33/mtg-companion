@@ -244,3 +244,36 @@ button.cardimage:hover { transform: translateY(-3px); box-shadow: var(--shadow-l
 .prices--sm .prices__label { font-size: 0.55rem; }
 
 .deck-row__price { font-variant-numeric: tabular-nums; min-width: 4.5rem; text-align: right; }
+
+/* --- choosing a printing --------------------------------------------------
+   Shared by the deck editor and the table: the same question in both places,
+   so the same list of covers. */
+
+.printings {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.printings__list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--space-1);
+  max-height: 22rem; overflow: auto;
+}
+.printings__print {
+  width: 100%; display: flex; align-items: center; gap: var(--space-2);
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+}
+.printings__print:hover, .printings__print:focus-visible { border-color: var(--accent); }
+.printings__print--mine { border-color: var(--border-strong); }
+.printings__art {
+  flex: 0 0 auto; width: 56px; aspect-ratio: 4 / 3;
+  border-radius: 4px; background: #0a0d12 center/cover no-repeat;
+  display: grid; place-items: center; color: var(--text-faint);
+}
+.printings__what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.printings__what strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.printings__tags { display: flex; gap: 4px; flex-wrap: wrap; }
