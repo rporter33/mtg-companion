@@ -18,7 +18,7 @@
  * devices.
  */
 import { rng, shuffle } from '../goldfish.js'
-import { ZONES, ORDERED_ZONES, makeInstance, clampToField, CARD_W, CARD_H } from './model.js'
+import { ZONES, ORDERED_ZONES, makeInstance, clampToField, attachedTo, CARD_W, CARD_H } from './model.js'
 import { freeSpot, tidy as tidyPositions } from './geometry.js'
 
 const refuse = (code, message) => ({ ok: false, reason: { code, message } })
@@ -61,8 +61,11 @@ function place(board, id, zone, { to = 'top', x, y, owner } = {}) {
   const player = owner ?? inst.owner
   inst.zone = zone
   if (zone !== 'battlefield') {
-    Object.assign(inst, { tapped: false, x: 0.5, y: 0.5, counters: {}, faceDown: zone === 'library' ? false : inst.faceDown, note: '' })
+    Object.assign(inst, { tapped: false, x: 0.5, y: 0.5, counters: {}, faceDown: zone === 'library' ? false : inst.faceDown, note: '', attachedTo: null })
     board.arrows = board.arrows.filter((a) => a.from !== id && a.to !== id)
+    // Whatever was on it falls off, which is what happens when the thing
+    // underneath leaves the table.
+    for (const other of Object.values(board.cards)) if (other.attachedTo === id) other.attachedTo = null
   } else {
     const others = list(board, player, 'battlefield').map((other) => board.cards[other])
     const wanted = clampToField(x ?? inst.x, y ?? inst.y)
@@ -137,11 +140,22 @@ const HANDLERS = {
       lift(board, id)
       delete board.cards[id]
       board.arrows = board.arrows.filter((a) => a.from !== id && a.to !== id)
+      // Anything sitting on it, and anything it was sitting on, comes apart:
+      // the card it pointed at is not there any more to point at.
+      for (const other of Object.values(board.cards)) if (other.attachedTo === id) other.attachedTo = null
       emit(board, { type: 'tokenGone', instanceId: id, player: inst.owner })
       return null
     }
+    // An aura goes where the creature goes. Working out the shift before the
+    // card moves is what makes a pile stay a pile.
+    const riders = from === 'battlefield' && zone === 'battlefield' ? attachedTo(board, id) : []
+    const was = { x: inst.x, y: inst.y }
     lift(board, id)
     place(board, id, zone, { to, x, y, owner: player })
+    for (const rider of riders) {
+      const spot = clampToField(rider.x + (inst.x - was.x), rider.y + (inst.y - was.y))
+      Object.assign(board.cards[rider.id], spot, { z: board.nextZ++ })
+    }
     // Arriving from anywhere else is arriving this turn, which is the only
     // thing the board knows about summoning sickness. Sliding a card around
     // the battlefield is not an arrival.
@@ -254,6 +268,47 @@ const HANDLERS = {
     return null
   },
 
+  /**
+   * Putting one card on another: an aura on a creature, an equipment on one,
+   * a counter card under a permanent. The board does not know what any of
+   * that means — only that the two travel together and come apart when
+   * either leaves the table.
+   */
+  attach(board, { id, to }) {
+    const inst = board.cards[id]
+    const host = board.cards[to]
+    if (!inst || !host) return refuse('noSuchCard', 'That card is not on this table.')
+    if (id === to) return refuse('sameEnd', 'A card cannot be put on itself.')
+    if (inst.zone !== 'battlefield' || host.zone !== 'battlefield') return refuse('notOnBattlefield', 'Both cards have to be on the battlefield.')
+    // Following the chain up from the host: if it comes back here, this would
+    // be two cards each sitting on the other.
+    let at = host.attachedTo
+    while (at) {
+      if (at === id) return refuse('wouldLoop', 'Those two are already holding each other up.')
+      at = board.cards[at]?.attachedTo ?? null
+    }
+    // Down and to the right by about a third of a card, the way a player lays
+    // an aura so that the creature's name and numbers still read; a second
+    // one goes further down again.
+    const depth = attachedTo(board, to).filter((c) => c.attachedTo === to).length
+    inst.attachedTo = to
+    const spot = clampToField(host.x + CARD_W * 0.3, host.y + CARD_H * (0.45 + depth * 0.3))
+    Object.assign(inst, spot, { z: board.nextZ++ })
+    emit(board, { type: 'attached', instanceId: id, to, player: inst.owner })
+    return null
+  },
+
+  detach(board, { id }) {
+    const inst = board.cards[id]
+    if (!inst) return refuse('noSuchCard', 'That card is not on this table.')
+    if (!inst.attachedTo) return refuse('notAttached', 'That card is not on anything.')
+    const host = inst.attachedTo
+    inst.attachedTo = null
+    Object.assign(inst, clampToField(inst.x, inst.y + CARD_H * 0.6), { z: board.nextZ++ })
+    emit(board, { type: 'detached', instanceId: id, from: host, player: inst.owner })
+    return null
+  },
+
   /** An arrow from a card to a card or a player: what is attacking what, what a spell is pointed at. */
   arrow(board, { from, to, kind = 'target' }) {
     const known = (end) => Boolean(board.cards[end]) || board.players.includes(end)
@@ -285,12 +340,24 @@ const HANDLERS = {
     return null
   },
 
-  /** Straightens the board into rows, the way a player tidies mid-game. */
+  /**
+   * Straightens the board into rows, the way a player tidies mid-game.
+   * Attached cards are not laid out on their own — they follow whatever they
+   * are sitting on, or tidying would take every aura off its creature.
+   */
   tidy(board, { player = 'you', lands = [] }) {
-    const cards = list(board, player, 'battlefield').map((id) => board.cards[id])
+    const all = list(board, player, 'battlefield').map((id) => board.cards[id])
+    const loose = all.filter((c) => !c.attachedTo)
     const isLand = (c) => lands.includes(c.id)
-    for (const placed of tidyPositions(cards, { isLand })) Object.assign(board.cards[placed.id], { x: placed.x, y: placed.y })
-    emit(board, { type: 'tidied', player, count: cards.length })
+    for (const placed of tidyPositions(loose, { isLand })) {
+      const inst = board.cards[placed.id]
+      const shift = { x: placed.x - inst.x, y: placed.y - inst.y }
+      Object.assign(inst, { x: placed.x, y: placed.y })
+      for (const rider of attachedTo(board, placed.id)) {
+        Object.assign(board.cards[rider.id], clampToField(rider.x + shift.x, rider.y + shift.y))
+      }
+    }
+    emit(board, { type: 'tidied', player, count: all.length })
     return null
   },
 

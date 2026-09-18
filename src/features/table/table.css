@@ -193,3 +193,40 @@
   .tabletop__rail { flex: 1 1 280px; min-width: 0; }
   .tabletop__handcard { width: 96px; }
 }
+
+/* --- arrows, counters, dice and notes ------------------------------------ */
+
+.field__arrows {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 900;
+}
+.field__arrow { stroke-width: 2; opacity: 0.85; }
+.field__arrow--attack { stroke: var(--mtg-r, #d89383); }
+.field__arrow--target { stroke: var(--accent); stroke-dasharray: 4 3; }
+
+/* While something is being pointed at, everything else is a possible far end. */
+.field__slot--aimable .bcard { box-shadow: 0 0 0 1px var(--accent-soft), var(--shadow); cursor: crosshair; }
+.field__slot--aimable .bcard:hover, .field__slot--aimable .bcard:focus-visible { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+
+.counters { align-items: center; gap: var(--space-1); }
+.counters__on { display: inline-flex; align-items: center; gap: 2px; }
+
+.dice { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.dice__roll { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85rem; }
+
+.tablecoach {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.tablecoach__head { align-items: center; }
+.tablecoach__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.tablecoach__note {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  font-size: 0.85rem; color: var(--text-muted);
+}
+.tablecoach__note--warn { color: var(--text); }
+.tablecoach__note--warn::before { content: '!'; color: var(--warn); font-weight: 700; flex: 0 0 auto; }
+.tablecoach__note span { flex: 1; }

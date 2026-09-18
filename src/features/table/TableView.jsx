@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { navigate } from '../../lib/router.js'
-import { listDecks, getDeck, getTable, saveTable, clearTable } from '../../lib/storage.js'
-import { createBoard, handOf, librarySize, zoneOf, nameOf, ZONE_LABELS } from '../../lib/board/model.js'
+import { listDecks, getDeck, getTable, saveTable, clearTable, getPrefs, setPref } from '../../lib/storage.js'
+import { createBoard, handOf, librarySize, zoneOf, nameOf, hostOf, ZONE_LABELS, DEFAULT_COUNTERS } from '../../lib/board/model.js'
 import { newRun, act, applyAll, undo, snapshot, restore } from '../../lib/board/runner.js'
 import { openingActions, mulliganActions, libraryOf, OPENING_HAND } from '../../lib/board/deck.js'
 import { isLandCard } from '../../lib/deck.js'
 import useDeckCards from '../decks/useDeckCards.js'
+import { playFor } from '../../lib/board/sound.js'
 import useDrag from './useDrag.js'
 import Field from './Field.jsx'
 import BoardCard from './BoardCard.jsx'
+import Coach from './Coach.jsx'
 import './table.css'
 
 /**
@@ -109,6 +111,10 @@ function Seat({ deck, onOpenCard }) {
   const [peeking, setPeeking] = useState(0)
   const [openPile, setOpenPile] = useState(null)
   const [mulligans, setMulligans] = useState(0)
+  // Pointing at something: an arrow, or putting one card on another. Until a
+  // second card is picked the table is unchanged.
+  const [aiming, setAiming] = useState(null)
+  const [prefs, setPrefs] = useState(() => getPrefs())
   const fieldRef = useRef(null)
   const actionsRef = useRef(null)
 
@@ -156,8 +162,22 @@ function Seat({ deck, onOpenCard }) {
   }, [run, deck.id, deck.name, mulligans])
 
   const board = run?.board
-  const doAction = useCallback((action) => setRun((r) => (r ? act(r, action) : r)), [])
-  const doAll = useCallback((actions) => setRun((r) => (r ? applyAll(r, actions).run : r)), [])
+  // Sound is played from the events an action produced, so one draw of seven
+  // is one riffle and a refused action is silent.
+  const soundOn = prefs.tableSound
+  const doAction = useCallback((action) => setRun((r) => {
+    if (!r) return r
+    const next = act(r, action)
+    playFor(next.lastEvents, soundOn)
+    return next
+  }), [soundOn])
+  const doAll = useCallback((actions) => setRun((r) => {
+    if (!r) return r
+    const next = applyAll(r, actions).run
+    playFor(next.lastEvents, soundOn)
+    return next
+  }), [soundOn])
+  const togglePref = useCallback((key) => { setPrefs(setPref(key, !prefs[key]).prefs) }, [prefs])
 
   const onSlide = useCallback((id, point) => doAction({ type: 'move', id, zone: 'battlefield', ...point }), [doAction])
   const onPlay = useCallback((id, point) => { setSelected(null); doAction({ type: 'move', id, zone: 'battlefield', ...point }) }, [doAction])
@@ -187,8 +207,25 @@ function Seat({ deck, onOpenCard }) {
   const topOfLibrary = zoneOf(board, 'you', 'library').slice(0, peeking)
   const nameFor = (inst) => nameOf(board, inst.id, lookup)
   const cardFor = (inst) => (inst.custom ? null : lookup(inst.cardId))
-  // A drag that ends on a card must not also pick it up.
-  const select = (id) => { if (!justDragged()) setSelected((current) => (current === id ? null : id)) }
+  /*
+   * One click does one of two things. Normally it picks a card up, or puts
+   * it down again. While something is being pointed at, it is the far end
+   * of that pointing instead — an arrow drawn, or a card laid on another —
+   * and the aim is spent either way.
+   */
+  const select = (id) => {
+    if (justDragged()) return
+    if (aiming) {
+      const { id: from, mode } = aiming
+      setAiming(null)
+      if (id === from) return
+      if (mode === 'attach') doAction({ type: 'attach', id: from, to: id })
+      else doAction({ type: 'arrow', from, to: id, kind: mode })
+      return
+    }
+    setSelected((current) => (current === id ? null : id))
+  }
+  const aimAt = (mode) => { setAiming({ id: selected, mode }); setSelected(null) }
 
   return (
     <div className="stack tabletop">
@@ -217,14 +254,31 @@ function Seat({ deck, onOpenCard }) {
             lookup={lookup}
             selectedId={selected}
             drag={drag}
+            aiming={aiming}
             onBegin={begin}
             onSelect={select}
             onNudge={nudge}
+            onBackground={() => { if (!justDragged()) { setSelected(null); setAiming(null) } }}
           />
+
+          {aiming && (
+            <div className="banner banner--info row row--wrap" role="status">
+              <span style={{ flex: '1 1 12rem' }}>
+                {aiming.mode === 'attach'
+                  ? `Pick the card to put ${nameOf(board, aiming.id, lookup)} on.`
+                  : `Pick what ${nameOf(board, aiming.id, lookup)} is ${aiming.mode === 'attack' ? 'attacking' : 'pointing at'}.`}
+              </span>
+              <button className="btn btn--ghost btn--sm" onClick={() => setAiming(null)}>Never mind</button>
+            </div>
+          )}
+
+          {prefs.tableCoach && <Coach board={board} events={run.events} lookup={lookup} onSilence={() => togglePref('tableCoach')} />}
 
           {selectedInst && (
             <Actions
               panelRef={actionsRef}
+              host={hostOf(board, selectedInst.id)}
+              onAim={aimAt}
               inst={selectedInst}
               name={nameFor(selectedInst)}
               card={cardFor(selectedInst)}
@@ -312,6 +366,8 @@ function Seat({ deck, onOpenCard }) {
             )
           })}
 
+          <Dice board={board} onRoll={(sides, label) => doAction({ type: 'roll', sides, label, seed: Math.floor(Math.random() * 1e9) })} />
+
           <section className="pile">
             <h2 className="pile__title">The turn</h2>
             <div className="row row--wrap">
@@ -333,7 +389,27 @@ function Seat({ deck, onOpenCard }) {
               >
                 Deal again
               </button>
+              {board.arrows.length > 0 && (
+                <button className="btn btn--ghost btn--sm" onClick={() => doAction({ type: 'clearArrows' })}>
+                  Clear the arrows
+                </button>
+              )}
             </div>
+          </section>
+
+          <section className="pile">
+            <h2 className="pile__title">This table</h2>
+            <div className="row row--wrap">
+              <button className="btn btn--ghost btn--sm" onClick={() => togglePref('tableCoach')} aria-pressed={prefs.tableCoach}>
+                Notes {prefs.tableCoach ? 'on' : 'off'}
+              </button>
+              <button className="btn btn--ghost btn--sm" onClick={() => togglePref('tableSound')} aria-pressed={prefs.tableSound}>
+                Sound {prefs.tableSound ? 'on' : 'off'}
+              </button>
+            </div>
+            <p className="faint tiny">
+              Notes are observations, never rulings, and nothing here checks whether a play is legal.
+            </p>
           </section>
         </div>
       </div>
@@ -399,20 +475,39 @@ const MOVES = [
   { zone: 'command', label: 'To the command zone' },
 ]
 
-function Actions({ inst, name, card, onDo, onInspect, onClose, panelRef }) {
+function Actions({ inst, name, card, host, onDo, onAim, onInspect, onClose, panelRef }) {
+  const onField = inst.zone === 'battlefield'
+  const counters = Object.entries(inst.counters).filter(([, n]) => n)
   return (
     <section className="actions" aria-label={`Actions for ${name}`} ref={panelRef}>
       <div className="row row--wrap">
         <strong className="actions__name">{name}</strong>
-        <span className="faint tiny">in the {ZONE_LABELS[inst.zone].toLowerCase()}</span>
+        <span className="faint tiny">
+          in the {ZONE_LABELS[inst.zone].toLowerCase()}
+          {host ? ` · on ${host.id === inst.id ? 'itself' : 'another card'}` : ''}
+        </span>
         <span className="spacer" />
         <button className="btn btn--ghost btn--sm" onClick={onClose}>Put it down</button>
       </div>
+
       <div className="row row--wrap">
-        {inst.zone === 'battlefield' && (
+        {onField && (
           <button className="btn btn--sm" onClick={() => onDo({ type: 'tap', id: inst.id })}>{inst.tapped ? 'Untap' : 'Tap'}</button>
         )}
+        <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'flip', id: inst.id })}>
+          {inst.faceDown ? 'Turn it up' : 'Turn it face down'}
+        </button>
         <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'reveal', id: inst.id })}>Reveal</button>
+        {onField && <button className="btn btn--ghost btn--sm" onClick={() => onAim('attack')}>Attacking…</button>}
+        {onField && <button className="btn btn--ghost btn--sm" onClick={() => onAim('target')}>Pointing at…</button>}
+        {onField && !inst.attachedTo && <button className="btn btn--ghost btn--sm" onClick={() => onAim('attach')}>Put it on…</button>}
+        {inst.attachedTo && <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'detach', id: inst.id })}>Take it off</button>}
+        {card && <button className="btn btn--ghost btn--sm" onClick={onInspect}>Read it</button>}
+      </div>
+
+      {onField && <Counters inst={inst} counters={counters} onDo={onDo} />}
+
+      <div className="row row--wrap">
         {MOVES.filter((move) => move.zone !== inst.zone || move.to).map((move) => (
           <button
             key={`${move.zone}${move.to ?? ''}`}
@@ -422,8 +517,63 @@ function Actions({ inst, name, card, onDo, onInspect, onClose, panelRef }) {
             {move.label}
           </button>
         ))}
-        {card && <button className="btn btn--ghost btn--sm" onClick={onInspect}>Read it</button>}
       </div>
     </section>
   )
 }
+
+/**
+ * Counters on a card.
+ *
+ * What is already there can go up or down; anything else is one press away.
+ * The board removes a counter that reaches zero rather than keeping a zero,
+ * so a card never carries "0 charge" the way a spreadsheet would.
+ */
+function Counters({ inst, counters, onDo }) {
+  const step = (name, delta) => onDo({ type: 'counter', id: inst.id, name, delta })
+  return (
+    <div className="row row--wrap counters">
+      {counters.map(([name, n]) => (
+        <span className="counters__on" key={name}>
+          <button className="btn btn--ghost btn--sm" onClick={() => step(name, -1)} aria-label={`One fewer ${name} counter`}>−</button>
+          <span className="chip tiny">{n} {name}</span>
+          <button className="btn btn--ghost btn--sm" onClick={() => step(name, 1)} aria-label={`One more ${name} counter`}>+</button>
+        </span>
+      ))}
+      {DEFAULT_COUNTERS.filter((name) => !inst.counters[name]).map((name) => (
+        <button key={name} className="btn btn--ghost btn--sm" onClick={() => step(name, 1)}>
+          + {name}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Dice and a coin, for everything a game asks you to decide at random and
+ * the rules do not cover: who starts, which of two targets, a die on a card
+ * standing in for a counter.
+ */
+function Dice({ board, onRoll }) {
+  return (
+    <section className="pile">
+      <h2 className="pile__title">Dice</h2>
+      <div className="row row--wrap">
+        <button className="btn btn--ghost btn--sm" onClick={() => onRoll(6, 'd6')}>Roll a d6</button>
+        <button className="btn btn--ghost btn--sm" onClick={() => onRoll(20, 'd20')}>Roll a d20</button>
+        <button className="btn btn--ghost btn--sm" onClick={() => onRoll(2, 'Coin')}>Flip a coin</button>
+      </div>
+      {board.dice.length > 0 && (
+        <ul className="dice" role="list" aria-label="What was rolled, most recent first">
+          {board.dice.map((die) => (
+            <li key={die.id} className="dice__roll">
+              <span className="chip tiny">{die.label || `d${die.sides}`}</span>
+              <strong>{die.sides === 2 ? (die.value === 1 ? 'heads' : 'tails') : die.value}</strong>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+

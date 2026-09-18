@@ -594,6 +594,22 @@ on the table, shuffling a pile whose order is open. A token that leaves the
 battlefield ceases to exist rather than filing itself in a graveyard, and
 leaving the battlefield forgets everything that only meant something there.
 
+Pointing is the part a screen usually loses. At a real table you point at what
+you are attacking and at what a spell is aimed at, and half of combat is that
+gesture; here it is an arrow drawn from one card to another or to a player, in
+one style for an attack and another for a target, cleared in a press. Nothing
+checks whether the far end could legally be attacked — that is the player's
+claim, not the app's ruling. One card can be put on another for an aura, an
+equipment or a pile, and then the two travel together and come apart when
+either leaves the table. Cards carry counters, turn face down, and there are
+dice and a coin for everything the rules do not decide.
+
+The sound is synthesised rather than sampled — a few short noise bursts through
+a band-pass filter — because a full sound pack is several hundred kilobytes of
+audio for a game usually played in a room where people are talking. It is off
+until it is asked for, and one burst of events makes one sound, so drawing
+seven cards is a riffle rather than seven riffles.
+
 A position is stored as a fraction of the battlefield, which is square for the
 same reason a fraction is used: only then does a position mean the same thing
 across and down, at any size, after turning a phone sideways. Ids come off a
@@ -603,7 +619,11 @@ seeded shuffle, so two devices replaying the same actions reach the same table.
 only ever speaks: a second land this turn, a creature tapped the turn it
 arrived, untapped mana with something affordable in hand, a library running
 out. All of that comes from Scryfall's own fields, so it works for a whole
-deck rather than for cards something has been taught.
+deck rather than for cards something has been taught. Every note has a cross on
+it and there is one switch that silences the lot, which matters more here than
+anywhere else in the app: the whole promise of this table is that nothing on it
+tells you what to do, and a coach that could not be told to be quiet would break
+that promise even while being right.
 
 ## Data
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createBoard, invariants, battlefield, handOf, librarySize, nameOf, stacked, zoneOf, ZONES } from '../src/lib/board/model.js'
+import { createBoard, invariants, battlefield, handOf, librarySize, nameOf, stacked, zoneOf, attachedTo, hostOf, ZONES } from '../src/lib/board/model.js'
 import { apply } from '../src/lib/board/reducer.js'
 import { act, undo, newRun, applyAll, snapshot, restore, UNDO_DEPTH } from '../src/lib/board/runner.js'
 import { clampToField, overlaps, cardAt, freeSpot, tidy, pointToField, CARD_W, CARD_H } from '../src/lib/board/geometry.js'
@@ -380,6 +380,124 @@ describe('the table', () => {
     apply(board, { type: 'move', id: find('bear').id, zone: 'battlefield' })
     apply(board, { type: 'draw', count: 3 })
     expect(JSON.stringify(board)).toBe(before)
+  })
+})
+
+describe('one card on another', () => {
+  /**
+   * Two real cards on the battlefield at known spots — not tokens, because a
+   * token that leaves stops existing and these tests are about what happens
+   * to the card underneath.
+   */
+  function pair() {
+    const { board, find } = seated()
+    const host = find('bear').id
+    const aura = find('bolt').id
+    let state = ok(apply(board, { type: 'move', id: host, zone: 'battlefield', x: 0.4, y: 0.4 })).board
+    state = ok(apply(state, { type: 'move', id: aura, zone: 'battlefield', x: 0.7, y: 0.6 })).board
+    return { state, host, aura }
+  }
+
+  it('puts a card on another and remembers which way round', () => {
+    const { state, host, aura } = pair()
+    const on = ok(apply(state, { type: 'attach', id: aura, to: host }))
+    expect(on.board.cards[aura].attachedTo).toBe(host)
+    expect(hostOf(on.board, aura).id).toBe(host)
+    expect(attachedTo(on.board, host).map((c) => c.id)).toEqual([aura])
+    expect(on.events[0]).toMatchObject({ type: 'attached', to: host })
+    // It moves onto what it is attached to, down and to the right, far enough
+    // that the card underneath still reads and close enough to be one thing.
+    const host_ = on.board.cards[host]
+    const rider = on.board.cards[aura]
+    expect(rider.x).toBeGreaterThan(host_.x)
+    expect(rider.y).toBeGreaterThan(host_.y)
+    expect(overlaps(rider, host_, { share: 1 })).toBe(true)
+  })
+
+  it('takes the aura with the creature', () => {
+    const { state, host, aura } = pair()
+    const on = ok(apply(state, { type: 'attach', id: aura, to: host })).board
+    const offset = { x: on.cards[aura].x - on.cards[host].x, y: on.cards[aura].y - on.cards[host].y }
+    const moved = ok(apply(on, { type: 'move', id: host, zone: 'battlefield', x: 0.8, y: 0.2 })).board
+    expect(moved.cards[host]).toMatchObject({ x: 0.8, y: 0.2 })
+    expect(moved.cards[aura].x - moved.cards[host].x).toBeCloseTo(offset.x, 5)
+    expect(moved.cards[aura].y - moved.cards[host].y).toBeCloseTo(offset.y, 5)
+  })
+
+  it('drops the aura when the creature leaves the table', () => {
+    const { state, host, aura } = pair()
+    const on = ok(apply(state, { type: 'attach', id: aura, to: host })).board
+    const dead = ok(apply(on, { type: 'move', id: host, zone: 'graveyard' })).board
+    expect(dead.cards[aura].attachedTo).toBe(null)
+    expect(dead.cards[aura].zone).toBe('battlefield')
+    expect(invariants(dead)).toEqual([])
+  })
+
+  it('takes itself off when it leaves', () => {
+    const { state, host, aura } = pair()
+    const on = ok(apply(state, { type: 'attach', id: aura, to: host })).board
+    const gone = ok(apply(on, { type: 'move', id: aura, zone: 'graveyard' })).board
+    expect(gone.cards[aura].attachedTo).toBe(null)
+    expect(attachedTo(gone, host)).toEqual([])
+  })
+
+  it('comes off by hand, and lands somewhere its own', () => {
+    const { state, host, aura } = pair()
+    const on = ok(apply(state, { type: 'attach', id: aura, to: host })).board
+    const off = ok(apply(on, { type: 'detach', id: aura }))
+    expect(off.board.cards[aura].attachedTo).toBe(null)
+    expect(off.board.cards[aura].y).toBeGreaterThan(on.cards[aura].y)
+    expect(off.events[0]).toMatchObject({ type: 'detached', from: host })
+    refused(apply(off.board, { type: 'detach', id: aura }), 'notAttached')
+  })
+
+  it('refuses the two impossible cases and nothing else', () => {
+    const { state, host, aura } = pair()
+    refused(apply(state, { type: 'attach', id: aura, to: aura }), 'sameEnd')
+    refused(apply(state, { type: 'attach', id: aura, to: 'nowhere' }), 'noSuchCard')
+    const inHand = zoneOf(state, 'you', 'library')[0].id
+    refused(apply(state, { type: 'attach', id: inHand, to: host }), 'notOnBattlefield')
+    const on = ok(apply(state, { type: 'attach', id: aura, to: host })).board
+    refused(apply(on, { type: 'attach', id: host, to: aura }), 'wouldLoop')
+  })
+
+  it('stacks a second card on the same host below the first', () => {
+    const { state, host, aura } = pair()
+    let on = ok(apply(state, { type: 'attach', id: aura, to: host })).board
+    const second = zoneOf(on, 'you', 'library').find((c) => c.cardId === 'forest').id
+    on = ok(apply(on, { type: 'move', id: second, zone: 'battlefield', x: 0.2, y: 0.9 })).board
+    const both = ok(apply(on, { type: 'attach', id: second, to: host }))
+    expect(both.board.cards[second].y).toBeGreaterThan(both.board.cards[aura].y)
+    expect(attachedTo(both.board, host)).toHaveLength(2)
+    expect(invariants(both.board)).toEqual([])
+  })
+
+  it('tidies the creature and lets the aura ride along', () => {
+    const { state, host, aura } = pair()
+    const on = ok(apply(state, { type: 'attach', id: aura, to: host })).board
+    const offset = { x: on.cards[aura].x - on.cards[host].x, y: on.cards[aura].y - on.cards[host].y }
+    const neat = ok(apply(on, { type: 'tidy', player: 'you' })).board
+    expect(neat.cards[aura].x - neat.cards[host].x).toBeCloseTo(offset.x, 5)
+    expect(invariants(neat)).toEqual([])
+  })
+
+  it('comes apart when the token underneath stops existing', () => {
+    const { board, find } = seated()
+    const aura = find('bolt').id
+    let state = ok(apply(board, { type: 'move', id: aura, zone: 'battlefield', x: 0.5, y: 0.5 })).board
+    state = ok(apply(state, { type: 'makeToken', cardId: 'bear', x: 0.3, y: 0.3 })).board
+    const token = battlefield(state, 'you').find((c) => c.token).id
+    state = ok(apply(state, { type: 'attach', id: aura, to: token })).board
+    // The token is destroyed, so there is nothing left to be attached to.
+    const after = ok(apply(state, { type: 'move', id: token, zone: 'graveyard' })).board
+    expect(after.cards[aura].attachedTo).toBe(null)
+  })
+
+  it('flips a coin as a two-sided die', () => {
+    const { board } = seated()
+    const flip = ok(apply(board, { type: 'roll', sides: 2, seed: 11, label: 'Who starts' }))
+    expect([1, 2]).toContain(flip.board.dice[0].value)
+    expect(flip.events[0]).toMatchObject({ type: 'rolled', sides: 2, label: 'Who starts' })
   })
 })
 

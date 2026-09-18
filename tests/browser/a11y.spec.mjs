@@ -357,6 +357,23 @@ await scanState('the free table, a card picked up', async () => {
   return (await page.locator('.actions').count()) === 1
 })
 
+// Pointing at something, with a card on the table carrying counters: the two
+// states where the table stops being a list of controls and starts being a
+// place, and the two most likely to lose their names.
+await scanState('the free table, pointing at something', async () => {
+  await page.getByRole('button', { name: 'To the battlefield' }).click()
+  await page.waitForTimeout(300)
+  const onTable = page.locator('.field .bcard').first()
+  if (!await onTable.count()) return false
+  await onTable.click()
+  await page.waitForTimeout(200)
+  await page.getByRole('button', { name: '+ +1/+1' }).click()
+  await page.waitForTimeout(200)
+  await page.getByRole('button', { name: 'Attacking…' }).click()
+  await page.waitForTimeout(300)
+  return (await page.locator('.banner').count()) > 0
+})
+
 console.log('\nFindings')
 if (!seen.size) console.log('  none')
 const order = { critical: 0, serious: 1, moderate: 2, minor: 3 }

@@ -108,6 +108,10 @@ const EMPTY = {
     market: 'usd',
     currency: 'usd', showCardImages: true, lastFormat: 'commander',
     sortId: 'name', sortDir: null,
+    // The free table: the coach speaks unless silenced, and is silent in
+    // sound unless asked, because a table that makes noise by surprise is
+    // worse than one that never does.
+    tableCoach: true, tableSound: false,
   },
 }
 

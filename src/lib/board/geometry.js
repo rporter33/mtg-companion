@@ -55,11 +55,15 @@ export function cardAt(point, cards, { w = CARD_W, h = CARD_H } = {}) {
  * deliberate pile is made by dropping onto a card, not by missing.
  */
 export function freeSpot(wanted, taken, { w = CARD_W, h = CARD_H } = {}) {
-  const step = w * 0.55
-  const spiral = [[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1], [2, 0], [0, 2], [-2, 0], [0, -2]]
+  // A step of a bit more than a card, and "free" meaning almost no overlap:
+  // a card that lands half on top of another hides the one underneath, and a
+  // card you cannot point at is worse than one a little further away. A pile
+  // is made on purpose, by dropping onto a card, not by missing.
+  const step = w * 1.15
+  const spiral = [[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1], [2, 0], [0, 2], [-2, 0], [0, -2], [2, 1], [-2, 1], [2, -1], [-2, -1]]
   for (const [dx, dy] of spiral) {
     const spot = clampToField(wanted.x + dx * step, wanted.y + dy * step * 1.4, { w, h })
-    if (!taken.some((c) => overlaps(spot, c, { w, h, share: 0.35 }))) return spot
+    if (!taken.some((c) => overlaps(spot, c, { w, h, share: 0.9 }))) return spot
   }
   return clampToField(wanted.x, wanted.y, { w, h })
 }

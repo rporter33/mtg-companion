@@ -50,6 +50,7 @@ export function makeInstance({ id, cardId, owner = 'you', zone = 'library', toke
     flipped: false,
     counters: {},
     note: '',
+    attachedTo: null, // an aura on a creature, an equipment on one: position, not rules
     token,
     custom, // a made-up card: { name, typeLine, power, toughness, colors, art }
     enteredOnTurn: 0,
@@ -89,6 +90,21 @@ export const zoneOf = (board, player, zone) => (board.zones[player]?.[zone] ?? [
 export const battlefield = (board, player) => zoneOf(board, player, 'battlefield')
 export const handOf = (board, player) => zoneOf(board, player, 'hand')
 export const librarySize = (board, player) => (board.zones[player]?.library ?? []).length
+/** Everything attached to a card, and everything attached to those. */
+export function attachedTo(board, id, seen = new Set()) {
+  const out = []
+  for (const inst of Object.values(board.cards)) {
+    if (inst.attachedTo !== id || seen.has(inst.id)) continue
+    seen.add(inst.id)
+    out.push(inst, ...attachedTo(board, inst.id, seen))
+  }
+  return out
+}
+/** The card this one is on, if any. */
+export const hostOf = (board, id) => {
+  const inst = board.cards[id]
+  return inst?.attachedTo ? board.cards[inst.attachedTo] ?? null : null
+}
 export const isRevealed = (board, id) => board.revealed.includes(id)
 
 /** The name to show, which for a made-up card is whatever it was called. */
@@ -132,6 +148,22 @@ export function invariants(board) {
       problems.push(`${inst.id} carries battlefield state in the ${inst.zone}`)
     }
     for (const [name, n] of Object.entries(inst.counters)) if (!Number.isFinite(n) || n === 0) problems.push(`${inst.id} has a ${name} counter of ${n}`)
+    if (inst.attachedTo) {
+      const host = board.cards[inst.attachedTo]
+      if (!host) problems.push(`${inst.id} is attached to nothing`)
+      else if (host.zone !== 'battlefield' || inst.zone !== 'battlefield') problems.push(`${inst.id} is attached outside the battlefield`)
+      if (inst.attachedTo === inst.id) problems.push(`${inst.id} is attached to itself`)
+    }
+  }
+  // A chain of attachments has to end somewhere, or moving one would never stop.
+  for (const inst of Object.values(board.cards)) {
+    const seen = new Set([inst.id])
+    let at = inst.attachedTo
+    while (at) {
+      if (seen.has(at)) { problems.push(`${inst.id} is in a loop of attachments`); break }
+      seen.add(at)
+      at = board.cards[at]?.attachedTo ?? null
+    }
   }
   for (const arrow of board.arrows) {
     if (!board.cards[arrow.from] && !board.players.includes(arrow.from)) problems.push(`an arrow starts nowhere`)
