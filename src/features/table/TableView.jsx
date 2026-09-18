@@ -115,6 +115,11 @@ function Seat({ deck, onOpenCard }) {
   // second card is picked the table is unchanged.
   const [aiming, setAiming] = useState(null)
   const [prefs, setPrefs] = useState(() => getPrefs())
+  // On a phone held upright there is not room for the table, your hand and
+  // every pile at once, and a screen you have to scroll to play is not a
+  // table. So the counts and the rarer buttons fold away behind one press,
+  // and the quick ones live in a strip under your hand.
+  const [railOpen, setRailOpen] = useState(false)
   const fieldRef = useRef(null)
   const actionsRef = useRef(null)
 
@@ -233,7 +238,6 @@ function Seat({ deck, onOpenCard }) {
         <button className="btn btn--ghost btn--sm" onClick={() => navigate({ tableDeckId: null })}>← Decks</button>
         <h1 className="tabletop__name">{deck.name}</h1>
         <span className="spacer" />
-        <span className="chip tiny">Turn {board.turn}</span>
         {mulligans > 0 && <span className="chip tiny">{mulligans} mulligan{mulligans === 1 ? '' : 's'}: put {Math.min(mulligans, OPENING_HAND)} on the bottom</span>}
       </div>
 
@@ -272,8 +276,6 @@ function Seat({ deck, onOpenCard }) {
             </div>
           )}
 
-          {prefs.tableCoach && <Coach board={board} events={run.events} lookup={lookup} onSilence={() => togglePref('tableCoach')} />}
-
           {selectedInst && (
             <Actions
               panelRef={actionsRef}
@@ -287,6 +289,11 @@ function Seat({ deck, onOpenCard }) {
               onClose={() => setSelected(null)}
             />
           )}
+
+        </div>
+
+        <div className="tabletop__side">
+          {prefs.tableCoach && <Coach board={board} events={run.events} lookup={lookup} onSilence={() => togglePref('tableCoach')} />}
 
           <section className="pile tabletop__hand">
             <h2 className="pile__title">
@@ -314,126 +321,147 @@ function Seat({ deck, onOpenCard }) {
               </div>
             )}
           </section>
-        </div>
 
-        <div className="tabletop__rail stack">
-          <Life board={board} onChange={(delta) => doAction({ type: 'life', delta })} onSet={(value) => doAction({ type: 'life', value })} />
+          <Strip
+            board={board}
+            railOpen={railOpen}
+            onLife={(delta) => doAction({ type: 'life', delta })}
+            onDraw={() => doAction({ type: 'draw' })}
+            onUntap={() => doAction({ type: 'untapAll' })}
+            onNextTurn={() => doAll([{ type: 'nextTurn' }, { type: 'untapAll' }])}
+            onToggleRail={() => setRailOpen(!railOpen)}
+          />
 
-          <section className="pile">
-            <h2 className="pile__title">Library <span className="chip tiny">{librarySize(board, 'you')}</span></h2>
-            <div className="row row--wrap">
-              <button className="btn btn--primary btn--sm" onClick={() => doAction({ type: 'draw' })}>Draw</button>
-              <button className="btn btn--ghost btn--sm" onClick={() => doAction({ type: 'shuffle' })}>Shuffle</button>
-              <button className="btn btn--ghost btn--sm" onClick={() => setPeeking(peeking ? 0 : 3)} aria-expanded={peeking > 0}>
-                {peeking ? 'Stop looking' : 'Look at the top 3'}
-              </button>
-            </div>
-            {peeking > 0 && (
-              <Peek
-                instances={topOfLibrary}
-                nameFor={nameFor}
-                onBottom={(id) => doAction({ type: 'move', id, zone: 'library', to: 'bottom' })}
-                onHand={(id) => doAction({ type: 'move', id, zone: 'hand' })}
-                onGraveyard={(id) => doAction({ type: 'move', id, zone: 'graveyard' })}
-              />
-            )}
-          </section>
-
-          {PILES.map((zone) => {
-            const pile = zoneOf(board, 'you', zone)
-            return (
-              <section className="pile" key={zone}>
-                <h2 className="pile__title">
-                  {ZONE_LABELS[zone]} <span className="chip tiny">{pile.length}</span>
-                  {pile.length > 0 && (
-                    <button className="btn btn--ghost btn--sm" onClick={() => setOpenPile(openPile === zone ? null : zone)} aria-expanded={openPile === zone}>
-                      {openPile === zone ? 'Close' : 'Look'}
-                    </button>
-                  )}
-                </h2>
-                {openPile === zone && (
-                  <ul className="pile__cards" role="list">
-                    {pile.slice().reverse().map((inst) => (
-                      <li key={inst.id}>
-                        <button className={`pile__card ${selected === inst.id ? 'pile__card--selected' : ''}`} onClick={() => select(inst.id)} aria-pressed={selected === inst.id}>
-                          {nameFor(inst)}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            )
-          })}
-
-          <Dice board={board} onRoll={(sides, label) => doAction({ type: 'roll', sides, label, seed: Math.floor(Math.random() * 1e9) })} />
-
-          <section className="pile">
-            <h2 className="pile__title">The turn</h2>
-            <div className="row row--wrap">
-              <button className="btn btn--sm" onClick={() => doAll([{ type: 'nextTurn' }, { type: 'untapAll' }])}>Next turn</button>
-              <button className="btn btn--ghost btn--sm" onClick={() => doAction({ type: 'untapAll' })}>Untap all</button>
-              <button className="btn btn--ghost btn--sm" onClick={() => doAction({ type: 'tidy', lands: landIds })}>Tidy up</button>
-              <button className="btn btn--ghost btn--sm" onClick={() => setRun((r) => undo(r))} disabled={!run.past.length}>Undo</button>
-            </div>
-            <div className="row row--wrap">
-              <button
-                className="btn btn--ghost btn--sm"
-                onClick={() => { setMulligans(mulligans + 1); doAll(mulliganActions(board, { seed: Math.floor(Math.random() * 1e9) })) }}
-              >
-                Mulligan
-              </button>
-              <button
-                className="btn btn--ghost btn--sm"
-                onClick={() => { setSelected(null); setMulligans(0); setPeeking(0); setRun(fresh()) }}
-              >
-                Deal again
-              </button>
-              {board.arrows.length > 0 && (
-                <button className="btn btn--ghost btn--sm" onClick={() => doAction({ type: 'clearArrows' })}>
-                  Clear the arrows
+          <div className={`tabletop__rail${railOpen ? ' tabletop__rail--open' : ''}`}>
+            <section className="pile">
+              <h2 className="pile__title">Library <span className="chip tiny">{librarySize(board, 'you')}</span></h2>
+              <div className="row row--wrap">
+                <button className="btn btn--ghost btn--sm" onClick={() => doAction({ type: 'shuffle' })}>Shuffle</button>
+                <button className="btn btn--ghost btn--sm" onClick={() => setPeeking(peeking ? 0 : 3)} aria-expanded={peeking > 0}>
+                  {peeking ? 'Stop looking' : 'Look at the top 3'}
                 </button>
+              </div>
+              {peeking > 0 && (
+                <Peek
+                  instances={topOfLibrary}
+                  nameFor={nameFor}
+                  onBottom={(id) => doAction({ type: 'move', id, zone: 'library', to: 'bottom' })}
+                  onHand={(id) => doAction({ type: 'move', id, zone: 'hand' })}
+                  onGraveyard={(id) => doAction({ type: 'move', id, zone: 'graveyard' })}
+                />
               )}
-            </div>
-          </section>
+            </section>
 
-          <section className="pile">
-            <h2 className="pile__title">This table</h2>
-            <div className="row row--wrap">
-              <button className="btn btn--ghost btn--sm" onClick={() => togglePref('tableCoach')} aria-pressed={prefs.tableCoach}>
-                Notes {prefs.tableCoach ? 'on' : 'off'}
-              </button>
-              <button className="btn btn--ghost btn--sm" onClick={() => togglePref('tableSound')} aria-pressed={prefs.tableSound}>
-                Sound {prefs.tableSound ? 'on' : 'off'}
-              </button>
-            </div>
-            <p className="faint tiny">
-              Notes are observations, never rulings, and nothing here checks whether a play is legal.
-            </p>
-          </section>
+            {PILES.map((zone) => {
+              const pile = zoneOf(board, 'you', zone)
+              return (
+                <section className="pile" key={zone}>
+                  <h2 className="pile__title">
+                    {ZONE_LABELS[zone]} <span className="chip tiny">{pile.length}</span>
+                    {pile.length > 0 && (
+                      <button className="btn btn--ghost btn--sm" onClick={() => setOpenPile(openPile === zone ? null : zone)} aria-expanded={openPile === zone}>
+                        {openPile === zone ? 'Close' : 'Look'}
+                      </button>
+                    )}
+                  </h2>
+                  {openPile === zone && (
+                    <ul className="pile__cards" role="list">
+                      {pile.slice().reverse().map((inst) => (
+                        <li key={inst.id}>
+                          <button className={`pile__card ${selected === inst.id ? 'pile__card--selected' : ''}`} onClick={() => select(inst.id)} aria-pressed={selected === inst.id}>
+                            {nameFor(inst)}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              )
+            })}
+
+            <Dice board={board} onRoll={(sides, label) => doAction({ type: 'roll', sides, label, seed: Math.floor(Math.random() * 1e9) })} />
+
+            <section className="pile">
+              <h2 className="pile__title">The turn</h2>
+              <div className="row row--wrap">
+                <button className="btn btn--ghost btn--sm" onClick={() => doAction({ type: 'tidy', lands: landIds })}>Tidy up</button>
+                <button className="btn btn--ghost btn--sm" onClick={() => setRun((r) => undo(r))} disabled={!run.past.length}>Undo</button>
+                <button
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => { setMulligans(mulligans + 1); doAll(mulliganActions(board, { seed: Math.floor(Math.random() * 1e9) })) }}
+                >
+                  Mulligan
+                </button>
+                <button
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => { setSelected(null); setMulligans(0); setPeeking(0); setRun(fresh()) }}
+                >
+                  Deal again
+                </button>
+                {board.arrows.length > 0 && (
+                  <button className="btn btn--ghost btn--sm" onClick={() => doAction({ type: 'clearArrows' })}>
+                    Clear the arrows
+                  </button>
+                )}
+              </div>
+            </section>
+
+            <section className="pile">
+              <h2 className="pile__title">This table</h2>
+              <div className="row row--wrap">
+                <button className="btn btn--ghost btn--sm" onClick={() => togglePref('tableCoach')} aria-pressed={prefs.tableCoach}>
+                  Notes {prefs.tableCoach ? 'on' : 'off'}
+                </button>
+                <button className="btn btn--ghost btn--sm" onClick={() => togglePref('tableSound')} aria-pressed={prefs.tableSound}>
+                  Sound {prefs.tableSound ? 'on' : 'off'}
+                </button>
+                <button className="btn btn--ghost btn--sm" onClick={() => doAction({ type: 'life', value: board.life.you === 40 ? 20 : 40 })}>
+                  Set life to {board.life.you === 40 ? '20' : '40'}
+                </button>
+              </div>
+              <p className="faint tiny">
+                Notes are observations, never rulings, and nothing here checks whether a play is legal.
+              </p>
+            </section>
+          </div>
         </div>
       </div>
-
     </div>
   )
 }
 
 // --- the pieces ------------------------------------------------------------
 
-function Life({ board, onChange, onSet }) {
+/**
+ * The strip under your hand: life, a card, the turn.
+ *
+ * These four are most of what anyone presses during a game, so they are the
+ * four that are always on screen. Everything else — the piles, the dice, a
+ * mulligan — is behind "More", because on a phone held upright the table and
+ * your hand already fill the screen, and a table you have to scroll to play
+ * is not a table.
+ */
+function Strip({ board, railOpen, onLife, onDraw, onUntap, onNextTurn, onToggleRail }) {
   return (
-    <section className="pile life">
-      <h2 className="pile__title">Life</h2>
+    <section className="pile tabletop__strip">
       <div className="row life__row">
-        <button className="btn btn--ghost btn--sm" onClick={() => onChange(-5)} aria-label="Lose 5 life">−5</button>
-        <button className="btn btn--ghost btn--sm" onClick={() => onChange(-1)} aria-label="Lose 1 life">−1</button>
+        <button className="btn btn--ghost btn--sm" onClick={() => onLife(-5)} aria-label="Lose 5 life">−5</button>
+        <button className="btn btn--ghost btn--sm" onClick={() => onLife(-1)} aria-label="Lose 1 life">−1</button>
         <output className="life__total" aria-label={`${board.life.you} life`}>{board.life.you}</output>
-        <button className="btn btn--ghost btn--sm" onClick={() => onChange(1)} aria-label="Gain 1 life">+1</button>
-        <button className="btn btn--ghost btn--sm" onClick={() => onChange(5)} aria-label="Gain 5 life">+5</button>
+        <button className="btn btn--ghost btn--sm" onClick={() => onLife(1)} aria-label="Gain 1 life">+1</button>
+        <button className="btn btn--ghost btn--sm" onClick={() => onLife(5)} aria-label="Gain 5 life">+5</button>
+        <span className="spacer" />
+        <span className="chip tiny">Turn {board.turn}</span>
       </div>
-      <button className="btn btn--ghost btn--sm self-start" onClick={() => onSet(board.life.you === 40 ? 20 : 40)}>
-        Set to {board.life.you === 40 ? '20' : '40'}
-      </button>
+      <div className="row row--wrap">
+        <button className="btn btn--primary btn--sm" onClick={onDraw}>Draw</button>
+        <button className="btn btn--sm" onClick={onNextTurn}>Next turn</button>
+        <button className="btn btn--ghost btn--sm" onClick={onUntap}>Untap all</button>
+        <span className="spacer" />
+        <button className="btn btn--ghost btn--sm tabletop__more" onClick={onToggleRail} aria-expanded={railOpen}>
+          {railOpen ? 'Fewer' : 'More'}
+        </button>
+      </div>
     </section>
   )
 }

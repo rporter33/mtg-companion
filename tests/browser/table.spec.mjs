@@ -69,9 +69,16 @@ const openTable = async () => {
   await page.getByRole('button', { name: 'Table', exact: true }).click()
   await page.waitForTimeout(500)
 }
+/** Held upright, the piles and the rarer buttons are behind one press. */
+const openRail = async () => {
+  if (await page.locator('.tabletop__rail--open').count()) return
+  await page.getByRole('button', { name: 'More', exact: true }).click()
+  await page.waitForTimeout(300)
+}
 const onField = () => page.locator('.field .bcard').count()
 const inHand = () => page.locator('.tabletop__handcard .bcard').count()
 const pileCount = async (title) => {
+  await openRail()
   const text = await page.locator('.pile__title', { hasText: title }).first().innerText()
   return Number(text.match(/(\d+)/)?.[1])
 }
@@ -144,9 +151,10 @@ check('and puts it in hand', (await inHand()) === 7)
 await page.getByRole('button', { name: 'Next turn' }).click()
 await page.waitForTimeout(300)
 check('the turn counter is the player’s to advance',
-  (await page.locator('.tabletop__top').innerText()).includes('Turn 2'))
+  (await page.locator('.tabletop__strip').innerText()).includes('Turn 2'))
 
 console.log('\nLooking at the top of the library')
+await openRail()
 await page.getByRole('button', { name: 'Look at the top 3' }).click()
 await page.waitForTimeout(300)
 check('three cards, in order', (await page.locator('.peek__card').count()) === 3)
@@ -160,6 +168,7 @@ console.log('\nLife, and a mulligan')
 await page.getByRole('button', { name: 'Lose 5 life' }).click()
 await page.waitForTimeout(200)
 check('life goes down by five', (await page.locator('.life__total').innerText()) === '15')
+await openRail()
 await page.getByRole('button', { name: 'Mulligan' }).click()
 await page.waitForTimeout(500)
 check('a mulligan deals seven again', (await inHand()) === 7, `${await inHand()} in hand`)
@@ -176,9 +185,10 @@ await page.waitForTimeout(1200)
 check('the table is where it was left', (await onField()) === 1, `${await onField()} on the battlefield`)
 check('the card is in the same spot', (await slotStyle()) === kept, `${kept} then ${await slotStyle()}`)
 check('life is what it was', (await page.locator('.life__total').innerText()) === life)
-check('so is the turn', (await page.locator('.tabletop__top').innerText()).includes('Turn 2'))
+check('so is the turn', (await page.locator('.tabletop__strip').innerText()).includes('Turn 2'))
 
 console.log('\nStarting over')
+await openRail()
 await page.getByRole('button', { name: 'Deal again' }).click()
 await page.waitForTimeout(500)
 check('a fresh deal clears the battlefield', (await onField()) === 0)
@@ -259,6 +269,7 @@ await page.getByRole('button', { name: 'Pointing at…' }).click()
 await clickAt(...MIDDLE)
 check('a second arrow, drawn differently because it means something else',
   (await page.locator('.field__arrow--target').count()) === 1)
+await openRail()
 await page.getByRole('button', { name: 'Clear the arrows' }).click()
 await page.waitForTimeout(300)
 check('and both come off at once', (await page.locator('.field__arrow').count()) === 0)
@@ -307,6 +318,7 @@ await page.getByRole('button', { name: 'Put it down' }).click()
 await page.waitForTimeout(200)
 
 console.log('\nDice')
+await openRail()
 await page.getByRole('button', { name: 'Flip a coin' }).click()
 await page.waitForTimeout(300)
 check('a coin comes up one way or the other',
@@ -323,6 +335,7 @@ check('more than one land this turn is worth a note',
 await page.getByRole('button', { name: 'Quiet, please' }).click()
 await page.waitForTimeout(300)
 check('the whole coach can be silenced in one press', (await page.locator('.tablecoach').count()) === 0)
+await openRail()
 check('and the switch says so', (await page.getByRole('button', { name: /^Notes/ }).innerText()).includes('off'))
 await page.getByRole('button', { name: /^Notes/ }).click()
 await page.waitForTimeout(300)
@@ -334,12 +347,38 @@ await page.waitForTimeout(250)
 check('and a single note can be waved away on its own',
   (await page.locator('.tablecoach__note').count()) === notes - 1)
 
+await openRail()
 check('sound is off until it is asked for',
   (await page.getByRole('button', { name: /^Sound/ }).getAttribute('aria-pressed')) === 'false')
 await page.getByRole('button', { name: /^Sound/ }).click()
 await page.waitForTimeout(200)
 check('and stays on once it is',
   (await page.getByRole('button', { name: /^Sound/ }).getAttribute('aria-pressed')) === 'true')
+
+// A phone turned sideways is the shape this layout wants: the table on the
+// left at the height of the screen, hand and piles beside it, and nothing
+// folded away. What is being checked is that turning the phone is enough —
+// no scrolling to reach the piles, and the table does not shrink to a strip.
+console.log('\nHeld sideways')
+await page.setViewportSize({ width: 874, height: 402 })
+await page.waitForTimeout(600)
+{
+  const box = await page.locator('.field').boundingBox()
+  check('the table is still square', Math.abs(box.width - box.height) < 2, `${box.width} by ${box.height}`)
+  check('and as tall as the screen allows', box.height > 260, `${box.height} tall in 402`)
+  check('the piles are beside it, not folded away',
+    (await page.locator('.tabletop__rail').isVisible()) && !(await page.locator('.tabletop__more').isVisible()))
+  const rail = await page.locator('.tabletop__rail').boundingBox()
+  check('and genuinely beside it', rail.x > box.x + box.width - 4, `field ends ${box.x + box.width}, rail starts ${rail.x}`)
+  check('your hand is beside the table too',
+    (await page.locator('.tabletop__hand').boundingBox()).x > box.x + box.width - 4)
+}
+await page.setViewportSize({ width: 430, height: 1300 })
+await page.waitForTimeout(500)
+check('and upright the fold is back', await page.locator('.tabletop__more').isVisible())
+await page.getByRole('button', { name: 'Fewer', exact: true }).click()
+await page.waitForTimeout(300)
+check('and closing it leaves the table and your hand', !(await page.locator('.tabletop__rail').isVisible()))
 
 check('no console errors throughout', errors.length === 0, errors.join('; '))
 

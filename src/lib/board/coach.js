@@ -21,6 +21,24 @@ const isLandCard = (card) => /\bLand\b/.test(typeLineOf(card ?? {}))
 const isCreatureCard = (card) => /\bCreature\b/.test(typeLineOf(card ?? {}))
 const note = (id, text, { severity = 'info' } = {}) => ({ id, text, severity })
 
+/**
+ * At most this many notes at once.
+ *
+ * A coach that says six things says nothing: on a phone the notes push the
+ * table and your hand off the screen, and past about three the player stops
+ * reading them. Warnings come first, so what is cut is always the mildest
+ * thing the coach had to say.
+ */
+export const MOST_NOTES = 3
+
+/** "a", "a and b", "a, b and c", then "a, b and 2 more". */
+function listOf(names) {
+  if (names.length <= 1) return names[0] ?? ''
+  if (names.length === 2) return `${names[0]} and ${names[1]}`
+  if (names.length === 3) return `${names[0]}, ${names[1]} and ${names[2]}`
+  return `${names[0]}, ${names[1]} and ${names.length - 2} more`
+}
+
 /** What the untapped permanents on a player's battlefield could produce, as a count per colour plus a total. */
 export function manaAvailable(board, player, lookup) {
   const pool = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 }
@@ -76,11 +94,14 @@ export function notesFor(board, events, lookup, { player = 'you' } = {}) {
     return isLandCard(lookup?.(board.cards[e.instanceId]?.cardId))
   }).length
   if (landsThisTurn > 1) {
-    out.push(note('lands', `That is ${landsThisTurn} lands this turn. One a turn is the usual rule, unless something on the table says otherwise.`, { severity: 'warn' }))
+    out.push(note('lands', `That is ${landsThisTurn} lands this turn. One a turn is the usual rule, unless a card on the table says otherwise.`, { severity: 'warn' }))
   }
 
-  // Summoning sickness: a creature that arrived this turn and is now tapped
-  // or pointed at something. Haste is the common exception, so the note says so.
+  // Summoning sickness: creatures that arrived this turn and are now tapped
+  // or pointed at something. Haste is the common exception, so the note says
+  // so. All of them in one note rather than one each — a board with three
+  // fresh creatures on it does not need the same sentence three times.
+  const sick = []
   for (const inst of battlefield(board, player)) {
     const c = card(inst)
     if (!c || !isCreatureCard(c)) continue
@@ -88,7 +109,11 @@ export function notesFor(board, events, lookup, { player = 'you' } = {}) {
     const attacking = board.arrows.some((a) => a.from === inst.id)
     if (!inst.tapped && !attacking) continue
     if (/\bHaste\b/i.test(c.oracle_text ?? '')) continue
-    out.push(note(`sick:${inst.id}`, `${c.name} arrived this turn. A creature cannot attack or use an ability with {T} in its cost unless it has haste.`, { severity: 'warn' }))
+    sick.push(c.name)
+  }
+  if (sick.length) {
+    const names = [...new Set(sick)]
+    out.push(note('sick', `${listOf(names)} arrived this turn. Without haste, a creature cannot attack or use an ability with {T} until your next turn.`, { severity: 'warn' }))
   }
 
   // Mana left untapped, which almost always means a forgotten land.
@@ -113,7 +138,10 @@ export function notesFor(board, events, lookup, { player = 'you' } = {}) {
   if (empty === 0) out.push(note('library', 'Your library is empty. Drawing from an empty library loses the game.', { severity: 'warn' }))
   else if (empty <= 3) out.push(note('library', `${empty} card${empty === 1 ? '' : 's'} left in your library.`))
 
-  return out
+  // Warnings first, and only so many: what gets cut is the mildest thing.
+  const warnings = out.filter((n) => n.severity === 'warn')
+  const rest = out.filter((n) => n.severity !== 'warn')
+  return [...warnings, ...rest].slice(0, MOST_NOTES)
 }
 
 export { ZONES }

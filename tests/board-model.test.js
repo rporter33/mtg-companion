@@ -635,25 +635,25 @@ describe('the coach', () => {
     const run = table({ field: ['bear'] })
     const bear = battlefield(run.board, 'you')[0].id
     const tapped = act(run, { type: 'tap', id: bear })
-    expect(notes(tapped).find((n) => n.id === `sick:${bear}`).text).toMatch(/haste/)
+    expect(notes(tapped).find((n) => n.id === 'sick').text).toMatch(/Grizzly Bears.*haste/)
   })
 
   it('says nothing about a creature with haste, or one that has been out a turn', () => {
     const hasty = table({ field: ['hasty'] })
     const hastyId = battlefield(hasty.board, 'you')[0].id
-    expect(ids(act(hasty, { type: 'tap', id: hastyId }))).not.toContain(`sick:${hastyId}`)
+    expect(ids(act(hasty, { type: 'tap', id: hastyId }))).not.toContain('sick')
 
     let settled = table({ field: ['bear'] })
     const bear = battlefield(settled.board, 'you')[0].id
     settled = act(act(settled, { type: 'nextTurn' }), { type: 'tap', id: bear })
-    expect(ids(settled)).not.toContain(`sick:${bear}`)
+    expect(ids(settled)).not.toContain('sick')
   })
 
   it('treats an arrow off a new creature as an attack it should mention', () => {
     const run = table({ field: ['bear'] })
     const bear = battlefield(run.board, 'you')[0].id
     const attacking = act(run, { type: 'arrow', from: bear, to: 'you' })
-    expect(ids(attacking)).toContain(`sick:${bear}`)
+    expect(ids(attacking)).toContain('sick')
   })
 
   it('notices untapped mana and something in hand it would pay for', () => {
@@ -668,6 +668,25 @@ describe('the coach', () => {
   it('does not count a land in hand as something to cast', () => {
     const run = table({ field: ['forest'], hand: ['forest'] })
     expect(ids(run)).not.toContain('castable')
+  })
+
+  it('says one sentence about three sick creatures, not three', () => {
+    let run = table({ field: ['bear', 'bear', 'hasty'] })
+    for (const inst of battlefield(run.board, 'you')) run = act(run, { type: 'tap', id: inst.id })
+    const sick = notes(run).filter((n) => n.id === 'sick')
+    expect(sick).toHaveLength(1)
+    // Two copies of one card are one name, and the hasty one is not in it.
+    expect(sick[0].text).toMatch(/^Grizzly Bears arrived this turn/)
+    expect(sick[0].text).not.toMatch(/Raging Goblin/)
+  })
+
+  it('never says more than three things at once, and cuts the mildest', () => {
+    const run = table({ field: ['forest', 'forest', 'bear'], hand: ['bear', 'bolt'], rest: 2 })
+    const all = notes(run)
+    expect(all.length).toBeLessThanOrEqual(3)
+    // Whatever is left, the warnings are at the top of it.
+    const firstInfo = all.findIndex((n) => n.severity !== 'warn')
+    if (firstInfo >= 0) expect(all.slice(firstInfo).every((n) => n.severity !== 'warn')).toBe(true)
   })
 
   it('counts a hand over seven, and a library running out', () => {

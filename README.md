@@ -610,6 +610,16 @@ audio for a game usually played in a room where people are talking. It is off
 until it is asked for, and one burst of events makes one sound, so drawing
 seven cards is a riffle rather than seven riffles.
 
+Turn the phone sideways. A phone in landscape is about 850 by 390, which is
+the shape this layout wants — the table on the left at the height of the
+screen, your hand and every pile beside it, nothing folded and nothing to
+scroll — so the wide layout is keyed on the orientation rather than waiting
+for a desktop-sized screen, and the table stays put while the piles scroll
+past it. Held upright there is not room for all of that at once, and a screen
+you have to scroll to play is not a table: so life, Draw, Next turn and Untap
+all sit in a strip under your hand, the notes show one at a time, and the
+counts, the dice and the rarer buttons are one press away behind More.
+
 A position is stored as a fraction of the battlefield, which is square for the
 same reason a fraction is used: only then does a position mean the same thing
 across and down, at any size, after turning a phone sideways. Ids come off a

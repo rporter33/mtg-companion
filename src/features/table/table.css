@@ -113,7 +113,20 @@
 
 /* --- piles and the rail -------------------------------------------------- */
 
-.tabletop__rail { gap: var(--space-3); }
+.tabletop__side { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+
+/*
+ * Held upright there is not room for the table, your hand and every pile at
+ * once, and a screen you have to scroll to play is not a table. So the
+ * counts and the rarer buttons fold away behind one press. The wide rules at
+ * the bottom of this file put them back beside the table, where there is
+ * room, and take the fold away with them.
+ */
+.tabletop__rail { flex-direction: column; gap: var(--space-3); display: none; }
+.tabletop__rail--open { display: flex; }
+
+/* Life never wraps: five small buttons and a number, on one line. */
+.tabletop__strip .life__row { flex-wrap: nowrap; }
 
 .pile {
   padding: var(--space-2) var(--space-3);
@@ -181,16 +194,30 @@
   .pile__card { min-height: 40px; }
 }
 
-/* On a desktop the leftover width goes to the piles, not to a stretched
-   table: the field stays square so a position still means what it meant on
-   the phone it was arranged on. */
-@media (min-width: 900px) {
-  .tabletop__layout { flex-direction: row; align-items: start; }
-  /* The width belongs to the column, not to the field: the field is inside a
-     column of its own now, so a basis set on it would size its height and
-     the aspect ratio would take the width from that. */
-  .tabletop__main { flex: 0 0 min(62vh, 620px); }
-  .tabletop__rail { flex: 1 1 280px; min-width: 0; }
+/*
+ * Wide enough for the table and everything beside it: a desktop, or a phone
+ * turned sideways. A phone in landscape is about 850 by 390, which is the
+ * shape this layout wants — the table on the left at the height of the
+ * screen, your hand and the piles on the right — so it is the orientation
+ * to hold the thing in, and the query says so rather than waiting for a
+ * desktop-sized screen.
+ *
+ * The width belongs to the column, not to the field: the field sits inside a
+ * column of its own, so a basis set on the field would size its height and
+ * the aspect ratio would take the width from that.
+ */
+@media (min-width: 900px), (orientation: landscape) and (min-width: 620px) {
+  .tabletop__layout {
+    display: grid;
+    grid-template-columns: min(86vh, 620px) minmax(0, 1fr);
+    gap: var(--space-4);
+    align-items: start;
+  }
+  /* The table stays put while the piles scroll past it. */
+  .tabletop__main { position: sticky; top: var(--space-2); }
+  .tabletop__rail { display: flex; }
+  .tabletop__more, .tablecoach__more { display: none; }
+  .tablecoach__note:nth-child(n + 2) { display: flex; }
   .tabletop__handcard { width: 96px; }
 }
 
@@ -223,6 +250,10 @@
 }
 .tablecoach__head { align-items: center; }
 .tablecoach__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+/* Upright, one note at a time: three of them push the table and your hand
+   off the screen, which is a worse outcome than a note going unread. */
+.tablecoach__note:nth-child(n + 2) { display: none; }
+.tablecoach--open .tablecoach__note { display: flex; }
 .tablecoach__note {
   display: flex; align-items: flex-start; gap: var(--space-2);
   font-size: 0.85rem; color: var(--text-muted);

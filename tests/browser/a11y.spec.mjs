@@ -360,6 +360,16 @@ await scanState('the free table, a card picked up', async () => {
 // Pointing at something, with a card on the table carrying counters: the two
 // states where the table stops being a list of controls and starts being a
 // place, and the two most likely to lose their names.
+// Everything the rail holds is behind one press on a phone, so open it: a
+// panel nobody can reach is also a panel nobody scans.
+await scanState('the free table, every control open', async () => {
+  const more = page.getByRole('button', { name: 'More', exact: true })
+  if (!await more.count()) return false
+  await more.click()
+  await page.waitForTimeout(400)
+  return (await page.locator('.tabletop__rail--open').count()) === 1
+})
+
 await scanState('the free table, pointing at something', async () => {
   await page.getByRole('button', { name: 'To the battlefield' }).click()
   await page.waitForTimeout(300)

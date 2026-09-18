@@ -16,15 +16,24 @@ import { notesFor } from '../../lib/board/coach.js'
  */
 export default function Coach({ board, events, lookup, onSilence }) {
   const [dismissed, setDismissed] = useState(() => new Set())
+  // On a narrow screen only the first note is shown until this is set; with
+  // room beside the table they are all shown and this does nothing. The
+  // choice is the stylesheet's, so there is no media query in here.
+  const [open, setOpen] = useState(false)
   const notes = notesFor(board, events, lookup)
   const shown = notes.filter((note) => !dismissed.has(`${note.id}:${board.turn}`))
   if (!shown.length) return null
 
   return (
-    <section className="tablecoach" aria-label="Notes">
+    <section className={`tablecoach${open ? ' tablecoach--open' : ''}`} aria-label="Notes">
       <div className="row row--wrap tablecoach__head">
-        <h2 className="pile__title">Notes</h2>
+        <h2 className="pile__title">Notes <span className="chip tiny">{shown.length}</span></h2>
         <span className="spacer" />
+        {shown.length > 1 && (
+          <button className="btn btn--ghost btn--sm tablecoach__more" onClick={() => setOpen(!open)} aria-expanded={open}>
+            {open ? 'Just the first' : `All ${shown.length}`}
+          </button>
+        )}
         <button className="btn btn--ghost btn--sm" onClick={onSilence}>Quiet, please</button>
       </div>
       <ul className="tablecoach__list" role="list">
