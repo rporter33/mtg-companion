@@ -17,6 +17,30 @@ import { stapleQueries } from '../src/lib/first-deck.js'
 const API = process.env.SCRYFALL_API || 'https://api.scryfall.com'
 const UA = 'mtg-companion-first-deck-verifier/1.0 (+https://github.com/rporter33/mtg-companion)'
 
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * One request, paced and patient. Scryfall asks for a short gap between
+ * requests and answers 429 when a run gets ahead of it; the verifier has
+ * a few hundred searches to make, so a 429 waits as long as Scryfall says
+ * (or a growing pause) and tries again, up to five times, before it is a
+ * failure. Every request leaves a gap behind it, so the pass never bursts.
+ */
+async function request(url, init = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, { ...init, headers: { Accept: 'application/json', 'User-Agent': UA, ...(init.headers ?? {}) } })
+    await wait(150)
+    if ((response.status === 429 || response.status >= 500) && attempt < 5) {
+      const after = Number(response.headers.get('retry-after'))
+      const pause = Number.isFinite(after) && after > 0 ? after * 1000 : 1000 * 2 ** attempt
+      console.error(`Scryfall answered ${response.status}; waiting ${pause / 1000}s before trying again`)
+      await wait(pause)
+      continue
+    }
+    return response
+  }
+}
+
 const names = [...new Set([
   ...Object.values(FIRST_COMMANDERS).flat().map((p) => p.name),
   ...Object.values(COLOR_PAGES).flatMap((p) => p.signature),
@@ -26,9 +50,9 @@ let unknown = []
 let notCommander = []
 for (let i = 0; i < names.length; i += 75) {
   const chunk = names.slice(i, i + 75)
-  const response = await fetch(`${API}/cards/collection`, {
+  const response = await request(`${API}/cards/collection`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': UA },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ identifiers: chunk.map((name) => ({ name })) }),
   })
   if (!response.ok) { console.error(`Scryfall answered ${response.status}`); process.exit(2) }
@@ -39,7 +63,6 @@ for (let i = 0; i < names.length; i += 75) {
     if (commanders.has(card.name) && !/Legendary/.test(card.type_line) && !/can be your commander/i.test(card.oracle_text ?? '')) notCommander.push(card.name)
     if (commanders.has(card.name) && card.legalities?.commander !== 'legal') notCommander.push(`${card.name} (${card.legalities?.commander})`)
   }
-  await new Promise((r) => setTimeout(r, 120))
 }
 
 // Every plan's searches, for every colour choice that offers it, at the
@@ -54,10 +77,7 @@ for (const formatId of ['commander', 'modern']) for (const [colors, plans] of Ob
     const queries = stapleQueries(colors, 'theme', { capUsd: 4, strategy: plan, formatId }).slice(0, plan.queries.length)
     let answered = false
     for (const q of queries) {
-      const response = await fetch(`${API}/cards/search?q=${encodeURIComponent(q)}&order=edhrec&unique=cards`, {
-        headers: { Accept: 'application/json', 'User-Agent': UA },
-      })
-      await new Promise((r) => setTimeout(r, 120))
+      const response = await request(`${API}/cards/search?q=${encodeURIComponent(q)}&order=edhrec&unique=cards`)
       if (response.status === 404) continue // Scryfall's "no cards match"
       if (!response.ok) { console.error(`Scryfall answered ${response.status} for ${q}`); process.exit(2) }
       const payload = await response.json()
