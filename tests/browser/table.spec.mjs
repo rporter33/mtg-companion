@@ -571,6 +571,153 @@ console.log('\nWhere you are in the turn')
   await page.getByRole('button', { name: 'Close' }).click()
 }
 
+console.log('\nLooking through a pile')
+await openRail()
+{
+  // Put something in the graveyard to look through.
+  const inHand = page.locator('.tabletop__handcard .bcard').first()
+  await inHand.click()
+  await page.waitForTimeout(200)
+  const toYard = page.getByRole('button', { name: 'To the graveyard' })
+  if (await toYard.count()) { await toYard.click(); await page.waitForTimeout(350) }
+  await openRail()
+  const yard = page.locator('.pile').filter({ has: page.locator('.pile__title', { hasText: 'Graveyard' }) }).first()
+  const look = yard.getByRole('button', { name: 'Look' })
+  if (await look.count()) {
+    await look.click()
+    await page.waitForTimeout(300)
+    check('a pile opens into a browser', (await yard.locator('.zonebrowse').count()) === 1)
+    check('grouped by type with a count', (await yard.locator('.zonebrowse__head').count()) > 0)
+    const hint = await yard.locator('.zonebrowse__find').getAttribute('placeholder')
+    check('and the box teaches its own syntax', /t:/.test(hint) && /o:/.test(hint), hint)
+  }
+
+  // The library is the one an enforced game will not let you look through.
+  await page.getByRole('button', { name: 'Search the library' }).click()
+  await page.waitForTimeout(300)
+  const lib = page.locator('.pile').filter({ has: page.locator('.pile__title', { hasText: 'Library' }) }).first()
+  check('the library can be searched at all', (await lib.locator('.zonebrowse').count()) === 1)
+  const before = await lib.locator('.pile__card').count()
+  check('and shows what is in it', before > 0, `${before} cards`)
+
+  await lib.locator('.zonebrowse__find').fill('t:creature')
+  await page.waitForTimeout(350)
+  const creatures = await lib.locator('.pile__card').count()
+  check('a t: search narrows it', creatures > 0 && creatures < before, `${creatures} of ${before}`)
+
+  const creatureNames = (await lib.locator('.pile__card').allInnerTexts()).join(',')
+  await lib.locator('.zonebrowse__find').fill('t:land')
+  await page.waitForTimeout(350)
+  const lands = await lib.locator('.pile__card').count()
+  const landNames = (await lib.locator('.pile__card').allInnerTexts()).join(',')
+  check('and finds a different set for a different type',
+    lands > 0 && landNames !== creatureNames, `${lands} lands vs ${creatures} creatures`)
+
+  await lib.locator('.zonebrowse__find').fill('zzzznothing')
+  await page.waitForTimeout(350)
+  check('an empty result says so rather than showing nothing at all',
+    (await lib.getByText('Nothing here matches.').count()) === 1)
+
+  await lib.locator('.zonebrowse__find').fill('')
+  await page.waitForTimeout(300)
+  await page.getByRole('button', { name: 'Close the library' }).click()
+  await page.waitForTimeout(200)
+  check('and it closes again', (await lib.locator('.zonebrowse').count()) === 0)
+}
+
+console.log('\nThe game log')
+await openRail()
+{
+  const log = page.locator('.gamelog')
+  check('the log is in the rail', (await log.count()) === 1)
+  const items = await page.locator('.gamelog__item').count()
+  check('and has entries in it by now', items > 0, `${items} entries`)
+  const said = (await page.locator('.gamelog__said').allInnerTexts()).join(' | ')
+  check('which read as sentences about cards', /You (drew|put|tapped|untapped|moved|exiled|rolled)/i.test(said), said.slice(0, 160))
+  // The table has no notion of casting, so the log must never claim one.
+  check('and never claim a card was cast', !/\bcast\b/i.test(said), said.slice(0, 160))
+  check('turns are headed', (await page.locator('.gamelog__turn').count()) > 0)
+  const steps = await page.locator('.gamelog__steps').count()
+  check('and the steps that passed are collapsed into their own lines', steps > 0, `${steps} step lines`)
+  await page.locator('.gamelog__toggle').click()
+  await page.waitForTimeout(250)
+  check('the log folds away', (await page.locator('.gamelog__items').count()) === 0)
+  await page.locator('.gamelog__toggle').click()
+  await page.waitForTimeout(250)
+  check('and comes back', (await page.locator('.gamelog__items').count()) > 0)
+}
+
+console.log('\nThe counters beside you')
+await openRail()
+{
+  const box = page.locator('.counters')
+  check('the counters are in the rail', (await box.count()) === 1)
+  const labels = (await box.locator('.counters__label').allInnerTexts()).map((t) => t.toLowerCase())
+  check('poison is among them', labels.includes('poison'), labels.join(', '))
+  check('and so are the newer ones', labels.includes('storm') && labels.includes('speed'), labels.join(', '))
+
+  const poison = box.locator('.counters__one', { hasText: 'Poison' }).first()
+  await poison.getByRole('button', { name: 'One more Poison counter' }).click()
+  await page.waitForTimeout(250)
+  check('a counter goes up', (await poison.locator('.counters__value').innerText()) === '1')
+  const headline = await page.locator('.pile__title', { hasText: 'Your counters' }).first().innerText()
+  check('and the heading says so', /1 poison/i.test(headline), JSON.stringify(headline))
+  await poison.getByRole('button', { name: 'One fewer Poison counter' }).click()
+  await page.waitForTimeout(250)
+  check('and comes back down', (await poison.locator('.counters__value').innerText()) === '0')
+  check('but never below nothing',
+    await poison.getByRole('button', { name: 'One fewer Poison counter' }).isDisabled())
+
+  // A counter the list has never heard of is the point of the field.
+  await page.locator('#counter-name').fill('lore')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await page.waitForTimeout(300)
+  const mine = (await page.locator('.counters__label').allInnerTexts()).map((t) => t.toLowerCase())
+  check('a counter of your own can be added', mine.includes('lore'), mine.join(', '))
+
+  // It has to survive a reload, or it is not worth typing. The table saves a
+  // moment after things settle, so give it that moment before reloading.
+  await page.waitForTimeout(2500)
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForTimeout(800)
+  await openRail()
+  const after = (await page.locator('.counters__label').allInnerTexts()).map((t) => t.toLowerCase())
+  check('and is still there after a reload', after.includes('lore'), after.join(', '))
+
+  // The board is saved; the log is not. Saying "nothing has happened yet" to
+  // somebody looking at their own board from yesterday would be a lie.
+  const empty = await page.locator('.gamelog__empty').innerText().catch(() => '')
+  check('and the log admits it did not keep the history',
+    empty === '' || /picked up where you left off/i.test(empty), JSON.stringify(empty))
+}
+
+console.log('\nWhat is untapped, and what a card costs')
+{
+  const costs = await page.locator('.tabletop__cost').count()
+  check('hand cards carry their cost above them', costs > 0, `${costs} costs`)
+  const pool = page.locator('.pool')
+  check('and the strip says what is still untapped', (await pool.count()) === 1)
+  const before = await pool.locator('.pool__count').innerText()
+  check('with a count on it', /^[0-9]+$/.test(before.trim()), before)
+  check('and the colours between them', (await pool.locator('.mana').count()) > 0)
+  // Tapping a land has to move the number, or it is not reading the board.
+  const land = page.locator('.field .bcard').first()
+  await land.click()
+  await page.waitForTimeout(200)
+  const tap = page.getByRole('button', { name: 'Tap', exact: true })
+  if (await tap.count()) {
+    await tap.click()
+    await page.waitForTimeout(350)
+    const after = await pool.locator('.pool__count').innerText().catch(() => '0')
+    check('tapping a source takes it out of the count', Number(after) === Number(before) - 1, `${before} then ${after}`)
+    await page.getByRole('button', { name: 'Untap all' }).click()
+    await page.waitForTimeout(300)
+  }
+  // It counts cards, not mana, so the wording must not promise mana.
+  const label = await pool.locator('.pool__label').innerText()
+  check('and it is labelled untapped rather than available', /untapped/i.test(label), label)
+}
+
 console.log('\nThe bare table is still there')
 await openRail()
 await page.getByRole('button', { name: /^Playmat/ }).click()

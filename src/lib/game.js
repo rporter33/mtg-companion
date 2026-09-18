@@ -7,11 +7,22 @@
 
 import { getFormat } from './formats.js'
 
+/*
+ * The counters a player can have, as opposed to the ones a card can have.
+ *
+ * One list, shared by the play companion and the table, so the two screens
+ * never disagree about what a player can be keeping track of. Poison is the
+ * only one that ends a game, which is why it is the only one with a number
+ * against it.
+ */
 export const COUNTER_TYPES = [
   { id: 'poison', label: 'Poison', max: 10, lethal: 10, hint: 'Ten poison counters and you lose.' },
   { id: 'energy', label: 'Energy', max: null },
   { id: 'experience', label: 'Experience', max: null },
   { id: 'rad', label: 'Rad', max: null },
+  { id: 'storm', label: 'Storm', max: null, hint: 'How many spells have been cast this turn.' },
+  { id: 'ticket', label: 'Ticket', max: null },
+  { id: 'speed', label: 'Speed', max: 4, hint: 'Start your engines: speed goes up to four and never comes down.' },
 ]
 
 const PLAYER_COLORS = ['U', 'R', 'G', 'W', 'B', 'C']

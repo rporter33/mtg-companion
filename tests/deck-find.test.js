@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalize, termsOf, haystackOf, matches, filterSections, statusLine } from '../src/lib/deck-find.js'
+import { normalize, termsOf, haystackOf, matches, filterSections, statusLine, parseFind, matchesFind } from '../src/lib/deck-find.js'
 
 const card = (name, type_line, over = {}) => ({ id: name, name, type_line, ...over })
 const BOLT = card('Lightning Bolt', 'Instant')
@@ -144,5 +144,84 @@ describe('statusLine', () => {
     expect(statusLine({ active: true, matched: 3, total: 100, unloaded: 0 })).toBe('3 of 100 cards match')
     expect(statusLine({ active: true, matched: 0, total: 100, unloaded: 0 })).toBe('No cards match')
     expect(statusLine({ active: true, matched: 3, total: 100, unloaded: 2 })).toBe('3 of 100 cards match · 2 not loaded, not searched')
+  })
+})
+
+/**
+ * The prefixes the module's own comment promised.
+ *
+ * A bare query still reads names and type lines only — "draw" must not light
+ * up half a deck — and rules text is reachable only when you ask for it by
+ * name. The vocabulary is Scryfall's, which is also Moxgate's, so nobody has
+ * to learn a third one.
+ */
+describe('finding with a prefix', () => {
+  const bear = { name: 'Grizzly Bears', type_line: 'Creature — Bear', oracle_text: '' }
+  const bolt = { name: 'Lightning Bolt', type_line: 'Instant', oracle_text: 'Lightning Bolt deals 3 damage to any target.' }
+  const wrenn = {
+    name: 'Wrenn and Six',
+    type_line: 'Legendary Planeswalker — Wrenn',
+    oracle_text: 'Return up to one target land card from your graveyard to your hand.',
+  }
+  const room = {
+    name: 'Bottomless Pool // Locker Room',
+    card_faces: [
+      { name: 'Bottomless Pool', type_line: 'Enchantment — Room', oracle_text: 'When you unlock this door, return a creature.' },
+      { name: 'Locker Room', type_line: 'Enchantment — Room', oracle_text: 'Creatures you control get +1/+1.' },
+    ],
+  }
+  const all = [bear, bolt, wrenn, room]
+  const found = (query) => all.filter((card) => matchesFind(card, parseFind(query))).map((card) => card.name)
+
+  it('reads the type line with t:', () => {
+    expect(found('t:creature')).toEqual(['Grizzly Bears'])
+    expect(found('t:planeswalker')).toEqual(['Wrenn and Six'])
+  })
+
+  it('reads rules text with o:, which a bare query still will not', () => {
+    expect(found('o:damage')).toEqual(['Lightning Bolt'])
+    expect(found('damage')).toEqual([])
+  })
+
+  it('reads the name alone with name:', () => {
+    // "bolt" is in Lightning Bolt's rules text as well as its name, so this
+    // only proves anything because the type line does not carry it.
+    expect(found('name:wrenn')).toEqual(['Wrenn and Six'])
+  })
+
+  it('takes type: and text: written out', () => {
+    expect(found('type:instant')).toEqual(['Lightning Bolt'])
+    expect(found('text:graveyard')).toEqual(['Wrenn and Six'])
+  })
+
+  it('combines a prefix with plain words', () => {
+    expect(found('t:creature bear')).toEqual(['Grizzly Bears'])
+    expect(found('t:creature bolt')).toEqual([])
+  })
+
+  it('combines two prefixes', () => {
+    expect(found('t:instant o:damage')).toEqual(['Lightning Bolt'])
+    expect(found('t:instant o:graveyard')).toEqual([])
+  })
+
+  it('reads both faces of a double-faced card', () => {
+    expect(found('name:locker')).toEqual(['Bottomless Pool // Locker Room'])
+    expect(found('o:unlock')).toEqual(['Bottomless Pool // Locker Room'])
+    expect(found('t:room')).toEqual(['Bottomless Pool // Locker Room'])
+  })
+
+  it('treats an unknown prefix as ordinary words, so a real name still finds it', () => {
+    expect(parseFind('zz:nope').fielded).toEqual([])
+    expect(parseFind('zz:nope').terms).toEqual(['zz', 'nope'])
+  })
+
+  it('ignores a prefix with nothing after it rather than matching everything', () => {
+    expect(parseFind('t:').fielded).toEqual([])
+    expect(found('t: bear')).toEqual(['Grizzly Bears'])
+  })
+
+  it('matches everything on an empty query, and nothing on a missing card', () => {
+    expect(found('')).toEqual(all.map((card) => card.name))
+    expect(matchesFind(null, parseFind('bear'))).toBe(false)
   })
 })

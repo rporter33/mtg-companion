@@ -10,8 +10,11 @@ import { typeLineOf } from './formats.js'
  * finds Jötun Grunt because a phone keyboard cannot type the umlaut, and
  * "druid elf" finds Llanowar Elves because nobody remembers word order.
  *
- * Rules text is left out on purpose: "draw" would light up half a deck and
- * make the counts meaningless. It can come back as an explicit prefix.
+ * Rules text is left out of a bare query on purpose: "draw" would light up
+ * half a deck and make the counts meaningless. It is reachable with an
+ * explicit prefix instead — `o:draw` — along with `t:` for the type line and
+ * `name:` for the name alone. The prefixes are Scryfall's and Moxgate's, so
+ * anybody who has typed a search into either already knows them.
  */
 
 const NONE = Object.freeze([])
@@ -54,6 +57,51 @@ export function matches(card, terms) {
   if (!terms?.length) return true
   const hay = haystackOf(card)
   return hay !== '' && terms.every((term) => hay.includes(term))
+}
+
+/*
+ * The fields a prefix reaches, and how to read each one off a card.
+ *
+ * Both faces everywhere, because somebody looking for a Fireblade Alchemist
+ * does not care which side of the card they half-remember.
+ */
+const FIELDS = {
+  name: (card) => [card.name, ...(card.card_faces ?? []).map((face) => face?.name)],
+  t: (card) => [card.type_line, ...(card.card_faces ?? []).map((face) => face?.type_line)],
+  o: (card) => [card.oracle_text, ...(card.card_faces ?? []).map((face) => face?.oracle_text)],
+}
+
+/** `type:` and `text:` written out, because half of people will. */
+const ALIASES = { type: 't', text: 'o', oracle: 'o', n: 'name' }
+
+/**
+ * A query split into a plain part and its prefixed parts.
+ *
+ * `bear t:creature o:trample` becomes the words `bear`, plus a `t` term and
+ * an `o` term. Anything with an unknown prefix is treated as plain words, so
+ * a card actually called "Mr. Orange" is still findable by typing it.
+ */
+export function parseFind(query) {
+  const plain = []
+  const fielded = []
+  for (const token of String(query ?? '').split(/\s+/)) {
+    if (!token) continue
+    const match = /^([a-z]+):(.*)$/i.exec(token)
+    const field = match && (ALIASES[match[1].toLowerCase()] ?? match[1].toLowerCase())
+    if (match && FIELDS[field] && match[2]) fielded.push({ field, terms: termsOf(match[2]) })
+    else plain.push(token)
+  }
+  return { terms: termsOf(plain.join(' ')), fielded }
+}
+
+/** True when the card satisfies the plain words and every prefixed term. */
+export function matchesFind(card, { terms, fielded } = {}) {
+  if (!card) return false
+  if (!matches(card, terms)) return false
+  return (fielded ?? []).every(({ field, terms: want }) => {
+    const hay = normalize(FIELDS[field](card).filter(Boolean).join(' '))
+    return want.every((term) => hay.includes(term))
+  })
 }
 
 /**

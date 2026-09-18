@@ -3,6 +3,7 @@ import { navigate } from '../../lib/router.js'
 import { listDecks, getDeck, saveDeck, getTable, saveTable, clearTable, getPrefs, setPref } from '../../lib/storage.js'
 import { createBoard, handOf, librarySize, zoneOf, nameOf, hostOf, ZONE_LABELS, DEFAULT_COUNTERS } from '../../lib/board/model.js'
 import { newRun, act, applyAll, undo, snapshot, restore } from '../../lib/board/runner.js'
+import { untappedSources, withinReach } from '../../lib/board/mana.js'
 import { openingActions, mulliganActions, libraryOf, swapPrinting, OPENING_HAND } from '../../lib/board/deck.js'
 import { treatmentOf, finishFor } from '../../lib/board/art.js'
 import { laneFor, refuseBattlefield, zoneWhenPlayed, isPermanent } from '../../lib/board/placement.js'
@@ -17,6 +18,11 @@ import Field from './Field.jsx'
 import BoardCard from './BoardCard.jsx'
 import Coach from './Coach.jsx'
 import TurnTracker from './TurnTracker.jsx'
+import GameLog from './GameLog.jsx'
+import Pool from './Pool.jsx'
+import PlayerCounters from './PlayerCounters.jsx'
+import ZoneBrowser from './ZoneBrowser.jsx'
+import ManaCost from '../../components/ManaCost.jsx'
 import Printings from '../../components/Printings.jsx'
 import TokenMaker from './TokenMaker.jsx'
 import './table.css'
@@ -132,6 +138,7 @@ function Seat({ deck: initialDeck, onOpenCard }) {
   const [run, setRun] = useState(null)
   const [selected, setSelected] = useState(null)
   const [peeking, setPeeking] = useState(0)
+  const [searching, setSearching] = useState(false)
   const [openPile, setOpenPile] = useState(null)
   const [mulligans, setMulligans] = useState(0)
   // Pointing at something: an arrow, or putting one card on another. Until a
@@ -329,6 +336,9 @@ function Seat({ deck: initialDeck, onOpenCard }) {
   const topOfLibrary = zoneOf(board, 'you', 'library').slice(0, peeking)
   const nameFor = (inst) => nameOf(board, inst.id, lookup)
   const cardFor = (inst) => (inst.custom ? null : lookup(inst.cardId))
+  // What is left untapped, read off Scryfall rather than worked out from the
+  // rules. Recomputed with the board because tapping one land changes it.
+  const pool = untappedSources(board, 'you', cardFor)
   /*
    * One click does one of two things. Normally it picks a card up, or puts
    * it down again. While something is being pointed at, it is the far end
@@ -495,6 +505,7 @@ function Seat({ deck: initialDeck, onOpenCard }) {
               <div className="tabletop__handrow">
                 {hand.map((inst) => (
                   <span className="tabletop__handcard" key={inst.id}>
+                    <HandCost card={cardFor(inst)} pool={pool} />
                     <BoardCard
                       card={cardFor(inst)}
                       name={nameFor(inst)}
@@ -523,6 +534,7 @@ function Seat({ deck: initialDeck, onOpenCard }) {
 
           <Strip
             board={board}
+            pool={pool}
             railOpen={railOpen}
             onLife={(delta) => doAction({ type: 'life', delta })}
             onDraw={() => doAction({ type: 'draw' })}
@@ -532,6 +544,23 @@ function Seat({ deck: initialDeck, onOpenCard }) {
           />
 
           <div className={`tabletop__rail${railOpen ? ' tabletop__rail--open' : ''}`}>
+            <GameLog board={board} events={run.events} lookup={lookup} restored={run.restored} />
+
+            <section className="pile">
+              <h2 className="pile__title">
+                Your counters
+                {Object.values(board.counters?.you ?? {}).some(Boolean) && (
+                  <span className="chip tiny">
+                    {Object.entries(board.counters.you).filter(([, n]) => n).map(([name, n]) => `${n} ${name}`).join(' · ')}
+                  </span>
+                )}
+              </h2>
+              <PlayerCounters
+                board={board}
+                onChange={(name, delta) => doAction({ type: 'playerCounter', name, delta })}
+              />
+            </section>
+
             <section className="pile">
               <h2 className="pile__title">Library <span className="chip tiny">{librarySize(board, 'you')}</span></h2>
               <div className="row row--wrap">
@@ -539,7 +568,30 @@ function Seat({ deck: initialDeck, onOpenCard }) {
                 <button className="btn btn--ghost btn--sm" onClick={() => setPeeking(peeking ? 0 : 3)} aria-expanded={peeking > 0}>
                   {peeking ? 'Stop looking' : 'Look at the top 3'}
                 </button>
+                <button className="btn btn--ghost btn--sm" onClick={() => setSearching(!searching)} aria-expanded={searching}>
+                  {searching ? 'Close the library' : 'Search the library'}
+                </button>
               </div>
+              {/*
+                * Searching your own library is a thing an enforced game
+                * refuses and a paper table always allows, because at a paper
+                * table you are the one holding the deck. Shuffling afterwards
+                * is the player's job, the same as it is in paper — hence the
+                * reminder rather than a rule.
+                */}
+              {searching && (
+                <>
+                  <ZoneBrowser
+                    label="library"
+                    instances={zoneOf(board, 'you', 'library')}
+                    cardFor={cardFor}
+                    nameFor={nameFor}
+                    selected={selected}
+                    onSelect={select}
+                  />
+                  <p className="faint tiny m0">Shuffle when you are done, the way you would in paper.</p>
+                </>
+              )}
               {peeking > 0 && (
                 <Peek
                   instances={topOfLibrary}
@@ -564,15 +616,14 @@ function Seat({ deck: initialDeck, onOpenCard }) {
                     )}
                   </h2>
                   {openPile === zone && (
-                    <ul className="pile__cards" role="list">
-                      {pile.slice().reverse().map((inst) => (
-                        <li key={inst.id}>
-                          <button className={`pile__card ${selected === inst.id ? 'pile__card--selected' : ''}`} onClick={() => select(inst.id)} aria-pressed={selected === inst.id}>
-                            {nameFor(inst)}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                    <ZoneBrowser
+                      label={ZONE_LABELS[zone].toLowerCase()}
+                      instances={pile.slice().reverse()}
+                      cardFor={cardFor}
+                      nameFor={nameFor}
+                      selected={selected}
+                      onSelect={select}
+                    />
                   )}
                 </section>
               )
@@ -700,7 +751,7 @@ function Stack({ board, nameFor, cardFor, onResolve, onCounter }) {
  * your hand already fill the screen, and a table you have to scroll to play
  * is not a table.
  */
-function Strip({ board, railOpen, onLife, onDraw, onUntap, onNextTurn, onToggleRail }) {
+function Strip({ board, pool, railOpen, onLife, onDraw, onUntap, onNextTurn, onToggleRail }) {
   return (
     <section className="pile tabletop__strip">
       <div className="row life__row">
@@ -716,6 +767,7 @@ function Strip({ board, railOpen, onLife, onDraw, onUntap, onNextTurn, onToggleR
         <button className="btn btn--primary btn--sm" onClick={onDraw}>Draw</button>
         <button className="btn btn--sm" onClick={onNextTurn}>Next turn</button>
         <button className="btn btn--ghost btn--sm" onClick={onUntap}>Untap all</button>
+        <Pool pool={pool} />
         <span className="spacer" />
         <button className="btn btn--ghost btn--sm tabletop__more" onClick={onToggleRail} aria-expanded={railOpen}>
           {railOpen ? 'Fewer' : 'More'}
@@ -890,3 +942,31 @@ function Dice({ board, onRoll }) {
   )
 }
 
+
+/**
+ * A card's cost, floating above it in hand.
+ *
+ * Borrowed from Moxgate, and the best small idea in their hand: you read what
+ * a card costs without reading the card, so a fanned hand of seven is legible
+ * at a glance rather than seven things to squint at.
+ *
+ * The reach hint is ours and is weaker than theirs by design. Theirs knows
+ * what you can cast; this compares two numbers and is wrong about cost
+ * reduction, alternative costs and anything that taps for more than one — so
+ * it only ever dims a cost, never forbids a play, and says what it ignores.
+ */
+function HandCost({ card, pool }) {
+  const cost = card?.mana_cost ?? card?.card_faces?.[0]?.mana_cost ?? ''
+  if (!cost) return null
+  const reach = withinReach(card, pool)
+  return (
+    <span
+      className={`tabletop__cost${reach === 'no' ? ' tabletop__cost--far' : ''}`}
+      title={reach === 'no'
+        ? 'More than your untapped sources, counted one per card. It does not read conditions or cost reductions.'
+        : undefined}
+    >
+      <ManaCost cost={cost} />
+    </span>
+  )
+}
