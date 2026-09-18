@@ -20,20 +20,26 @@ const UA = 'mtg-companion-first-deck-verifier/1.0 (+https://github.com/rporter33
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /**
- * One request, paced and patient. Scryfall asks for a short gap between
- * requests and answers 429 when a run gets ahead of it; the verifier has
- * a few hundred searches to make, so a 429 waits as long as Scryfall says
- * (or a growing pause) and tries again, up to five times, before it is a
- * failure. Every request leaves a gap behind it, so the pass never bursts.
+ * One request, paced and patient. Scryfall's documented ask is a short
+ * gap between requests, but a run at eight a second was cut off after
+ * about thirty and blocked for a minute, so the pace here is under three
+ * a second: the whole pass takes under a minute and never trips the
+ * limit. If it is tripped anyway (a run just before this one, say), a
+ * 429 waits as long as Scryfall says, or a growing pause, and tries
+ * again, up to five times, before it is a failure.
  */
+const GAP_MS = Number(process.env.SCRYFALL_GAP_MS) || 350
+let requests = 0
+
 async function request(url, init = {}) {
   for (let attempt = 0; ; attempt++) {
     const response = await fetch(url, { ...init, headers: { Accept: 'application/json', 'User-Agent': UA, ...(init.headers ?? {}) } })
-    await wait(150)
+    requests++
+    await wait(GAP_MS)
     if ((response.status === 429 || response.status >= 500) && attempt < 5) {
       const after = Number(response.headers.get('retry-after'))
       const pause = Number.isFinite(after) && after > 0 ? after * 1000 : 1000 * 2 ** attempt
-      console.error(`Scryfall answered ${response.status}; waiting ${pause / 1000}s before trying again`)
+      console.error(`Scryfall answered ${response.status} after ${requests} requests; waiting ${pause / 1000}s, then trying again (${attempt + 1} of 5)`)
       await wait(pause)
       continue
     }
@@ -71,8 +77,8 @@ for (let i = 0; i < names.length; i += 75) {
 // broad fallback without saying so here.
 const silent = []
 let plansChecked = 0
-for (const formatId of ['commander', 'modern']) for (const [colors, plans] of Object.entries(STRATEGIES)) {
-  for (const plan of plans) {
+for (const formatId of ['commander', 'modern']) {
+  for (const [colors, plans] of Object.entries(STRATEGIES)) for (const plan of plans) {
     plansChecked++
     const queries = stapleQueries(colors, 'theme', { capUsd: 4, strategy: plan, formatId }).slice(0, plan.queries.length)
     let answered = false
@@ -85,6 +91,7 @@ for (const formatId of ['commander', 'modern']) for (const [colors, plans] of Ob
     }
     if (!answered) silent.push(`${formatId} ${colors} ${plan.id}: ${queries.join(' | ')}`)
   }
+  console.log(`${formatId}: ${Object.values(STRATEGIES).flat().length} plan searches checked`)
 }
 
 console.log(`${names.length} names checked, ${plansChecked} plan searches checked.`)
