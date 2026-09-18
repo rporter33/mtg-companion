@@ -128,6 +128,39 @@ resume from it. Milestones are the ones agreed on 18 September 2026 from the
   self-report, reduced-motion equivalence on a page with the system
   setting, keyboard-only completion with Enter alone). 57 checks.
 
+## M3 — combat and responses (done)
+
+- Scenarios in `src/lib/table/scenarios/combat.js`: a 2/2 into a 2/1
+  that blocks (both die), a 3/3 into the same blocker (Piker dies, the
+  Courser keeps 2 damage until cleanup), the same attack into an opponent
+  that never blocks (20 to 17), and readiness (Raging Goblin with haste
+  attacks the turn it arrives, Grizzly Bears is refused by name). In
+  `scenarios/responses.js`: their Shock on the stack at your Bears with
+  Giant Growth in hand, guided to the response, and a free choice of
+  either branch. Every combat and response scenario asks its prediction
+  before the moment it is about; one answer per run, since a guess made
+  after the result is not a prediction, and a wrong one is explained and
+  left unmet.
+- Opponents: `blocker` (blocks every attacker it can, never attacks) and
+  a `scripted` policy that casts Shock at the Bears once on its own turn.
+  Every policy has a description, shown under the coach.
+- Screen: declaration panels for attackers and blockers (chips that mirror
+  the cards, with the reason a creature cannot be chosen written before
+  the model refuses it), creatures on the table toggle the same choice,
+  and priority is withheld until pending predictions are answered.
+- Tests: `tests/table-combat.test.js` (attack taps, block does not,
+  simultaneous damage, lethal damage as a state-based action, a blocked
+  attacker whose blocker died deals no damage, combat cleared at end of
+  combat, damage removed at cleanup, no-attackers skips the blockers and
+  damage steps, haste vs sickness, both response branches with priority
+  going round between resolutions, a sorcery refused on their turn, every
+  scenario's shape); browser spec walks the trade, the readiness
+  refusal and the two-spell stack (80 checks); the declare panel is in
+  the accessibility sweep.
+- Rules relied on: 117.3b–c, 117.4, 302.6, 405, 502.3, 506.1, 508.1,
+  508.8, 509.1, 509.1h, 510.1–510.2, 511.1, 514.2, 608.2b, 611.2, 702.10,
+  704.5f–g.
+
 ## Next
 
-M3 — combat and responses on the shared model.
+M4 — practice home, evidence, colour explorer, evaluation script.

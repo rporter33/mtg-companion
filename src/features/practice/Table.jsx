@@ -9,14 +9,14 @@ import { colourName } from '../../lib/table/reducer.js'
  * button; tapped, sick, attacking and blocking are classes and words, never
  * only a rotation.
  */
-export default function Table({ state, cues = {}, highlight, selected, casting, onSelectHand, onPermanent, onPlayer, onInspect }) {
+export default function Table({ state, cues = {}, highlight, selected, chosen = [], casting, onSelectHand, onPermanent, onPlayer, onInspect }) {
   const targeting = casting?.needsTarget && !casting.targets.length
   return (
     <div className="table">
       <Strip state={state} player="foe" label="Opponent" targeting={targeting === 'any'} onPlayer={onPlayer} cue={cues.foe} />
       <Zone state={state} player="foe" targeting={targeting} onPermanent={onPermanent} onInspect={onInspect} highlight={null} cues={cues} />
       <Stack state={state} cues={cues} />
-      <Zone state={state} player="you" targeting={targeting} onPermanent={onPermanent} onInspect={onInspect} highlight={highlight?.kind === 'battlefield' ? highlight.cardId : null} cues={cues} />
+      <Zone state={state} player="you" targeting={targeting} onPermanent={onPermanent} onInspect={onInspect} highlight={highlight?.kind === 'battlefield' ? highlight.cardId : null} cues={cues} chosen={chosen} />
       <Strip state={state} player="you" label="You" targeting={targeting === 'any'} onPlayer={onPlayer} cue={cues.you} />
       <Pool pool={state.pool.you} />
       <Hand state={state} selected={selected} highlight={highlight?.kind === 'hand' ? highlight.cardId : null} onSelect={onSelectHand} onInspect={onInspect} disabled={!!casting} />
@@ -72,7 +72,7 @@ function Stack({ state, cues = {} }) {
   )
 }
 
-function Zone({ state, player, targeting, onPermanent, onInspect, highlight, cues = {} }) {
+function Zone({ state, player, targeting, onPermanent, onInspect, highlight, cues = {}, chosen = [] }) {
   const all = battlefield(state, player)
   const lands = all.filter(isLand)
   const others = all.filter((c) => !isLand(c))
@@ -80,7 +80,7 @@ function Zone({ state, player, targeting, onPermanent, onInspect, highlight, cue
   return (
     <div className={`zone zone--${player}`} aria-label={`${player === 'you' ? 'Your' : 'Their'} battlefield`}>
       {others.map((inst) => (
-        <Permanent key={inst.instanceId} inst={inst} targeting={targeting && isCreature(inst)} cue={cues[inst.instanceId]}
+        <Permanent key={inst.instanceId} inst={inst} targeting={targeting && isCreature(inst)} cue={cues[inst.instanceId]} chosen={chosen.includes(inst.instanceId)}
           highlight={highlight === inst.cardId} onClick={() => onPermanent(inst)} onInspect={() => onInspect(inst.instanceId)} />
       ))}
       {lands.length > 0 && (
@@ -95,7 +95,7 @@ function Zone({ state, player, targeting, onPermanent, onInspect, highlight, cue
   )
 }
 
-function Permanent({ inst, small, targeting, highlight, onClick, onInspect, cue }) {
+function Permanent({ inst, small, targeting, highlight, onClick, onInspect, cue, chosen = false }) {
   const card = cardOf(inst)
   const s = stats(inst)
   const words = [
@@ -118,6 +118,7 @@ function Permanent({ inst, small, targeting, highlight, onClick, onInspect, cue 
         highlight ? 'permanent--wanted' : '',
         targeting ? 'permanent--target' : '',
         cue ? `permanent--cue-${cue}` : '',
+        chosen ? 'permanent--chosen' : '',
       ].filter(Boolean).join(' ')}
       data-instance={inst.instanceId}
     >

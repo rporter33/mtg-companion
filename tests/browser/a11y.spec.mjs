@@ -151,6 +151,17 @@ await scanState('practice table, casting', async () => {
   return (await page.locator('.cast').count()) === 1
 })
 
+await scanState('practice table, declaring attackers', async () => {
+  await page.goto(`${TARGET}#/practice/combat-trade`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(500)
+  await page.getByRole('button', { name: 'Reset' }).click()
+  await page.getByRole('button', { name: 'Both die' }).click()
+  await page.getByRole('button', { name: 'Pass priority' }).click()
+  await page.getByRole('button', { name: 'Pass priority' }).click()
+  await page.waitForTimeout(300)
+  return (await page.locator('.declare').count()) === 1
+})
+
 // The scripted first game is the screen a brand new player meets first, and
 // the only place the zoom viewer is two clicks away.
 await scanState('tutorial', async () => {

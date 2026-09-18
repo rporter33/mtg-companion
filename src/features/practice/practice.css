@@ -76,3 +76,7 @@
 .practice__log { margin: var(--space-2) 0; padding-left: 1.4em; max-height: 240px; overflow: auto; }
 .practice__paper ul, .practice__paper ol { padding-left: 1.4em; }
 .practice__replay { padding: var(--space-2); border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); }
+
+.permanent--chosen .cardface { box-shadow: 0 0 0 3px var(--accent); transform: translateY(-4px); }
+.declare .chip { min-height: 36px; }
+.coach__predict { border-top: 1px solid var(--border); padding-top: var(--space-2); }

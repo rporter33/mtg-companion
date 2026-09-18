@@ -7,7 +7,7 @@
  */
 import { createState } from './model.js'
 import { applyAction } from './reducer.js'
-import { policyById } from './opponent.js'
+import { policyFor } from './opponent.js'
 
 /** A composite the opponent uses: tap the named sources, pay, choose a target, commit. */
 function expandCastWith(state, action) {
@@ -20,7 +20,7 @@ function expandCastWith(state, action) {
 
 /** Lets the opponent act until the table is back with the learner (or the game ends). Returns { state, events, actions }. */
 export function settle(state, scenario, limit = 200) {
-  const policy = policyById(scenario.opponent)
+  const policy = policyFor(scenario.opponent)
   const events = []
   const actions = []
   for (let i = 0; i < limit; i++) {

@@ -89,5 +89,53 @@ export const SIMPLE = {
   },
 }
 
-export const POLICIES = { passive: PASSIVE, simple: SIMPLE }
-export const policyById = (id) => POLICIES[id] ?? PASSIVE
+/**
+ * Blocks whenever it can: each attacker gets one untapped creature, in
+ * order. Never attacks. The opponent a blocking lesson wants, and it says
+ * so on the screen.
+ */
+export const BLOCKER = {
+  id: 'blocker',
+  description: 'Blocks every attacker it can with one untapped creature each. Never attacks.',
+  decide(state) {
+    if (state.awaiting?.player === 'foe' && state.awaiting.kind === 'blockers') {
+      const free = battlefield(state, 'foe').filter((c) => isCreature(c) && !c.tapped)
+      const blocks = {}
+      for (const attackerId of state.attackers) {
+        const blocker = free.find((b) => !blocks[b.instanceId])
+        if (blocker) blocks[blocker.instanceId] = attackerId
+      }
+      return { type: 'declareBlockers', player: 'foe', blocks }
+    }
+    return PASSIVE.decide(state)
+  },
+}
+
+/**
+ * A scripted opponent: a list of rules tried in order, each a function of
+ * the state returning an action or null, falling back to the passive
+ * policy. Scenarios use it to make the opponent do one specific thing, such
+ * as cast Shock at a creature on its own turn.
+ */
+export function scripted(id, description, rules) {
+  return {
+    id,
+    description,
+    decide(state) {
+      for (const rule of rules) {
+        const action = rule(state)
+        if (action) return action
+      }
+      return PASSIVE.decide(state)
+    },
+  }
+}
+
+export const POLICIES = { passive: PASSIVE, simple: SIMPLE, blocker: BLOCKER }
+
+/** A scenario's opponent: a policy id, or a policy object of its own. */
+export function policyFor(opponent) {
+  if (opponent && typeof opponent === 'object' && typeof opponent.decide === 'function') return opponent
+  return POLICIES[opponent] ?? PASSIVE
+}
+export const policyById = policyFor

@@ -3,7 +3,7 @@ import { navigate } from '../../lib/router.js'
 import { LESSONS, scenarioById } from '../../lib/table/scenarios/index.js'
 import { start, act, passUntil, replay } from '../../lib/table/runner.js'
 import { evaluate } from '../../lib/table/objectives.js'
-import { cardOf, STEP_LABELS } from '../../lib/table/model.js'
+import { cardOf, STEP_LABELS, battlefield, isCreature, hasKeyword, stats } from '../../lib/table/model.js'
 import { narrateAll, cuesFrom, CUE_MS, prefersReducedMotion } from '../../lib/table/motion.js'
 import {
   getPractice, savePracticeRun, clearPracticeRun, markPaperPractice, recordEvidence, getPrefs, setPref, lastSaveSucceeded,
@@ -93,6 +93,9 @@ function fresh(scenario) {
     lastEvents: [],
     seq: 0,
     restored: false,
+    predictions: {},
+    chosen: [],
+    blocks: {},
   }
 }
 
@@ -104,6 +107,7 @@ function initial(scenario) {
   if (rebuilt.applied !== saved.log.length) return fresh(scenario)
   const events = [...rebuilt.events]
   if (saved.explained) events.push({ type: 'explained', questionId: scenario.explain?.id, correct: !!saved.explained.correct, index: saved.explained.index })
+  for (const [questionId, p] of Object.entries(saved.predictions ?? {})) events.push({ type: 'predicted', questionId, correct: !!p.correct, index: p.index })
   return {
     ...fresh(scenario),
     state: rebuilt.state,
@@ -112,6 +116,7 @@ function initial(scenario) {
     journal: narrateAll(rebuilt.events, rebuilt.state),
     hints: saved.hints ?? [],
     explained: saved.explained ?? null,
+    predictions: saved.predictions ?? {},
     restored: true,
   }
 }
@@ -129,6 +134,8 @@ function committed(run, result) {
     lastEvents: result.events,
     seq: run.seq + 1,
     restored: false,
+    chosen: [],
+    blocks: {},
   }
 }
 
@@ -154,6 +161,22 @@ function reduce(run, action) {
       return { ...run, events: [...run.events, event], journal: [...run.journal, ...narrateAll([event], run.state)], explained: { index: action.index, correct: !!option.correct } }
     }
     case 'retryExplain': return { ...run, explained: null }
+    case 'predict': {
+      const question = action.question
+      const option = question.options[action.index]
+      const event = { type: 'predicted', questionId: question.id, correct: !!option.correct, index: action.index }
+      return { ...run, events: [...run.events, event], journal: [...run.journal, ...narrateAll([event], run.state)], predictions: { ...run.predictions, [question.id]: { index: action.index, correct: !!option.correct } } }
+    }
+    case 'toggleChosen': {
+      const chosen = run.chosen.includes(action.instanceId) ? run.chosen.filter((id) => id !== action.instanceId) : [...run.chosen, action.instanceId]
+      return { ...run, chosen, refusal: null }
+    }
+    case 'setBlock': {
+      const blocks = { ...run.blocks }
+      if (action.attackerId) blocks[action.blockerId] = action.attackerId
+      else delete blocks[action.blockerId]
+      return { ...run, blocks, refusal: null }
+    }
     default: return run
   }
 }
@@ -181,10 +204,10 @@ function Scenario({ scenario, onOpenCard }) {
   const firstSave = useRef(true)
   useEffect(() => {
     if (firstSave.current) { firstSave.current = false; if (run.restored) return }
-    if (!run.log.length && !run.hints.length && !run.explained) { clearPracticeRun(scenario.id); return }
-    savePracticeRun(scenario.id, { version: scenario.version ?? 1, log: run.log, hints: run.hints, explained: run.explained })
+    if (!run.log.length && !run.hints.length && !run.explained && !Object.keys(run.predictions).length) { clearPracticeRun(scenario.id); return }
+    savePracticeRun(scenario.id, { version: scenario.version ?? 1, log: run.log, hints: run.hints, explained: run.explained, predictions: run.predictions })
     setSaveOk(lastSaveSucceeded())
-  }, [run.log, run.hints, run.explained, run.restored, scenario])
+  }, [run.log, run.hints, run.explained, run.predictions, run.restored, scenario])
 
   // Cues from the last committed events, shown for a moment; none with motion reduced.
   useEffect(() => {
@@ -197,7 +220,11 @@ function Scenario({ scenario, onOpenCard }) {
   }, [run.seq, run.lastEvents, reduced])
 
   const step = scenario.coach.steps.find((s) => s.when(state)) ?? null
-  const yourPriority = state.priority === 'you' && !state.awaiting && !state.over
+  // Predictions are asked before the moment they are about, and answered once: a guess made after the result is not a prediction.
+  const pendingPredictions = (scenario.predict ?? []).filter((q) => q.when(state) && !run.predictions[q.id])
+  const mustPredict = pendingPredictions.length > 0
+  const yourPriority = state.priority === 'you' && !state.awaiting && !state.over && !mustPredict
+  const declaring = state.awaiting?.player === 'you' && !mustPredict ? state.awaiting : null
   const askExplain = scenario.explain && !run.explained?.correct
     && progress.goals.filter((g) => !g.id.startsWith('explained:')).every((g) => g.done)
 
@@ -253,8 +280,16 @@ function Scenario({ scenario, onOpenCard }) {
         selected={viewing == null ? run.selected : null}
         casting={viewing == null ? state.casting : null}
         onSelectHand={(id) => { if (viewing == null) dispatch({ type: 'select', instanceId: run.selected === id ? null : id }) }}
+        chosen={declaring?.kind === 'attackers' ? run.chosen : declaring?.kind === 'blockers' ? Object.keys(run.blocks) : []}
         onPermanent={(inst) => {
           if (viewing != null) return setInspecting(inst.instanceId)
+          if (declaring?.kind === 'attackers' && inst.controller === 'you') return dispatch({ type: 'toggleChosen', instanceId: inst.instanceId })
+          if (declaring?.kind === 'blockers' && inst.controller === 'you') {
+            const attackers = state.attackers
+            const current = run.blocks[inst.instanceId]
+            const next = current ? null : attackers[0]
+            return dispatch({ type: 'setBlock', blockerId: inst.instanceId, attackerId: next })
+          }
           if (state.casting?.needsTarget && !state.casting.targets.length) return doAction({ type: 'chooseTarget', target: { kind: 'creature', id: inst.instanceId } })
           if (inst.controller === 'you' && (cardOf(inst).rules.mana ?? []).length) return doAction({ type: 'tapForMana', instanceId: inst.instanceId })
           setInspecting(inst.instanceId)
@@ -291,7 +326,21 @@ function Scenario({ scenario, onOpenCard }) {
         />
       )}
 
-      {viewing == null && !state.casting && !state.over && (
+      {viewing == null && declaring && (
+        <Declare
+          kind={declaring.kind}
+          state={state}
+          chosen={run.chosen}
+          blocks={run.blocks}
+          highlight={step?.highlight?.kind === 'control' ? step.highlight.id : null}
+          onToggle={(id) => dispatch({ type: 'toggleChosen', instanceId: id })}
+          onBlock={(blockerId, attackerId) => dispatch({ type: 'setBlock', blockerId, attackerId })}
+          onDeclare={() => doAction(declaring.kind === 'attackers' ? { type: 'declareAttackers', attackers: run.chosen } : { type: 'declareBlockers', blocks: run.blocks })}
+          onNone={() => doAction(declaring.kind === 'attackers' ? { type: 'declareAttackers', attackers: [] } : { type: 'declareBlockers', blocks: {} })}
+        />
+      )}
+
+      {viewing == null && !state.casting && !state.over && !declaring && (
         <div className="row row--wrap practice__priority">
           <button
             className={`btn ${step?.highlight?.id === 'pass' ? 'btn--primary practice__wanted' : ''}`}
@@ -323,6 +372,11 @@ function Scenario({ scenario, onOpenCard }) {
         explained={run.explained}
         onExplain={(index) => dispatch({ type: 'explain', index, scenario })}
         onRetryExplain={() => dispatch({ type: 'retryExplain' })}
+        predictions={viewing == null ? pendingPredictions : []}
+        answered={run.predictions}
+        allPredictions={scenario.predict ?? []}
+        onPredict={(question, index) => dispatch({ type: 'predict', question, index })}
+        opponent={scenario.opponent}
         over={shown.over}
       />
 
@@ -352,6 +406,71 @@ function Scenario({ scenario, onOpenCard }) {
         onClose={() => setInspecting(null)}
       />
     </div>
+  )
+}
+
+/**
+ * Choosing attackers or blockers. Creatures on the table are toggled by
+ * selecting them; this panel lists the same choices as buttons, so the
+ * declaration can be made without touching the cards, and says why a
+ * creature cannot be chosen before the model has to refuse it.
+ */
+function Declare({ kind, state, chosen, blocks, highlight, onToggle, onBlock, onDeclare, onNone }) {
+  const mine = battlefield(state, 'you').filter(isCreature)
+  if (kind === 'attackers') {
+    return (
+      <section className="panel stack stack--snug declare" aria-label="Choose attackers">
+        <strong>Declare attackers</strong>
+        <div className="stack stack--tight">
+          {mine.map((c) => {
+            const why = c.tapped ? 'tapped' : c.sick && !hasKeyword(c, 'haste') ? 'summoning sick' : null
+            return (
+              <button key={c.instanceId} type="button" className={`chip ${chosen.includes(c.instanceId) ? 'chip--active' : ''}`}
+                aria-pressed={chosen.includes(c.instanceId)} onClick={() => onToggle(c.instanceId)}>
+                {cardOf(c).name} {stats(c) ? `${stats(c).power}/${stats(c).toughness}` : ''}{why ? ` · ${why}` : ''}
+              </button>
+            )
+          })}
+          {mine.length === 0 && <span className="faint tiny">No creatures.</span>}
+        </div>
+        <div className="row row--wrap">
+          <button className={`btn btn--primary ${highlight === 'attack' ? 'practice__wanted' : ''}`} onClick={onDeclare} disabled={!chosen.length} data-wanted={highlight === 'attack' || undefined}>
+            Attack with {chosen.length || 'these'}
+          </button>
+          <button className="btn btn--sm" onClick={onNone}>No attackers</button>
+          <span className="faint tiny">Attacking taps the creature. Choosing a creature that cannot attack is refused with the reason.</span>
+        </div>
+      </section>
+    )
+  }
+  const attackers = state.attackers.map((id) => state.cards[id])
+  return (
+    <section className="panel stack stack--snug declare" aria-label="Choose blockers">
+      <strong>Declare blockers</strong>
+      <p className="tiny muted m0">Attacking you: {attackers.map((a) => `${cardOf(a).name} ${stats(a).power}/${stats(a).toughness}`).join(', ')}.</p>
+      <div className="stack stack--tight">
+        {mine.map((c) => (
+          <div key={c.instanceId} className="row row--wrap row--middle">
+            <span className="tiny">{cardOf(c).name} {stats(c).power}/{stats(c).toughness}{c.tapped ? ' · tapped' : ''}</span>
+            {!c.tapped && attackers.map((a) => (
+              <button key={a.instanceId} type="button" className={`chip tiny ${blocks[c.instanceId] === a.instanceId ? 'chip--active' : ''}`}
+                aria-pressed={blocks[c.instanceId] === a.instanceId}
+                onClick={() => onBlock(c.instanceId, blocks[c.instanceId] === a.instanceId ? null : a.instanceId)}>
+                block {cardOf(a).name}
+              </button>
+            ))}
+          </div>
+        ))}
+        {mine.length === 0 && <span className="faint tiny">No creatures to block with.</span>}
+      </div>
+      <div className="row row--wrap">
+        <button className={`btn btn--primary ${highlight === 'block' ? 'practice__wanted' : ''}`} onClick={onDeclare} disabled={!Object.keys(blocks).length} data-wanted={highlight === 'block' || undefined}>
+          Declare blocks
+        </button>
+        <button className="btn btn--sm" onClick={onNone}>No blocks</button>
+        <span className="faint tiny">Blocking does not tap. A summoning-sick creature can block.</span>
+      </div>
+    </section>
   )
 }
 
