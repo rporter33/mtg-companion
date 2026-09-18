@@ -1,5 +1,9 @@
 # Reference documents
 
+`PROJECT_BRIEF.md` is the whole-project handoff: what this is, how it is
+built, what holds it together and what is left to do. Read that first if you
+are new to the repository.
+
 Two references live here, written for this app and read by every session
 that works on it, with the art direction and token files that came with them
 and `ASSET_PACK.md` on provenance and licences:
