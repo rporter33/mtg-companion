@@ -162,6 +162,20 @@ await scanState('practice table, declaring attackers', async () => {
   return (await page.locator('.declare').count()) === 1
 })
 
+await scanState('colour explorer', async () => {
+  await page.goto(`${TARGET}#/practice/colours`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(400)
+  await page.getByRole('button', { name: 'Green', exact: true }).click()
+  await page.getByRole('button', { name: 'White', exact: true }).click()
+  await page.waitForTimeout(200)
+  return (await page.locator('.explorer').count()) === 1
+})
+await scanState('practice home', async () => {
+  await page.goto(`${TARGET}#/practice`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(400)
+  return (await page.getByRole('button', { name: /Continue practicing|Start again/ }).count()) === 1
+})
+
 // The scripted first game is the screen a brand new player meets first, and
 // the only place the zoom viewer is two clicks away.
 await scanState('tutorial', async () => {

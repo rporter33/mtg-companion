@@ -161,6 +161,48 @@ resume from it. Milestones are the ones agreed on 18 September 2026 from the
   508.8, 509.1, 509.1h, 510.1–510.2, 511.1, 514.2, 608.2b, 611.2, 702.10,
   704.5f–g.
 
+## M4 — the practice home, evidence, the colour explorer (done)
+
+- Home at `#/practice`: "Continue practicing" names the next exercise not
+  yet done (then the first done only with hints), plus Start from the
+  beginning, Explore colours and Table reference. Each lesson shows its
+  status (new / viewed / practiced / demonstrated) and each exercise
+  whether it was done, with or without hints, in progress, or done with
+  cards. The sequence is labelled a practice sequence, not a game.
+- Evidence (`src/lib/table/evidence.js`, `recordCompletion` in storage):
+  viewed on arrival; practiced on any completion; demonstrated when two
+  different exercises of a lesson are completed with no hints, each of
+  which ends in a correct prediction or explanation. Completions keep the
+  fewest hints seen and the first date; nothing is removed by revisiting;
+  paper is listed and not counted. The threshold is stated on screen as a
+  default to try, not a measure of mastery.
+- Colour explorer at `#/practice/colours`: five labelled toggles, any
+  number, and a drawn ring of wedges that toggles the same choice without
+  a drag. Each colour's page is the app's own writing and says so, with
+  one real card opened from Scryfall and a one-line small decision the
+  colour likes. Two colours name the pair; three or more are shown as a
+  real way to build and the pair summaries stop. The handoff sets only
+  `firstDeckColors` and opens the first-deck colours step; nothing is
+  created, no identity is asserted, and three or more are not handed on.
+  The fluid treatment waits on the prototype's source.
+- Table reference at `#/practice/reference`: every step of a turn with
+  what happens and who gets priority, the zones with glossary links, and
+  a line saying it is a reference, not a judge.
+- `docs/LEARN_EVALUATION.md`: the observation script for three to five
+  novices (pay a changed cost, say what is left, find the next legal
+  move, predict a fight, show it with cards). No session has been run;
+  nothing is recorded.
+- Checks: `tests/table-evidence.test.js`; browser spec now 99 checks;
+  accessibility sweep covers the explorer and the home; perf script has
+  two practice lines: under a 4× CPU throttle at 390px, a tap on a land
+  reaches the pool in 113ms and a cast reaches the stack in 95ms, with no
+  long tasks (headless Chromium in the build container, not a phone).
+
+## Evaluation
+
+No session has been run yet. Nothing is recorded.
+
 ## Next
 
-M4 — practice home, evidence, colour explorer, evaluation script.
+M5 — free play on desktop: whole games against the practice opponent,
+hot-seat, practice decks from the pool.

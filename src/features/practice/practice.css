@@ -80,3 +80,20 @@
 .permanent--chosen .cardface { box-shadow: 0 0 0 3px var(--accent); transform: translateY(-4px); }
 .declare .chip { min-height: 36px; }
 .coach__predict { border-top: 1px solid var(--border); padding-top: var(--space-2); }
+
+/* The colour explorer */
+.explorer__layout { display: grid; grid-template-columns: minmax(160px, 240px) 1fr; gap: var(--space-4); align-items: center; }
+@media (max-width: 480px) { .explorer__layout { grid-template-columns: 1fr; justify-items: center; } }
+.explorer__ring { width: 100%; max-width: 240px; height: auto; }
+.explorer__arc { stroke: var(--bg); stroke-width: 2; opacity: 0.3; cursor: pointer; transition: opacity 0.15s; }
+.explorer__arc--on { opacity: 1; }
+.explorer__centre, .explorer__label, .explorer__count { pointer-events: none; }
+.explorer__label { fill: var(--text-muted); font-size: 12px; font-family: var(--font-data); }
+.explorer__centre { fill: var(--bg-raised); stroke: var(--border); }
+.explorer__count { fill: var(--text); font-size: 28px; font-family: var(--font-display); }
+.explorer__toggle { justify-content: flex-start; min-height: 40px; }
+.explorer__dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--swatch); margin-right: 6px; vertical-align: -1px; }
+.colour-page { border-left: 3px solid var(--swatch); }
+
+/* The reference */
+.reference__steps, .reference__zones { margin: var(--space-2) 0 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 6px; }

@@ -129,7 +129,7 @@ describe('practice', () => {
     expect(practice.runs.a.log).toHaveLength(2) // local is later
     expect(practice.runs.b.log).toHaveLength(1) // incoming is later
     expect(Object.keys(practice.paper).sort()).toEqual(['a', 'c'])
-    expect(Object.keys(practice.evidence.lesson).sort()).toEqual(['practiced', 'viewed'])
+    expect(Object.keys(practice.evidence.lesson).sort()).toEqual(['completions', 'practiced', 'viewed'])
   })
 })
 

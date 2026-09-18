@@ -476,6 +476,21 @@ export function recordEvidence(lessonId, kind, detail = {}) {
   })
 }
 
+/** A completed exercise: kept per scenario with the fewest hints seen and the first date. Never removed. */
+export function recordCompletion(lessonId, scenarioId, { hints = 0 } = {}) {
+  return update((state) => {
+    const current = state.practice.evidence[lessonId] ?? {}
+    const completions = { ...(current.completions ?? {}) }
+    const previous = completions[scenarioId]
+    const at = new Date().toISOString()
+    completions[scenarioId] = previous ? { hints: Math.min(previous.hints, hints), at: previous.at } : { hints, at }
+    const clean = Object.values(completions).filter((c) => c.hints === 0).length
+    const next = { ...current, completions, practiced: current.practiced ?? { at } }
+    if (clean >= 2 && !next.demonstrated) next.demonstrated = { at }
+    return { ...state, practice: { ...state.practice, evidence: { ...state.practice.evidence, [lessonId]: next } } }
+  })
+}
+
 /** Clears practice progress only. Decks, collection, games, guide and prefs are untouched. */
 export function resetPractice() {
   return update((state) => ({ ...state, practice: { runs: {}, paper: {}, evidence: {} } }))
@@ -580,7 +595,12 @@ function mergePractice(local, incoming) {
   const paper = { ...(incoming.paper ?? {}), ...base.paper }
   const evidence = { ...base.evidence }
   for (const [lesson, kinds] of Object.entries(incoming.evidence ?? {})) {
-    evidence[lesson] = { ...(kinds ?? {}), ...(evidence[lesson] ?? {}) }
+    const mine = evidence[lesson] ?? {}
+    const completions = { ...(kinds?.completions ?? {}) }
+    for (const [id, c] of Object.entries(mine.completions ?? {})) {
+      completions[id] = completions[id] ? { hints: Math.min(completions[id].hints, c.hints), at: [completions[id].at, c.at].sort()[0] } : c
+    }
+    evidence[lesson] = { ...(kinds ?? {}), ...mine, completions }
   }
   return { runs, paper, evidence }
 }

@@ -6,11 +6,14 @@ import { evaluate } from '../../lib/table/objectives.js'
 import { cardOf, STEP_LABELS, battlefield, isCreature, hasKeyword, stats } from '../../lib/table/model.js'
 import { narrateAll, cuesFrom, CUE_MS, prefersReducedMotion } from '../../lib/table/motion.js'
 import {
-  getPractice, savePracticeRun, clearPracticeRun, markPaperPractice, recordEvidence, getPrefs, setPref, lastSaveSucceeded,
+  getPractice, savePracticeRun, clearPracticeRun, markPaperPractice, recordEvidence, recordCompletion, getPrefs, setPref, lastSaveSucceeded,
 } from '../../lib/storage.js'
+import { evidenceFor, nextScenario, DEMONSTRATION_RUNS } from '../../lib/table/evidence.js'
 import Table from './Table.jsx'
 import CastPanel from './CastPanel.jsx'
 import Coach from './Coach.jsx'
+import ColourExplorer from './ColourExplorer.jsx'
+import TableReference from './TableReference.jsx'
 import CardZoom from '../../components/CardZoom.jsx'
 import './practice.css'
 
@@ -28,6 +31,8 @@ import './practice.css'
  * be turned off without changing anything the screen says.
  */
 export default function PracticeView({ route, onOpenCard }) {
+  if (route.scenarioId === 'colours') return <ColourExplorer onOpenCard={onOpenCard} />
+  if (route.scenarioId === 'reference') return <TableReference />
   const scenario = route.scenarioId ? scenarioById(route.scenarioId) : null
   if (route.scenarioId && !scenario) {
     return (
@@ -43,35 +48,69 @@ export default function PracticeView({ route, onOpenCard }) {
 
 function PracticeHome() {
   const practice = getPractice()
+  const next = nextScenario(practice)
+  const first = LESSONS[0].scenarios[0]
   return (
     <div className="stack">
       <div>
         <h1>Practice</h1>
-        <p className="muted">A table that plays by the rules, one decision at a time. Nothing here is saved to your decks.</p>
+        <p className="muted">
+          A table that plays by the rules, one decision at a time. A practice sequence, not a game: each exercise is one
+          skill, predicted before it happens. Nothing here is saved to your decks.
+        </p>
       </div>
-      {LESSONS.map((lesson) => (
-        <section className="panel stack stack--snug" key={lesson.id}>
-          <h2 className="m0">{lesson.title}</h2>
-          <p className="muted tiny m0">{lesson.skill} · about {lesson.minutes} minutes</p>
-          <div className="stack stack--tight">
-            {lesson.scenarios.map((id) => {
-              const s = scenarioById(id)
-              const saved = practice.runs[id]
-              return (
-                <button key={id} className="lesson-row" onClick={() => navigate({ scenarioId: id })}>
-                  <span style={{ flex: 1, textAlign: 'left' }}>
-                    {s.title}
-                    <span className="faint tiny"> · {s.variant}{saved ? ' · in progress' : ''}{practice.paper[id] ? ' · done with cards' : ''}</span>
-                    <br />
-                    <span className="muted tiny">{s.summary}</span>
-                  </span>
-                  <span className="faint">›</span>
-                </button>
-              )
-            })}
-          </div>
-        </section>
-      ))}
+
+      <section className="hero">
+        <div className="hero__label">{next ? (next.why === 'done with hints' ? 'Try it without a hint' : 'Next') : 'All done'}</div>
+        <h2>{next ? next.scenario.title : 'Every exercise is done'}</h2>
+        <p className="muted">{next ? `${next.lesson.skill}. ${next.scenario.summary}` : 'Play any of them again, or take the colours to a first deck.'}</p>
+        <div className="row row--wrap">
+          <button className="btn btn--primary" onClick={() => navigate({ scenarioId: next ? next.scenario.id : first })}>
+            {next ? 'Continue practicing' : 'Start again'}
+          </button>
+          <button className="btn btn--sm" onClick={() => navigate({ scenarioId: first })}>Start from the beginning</button>
+          <button className="btn btn--sm" onClick={() => navigate({ scenarioId: 'colours' })}>Explore colours</button>
+          <button className="btn btn--sm" onClick={() => navigate({ scenarioId: 'reference' })}>Table reference</button>
+        </div>
+      </section>
+
+      {LESSONS.map((lesson) => {
+        const evidence = evidenceFor(lesson.id, practice)
+        return (
+          <section className="panel stack stack--snug" key={lesson.id}>
+            <div className="row row--wrap row--middle">
+              <h2 className="m0">{lesson.title}</h2>
+              <span className={`chip tiny ${evidence.status === 'demonstrated' ? 'chip--ok' : ''}`} aria-label={`Progress: ${evidence.status}`}>{evidence.status}</span>
+            </div>
+            <p className="muted tiny m0">{lesson.skill} · about {lesson.minutes} minutes</p>
+            <div className="stack stack--tight">
+              {lesson.scenarios.map((id) => {
+                const s = scenarioById(id)
+                const done = practice.evidence?.[lesson.id]?.completions?.[id]
+                const saved = practice.runs[id]
+                return (
+                  <button key={id} className={`lesson-row ${done ? 'lesson-row--done' : ''}`} onClick={() => navigate({ scenarioId: id })}>
+                    <span className="lesson-row__num" aria-hidden="true">{done ? '✓' : ''}</span>
+                    <span style={{ flex: 1, textAlign: 'left' }}>
+                      {s.title}
+                      <span className="faint tiny"> · {s.variant}{done ? (done.hints === 0 ? ' · done without hints' : ' · done with hints') : ''}{saved ? ' · in progress' : ''}{practice.paper[id] ? ' · done with cards' : ''}</span>
+                      <br />
+                      <span className="muted tiny">{s.summary}</span>
+                    </span>
+                    <span className="faint">›</span>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        )
+      })}
+
+      <p className="faint tiny m0">
+        Viewed, practiced and demonstrated are kept apart. Demonstrated means {DEMONSTRATION_RUNS} exercises of a lesson done without
+        a hint, each ending in a correct prediction or explanation: a default to try with learners, not a measure of mastery.
+        Paper practice is what you told us, and is listed but not counted.
+      </p>
     </div>
   )
 }
@@ -197,7 +236,7 @@ function Scenario({ scenario, onOpenCard }) {
   // Evidence: viewing is recorded on arrival, practising when every goal is met.
   useEffect(() => { recordEvidence(scenario.lessonId, 'viewed', { scenarioId: scenario.id }) }, [scenario])
   useEffect(() => {
-    if (progress.complete) recordEvidence(scenario.lessonId, 'practiced', { scenarioId: scenario.id, hints: run.hints.length })
+    if (progress.complete) recordCompletion(scenario.lessonId, scenario.id, { hints: run.hints.length })
   }, [progress.complete, scenario, run.hints.length])
 
   // The saved run is the log, written after every committed action; a fresh reset clears it.

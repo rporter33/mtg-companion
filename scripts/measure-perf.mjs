@@ -150,4 +150,27 @@ await page.getByLabel('Version label').type('typing a label here', { delay: 10 }
 const typed = await page.evaluate(() => ({ long: window.__longTasks.length, longMs: Math.round(window.__longTasks.reduce((a, b) => a + b, 0)) }))
 console.log(`${'typing 19 chars in version label'.padEnd(34)} ${String(Date.now() - l0).padStart(6)} ms   per char ${Math.round((Date.now() - l0) / 19)} ms   long ${typed.long} (${typed.longMs} ms)`)
 
+// The practice table: the first thing a learner feels is how fast a tap
+// answers. Measured as the time from pressing a land to the pool reading
+// the mana, and from committing a cast to the spell showing on the stack.
+await page.goto(`${TARGET}#/practice/mana-guided`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(400)
+await page.getByRole('button', { name: 'Reset' }).click()
+await page.locator('.hand__card .cardface').first().click()
+await page.getByRole('button', { name: 'Cast', exact: true }).click()
+await page.evaluate(() => { window.__longTasks = [] })
+const tap0 = Date.now()
+await page.locator('.zone--you .permanent--land .cardface').first().click()
+await page.locator('.practice__pool', { hasText: '1 green' }).waitFor()
+const tapMs = Date.now() - tap0
+await page.locator('.zone--you .permanent--land:not(.permanent--tapped) .cardface').first().click()
+await page.getByRole('button', { name: 'Pay from pool' }).click()
+const cast0 = Date.now()
+await page.getByRole('button', { name: 'Cast', exact: true }).click()
+await page.locator('.table__spell').waitFor()
+const castMs = Date.now() - cast0
+const table = await page.evaluate(() => ({ long: window.__longTasks.length, longMs: Math.round(window.__longTasks.reduce((a, b) => a + b, 0)) }))
+console.log(`${'practice: tap a land → pool'.padEnd(34)} ${String(tapMs).padStart(6)} ms`)
+console.log(`${'practice: cast → on the stack'.padEnd(34)} ${String(castMs).padStart(6)} ms   long ${table.long} (${table.longMs} ms)`)
+
 await browser.close()
