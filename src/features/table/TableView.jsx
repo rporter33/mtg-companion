@@ -5,6 +5,7 @@ import { createBoard, handOf, librarySize, zoneOf, nameOf, hostOf, ZONE_LABELS, 
 import { newRun, act, applyAll, undo, snapshot, restore } from '../../lib/board/runner.js'
 import { openingActions, mulliganActions, libraryOf, swapPrinting, OPENING_HAND } from '../../lib/board/deck.js'
 import { treatmentOf, finishFor } from '../../lib/board/art.js'
+import { laneFor, refuseBattlefield, zoneWhenPlayed, isPermanent } from '../../lib/board/placement.js'
 import { prefersReducedMotion } from '../../lib/table/motion.js'
 import { getCardsByIds } from '../../lib/scryfall.js'
 import { pinCards } from '../../lib/cache.js'
@@ -15,6 +16,7 @@ import useDrag from './useDrag.js'
 import Field from './Field.jsx'
 import BoardCard from './BoardCard.jsx'
 import Coach from './Coach.jsx'
+import TurnTracker from './TurnTracker.jsx'
 import Printings from '../../components/Printings.jsx'
 import TokenMaker from './TokenMaker.jsx'
 import './table.css'
@@ -144,6 +146,7 @@ function Seat({ deck: initialDeck, onOpenCard }) {
   // One panel at a time, under the table: the printings of a card, or the
   // token maker.
   const [panel, setPanel] = useState(null)
+  const [turnsOpen, setTurnsOpen] = useState(false)
   const reduced = prefersReducedMotion(prefs.reduceMotion ?? null)
   const fieldRef = useRef(null)
   const actionsRef = useRef(null)
@@ -151,10 +154,20 @@ function Seat({ deck: initialDeck, onOpenCard }) {
   // Either the board this deck was left on, or a fresh deal. The seed is the
   // only thing here that is not pure: the model shuffles from a number, and
   // this is where the number comes from.
+  /*
+   * A fresh deal. The lanes go in with the seat action rather than being
+   * looked up inside the reducer: the board still knows nothing about what a
+   * card is, and two devices replaying the same log reach the same table.
+   */
   const fresh = useCallback(() => {
     const seed = Math.floor(Math.random() * 1e9)
-    return applyAll(newRun(createBoard({ seed })), openingActions(deck, { seed })).run
-  }, [deck])
+    const actions = openingActions(deck, { seed })
+    const seat = actions[0]
+    seat.lanes = Object.fromEntries(
+      [...new Set([...seat.cards, ...seat.command])].map((id) => [id, laneFor(deckLookup(id))]),
+    )
+    return applyAll(newRun(createBoard({ seed, guided: prefs.tablePlaymat !== false })), actions).run
+  }, [deck, deckLookup, prefs.tablePlaymat])
 
   /*
    * Anything on the table the deck cannot name. After a reload that is every
@@ -184,20 +197,39 @@ function Seat({ deck: initialDeck, onOpenCard }) {
     return () => { cancelled = true }
   }, [unknownIds])
 
+  /*
+   * Deal once, and not before the cards have arrived.
+   *
+   * Which row a card belongs in is read off its type line, and at first paint
+   * there is no type line to read — the deal used to happen anyway and put
+   * every land in the wrong row, silently, because an unknown card falls back
+   * to the middle. A restored board already carries its rows and needs no
+   * wait.
+   *
+   * `loading` is false on the very first render — before the fetch has even
+   * started — so readiness is "something came back", which is true only once
+   * it has settled either way.
+   */
+  const ready = !deck.main?.length || cards.size > 0 || missing.length > 0
+  const dealt = useRef(false)
   useEffect(() => {
+    if (dealt.current) return
     const saved = getTable()
     if (saved?.deckId === deck.id) {
       const restored = restore(saved)
       if (restored) {
+        dealt.current = true
         setRun(restored)
         setMulligans(saved.mulligans ?? 0)
         return
       }
     }
+    if (!ready) return
+    dealt.current = true
     setRun(fresh())
     setMulligans(0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deck.id])
+  }, [deck.id, ready])
 
   /*
    * Saved a moment after things settle, so dragging a card across the table
@@ -238,7 +270,25 @@ function Seat({ deck: initialDeck, onOpenCard }) {
   const togglePref = useCallback((key) => { setPrefs(setPref(key, !prefs[key]).prefs) }, [prefs])
 
   const onSlide = useCallback((id, point) => doAction({ type: 'move', id, zone: 'battlefield', ...point }), [doAction])
-  const onPlay = useCallback((id, point) => { setSelected(null); doAction({ type: 'move', id, zone: 'battlefield', ...point }) }, [doAction])
+  /*
+   * Dragging a card out of your hand onto the table. A permanent stays there;
+   * anything else goes on the stack instead, because that is where a spell
+   * actually goes — and noticing that is most of what the stack is for.
+   */
+  const onPlay = useCallback((id, point) => {
+    setSelected(null)
+    setRun((r) => {
+      if (!r) return r
+      const inst = r.board.cards[id]
+      const card = inst && !inst.custom ? deckLookup(inst.cardId) ?? null : null
+      const zone = r.board.guided && card ? zoneWhenPlayed(card, inst) : 'battlefield'
+      const next = act(r, zone === 'stack'
+        ? { type: 'move', id, zone: 'stack' }
+        : { type: 'move', id, zone: 'battlefield', ...point })
+      playFor(next.lastEvents, soundOn)
+      return next
+    })
+  }, [deckLookup, soundOn])
   const { drag, begin, justDragged } = useDrag({ fieldRef, onSlide, onPlay })
 
   const nudge = useCallback((id, dx, dy) => setRun((r) => {
@@ -252,6 +302,20 @@ function Seat({ deck: initialDeck, onOpenCard }) {
   useEffect(() => {
     if (selected) actionsRef.current?.scrollIntoView({ block: 'nearest' })
   }, [selected])
+
+  /*
+   * Whether the first-strike damage step happens at all this turn (510.4).
+   * Read off the creatures on the table rather than asked for, because a
+   * player who has to answer "does anything have first strike?" every turn
+   * has been handed the app's job.
+   */
+  const hasFirstStrike = useMemo(() => {
+    if (!board) return false
+    return zoneOf(board, 'you', 'battlefield').some((inst) => {
+      const card = inst.custom ? null : lookup(inst.cardId)
+      return /\b(first strike|double strike)\b/i.test(card?.oracle_text ?? '')
+    })
+  }, [board, lookup])
 
   const landIds = useMemo(() => {
     if (!board) return []
@@ -308,7 +372,25 @@ function Seat({ deck: initialDeck, onOpenCard }) {
   }
 
   return (
-    <div className="stack tabletop">
+    <div className={`stack tabletop${drag ? ' tabletop--carrying' : ''}`}>
+      {/*
+        The card in your hand while you are carrying it.
+        A card dragged across the battlefield moves because its own position
+        moves. One dragged out of your hand had nothing to show for itself —
+        the hand card stayed where it was and the table only changed when you
+        let go — so this is the card itself, under the pointer, until it lands.
+      */}
+      {drag && drag.moved && drag.from !== 'battlefield' && board.cards[drag.id] && (
+        <div className="carried" style={{ left: `${drag.x}px`, top: `${drag.y}px` }} aria-hidden="true">
+          <BoardCard
+            card={cardFor(board.cards[drag.id])}
+            name={nameFor(board.cards[drag.id])}
+            inst={board.cards[drag.id]}
+            size="hand"
+            dragging
+          />
+        </div>
+      )}
       <div className="row row--wrap tabletop__top">
         <button className="btn btn--ghost btn--sm" onClick={() => navigate({ tableDeckId: null })}>← Decks</button>
         <h1 className="tabletop__name">{deck.name}</h1>
@@ -355,6 +437,7 @@ function Seat({ deck: initialDeck, onOpenCard }) {
             <Actions
               panelRef={actionsRef}
               host={hostOf(board, selectedInst.id)}
+              permanent={!board.guided || !cardFor(selectedInst) || isPermanent(cardFor(selectedInst), selectedInst)}
               onAim={aimAt}
               inst={selectedInst}
               name={nameFor(selectedInst)}
@@ -388,6 +471,19 @@ function Seat({ deck: initialDeck, onOpenCard }) {
         <div className="tabletop__side">
           {prefs.tableCoach && <Coach board={board} events={run.events} lookup={lookup} onSilence={() => togglePref('tableCoach')} />}
 
+          <Stack
+            board={board}
+            nameFor={nameFor}
+            cardFor={cardFor}
+            onResolve={(inst) => {
+              const card = cardFor(inst)
+              doAction(card && isPermanent(card, inst)
+                ? { type: 'move', id: inst.id, zone: 'battlefield' }
+                : { type: 'move', id: inst.id, zone: 'graveyard' })
+            }}
+            onCounter={(inst) => doAction({ type: 'move', id: inst.id, zone: 'graveyard' })}
+          />
+
           <section className="pile tabletop__hand">
             <h2 className="pile__title">
               Your hand <span className="chip tiny">{hand.length}</span>
@@ -415,6 +511,15 @@ function Seat({ deck: initialDeck, onOpenCard }) {
               </div>
             )}
           </section>
+
+          <TurnTracker
+            board={board}
+            hasFirstStrike={hasFirstStrike}
+            open={turnsOpen}
+            onToggle={() => setTurnsOpen(!turnsOpen)}
+            onStep={(options) => doAction({ type: 'step', ...options })}
+            onJump={(to) => doAction({ type: 'step', to })}
+          />
 
           <Strip
             board={board}
@@ -518,12 +623,21 @@ function Seat({ deck: initialDeck, onOpenCard }) {
                 <button className="btn btn--ghost btn--sm" onClick={() => togglePref('tableSound')} aria-pressed={prefs.tableSound}>
                   Sound {prefs.tableSound ? 'on' : 'off'}
                 </button>
+                <button
+                  className="btn btn--ghost btn--sm"
+                  aria-pressed={board.guided}
+                  onClick={() => { setPref('tablePlaymat', !board.guided); doAction({ type: 'setGuided', value: !board.guided }) }}
+                >
+                  Playmat {board.guided ? 'on' : 'off'}
+                </button>
                 <button className="btn btn--ghost btn--sm" onClick={() => doAction({ type: 'life', value: board.life.you === 40 ? 20 : 40 })}>
                   Set life to {board.life.you === 40 ? '20' : '40'}
                 </button>
               </div>
               <p className="faint tiny">
-                Notes are observations, never rulings, and nothing here checks whether a play is legal.
+                With the playmat on, a card sits in the row its kind belongs in and an instant may not be left on the
+                battlefield. Everything else is yours: notes are observations, never rulings, and nothing here checks
+                whether a play is legal.
               </p>
             </section>
           </div>
@@ -534,6 +648,48 @@ function Seat({ deck: initialDeck, onOpenCard }) {
 }
 
 // --- the pieces ------------------------------------------------------------
+
+/**
+ * The stack.
+ *
+ * Every spell and ability waits here before it happens, and the last thing
+ * put on it is the first to resolve — which is the single rule that decides
+ * every argument about who wins a fight, and the one a new player is least
+ * likely to have been told. So it is a visible shelf rather than an
+ * implication: cast a spell and it lands here; press Resolve and it goes
+ * where it actually goes, a permanent to the battlefield and everything else
+ * to the graveyard.
+ *
+ * Nothing is resolved on the player's behalf, and nothing checks whether a
+ * response was legal. The shelf just shows the order.
+ */
+function Stack({ board, nameFor, cardFor, onResolve, onCounter }) {
+  const waiting = zoneOf(board, 'you', 'stack')
+  if (!waiting.length) return null
+  const top = waiting[waiting.length - 1]
+  return (
+    <section className="stackshelf" aria-label={`The stack, ${waiting.length} waiting`}>
+      <div className="row row--wrap">
+        <h2 className="pile__title">The stack <span className="chip tiny">{waiting.length}</span></h2>
+        <span className="spacer" />
+        <span className="faint tiny">Last on, first to happen</span>
+      </div>
+      <ol className="stackshelf__list" role="list">
+        {waiting.slice().reverse().map((inst, i) => (
+          <li key={inst.id} className={`stackshelf__item${i === 0 ? ' stackshelf__item--top' : ''}`}>
+            <span className="chip tiny">{i === 0 ? 'top' : `${i + 1}`}</span>
+            <strong>{nameFor(inst)}</strong>
+            <span className="faint tiny">{cardFor(inst)?.type_line ?? ''}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="row row--wrap">
+        <button className="btn btn--sm" onClick={() => onResolve(top)}>Resolve {nameFor(top)}</button>
+        <button className="btn btn--ghost btn--sm" onClick={() => onCounter(top)}>It was countered</button>
+      </div>
+    </section>
+  )
+}
 
 /**
  * The strip under your hand: life, a card, the turn.
@@ -598,6 +754,7 @@ function Peek({ instances, nameFor, onBottom, onHand, onGraveyard }) {
  */
 const MOVES = [
   { zone: 'battlefield', label: 'To the battlefield' },
+  { zone: 'stack', label: 'To the stack' },
   { zone: 'hand', label: 'To hand' },
   { zone: 'graveyard', label: 'To the graveyard' },
   { zone: 'exile', label: 'Exile it' },
@@ -606,7 +763,14 @@ const MOVES = [
   { zone: 'command', label: 'To the command zone' },
 ]
 
-function Actions({ inst, name, card, host, onDo, onAim, onInspect, onPrintings, onClose, panelRef }) {
+/** "in the graveyard", but "on the stack" and "on the battlefield". */
+function whereIs(zone) {
+  if (zone === 'stack') return 'on the stack'
+  if (zone === 'battlefield') return 'on the battlefield'
+  return `in the ${ZONE_LABELS[zone].toLowerCase()}`
+}
+
+function Actions({ inst, name, card, host, permanent = true, onDo, onAim, onInspect, onPrintings, onClose, panelRef }) {
   const onField = inst.zone === 'battlefield'
   const counters = Object.entries(inst.counters).filter(([, n]) => n)
   const treatment = card ? treatmentOf(card) : null
@@ -616,7 +780,7 @@ function Actions({ inst, name, card, host, onDo, onAim, onInspect, onPrintings, 
       <div className="row row--wrap">
         <strong className="actions__name">{name}</strong>
         <span className="faint tiny">
-          in the {ZONE_LABELS[inst.zone].toLowerCase()}
+          {whereIs(inst.zone)}
           {host ? ` · on ${host.id === inst.id ? 'itself' : 'another card'}` : ''}
         </span>
         <span className="spacer" />
@@ -653,7 +817,11 @@ function Actions({ inst, name, card, host, onDo, onAim, onInspect, onPrintings, 
       {onField && <Counters inst={inst} counters={counters} onDo={onDo} />}
 
       <div className="row row--wrap">
-        {MOVES.filter((move) => move.zone !== inst.zone || move.to).map((move) => (
+        {MOVES
+          .filter((move) => move.zone !== inst.zone || move.to)
+          // A card that does not stay on the battlefield is not offered it.
+          .filter((move) => move.zone !== 'battlefield' || permanent)
+          .map((move) => (
           <button
             key={`${move.zone}${move.to ?? ''}`}
             className="btn btn--ghost btn--sm"
@@ -661,7 +829,7 @@ function Actions({ inst, name, card, host, onDo, onAim, onInspect, onPrintings, 
           >
             {move.label}
           </button>
-        ))}
+          ))}
       </div>
     </section>
   )

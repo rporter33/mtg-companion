@@ -111,7 +111,7 @@ const EMPTY = {
     // The free table: the coach speaks unless silenced, and is silent in
     // sound unless asked, because a table that makes noise by surprise is
     // worse than one that never does.
-    tableCoach: true, tableSound: false,
+    tableCoach: true, tableSound: false, tablePlaymat: true,
   },
 }
 

@@ -9,6 +9,19 @@
 .tabletop__name { font-size: 1.1rem; margin: 0; }
 
 .tabletop__layout { display: flex; flex-direction: column; gap: var(--space-3); }
+/*
+ * A table is not a document.
+ *
+ * Pressing a card and moving it used to select the text of half the screen,
+ * because that is what a press-and-drag means to a browser. Switching
+ * selection off once a drag has begun is too late — the selection starts on
+ * the pointer down, a frame before anything re-renders — so it is off across
+ * the table from the start, and back on for the two panels that are there to
+ * be read.
+ */
+.tabletop { user-select: none; -webkit-user-select: none; }
+.tablecoach, .turns__does, .turns__all { user-select: text; -webkit-user-select: text; }
+.tabletop--carrying { cursor: grabbing; }
 /* The table, what you picked up off it, and your hand: one column, in the
    order you touch them. The counts and the buttons go beside, or below. */
 .tabletop__main { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
@@ -55,6 +68,10 @@
 
 .bcard {
   display: flex; flex-direction: column; gap: 2px;
+  /* A card is an object, not a paragraph. Pressing one and moving used to
+     select the text of half the screen, which on a phone is what a drag
+     looks like to the browser. */
+  user-select: none; -webkit-user-select: none;
   width: 100%; padding: 3px;
   font: inherit; color: var(--text); text-align: left;
   background: linear-gradient(180deg, var(--frame-dim, #1b2029), #0d1117);
@@ -354,3 +371,100 @@
 }
 .tokenmaker__field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tokenmaker__blank { border-top: 1px solid var(--border); padding-top: var(--space-2); }
+
+/* --- the marked playmat ---------------------------------------------------
+   Lines on the table, not walls. Drawn faintly because no rule puts them
+   there: they are the areas a printed playmat has, and the reason a board is
+   readable at a glance. */
+
+.playmat { position: absolute; inset: 0; pointer-events: none; }
+.playmat__lane {
+  position: absolute; left: 0; right: 0;
+  border-top: 1px dashed var(--border);
+  transition: background-color 0.15s ease-out, border-color 0.15s ease-out;
+}
+.playmat__lane:last-child { border-bottom: 1px dashed var(--border); }
+.playmat__name {
+  position: absolute; left: 6px; top: 3px;
+  font-size: 0.55rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-faint); opacity: 0.6;
+}
+/* The row a dragged card will land in, lit before you let go. */
+.playmat__lane--over {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.playmat__lane--over .playmat__name { color: var(--accent); opacity: 1; }
+
+/* --- dragging -------------------------------------------------------------
+   A card being carried is lifted off the table: larger, tilted the way a
+   hand tilts it, and casting a shadow that says how far above the felt it
+   is. When it is let go it settles rather than snapping, because a card
+   dropped on a table does not arrive instantly either. */
+
+.field__slot { transition: left 0.18s cubic-bezier(0.2, 0.9, 0.3, 1), top 0.18s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.field__slot--carried { transition: none; }
+.bcard--dragging {
+  cursor: grabbing;
+  transform: perspective(700px) rotateX(var(--lean-x, 5deg)) rotateY(var(--lean-y, -6deg)) scale(1.12);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--accent);
+  opacity: 0.96;
+}
+.field__turn { transition: transform 0.16s cubic-bezier(0.2, 0.9, 0.3, 1); }
+
+/* A card that has just arrived from somewhere else settles into place. */
+@keyframes bcard-settle {
+  from { transform: translateY(-9%) scale(1.06); opacity: 0.75; }
+  to   { transform: none; opacity: 1; }
+}
+.bcard--arrived { animation: bcard-settle 0.22s cubic-bezier(0.2, 0.9, 0.3, 1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .field__slot, .field__turn, .playmat__lane { transition: none; }
+  .bcard--dragging { transform: none; }
+  .bcard--arrived { animation: none; }
+}
+
+/* --- the stack ------------------------------------------------------------ */
+
+.stackshelf {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-left: 2px solid var(--mtg-u, #7fb0d8);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.stackshelf__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column-reverse; gap: 2px; }
+.stackshelf__item { display: flex; align-items: baseline; gap: var(--space-2); font-size: 0.85rem; }
+.stackshelf__item--top strong { color: var(--accent); }
+
+/* --- the turn tracker ----------------------------------------------------- */
+
+.turns__does { margin: 0; padding-left: 1.1rem; font-size: 0.8rem; color: var(--text-muted); }
+.turns__does li { margin-bottom: 2px; }
+.turns__can { border-color: var(--ok); }
+.turns__quiet { border-color: var(--text-faint); }
+.turns__all { display: flex; flex-direction: column; gap: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-2); }
+.turns__phase { display: flex; flex-direction: column; gap: 2px; }
+.turns__phasename { margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.turns__steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.turns__step {
+  width: 100%; display: flex; align-items: baseline; gap: var(--space-2);
+  text-align: left; font: inherit; color: inherit; cursor: pointer; font-size: 0.82rem;
+  padding: 3px 6px; background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+}
+.turns__step:hover, .turns__step:focus-visible { border-color: var(--accent); }
+.turns__step--here { background: var(--accent-soft); border-color: var(--accent); }
+
+@media (pointer: coarse) {
+  .turns__step { min-height: 38px; }
+}
+
+/* The card under the pointer while it is being carried out of your hand. */
+.carried {
+  position: fixed; z-index: 1000; width: 84px;
+  transform: translate(-50%, -55%);
+  pointer-events: none;
+  filter: drop-shadow(0 16px 22px rgba(0, 0, 0, 0.6));
+}
+@media (min-width: 900px) { .carried { width: 104px; } }

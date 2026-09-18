@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createBoard, invariants, battlefield, handOf, librarySize, nameOf, stacked, zoneOf, attachedTo, hostOf, ZONES } from '../src/lib/board/model.js'
+import { laneById } from '../src/lib/board/placement.js'
 import { apply } from '../src/lib/board/reducer.js'
 import { act, undo, newRun, applyAll, snapshot, restore, UNDO_DEPTH } from '../src/lib/board/runner.js'
 import { clampToField, overlaps, cardAt, freeSpot, tidy, pointToField, CARD_W, CARD_H } from '../src/lib/board/geometry.js'
@@ -37,9 +38,15 @@ const refused = (result, code) => {
   return result
 }
 
-/** A board with a seated player, returning the board and a finder for its cards. */
+/**
+ * A board with a seated player, returning the board and a finder for its cards.
+ *
+ * Unguided by default: most of what these tests are about is the bare table,
+ * where a card goes exactly where it is put. The marked playmat has a
+ * describe block of its own further down.
+ */
 function seated(cards = ['forest', 'forest', 'bear', 'bolt', 'island'], options = {}) {
-  const board = createBoard({ seed: 7, ...options })
+  const board = createBoard({ seed: 7, guided: false, ...options })
   const result = ok(apply(board, { type: 'seat', player: 'you', cards, shuffle: false }))
   const find = (cardId, zone = null) => Object.values(result.board.cards).find((c) => c.cardId === cardId && (!zone || c.zone === zone))
   return { board: result.board, find }
@@ -342,10 +349,10 @@ describe('the table', () => {
 
   it('leaves the turn to the player', () => {
     const { board } = seated([], { players: ['you', 'them'] })
-    const set = ok(apply(board, { type: 'setTurn', turn: 3, active: 'them', step: 'combat' })).board
-    expect(set).toMatchObject({ turn: 3, active: 'them', step: 'combat' })
+    const set = ok(apply(board, { type: 'setTurn', turn: 3, active: 'them', step: 'damage' })).board
+    expect(set).toMatchObject({ turn: 3, active: 'them', step: 'damage' })
     const back = ok(apply(set, { type: 'nextTurn' })).board
-    expect(back).toMatchObject({ turn: 4, active: 'you', step: null })
+    expect(back).toMatchObject({ turn: 4, active: 'you', step: 'untap' })
     const onward = ok(apply(back, { type: 'nextTurn' })).board
     expect(onward).toMatchObject({ turn: 4, active: 'them' })
   })
@@ -531,6 +538,112 @@ describe('one card on another', () => {
     const flip = ok(apply(board, { type: 'roll', sides: 2, seed: 11, label: 'Who starts' }))
     expect([1, 2]).toContain(flip.board.dice[0].value)
     expect(flip.events[0]).toMatchObject({ type: 'rolled', sides: 2, label: 'Who starts' })
+  })
+})
+
+describe('the marked playmat', () => {
+  /**
+   * A guided board, with each card told which row it belongs in — which is
+   * how the screen deals one: placement.js reads the type line, the seat
+   * action carries the answer, and the reducer never learns what a card is.
+   */
+  const LANES = { forest: 'lands', bear: 'creatures', island: 'lands', bolt: null, big: 'siege' }
+  function playmat(cards = ['forest', 'bear', 'bolt', 'island'], options = {}) {
+    const board = createBoard({ seed: 7, guided: true, ...options })
+    const result = ok(apply(board, { type: 'seat', player: 'you', cards, lanes: LANES, shuffle: false }))
+    const find = (cardId, zone = null) => Object.values(result.board.cards).find((c) => c.cardId === cardId && (!zone || c.zone === zone))
+    return { board: result.board, find }
+  }
+
+  it('puts a card in the row its type belongs to, wherever it was dropped', () => {
+    const { board, find } = playmat()
+    const forest = find('forest').id
+    const bear = find('bear').id
+    const laid = run(board, [
+      { type: 'move', id: forest, zone: 'battlefield', x: 0.3, y: 0.1 },
+      { type: 'move', id: bear, zone: 'battlefield', x: 0.7, y: 0.95 },
+    ])
+    // The row is decided by the card; the place along it is still yours.
+    expect(laid.cards[forest]).toMatchObject({ x: 0.3, y: laneById('lands').y })
+    expect(laid.cards[bear]).toMatchObject({ x: 0.7, y: laneById('creatures').y })
+    expect(laid.cards[bear].y).toBeLessThan(laid.cards[forest].y)
+  })
+
+  it('will not leave an instant on the battlefield, and says so', () => {
+    const { board, find } = playmat()
+    const bolt = find('bolt').id
+    const refusal = refused(apply(board, { type: 'move', id: bolt, zone: 'battlefield' }), 'notAPermanent')
+    expect(refusal.reason.message).toMatch(/does not stay on the battlefield/)
+    // It goes to the stack instead, which is where a spell actually goes.
+    const cast = ok(apply(board, { type: 'move', id: bolt, zone: 'stack' }))
+    expect(cast.board.cards[bolt].zone).toBe('stack')
+    expect(invariants(cast.board)).toEqual([])
+  })
+
+  it('lets the same instant sit anywhere once the table is bare', () => {
+    const { board, find } = playmat()
+    const bolt = find('bolt').id
+    const bare = ok(apply(board, { type: 'setGuided', value: false })).board
+    expect(bare.guided).toBe(false)
+    const laid = ok(apply(bare, { type: 'move', id: bolt, zone: 'battlefield', x: 0.2, y: 0.2 }))
+    expect(laid.board.cards[bolt]).toMatchObject({ x: 0.2, y: 0.2 })
+    expect(invariants(laid.board)).toEqual([])
+  })
+
+  it('tidies each row along its own line', () => {
+    const { board, find } = playmat(['forest', 'forest', 'bear', 'island'])
+    let state = board
+    for (const inst of zoneOf(board, 'you', 'library')) {
+      if (LANES[inst.cardId]) state = ok(apply(state, { type: 'move', id: inst.id, zone: 'battlefield' })).board
+    }
+    const neat = ok(apply(state, { type: 'tidy', player: 'you' })).board
+    const rows = new Map()
+    for (const inst of battlefield(neat, 'you')) {
+      rows.set(inst.lane, [...(rows.get(inst.lane) ?? []), inst])
+    }
+    for (const [lane, cards] of rows) {
+      for (const inst of cards) expect(inst.y, lane).toBeCloseTo(laneById(lane).y, 5)
+      const xs = cards.map((c) => c.x)
+      expect(new Set(xs).size, `${lane} rows overlap`).toBe(xs.length)
+    }
+  })
+
+  it('makes a token into a row too', () => {
+    const { board } = playmat()
+    const made = ok(apply(board, { type: 'makeToken', cardId: 'bear', lane: 'creatures' })).board
+    const token = battlefield(made, 'you').find((c) => c.token)
+    expect(token.y).toBeCloseTo(laneById('creatures').y, 5)
+    refused(apply(board, { type: 'makeToken', cardId: 'bolt', lane: null }), 'notAPermanent')
+  })
+
+  it('walks the turn one step at a time, and skips first strike unless it is there', () => {
+    const { board } = playmat()
+    expect(board.step).toBe('untap')
+    let state = board
+    const walk = (n, options) => { for (let i = 0; i < n; i++) state = ok(apply(state, { type: 'step', ...options })).board }
+    walk(6)
+    expect(state.step).toBe('blockers')
+    walk(1)
+    expect(state.step).toBe('damage')     // no first strike in combat
+    state = ok(apply(board, { type: 'setTurn', step: 'blockers' })).board
+    state = ok(apply(state, { type: 'step', hasFirstStrike: true })).board
+    expect(state.step).toBe('firstStrike')
+  })
+
+  it('counts a turn when the steps roll over, not before', () => {
+    const { board } = playmat()
+    let state = ok(apply(board, { type: 'setTurn', step: 'end' })).board
+    state = ok(apply(state, { type: 'step' })).board
+    expect(state).toMatchObject({ step: 'cleanup', turn: 1 })
+    const over = ok(apply(state, { type: 'step' }))
+    expect(over.board).toMatchObject({ step: 'untap', turn: 2 })
+    expect(over.events.map((e) => e.type)).toContain('turnBegan')
+  })
+
+  it('refuses a step that is not in a turn', () => {
+    const { board } = playmat()
+    refused(apply(board, { type: 'step', to: 'teatime' }), 'noSuchStep')
+    expect(ok(apply(board, { type: 'step', to: 'main1' })).board.step).toBe('main1')
   })
 })
 

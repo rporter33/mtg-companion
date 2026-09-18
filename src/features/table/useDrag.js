@@ -28,7 +28,10 @@ export default function useDrag({ fieldRef, onSlide, onPlay }) {
   const begin = useCallback((event, { id, from }) => {
     if (event.button != null && event.button !== 0) return
     if (session.current) return
-    const started = { id, from, originX: event.clientX, originY: event.clientY, moved: false, x: event.clientX, y: event.clientY }
+    // The field's box comes along for the ride so the lane under the card can
+    // light up without measuring the layout on every pointer move.
+    const rect = fieldRef.current?.getBoundingClientRect() ?? null
+    const started = { id, from, rect, originX: event.clientX, originY: event.clientY, moved: false, x: event.clientX, y: event.clientY }
     session.current = started
     setDrag(started)
 

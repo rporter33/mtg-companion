@@ -1,5 +1,6 @@
 import { CARD_W, CARD_H } from '../../lib/board/geometry.js'
 import { stacked, nameOf } from '../../lib/board/model.js'
+import { LANES, laneAt } from '../../lib/board/placement.js'
 import BoardCard from './BoardCard.jsx'
 
 /**
@@ -45,10 +46,13 @@ export default function Field({
       aria-label={`Battlefield, ${cards.length} card${cards.length === 1 ? '' : 's'}`}
       style={{ '--card-w': `${CARD_W * 100}%`, '--card-h': `${CARD_H * 100}%` }}
     >
+      {board.guided && <Playmat board={board} drag={drag} />}
       <Arrows board={board} />
       {!cards.length && (
         <p className="field__empty">
-          Drag a card up from your hand, or tap it to put it here.
+          {board.guided
+            ? 'Drag a card up from your hand. It will settle into the row its kind belongs in.'
+            : 'Drag a card up from your hand, or tap it to put it here.'}
         </p>
       )}
       {cards.map((inst) => {
@@ -56,7 +60,7 @@ export default function Field({
         return (
           <span
             key={inst.id}
-            className={`field__slot${aiming && aiming.id !== inst.id ? ' field__slot--aimable' : ''}`}
+            className={`field__slot${aiming && aiming.id !== inst.id ? ' field__slot--aimable' : ''}${live ? ' field__slot--carried' : ''}`}
             style={{ left: `${(live?.x ?? inst.x) * 100}%`, top: `${(live?.y ?? inst.y) * 100}%`, zIndex: live ? 999 : inst.z }}
           >
             {/* The rotation is on this wrapper, so the word beside it stays
@@ -135,4 +139,41 @@ function Arrows({ board }) {
       })}
     </svg>
   )
+}
+
+/**
+ * The rows marked on the table.
+ *
+ * A printed playmat has areas on it, and a board where everything is in one
+ * heap is a board its owner cannot read. None of this is in the rules — the
+ * Comprehensive Rules say nothing about layout — so the lines are drawn
+ * faintly and named, as guides rather than walls. Which row a card belongs in
+ * is decided by its type; where along the row it stands is still the
+ * player's.
+ *
+ * The row under a card being dragged lights up, so you can see where it is
+ * going to land before you let go.
+ */
+function Playmat({ board, drag }) {
+  const over = drag && drag.moved ? laneAt(dragY(drag)) : null
+  return (
+    <div className="playmat" aria-hidden="true">
+      {LANES.map((lane) => (
+        <div
+          key={lane.id}
+          className={`playmat__lane${over === lane.id ? ' playmat__lane--over' : ''}`}
+          style={{ top: `${(lane.y - lane.band / 2) * 100}%`, height: `${lane.band * 100}%` }}
+        >
+          <span className="playmat__name">{lane.short}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Where a drag is, as a fraction — the field is square, so this is enough. */
+function dragY(drag) {
+  const rect = drag.rect
+  if (!rect || !rect.height) return 0.5
+  return Math.min(1, Math.max(0, (drag.y - rect.top) / rect.height))
 }

@@ -1,14 +1,23 @@
 # Working in this repository
 
 Read `docs/` before touching lore, colour, typography or set-specific content.
-The two reference documents there are the source of truth for the universe
-and for the current set; the table in `docs/README.md` says where each
-section lands in the code and which test checks it.
+The reference documents there are the source of truth; the table in
+`docs/README.md` says where each section lands in the code and which test
+checks it.
+
+`docs/TURN_STRUCTURE.md` is the reference for how a turn works: the five
+phases, their steps, priority, the stack and what may be done where. Read it
+before writing anything about phases, steps, timing, the stack or when a card
+may be played, and cite its rule numbers rather than asserting a rule. It is
+transcribed in `src/data/turn-structure.js` and checked by
+`tests/turn-structure.test.js`; if the two disagree, the document is right.
+`docs/PROJECT_BRIEF.md` is the whole-project handoff.
 
 Rules that hold in code:
 
 - Nothing is invented. Card names, prices, popularity and legality come from
-  Scryfall. Lore and design come from `docs/`. Anything the app writes itself
+  Scryfall. Lore and design come from `docs/`. Rules of play come from
+  `docs/TURN_STRUCTURE.md`, cited by number. Anything the app writes itself
   says so on screen.
 - IP boundaries in the universe reference govern assets and treatments. The
   app draws its own mana symbols and card faces and shows Scryfall images

@@ -410,6 +410,16 @@ await scanState('the free table, making a token', async () => {
   return (await page.locator('.tokenmaker').count()) === 1
 })
 
+// The marked rows, the stack and the turn tracker: three things drawn as
+// much as written, which is where names go missing.
+await scanState('the free table, the turn tracker open', async () => {
+  const whole = page.getByRole('button', { name: 'The whole turn' })
+  if (!await whole.count()) return false
+  await whole.click()
+  await page.waitForTimeout(400)
+  return (await page.locator('.turns__step').count()) === 13
+})
+
 console.log('\nFindings')
 if (!seen.size) console.log('  none')
 const order = { critical: 0, serious: 1, moderate: 2, minor: 3 }

@@ -17,10 +17,11 @@
  */
 import { clampToField, CARD_W, CARD_H } from './geometry.js'
 import { FINISHES } from './art.js'
+import { FIRST_STEP } from '../../data/turn-structure.js'
 
-export const ZONES = ['library', 'hand', 'battlefield', 'graveyard', 'exile', 'command']
+export const ZONES = ['library', 'hand', 'battlefield', 'stack', 'graveyard', 'exile', 'command']
 export const ZONE_LABELS = {
-  library: 'Library', hand: 'Hand', battlefield: 'Battlefield',
+  library: 'Library', hand: 'Hand', battlefield: 'Battlefield', stack: 'The stack',
   graveyard: 'Graveyard', exile: 'Exile', command: 'Command zone',
 }
 /** Zones whose order is secret or meaningful. A shuffle only makes sense for the library. */
@@ -53,6 +54,14 @@ export function makeInstance({ id, cardId, owner = 'you', zone = 'library', toke
     note: '',
     attachedTo: null, // an aura on a creature, an equipment on one: position, not rules
     finish: 'normal', // which copy of the printing this is: normal, foil, etched
+    /*
+     * Which row of the playmat this card belongs in, or null for a card that
+     * never stays on the battlefield at all. Worked out from the type line by
+     * placement.js and stamped here when the card is dealt, so the reducer can
+     * keep the playmat honest without ever learning what a card does — and so
+     * that two devices replaying the same actions reach the same table.
+     */
+    lane: 'other',
     token,
     custom, // a made-up card: { name, typeLine, power, toughness, colors, art }
     enteredOnTurn: 0,
@@ -60,7 +69,7 @@ export function makeInstance({ id, cardId, owner = 'you', zone = 'library', toke
   }
 }
 
-export function createBoard({ players = ['you'], seed = 1, turn = 1, active = 'you' } = {}) {
+export function createBoard({ players = ['you'], seed = 1, turn = 1, active = 'you', guided = true, step = FIRST_STEP } = {}) {
   const byPlayer = (value) => Object.fromEntries(players.map((p) => [p, typeof value === 'function' ? value() : value]))
   return {
     version: 1,
@@ -68,7 +77,17 @@ export function createBoard({ players = ['you'], seed = 1, turn = 1, active = 'y
     seed,
     turn,
     active,
-    step: null, // a label the player sets; the board never advances it on its own
+    step, // where in the turn we are: an id from src/data/turn-structure.js
+    /*
+     * A marked playmat, or a bare table.
+     *
+     * Guided: cards sit in the row their type belongs to and an instant may
+     * not be left on the battlefield, which is what a printed playmat and the
+     * rules respectively say. Unguided: the table judges nothing, which is
+     * where this screen started and what it falls back to for a card whose
+     * type line nothing can parse, a house rule, or a silver-bordered card.
+     */
+    guided,
     life: byPlayer(20),
     counters: byPlayer(() => ({})), // poison, energy, experience, anything named
     cards: {},
@@ -151,6 +170,9 @@ export function invariants(board) {
     }
     for (const [name, n] of Object.entries(inst.counters)) if (!Number.isFinite(n) || n === 0) problems.push(`${inst.id} has a ${name} counter of ${n}`)
     if (inst.finish && !FINISHES.includes(inst.finish)) problems.push(`${inst.id} has a finish of ${inst.finish}`)
+    if (board.guided && inst.zone === 'battlefield' && inst.lane === null) {
+      problems.push(`${inst.id} is on the battlefield but belongs in no row`)
+    }
     if (inst.attachedTo) {
       const host = board.cards[inst.attachedTo]
       if (!host) problems.push(`${inst.id} is attached to nothing`)

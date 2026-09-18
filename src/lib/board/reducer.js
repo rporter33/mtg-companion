@@ -20,6 +20,8 @@
 import { rng, shuffle } from '../goldfish.js'
 import { ZONES, ORDERED_ZONES, makeInstance, clampToField, attachedTo, CARD_W, CARD_H } from './model.js'
 import { FINISHES } from './art.js'
+import { snapToLane, laneById } from './placement.js'
+import { nextStep as stepAfter, STEPS, FIRST_STEP } from '../../data/turn-structure.js'
 import { freeSpot, tidy as tidyPositions } from './geometry.js'
 
 const refuse = (code, message) => ({ ok: false, reason: { code, message } })
@@ -70,7 +72,18 @@ function place(board, id, zone, { to = 'top', x, y, owner } = {}) {
   } else {
     const others = list(board, player, 'battlefield').map((other) => board.cards[other])
     const wanted = clampToField(x ?? inst.x, y ?? inst.y)
-    const spot = x == null && y == null ? freeSpot(wanted, others) : wanted
+    /*
+     * On a marked playmat the row is decided by what the card is and the
+     * place along it is still yours: you choose the order your creatures
+     * stand in, not which row they stand in. A free spot is only searched
+     * for on a bare table, where nothing decides the row.
+     */
+    let spot
+    if (board.guided && inst.lane) {
+      spot = snapToLane(inst.lane, { x: wanted.x })
+    } else {
+      spot = x == null && y == null ? freeSpot(wanted, others) : wanted
+    }
     Object.assign(inst, spot, { z: board.nextZ++ })
   }
   const into = list(board, player, zone)
@@ -97,7 +110,7 @@ const HANDLERS = {
    * commander is not one of the ninety-nine and a shuffled-in commander would
    * be a different deck.
    */
-  seat(board, { player = 'you', cards = [], command = [], shuffle: doShuffle = true, seed }) {
+  seat(board, { player = 'you', cards = [], command = [], lanes = {}, shuffle: doShuffle = true, seed }) {
     if (!board.players.includes(player)) return refuse('noSuchPlayer', 'There is no such seat at this table.')
     const gone = new Set()
     for (const zone of ZONES) for (const id of list(board, player, zone)) { gone.add(id); delete board.cards[id] }
@@ -108,6 +121,10 @@ const HANDLERS = {
     const deal = (cardId, zone, i) => {
       const id = `${player}:${zone === 'command' ? 'c' : ''}${i}:${cardId}`
       board.cards[id] = makeInstance({ id, cardId, owner: player, zone })
+      // `lanes` comes in with the action rather than being looked up here, so
+      // the reducer still knows nothing about what a card is, and a replay on
+      // another device reaches the same table.
+      if (Object.prototype.hasOwnProperty.call(lanes, cardId)) board.cards[id].lane = lanes[cardId]
       board.zones[player][zone].push(id)
     }
     order.forEach((cardId, i) => deal(cardId, 'library', i))
@@ -135,6 +152,12 @@ const HANDLERS = {
     const inst = board.cards[id]
     if (!inst) return refuse('noSuchCard', 'That card is not on this table.')
     if (!ZONES.includes(zone)) return refuse('noSuchZone', 'There is no such zone.')
+    // The one rule this table keeps: a card that does not stay on the
+    // battlefield may not be left there. The screen says which card and what
+    // happens to it instead; the code only knows it has no row to sit in.
+    if (board.guided && zone === 'battlefield' && inst.lane === null) {
+      return refuse('notAPermanent', 'That card does not stay on the battlefield.')
+    }
     const from = inst.zone
     // A token that leaves the battlefield ceases to exist, as it does in paper.
     if (inst.token && from === 'battlefield' && zone !== 'battlefield') {
@@ -289,15 +312,19 @@ const HANDLERS = {
   },
 
   /** A token, or a blank card you name yourself. */
-  makeToken(board, { player = 'you', cardId = null, custom = null, x, y, count = 1 }) {
+  makeToken(board, { player = 'you', cardId = null, custom = null, lane = 'creatures', x, y, count = 1 }) {
     if (!cardId && !custom?.name) return refuse('needsACard', 'A token needs a card to copy or a name of its own.')
+    if (board.guided && lane === null) return refuse('notAPermanent', 'A token has to be something that stays on the battlefield.')
     for (let i = 0; i < Math.max(1, count); i++) {
       const id = freshId(board, `${player}:token`)
       board.cards[id] = makeInstance({ id, cardId, owner: player, zone: 'battlefield', token: true, custom })
       board.cards[id].enteredOnTurn = board.turn
+      board.cards[id].lane = lane
       list(board, player, 'battlefield').push(id)
       const others = list(board, player, 'battlefield').filter((o) => o !== id).map((o) => board.cards[o])
-      Object.assign(board.cards[id], freeSpot(clampToField(x ?? 0.5, y ?? 0.4), others), { z: board.nextZ++ })
+      const wanted = clampToField(x ?? 0.5, y ?? 0.4)
+      const spot = board.guided && lane ? snapToLane(lane, { x: wanted.x }) : freeSpot(wanted, others)
+      Object.assign(board.cards[id], spot, { z: board.nextZ++ })
       emit(board, { type: 'tokenMade', instanceId: id, player })
     }
     return null
@@ -383,6 +410,32 @@ const HANDLERS = {
   tidy(board, { player = 'you', lands = [] }) {
     const all = list(board, player, 'battlefield').map((id) => board.cards[id])
     const loose = all.filter((c) => !c.attachedTo)
+
+    // On a marked playmat, tidying means spacing each row out along its own
+    // line — the rows are already decided, so there is nothing to sort.
+    if (board.guided) {
+      const byLane = new Map()
+      for (const inst of loose) {
+        const lane = inst.lane ?? 'other'
+        if (!byLane.has(lane)) byLane.set(lane, [])
+        byLane.get(lane).push(inst)
+      }
+      for (const [lane, cards] of byLane) {
+        const gap = Math.min(CARD_W * 1.5, (1 - CARD_W) / Math.max(1, cards.length - 1))
+        const width = gap * (cards.length - 1)
+        cards.forEach((inst, i) => {
+          const spot = snapToLane(lane, { x: clampToField(0.5 - width / 2 + i * gap, 0.5).x })
+          const shift = { x: spot.x - inst.x, y: spot.y - inst.y }
+          Object.assign(board.cards[inst.id], spot)
+          for (const rider of attachedTo(board, inst.id)) {
+            Object.assign(board.cards[rider.id], clampToField(rider.x + shift.x, rider.y + shift.y))
+          }
+        })
+      }
+      emit(board, { type: 'tidied', player, count: all.length })
+      return null
+    }
+
     const isLand = (c) => lands.includes(c.id)
     for (const placed of tidyPositions(loose, { isLand })) {
       const inst = board.cards[placed.id]
@@ -396,11 +449,48 @@ const HANDLERS = {
     return null
   },
 
+  /**
+   * Where in the turn we are.
+   *
+   * The board walks the phases and steps of `src/data/turn-structure.js` but
+   * resolves nothing on the player's behalf: it is a tracker, not a judge. It
+   * skips the first-strike damage step unless the caller says something in
+   * combat has first strike, which is what the rules do (510.4) and what
+   * saves pressing past a step that almost never happens.
+   */
+  step(board, { to = null, hasFirstStrike = false }) {
+    const before = board.step
+    if (to) {
+      if (!STEPS.some((s) => s.id === to)) return refuse('noSuchStep', 'There is no such step in a turn.')
+      board.step = to
+      emit(board, { type: 'stepped', from: before, to, turn: board.turn })
+      return null
+    }
+    const { step, wrapped } = stepAfter(before ?? FIRST_STEP, { hasFirstStrike })
+    board.step = step.id
+    if (wrapped) {
+      const i = board.players.indexOf(board.active)
+      const next = board.players[(i + 1) % board.players.length]
+      if (board.players.indexOf(next) <= i || board.players.length === 1) board.turn += 1
+      board.active = next
+      emit(board, { type: 'turnBegan', turn: board.turn, active: next })
+    }
+    emit(board, { type: 'stepped', from: before, to: step.id, turn: board.turn })
+    return null
+  },
+
+  /** A marked playmat, or a bare table. The player's to choose, either way. */
+  setGuided(board, { value = true }) {
+    board.guided = Boolean(value)
+    emit(board, { type: 'guided', value: board.guided })
+    return null
+  },
+
   /** The turn counter and the step label are the player's to set. The board never advances them. */
   setTurn(board, { turn, active, step }) {
     if (turn !== undefined) board.turn = Math.max(1, Math.round(turn))
     if (active !== undefined && board.players.includes(active)) board.active = active
-    if (step !== undefined) board.step = step
+    if (step !== undefined && (step === null || STEPS.some((s) => s.id === step))) board.step = step
     for (const inst of Object.values(board.cards)) if (inst.zone === 'battlefield' && inst.enteredOnTurn === 0) inst.enteredOnTurn = board.turn
     emit(board, { type: 'turnSet', turn: board.turn, active: board.active, step: board.step })
     return null
@@ -411,7 +501,7 @@ const HANDLERS = {
     const next = player ?? board.players[(i + 1) % board.players.length]
     if (board.players.indexOf(next) <= i || board.players.length === 1) board.turn += 1
     board.active = next
-    board.step = null
+    board.step = FIRST_STEP
     emit(board, { type: 'turnBegan', turn: board.turn, active: next })
     return null
   },

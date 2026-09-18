@@ -32,6 +32,8 @@ const CARDS = [
   c('cmdr', 'Test Commander', 'Legendary Creature — Elf'),
   c('forest', 'Forest', 'Basic Land — Forest', { mana_cost: '', cmc: 0, produced_mana: ['G'], finishes: ['nonfoil', 'foil'] }),
   c('elf', 'Llanowar Elves', 'Creature — Elf Druid', { power: '1', toughness: '1' }),
+  c('bolt', 'Lightning Bolt', 'Instant', { mana_cost: '{R}', oracle_text: 'Deal 3 damage to any target.' }),
+  c('walker', 'Test Planeswalker', 'Legendary Planeswalker — Test', { loyalty: '4' }),
 ]
 /** A second printing of the Forest, so there is a real choice to make. */
 const FOREST_SHOWCASE = c('forest-showcase', 'Forest', 'Basic Land — Forest', {
@@ -74,6 +76,15 @@ await page.evaluate(() => localStorage.setItem('mtg-companion:v1', JSON.stringif
     sideboard: [], categoryOrder: [], versions: [],
     createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
   }, {
+    // One of each kind, so the playmat has something to sort.
+    id: 'd3', name: 'One Of Each', formatId: 'commander', commanders: [], signatureSpell: null,
+    main: [
+      { cardId: 'forest', quantity: 15 }, { cardId: 'elf', quantity: 15 },
+      { cardId: 'bolt', quantity: 15 }, { cardId: 'walker', quantity: 15 },
+    ],
+    sideboard: [], categoryOrder: [], versions: [],
+    createdAt: '2026-01-03T00:00:00Z', updatedAt: '2026-01-03T00:00:00Z',
+  }, {
     // Nothing but lands, so the opening hand is known and the coach's land
     // note can be triggered on purpose rather than hoped for.
     id: 'd2', name: 'All Forest', formatId: 'commander', commanders: [], signatureSpell: null,
@@ -108,7 +119,7 @@ const slotStyle = () => page.locator('.field__slot').first().getAttribute('style
 await openTable()
 
 console.log('\nChoosing a deck')
-check('the table lists your own decks', (await page.locator('.table-picker__deck').count()) === 2)
+check('the table lists your own decks', (await page.locator('.table-picker__deck').count()) === 3)
 check('and says how many cards will be dealt',
   (await page.locator('.table-picker__deck').first().innerText()).includes('99 cards'),
   await page.locator('.table-picker__deck').first().innerText())
@@ -258,13 +269,20 @@ await page.goto(`${TARGET}#/table`, { waitUntil: 'networkidle' })
 await page.waitForTimeout(500)
 await page.locator('.table-picker__deck', { hasText: 'All Forest' }).click()
 await page.waitForTimeout(1000)
-const LEFT = [0.2, 0.3]
-const MIDDLE = [0.5, 0.3]
-const RIGHT = [0.8, 0.3]
+// Every card in this deck is a land, and with the playmat on a land sits in
+// the land row — so these are three places along that one row. Where along
+// it is still the player's; which row is the card's.
+const LANDS_Y = 0.84
+const LEFT = [0.2, LANDS_Y]
+const MIDDLE = [0.5, LANDS_Y]
+const RIGHT = [0.8, LANDS_Y]
 await placeAt(...LEFT)
 await placeAt(...MIDDLE)
 await placeAt(...RIGHT)
 check('three cards, each in its own place', (await page.locator('.field .bcard').count()) === 3)
+check('all three in the land row, because that is what they are',
+  (await page.locator('.field__slot').evaluateAll((ns) => ns.map((n) => n.style.top))).every((t) => t === '84%'),
+  JSON.stringify(await page.locator('.field__slot').evaluateAll((ns) => ns.map((n) => n.style.top))))
 
 console.log('\nPointing at things')
 await clickAt(...LEFT)
@@ -301,15 +319,20 @@ await page.getByRole('button', { name: 'Put it on…' }).click()
 await clickAt(...LEFT)
 check('nothing was added or lost by stacking them',
   (await page.locator('.field .bcard').count()) === 3)
-// Whatever is on top of the left-hand spot now is the card that was moved there.
-await clickAt(0.24, 0.38)
+// An attached card sits on the one underneath rather than in its own row —
+// which is the point of attaching — so it is a little down and to the right
+// of the host.
+await clickAt(0.24, 0.90)
 check('the card on top knows it is on something',
   (await page.getByRole('button', { name: 'Take it off' }).count()) === 1)
 await page.getByRole('button', { name: 'Take it off' }).click()
 await page.waitForTimeout(300)
-await clickAt(0.24, 0.38)
+// Still the card in hand, and no longer on anything. Checked without
+// clicking again: a second click would put the card down, and then "no Take
+// it off button" would pass for the wrong reason.
 check('and once taken off it is a card like any other',
-  (await page.getByRole('button', { name: 'Take it off' }).count()) === 0)
+  (await page.locator('.actions').count()) === 1
+  && (await page.getByRole('button', { name: 'Take it off' }).count()) === 0)
 await page.getByRole('button', { name: 'Put it down' }).click()
 await page.waitForTimeout(200)
 
@@ -451,6 +474,121 @@ check('a blank card with a name on it needs no connection at all',
 check('and carries the numbers you wrote on it',
   (await page.locator('.field .bcard').last().innerText()).includes('2/2'),
   await page.locator('.field .bcard').last().innerText())
+
+// ---------------------------------------------------------------------------
+// The playmat: the rows a printed mat has, and the one rule this table keeps.
+
+console.log('\nThe marked playmat')
+await page.goto(`${TARGET}#/table`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(500)
+await page.locator('.table-picker__deck', { hasText: 'One Of Each' }).click()
+await page.waitForTimeout(1200)
+check('the rows are marked and named', (await page.locator('.playmat__lane').count()) === 4)
+check('and named in words, not only drawn',
+  /lands/i.test(await page.locator('.playmat').innerText()),
+  await page.locator('.playmat').innerText())
+
+/** Plays whatever is named from hand, if it is there; returns whether it was. */
+const playNamed = async (name) => {
+  const held = page.locator('.tabletop__handcard .bcard', { hasText: name }).first()
+  if (!await held.count()) return false
+  await held.click()
+  await page.waitForTimeout(200)
+  await page.getByRole('button', { name: 'To the battlefield' }).click()
+  await page.waitForTimeout(350)
+  return true
+}
+const rowOf = async (name) => page.locator('.field__slot', { hasText: name }).first().evaluate((n) => n.style.top)
+
+// Draw enough that one of each is in hand.
+for (let i = 0; i < 12; i++) await page.getByRole('button', { name: 'Draw', exact: true }).click()
+await page.waitForTimeout(500)
+
+if (await playNamed('Forest')) {
+  check('a land goes to the land row', (await rowOf('Forest')) === '84%', await rowOf('Forest'))
+}
+if (await playNamed('Llanowar')) {
+  check('a creature goes to the creature row', (await rowOf('Llanowar')) === '35%', await rowOf('Llanowar'))
+}
+if (await playNamed('Planeswalker')) {
+  check('a planeswalker goes to its own row', (await rowOf('Planeswalker')) === '11%', await rowOf('Planeswalker'))
+}
+
+console.log('\nAn instant does not stay on the battlefield')
+{
+  const bolt = page.locator('.tabletop__handcard .bcard', { hasText: 'Lightning Bolt' }).first()
+  check('there is one in hand to try it with', (await bolt.count()) > 0)
+  const onField = await page.locator('.field .bcard').count()
+  await bolt.click()
+  await page.waitForTimeout(200)
+  check('the table does not even offer to put it there',
+    (await page.getByRole('button', { name: 'To the battlefield' }).count()) === 0,
+    await page.locator('.actions').innerText())
+  await page.getByRole('button', { name: 'To the stack' }).click()
+  await page.waitForTimeout(400)
+  check('it goes on the stack instead', (await page.locator('.stackshelf').count()) === 1)
+  check('and not onto the battlefield', (await page.locator('.field .bcard').count()) === onField)
+  check('the stack says which way it resolves',
+    (await page.locator('.stackshelf').innerText()).includes('Last on, first to happen'))
+  await page.getByRole('button', { name: /^Resolve/ }).click()
+  await page.waitForTimeout(400)
+  check('resolving an instant sends it to the graveyard, not the table',
+    (await pileCount('Graveyard')) === 1 && (await page.locator('.field .bcard').count()) === onField)
+  check('and the stack empties', (await page.locator('.stackshelf').count()) === 0)
+}
+
+console.log('\nWhere you are in the turn')
+{
+  // The heading is styled uppercase, so read it without caring.
+  const where = () => page.locator('.turns .pile__title').innerText()
+  const at = async (name) => new RegExp(name, 'i').test(await where())
+  check('the turn starts at the untap step', await at('Untap'), await where())
+  check('and says nobody gets priority there',
+    (await page.locator('.turns').innerText()).includes('Nobody gets priority'))
+  for (let i = 0; i < 3; i++) {
+    await page.getByRole('button', { name: 'Next step' }).click()
+    await page.waitForTimeout(250)
+  }
+  check('three steps on is the first main phase', await at('Precombat main'), await where())
+  check('which is where a land may be played',
+    (await page.locator('.turns').innerText()).includes('A land and sorceries may be played here'))
+  await page.getByRole('button', { name: 'The whole turn' }).click()
+  await page.waitForTimeout(300)
+  check('the whole turn can be read at once', (await page.locator('.turns__step').count()) === 13)
+  check('and it cites the rules rather than asserting them',
+    (await page.locator('.turns__all').innerText()).includes('510.4'))
+  await page.locator('.turns__step', { hasText: 'Declare attackers' }).click()
+  await page.waitForTimeout(300)
+  check('any step can be jumped to', await at('Declare attackers'), await where())
+  // Attackers, then blockers, then damage — with the first-strike step
+  // between them skipped, because nothing in this combat has first strike.
+  for (let i = 0; i < 2; i++) {
+    await page.getByRole('button', { name: 'Next step' }).click()
+    await page.waitForTimeout(250)
+  }
+  check('and first-strike damage is skipped when nothing in combat has it',
+    await at('Combat damage') && !(await at('First-strike')), await where())
+  await page.getByRole('button', { name: 'Close' }).click()
+}
+
+console.log('\nThe bare table is still there')
+await openRail()
+await page.getByRole('button', { name: /^Playmat/ }).click()
+await page.waitForTimeout(400)
+check('the rows come off', (await page.locator('.playmat__lane').count()) === 0)
+{
+  const bolt = page.locator('.tabletop__handcard .bcard', { hasText: 'Lightning Bolt' }).first()
+  if (await bolt.count()) {
+    await bolt.click()
+    await page.waitForTimeout(200)
+    check('and an instant may sit wherever you like again',
+      (await page.getByRole('button', { name: 'To the battlefield' }).count()) === 1)
+    await page.getByRole('button', { name: 'Put it down' }).click()
+  }
+}
+await openRail()
+await page.getByRole('button', { name: /^Playmat/ }).click()
+await page.waitForTimeout(400)
 
 // A phone turned sideways is the shape this layout wants: the table on the
 // left at the height of the screen, hand and piles beside it, and nothing

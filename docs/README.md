@@ -1,5 +1,8 @@
 # Reference documents
 
+`TURN_STRUCTURE.md` is the reference for how a turn works — phases, steps,
+priority and the stack — and is read before writing anything about timing.
+
 `PROJECT_BRIEF.md` is the whole-project handoff: what this is, how it is
 built, what holds it together and what is left to do. Read that first if you
 are new to the repository.

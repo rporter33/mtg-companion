@@ -594,6 +594,36 @@ on the table, shuffling a pile whose order is open. A token that leaves the
 battlefield ceases to exist rather than filing itself in a graveyard, and
 leaving the battlefield forgets everything that only meant something there.
 
+**The playmat.** The battlefield is marked into the rows a printed playmat
+has — planeswalkers and battles, creatures, artifacts and enchantments, lands
+nearest you — and a card goes to the row its type belongs in. None of that is
+in the rules, which say nothing about layout; it is how every table is
+actually laid out, and a board where everything is in one heap is a board its
+owner cannot read. Where along a row a card stands is still yours; which row
+is the card's. The row a card is heading for lights up while it is being
+carried.
+
+One thing there *is* a rule, and it is the one beginners get wrong most often:
+an instant or a sorcery never stays on the battlefield. The table will not
+offer to put one there. It offers the stack instead — a visible shelf, last on
+and first to resolve, which is the single rule that settles most arguments and
+the one a new player is least likely to have been told. Resolve it and it goes
+where it actually goes: a permanent to the battlefield, everything else to the
+graveyard.
+
+All of that is the playmat, and it is one switch. Turn it off and the table
+judges nothing again, which is what a card with a type line nothing can parse,
+a house rule or a silver-bordered card needs.
+
+**The turn.** Five phases and thirteen steps, walked one at a time, from
+`docs/TURN_STRUCTURE.md`. For the step you are in it says what happens in it,
+whether anybody gets priority there at all, and whether a land or a sorcery
+may be played — with the rule number, because that is how an argument at a
+real table gets settled. The first-strike damage step is skipped unless
+something in combat actually has first strike, which is what the rules do and
+what saves pressing past a step that almost never happens. It follows the
+turn; it does not enforce it.
+
 Pointing is the part a screen usually loses. At a real table you point at what
 you are attacking and at what a spell is aimed at, and half of combat is that
 gesture; here it is an arrow drawn from one card to another or to a player, in

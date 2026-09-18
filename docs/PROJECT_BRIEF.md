@@ -332,7 +332,27 @@ sound.js     synthesised card sounds
 **Actions** (all physical, none consult a rule): `seat, draw, move, tap,
 untapAll, flip, counter, finish, reprint, life, playerCounter, shuffle,
 fromTop, reveal, makeToken, attach, detach, arrow, clearArrows, roll, tidy,
-setTurn, nextTurn, note`.
+step, setGuided, setTurn, nextTurn, note`.
+
+**The playmat.** `src/lib/board/placement.js` reads a Scryfall type line and
+answers which row a card belongs in — `siege` (planeswalkers and battles),
+`creatures`, `other` (artifacts and enchantments), `lands` — or `null` for a
+card that never stays on the battlefield at all. The board carries the answer
+as `lane` on each instance, stamped when the card is dealt and carried *in the
+seat action*, so the reducer still knows nothing about what a card is and a
+replay on another device reaches the same table. With `guided: true` a card
+snaps to its row's y (x stays free) and a card with `lane: null` is refused
+the battlefield; with `guided: false` none of that applies and the table is
+the bare one it started as.
+
+**The stack** is a zone like any other. Dragging a non-permanent out of hand
+puts it there rather than on the battlefield, and resolving it sends it to the
+battlefield or the graveyard depending on what it is.
+
+**The turn** is walked, not enforced: `src/data/turn-structure.js` holds the
+five phases and thirteen steps transcribed from `docs/TURN_STRUCTURE.md`, and
+the `step` action moves through them, skipping the first-strike damage step
+unless the caller says something in combat has it (510.4).
 
 **The only refusals are physical impossibilities**: `emptyLibrary`,
 `noSuchCard`, `noSuchZone`, `notOnBattlefield`, `cannotShuffle`, `noSuchEnd`,
@@ -443,16 +463,17 @@ motion derived from events, coaching and paper prompts, combat and responses,
 the practice home with evidence kept apart, the colour explorer, and free
 play — a whole game solo against a policy or two players at one screen.
 
-**Table (T0–T3)** — the free table: the board model, the solo table with any
+**Table (T0–T4a)** — the free table: the board model, the solo table with any
 deck, physicality (arrows, attachments, counters, face-down, dice, sound) and
-the quiet coach, and art (printings, treatments, foils with tilt, tokens and
-blank cards). The printing picker is in the deck editor too.
+the quiet coach, art (printings, treatments, foils with tilt, tokens and blank
+cards), and the marked playmat with the stack and the turn tracker. The
+printing picker is in the deck editor too.
 
 ---
 
 ## 10. What is next
 
-### T4 — two devices (specified, not built)
+### T4b — two devices (specified, not built)
 
 The user's decision, already made: **one tiny signalling service, then
 peer-to-peer.** Both "a table plus everyone's phones" and "two players over
