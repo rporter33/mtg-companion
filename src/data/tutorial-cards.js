@@ -9,12 +9,19 @@
 // simplest end of the game: no triggered abilities, no keywords beyond haste,
 // nothing that needs a rules lawyer. They are shaped like Scryfall card objects
 // so they render through the same components as everything else in the app.
+//
+// Each carries a `source` block naming the Scryfall record it was checked
+// against: `npm run tutorial:verify` fetches every card by exact name on a
+// machine that can reach Scryfall, compares cost, type, text and stats, and
+// prints the ids to paste in here. Names and rules text are the property of
+// Wizards of the Coast, shown under the Fan Content Policy.
 
 const base = (card) => ({
   object: 'card',
   legalities: {},
   prices: {},
   color_identity: [],
+  source: { oracleId: null, scryfallId: null, set: null, collectorNumber: null, checkedAt: null },
   ...card,
 })
 

@@ -14,6 +14,18 @@ describe('parseRoute', () => {
     expect(parseRoute('#/decks/abc/analysis')).toMatchObject({ deckId: 'abc', deckTab: 'analysis' })
     expect(parseRoute('#/cards?q=t%3Ainstant')).toMatchObject({ tab: 'cards', q: 't:instant' })
   })
+  it('reads each place inside Learn', () => {
+    expect(parseRoute('#/guide')).toMatchObject({ tab: 'guide', guide: null, trackId: null, lessonId: null })
+    expect(parseRoute('#/guide/game')).toMatchObject({ guide: 'game' })
+    expect(parseRoute('#/guide/glossary')).toMatchObject({ guide: 'glossary' })
+    expect(parseRoute('#/guide/track/beginner')).toMatchObject({ guide: 'track', trackId: 'beginner', lessonId: null })
+    expect(parseRoute('#/guide/track/beginner/goal')).toMatchObject({ guide: 'lesson', trackId: 'beginner', lessonId: 'goal' })
+    expect(parseRoute('#/guide/lesson/goal')).toMatchObject({ guide: 'lesson', trackId: null, lessonId: 'goal' })
+    // A place with no id is just Learn.
+    expect(parseRoute('#/guide/track')).toMatchObject({ guide: null })
+    expect(parseRoute('#/guide/lesson')).toMatchObject({ guide: null })
+    expect(parseRoute('#/guide/elsewhere')).toMatchObject({ tab: 'guide', guide: null })
+  })
   it('carries the card overlay on any screen', () => {
     expect(parseRoute('#/decks/abc?card=xyz')).toMatchObject({ deckId: 'abc', cardId: 'xyz' })
     expect(parseRoute('#/guide?card=xyz')).toMatchObject({ tab: 'guide', cardId: 'xyz' })
@@ -36,6 +48,7 @@ describe('buildHash', () => {
     for (const hash of [
       '#/guide', '#/play', '#/decks', '#/decks/data', '#/decks/new', '#/decks/new/commander', '#/decks/abc', '#/decks/abc/analysis',
       '#/cards?q=t%3Ainstant', '#/decks/abc/io?card=xyz', '#/guide?card=xyz', '#/decks/a%20b%2Fc',
+      '#/guide/game', '#/guide/glossary', '#/guide/track/beginner', '#/guide/track/beginner/goal', '#/guide/lesson/goal?card=xyz',
     ]) expect(buildHash(parseRoute(hash))).toBe(hash)
   })
   it('canonicalises: the list tab is the default and is not written', () => {
@@ -68,5 +81,11 @@ describe('withPatch', () => {
   })
   it('staying on the same screen keeps its state', () => {
     expect(buildHash(withPatch(inDeck, { tab: 'decks' }))).toBe('#/decks/abc/analysis?card=xyz')
+  })
+  it('moves between places in Learn and leaves them on a tab switch', () => {
+    const inLesson = parseRoute('#/guide/track/beginner/goal')
+    expect(buildHash(withPatch(inLesson, { guide: 'track', lessonId: null }))).toBe('#/guide/track/beginner')
+    expect(buildHash(withPatch(inLesson, { guide: null, trackId: null, lessonId: null }))).toBe('#/guide')
+    expect(buildHash(withPatch(inLesson, { tab: 'cards' }))).toBe('#/cards')
   })
 })

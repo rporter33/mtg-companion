@@ -46,7 +46,7 @@ export const LESSONS = {
       question: 'Your opponent is at 3 life and has no cards in their library. On their turn, what happens first?',
       options: [
         { text: 'They draw from an empty library and lose', correct: true,
-          why: 'The draw step comes before anything they could do about it. Running out of cards is a real loss condition, and "decking" someone is a genuine strategy.' },
+          why: 'Their untap and upkeep steps pass with nothing to do, then the draw step arrives before anything they could do about it. Running out of cards is a real loss condition, and "decking" someone is a genuine strategy.' },
         { text: 'Nothing — you cannot lose from an empty library', correct: false,
           why: 'You can. The loss happens the moment you would draw from an empty library, not when it empties.' },
         { text: 'They shuffle their graveyard back in', correct: false,
@@ -86,8 +86,9 @@ export const LESSONS = {
       'A cost like {2}{G} means two mana of any kind plus one that is specifically green. The number is generic, the symbols are not. A cost of {G}{G} cannot be paid with a Forest and a Mountain.',
       'Tapping a land produces mana. That mana empties at the end of each step, so unspent mana is simply gone — there is no saving up across turns.',
       'The total, ignoring colour, is the card’s mana value. A {2}{G} spell has mana value 3, and people will call it a three-drop.',
+      'One more word to keep apart: colourless is not generic. A cost of {C} — a diamond — asks for mana that is specifically colourless, the kind a few lands and artifacts make, and a Forest cannot pay it. Generic {2} takes any mana at all, colourless included. Most cards never ask for {C}, but the difference matters the first time one does.',
     ],
-    terms: ['mana', 'manaValue', 'tapped'],
+    terms: ['mana', 'manaValue', 'tapped', 'colorless'],
     quiz: {
       question: 'You control two Forests and two Mountains. Can you cast a spell costing {2}{R}{R}?',
       options: [
@@ -107,11 +108,11 @@ export const LESSONS = {
     minutes: 4,
     body: [
       'You declare which of your creatures attack. Then your opponent decides how to block. That order matters enormously: the attacker commits first, and the defender gets the information.',
-      'Damage is simultaneous. A 2/2 blocking a 2/2 means both die. A 2/2 blocking a 3/3 means only the 2/2 dies — and the 3/3 is fully healed at end of turn, because damage wears off.',
+      'Damage is simultaneous. A 2/2 blocking a 2/2 means both die. A 2/2 blocking a 3/3 means only the 2/2 dies — and the 3/3 is back to full at the end of the turn, because damage is removed then.',
       'A blocked creature deals its damage to the blocker, not to the player, no matter how large it is. Only trample changes that.',
-      'Creatures cannot attack the turn they arrive. They can block immediately, though — blocking is never restricted by summoning sickness.',
+      'Creatures cannot attack the turn they arrive, unless they have haste. They can block immediately, though — blocking is never restricted by summoning sickness.',
     ],
-    terms: ['combat', 'summoningSickness', 'trample', 'firstStrike'],
+    terms: ['combat', 'summoningSickness', 'haste', 'trample', 'firstStrike'],
     quiz: {
       question: 'Your 5/5 attacks. They block with a 1/1. How much damage does your opponent take?',
       options: [
@@ -137,14 +138,14 @@ export const LESSONS = {
     ],
     terms: ['stack', 'instant', 'sorcery', 'priority'],
     quiz: {
-      question: 'You cast a creature. In response, they cast a spell that destroys target creature, targeting it. What happens?',
+      question: 'You cast a creature. While it is on the stack, they want to cast a spell that says "destroy target creature". What can it target?',
       options: [
-        { text: 'Their spell fizzles — your creature is not on the battlefield yet', correct: true,
-          why: 'While on the stack your creature is a spell, not a creature. There is nothing for "destroy target creature" to target, so it cannot even be cast that way. This is why countering and destroying are different effects.' },
-        { text: 'Your creature is destroyed before it arrives', correct: false,
+        { text: 'Any creature already on the battlefield — but not the one you are casting', correct: true,
+          why: 'While it is on the stack your creature is a spell, not a creature, so it cannot be the target. To stop it arriving they would need a counterspell. This is why countering and destroying are different effects.' },
+        { text: 'Your creature spell — it is destroyed before it arrives', correct: false,
           why: 'Destruction affects permanents on the battlefield. A spell on the stack has to be countered, not destroyed.' },
-        { text: 'Your creature arrives and is then destroyed', correct: false,
-          why: 'Their spell resolves first, and at that moment there is no legal target for it.' },
+        { text: 'Nothing — they have to wait until it resolves', correct: false,
+          why: 'They can cast it now at any creature already on the table, or wait for yours to arrive and respond to your next spell. What they cannot do is point it at a spell.' },
       ],
     },
   },
@@ -268,9 +269,9 @@ export const LESSONS = {
     title: 'What Commander is and why everyone plays it',
     minutes: 5,
     body: [
-      'A hundred cards, only one copy of each except basic lands, led by a legendary creature that starts in the command zone rather than your library. You can always cast your commander, and if it dies you can cast it again — for {2} more each time.',
-      'Everything in your deck must fall inside your commander’s colour identity: every coloured mana symbol on the card, including in the rules text, not just the mana cost.',
-      'You start at 40 life and usually play with three or four people. Games run long, politics is real, and the format is explicitly casual — there is no sideboard and the ban list is maintained by a separate group with different priorities.',
+      'A hundred cards, only one copy of each except basic lands, led by a commander that starts in the command zone rather than your library. Usually that is a legendary creature; some planeswalkers and some pairs of partners say on the card that they can lead too. You can cast your commander from the command zone whenever you could cast it from your hand, and if it would die or be exiled you can put it back there and cast it again — for {2} more each time.',
+      'Everything in your deck must fall inside your commander’s colour identity: every coloured mana symbol on the card, in the cost and in the rules text — though not in reminder text.',
+      'You start at 40 life and usually play with three or four people. Games run long, politics is real, and the format is casual at heart — there is no sideboard, and its ban list is kept separately from the tournament formats’ and moves on its own schedule.',
       'Commander damage is the other way to die: 21 combat damage from any single commander, tracked separately per commander, on top of your normal life total.',
       'If you were away for a while: this format barely existed as an official thing and is now the centre of gravity for paper Magic. Whole products are designed for it.',
     ],
@@ -280,7 +281,7 @@ export const LESSONS = {
       options: [
         { text: 'No — the {U} in the text is part of its colour identity', correct: true,
           why: 'Colour identity counts every coloured mana symbol anywhere on the card, not just the cost. This trips up almost everyone once.' },
-        { text: 'Yes — its mana cost is colourless', correct: false,
+        { text: 'Yes — its mana cost has no coloured symbols', correct: false,
           why: 'The mana cost is only part of it. Symbols in the rules text count too.' },
       ],
     },

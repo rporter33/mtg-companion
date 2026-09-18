@@ -15,6 +15,7 @@
     "deck:fetch": "node scripts/fetch-deck.mjs",
     "tokens:check": "node scripts/check-tokens.mjs",
     "firstdeck:verify": "node scripts/verify-first-deck.mjs",
+    "tutorial:verify": "node scripts/verify-tutorial-cards.mjs",
     "examples:verify": "node scripts/verify-examples.mjs",
     "coach:measure": "node scripts/measure-coach.mjs",
     "perf:measure": "node scripts/measure-perf.mjs",

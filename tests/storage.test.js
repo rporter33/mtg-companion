@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { memoryBackend, localStorageBackend } from '../src/lib/storage-backend.js'
 import {
   useBackend, backendName, loadState, saveDeck, listDecks, deleteDeck,
-  markLessonComplete, getGuideProgress, exportAll, importAll, clearAll, setPref, getPrefs,
+  markLessonComplete, saveTutorialState, getGuideProgress, exportAll, importAll, clearAll, setPref, getPrefs,
 } from '../src/lib/storage.js'
 import { createDeck } from '../src/lib/deck.js'
 
@@ -93,6 +93,17 @@ describe('export and import', () => {
     importAll(json)
     expect(listDecks().map((d) => d.name)).toEqual(['Mine'])
     expect(getGuideProgress().completedLessons).toContain('turn')
+  })
+
+  it('keeps a place in the guided game across a merge, preferring this device\'s own', () => {
+    saveTutorialState('t3-stack')
+    const json = exportAll()
+    clearAll()
+    importAll(json)
+    expect(getGuideProgress().tutorialState).toBe('t3-stack')
+    saveTutorialState('t5-wurm')
+    importAll(json)
+    expect(getGuideProgress().tutorialState).toBe('t5-wurm')
   })
 
   it('keeps both decks when an import collides with a local one', () => {

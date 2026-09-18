@@ -265,3 +265,5 @@
   .permanent--land { width: 54px; }
   .hand__card { width: 110px; }
 }
+
+.tutorial__notice { margin: 0; padding: 0 var(--space-2); }

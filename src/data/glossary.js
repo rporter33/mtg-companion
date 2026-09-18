@@ -44,6 +44,12 @@ export const GLOSSARY = {
     short: 'The resource you spend to cast spells. It comes from lands.',
     long: 'Mana comes in five colours — white, blue, black, red, green — plus colourless. You produce it by tapping lands, and it empties at the end of each step, so unspent mana is wasted rather than saved.',
   },
+  colorless: {
+    term: 'Colourless mana',
+    short: 'A sixth kind of mana, with its own symbol {C}. Not the same as generic.',
+    long: 'Generic cost — the number in a cost like {2}{G} — takes any mana at all. Colourless mana is a specific kind, shown as {C}, made by a few lands and artifacts, and a cost with {C} in it can only be paid with colourless mana: a Forest cannot pay it. Most cards never ask for it, so the two words get mixed up; keep them apart and the odd card that asks for {C} will make sense.',
+    seeAlso: ['mana', 'manaValue'],
+  },
   land: {
     term: 'Land',
     short: 'Your mana source. You may play one per turn.',
@@ -124,8 +130,8 @@ export const GLOSSARY = {
   },
   artifact: {
     term: 'Artifact',
-    short: 'A colourless permanent — an object rather than a being.',
-    long: 'Artifacts go in any deck regardless of colour, which is why mana rocks and equipment show up everywhere.',
+    short: 'An object rather than a being — usually colourless.',
+    long: 'Most artifacts have no coloured symbols in their cost, so they go in any deck regardless of colour, which is why mana rocks and equipment show up everywhere. A few are coloured, and those follow their colour like any other card.',
   },
   enchantment: {
     term: 'Enchantment',
@@ -390,7 +396,7 @@ export const GLOSSARY_KEYS = Object.keys(GLOSSARY)
 /** Groups terms for the reference list in the guide. */
 export const GLOSSARY_SECTIONS = [
   { title: 'Zones', keys: ['battlefield', 'hand', 'library', 'graveyard', 'exile', 'stack', 'commandZone'] },
-  { title: 'Mana', keys: ['mana', 'land', 'manaValue', 'colorIdentity', 'tapped', 'ramp'] },
+  { title: 'Mana', keys: ['mana', 'land', 'manaValue', 'colorless', 'colorIdentity', 'tapped', 'ramp'] },
   { title: 'The turn', keys: ['untapStep', 'upkeep', 'drawStep', 'mainPhase', 'combat', 'endStep', 'priority'] },
   { title: 'Card types', keys: ['creature', 'instant', 'sorcery', 'artifact', 'enchantment', 'planeswalker'] },
   { title: 'Keywords — in almost every set', keys: ['flying', 'trample', 'firstStrike', 'doubleStrike', 'deathtouch', 'lifelink', 'vigilance', 'haste', 'reach', 'menace', 'defender', 'flash', 'hexproof', 'indestructible', 'protection', 'ward', 'summoningSickness'] },

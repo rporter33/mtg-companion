@@ -7,7 +7,7 @@
  * file, and "#/decks/abc/analysis" survives a reload, a bookmark and a paste
  * into a message. The grammar is small on purpose:
  *
- *   #/guide
+ *   #/guide | #/guide/game | #/guide/glossary | #/guide/track/<id> | #/guide/track/<id>/<lesson> | #/guide/lesson/<id>
  *   #/cards?q=<search>
  *   #/decks | #/decks/new | #/decks/new/<step> | #/decks/data | #/decks/<id> | #/decks/<id>/<tab>
  *   #/play
@@ -24,9 +24,16 @@ export const TABS = ['guide', 'cards', 'decks', 'play']
 export const DECK_TABS = ['list', 'add', 'coach', 'analysis', 'hand', 'history', 'io']
 /** The first-deck flow's steps, in order. The bare #/decks/new means "resume". */
 export const STEP_SLUGS = ['colours', 'play', 'commander', 'list']
+/**
+ * Places inside Learn. A lesson opened from a track keeps the track in its
+ * address, so Back from the lesson lands on the track it came from; a lesson
+ * reached on its own goes back to Learn.
+ */
+export const GUIDE_PLACES = ['game', 'glossary', 'track', 'lesson']
 
 const EMPTY = Object.freeze({
   tab: null, deckId: null, deckTab: null, data: false, starting: false, step: null, q: null, cardId: null,
+  guide: null, trackId: null, lessonId: null,
 })
 
 /** "#/decks/abc/analysis?card=xyz" -> { tab, deckId, deckTab, data, q, cardId }. */
@@ -40,10 +47,20 @@ export function parseRoute(hash) {
   const route = { ...EMPTY }
   route.cardId = params.get('card') || null
 
-  const [tab, second, third] = segments
+  const [tab, second, third, fourth] = segments
   if (!TABS.includes(tab)) return route
   route.tab = tab
   if (tab === 'cards') route.q = params.get('q') || null
+  if (tab === 'guide' && GUIDE_PLACES.includes(second)) {
+    if (second === 'track' && third) {
+      route.guide = fourth ? 'lesson' : 'track'
+      route.trackId = third
+      route.lessonId = fourth ?? null
+    } else if (second === 'lesson' && third) {
+      route.guide = 'lesson'
+      route.lessonId = third
+    } else if (second === 'game' || second === 'glossary') route.guide = second
+  }
   if (tab === 'decks' && second) {
     if (second === 'data') route.data = true
     else if (second === 'new') {
@@ -61,6 +78,13 @@ export function parseRoute(hash) {
 export function buildHash(route) {
   const tab = TABS.includes(route?.tab) ? route.tab : 'guide'
   const segments = [tab]
+  if (tab === 'guide' && GUIDE_PLACES.includes(route.guide)) {
+    if (route.guide === 'lesson' && route.lessonId) {
+      if (route.trackId) segments.push('track', encodeURIComponent(route.trackId), encodeURIComponent(route.lessonId))
+      else segments.push('lesson', encodeURIComponent(route.lessonId))
+    } else if (route.guide === 'track' && route.trackId) segments.push('track', encodeURIComponent(route.trackId))
+    else if (route.guide === 'game' || route.guide === 'glossary') segments.push(route.guide)
+  }
   if (tab === 'decks') {
     if (route.data) segments.push('data')
     else if (route.starting) {

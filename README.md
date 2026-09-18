@@ -555,6 +555,12 @@ enforcing 100ms spacing, results are cached, and prices are a daily aggregate
 rather than a live quote. If you find this useful, consider
 [supporting them](https://scryfall.com/donate).
 
+The ten cards in the guided first game are bundled as text records — name,
+cost, type, rules text, power and toughness — so the tutorial works with no
+connection and cannot be changed under it by a different printing. Each record
+names the Scryfall card it was checked against, and `npm run tutorial:verify`
+re-checks every field on a machine that can reach Scryfall.
+
 ## Legal
 
 Unofficial Fan Content permitted under the [Wizards of the Coast Fan Content

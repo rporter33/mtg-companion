@@ -1,15 +1,12 @@
 import { useEffect, useState } from 'react'
-import { TUTORIAL } from '../../data/tutorial.js'
+import { TUTORIAL, PHASES, beatIndexFor } from '../../data/tutorial.js'
 import { tutorialCard } from '../../data/tutorial-cards.js'
+import { isLandCard } from '../../lib/deck.js'
 import CardFace from '../../components/CardFace.jsx'
 import CardZoom from '../../components/CardZoom.jsx'
 import Term from '../../components/Term.jsx'
 import { saveTutorialState, getGuideProgress, markLessonComplete } from '../../lib/storage.js'
 import './guide.css'
-
-const PHASE_LABEL = {
-  main1: 'Main phase', main2: 'Second main phase', combat: 'Combat', draw: 'Draw step',
-}
 
 /**
  * Inspecting a card in the tutorial needs its own affordance, because tapping a
@@ -36,16 +33,15 @@ function InspectButton({ onClick, name }) {
 
 export default function TutorialGame({ onExit }) {
   const [inspecting, setInspecting] = useState(null)
-  const [index, setIndex] = useState(() => {
-    const saved = getGuideProgress().tutorialState
-    return typeof saved === 'number' && saved < TUTORIAL.length ? saved : 0
-  })
+  // The saved place is a beat id; a number is a position from the first
+  // release and is mapped by id, so an edit to the script cannot move it.
+  const [index, setIndex] = useState(() => beatIndexFor(getGuideProgress().tutorialState))
   const [nudge, setNudge] = useState(false)
 
   const beat = TUTORIAL[index]
   const atEnd = index >= TUTORIAL.length - 1
 
-  useEffect(() => { saveTutorialState(index) }, [index])
+  useEffect(() => { saveTutorialState(beat.id) }, [beat.id])
   useEffect(() => { setNudge(false) }, [index])
 
   const advance = () => {
@@ -91,9 +87,8 @@ export default function TutorialGame({ onExit }) {
           {beat.title}
           {beat.turn > 0 && (
             <span className="faint tiny">
-              {' '}· Turn {beat.turn}
-              {beat.phase && ` · ${PHASE_LABEL[beat.phase] ?? beat.phase}`}
-              {beat.active === 'foe' && ' · their turn'}
+              {' '}· {beat.active === 'foe' ? 'Their' : 'Your'} turn {beat.turn}
+              {beat.phase && ` · ${PHASES[beat.phase] ?? beat.phase}`}
             </span>
           )}
         </div>
@@ -122,6 +117,11 @@ export default function TutorialGame({ onExit }) {
         onCardClick={(id) => handleCardClick(id, 'hand')}
         onInspect={setInspecting}
       />
+
+      <p className="faint tiny tutorial__notice">
+        Card names and rules text are the property of Wizards of the Coast, shown under
+        the Fan Content Policy. Unofficial, and not endorsed by Wizards.
+      </p>
 
       <CardZoom
         card={inspecting ? tutorialCard(inspecting) : null}
@@ -175,9 +175,11 @@ function PlayerStrip({ label, life, handCount, graveyard, active, opponent }) {
   )
 }
 
+const isLand = (p) => isLandCard(tutorialCard(p.id))
+
 function Zone({ permanents, side, highlight, onCardClick, onInspect }) {
-  const lands = permanents.filter((p) => p.id === 'forest' || p.id === 'mountain')
-  const others = permanents.filter((p) => !(p.id === 'forest' || p.id === 'mountain'))
+  const lands = permanents.filter(isLand)
+  const others = permanents.filter((p) => !isLand(p))
 
   if (!permanents.length) {
     return <div className={`zone zone--${side} zone--empty`}>Nothing on the battlefield</div>
@@ -220,7 +222,8 @@ function Permanent({ perm: p, small, highlight, onClick, onInspect }) {
       <CardFace card={card} size={small ? 'sm' : 'md'} onClick={clickable ? () => onClick(p.id) : undefined} />
       {onInspect && !small && <InspectButton name={card.name} onClick={() => onInspect(p.id)} />}
       {p.buff && <span className="permanent__buff">{p.buff}</span>}
-      {p.sick && <span className="permanent__tag" title="Summoning sick — cannot attack yet">zzz</span>}
+      {p.tapped && <span className="sr-only">tapped</span>}
+      {p.sick && <span className="permanent__tag" title="Summoning sick — can block, but cannot attack or tap yet">zzz</span>}
       {p.attacking && <span className="permanent__tag permanent__tag--attack">attacking</span>}
       {p.blocking && <span className="permanent__tag">blocking</span>}
     </div>

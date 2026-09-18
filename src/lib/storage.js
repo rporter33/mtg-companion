@@ -486,6 +486,9 @@ export function importAll(json, { replace = false } = {}) {
           ...state.guide.completedLessons,
           ...(incoming.guide?.completedLessons ?? []),
         ])],
+        // A place in the guided game is kept from whichever side has one;
+        // this device's own place wins, since it is the one being played.
+        tutorialState: state.guide.tutorialState ?? incoming.guide?.tutorialState ?? null,
       },
     }
   })

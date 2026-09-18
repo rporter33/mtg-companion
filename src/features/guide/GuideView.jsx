@@ -1,71 +1,86 @@
 import { useState } from 'react'
 import { TRACKS, LESSONS } from '../../data/lessons.js'
 import { GLOSSARY_SECTIONS, lookupTerm } from '../../data/glossary.js'
+import { beatIndexFor, TUTORIAL_LENGTH } from '../../data/tutorial.js'
 import { getGuideProgress, markLessonComplete, resetLesson } from '../../lib/storage.js'
 import TutorialGame from './TutorialGame.jsx'
 import SeasonBanner from './SeasonBanner.jsx'
 import Commanders from './Commanders.jsx'
 import Term, { TermBody } from '../../components/Term.jsx'
-import { navigate } from '../../lib/router.js'
+import { navigate, useRoute } from '../../lib/router.js'
 import HeroArt from '../../components/HeroArt.jsx'
 import { decorFor } from '../../lib/theme-set.js'
 import Sheet from '../../components/Sheet.jsx'
 import './guide.css'
 
+/**
+ * Where you are in Learn is in the address: #/guide/game, #/guide/glossary,
+ * #/guide/track/<id>, #/guide/track/<id>/<lesson>, #/guide/lesson/<id>. A
+ * reload keeps the lesson open, Back retraces to the track it came from, and
+ * a lesson can be sent as a link. Unknown ids show a way back rather than a
+ * blank screen.
+ */
 export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onStartDeck }) {
-  const [mode, setMode] = useState('home')
-  const [trackId, setTrackId] = useState(null)
-  const [lessonId, setLessonId] = useState(null)
+  const route = useRoute()
   const [progress, setProgress] = useState(() => getGuideProgress())
-
   const refresh = () => setProgress(getGuideProgress())
+  const home = () => navigate({ guide: null, trackId: null, lessonId: null })
 
-  if (mode === 'tutorial') {
-    return <TutorialGame onExit={() => { refresh(); setMode('home') }} />
+  if (route.guide === 'game') {
+    return <TutorialGame onExit={() => { refresh(); home() }} />
   }
 
-  if (lessonId) {
+  if (route.guide === 'lesson') {
+    const lesson = LESSONS[route.lessonId]
+    const track = route.trackId ? TRACKS.find((t) => t.id === route.trackId) : null
+    const back = () => (track ? navigate({ guide: 'track', trackId: track.id, lessonId: null }) : home())
+    if (!lesson) return <Missing what="lesson" onBack={back} />
     return (
       <Lesson
-        lesson={LESSONS[lessonId]}
-        done={progress.completedLessons.includes(lessonId)}
-        onComplete={() => { markLessonComplete(lessonId); refresh() }}
-        onReset={() => { resetLesson(lessonId); refresh() }}
-        onBack={() => setLessonId(null)}
+        key={lesson.id}
+        lesson={lesson}
+        done={progress.completedLessons.includes(lesson.id)}
+        onComplete={() => { markLessonComplete(lesson.id); refresh() }}
+        onReset={() => { resetLesson(lesson.id); refresh() }}
+        onBack={back}
+        backLabel={track ? `← ${track.name}` : '← Learn'}
       />
     )
   }
 
-  if (mode === 'glossary') return <Glossary onBack={() => setMode('home')} />
+  if (route.guide === 'glossary') return <Glossary onBack={home} />
 
-  if (trackId) {
-    const track = TRACKS.find((t) => t.id === trackId)
+  if (route.guide === 'track') {
+    const track = TRACKS.find((t) => t.id === route.trackId)
+    if (!track) return <Missing what="track" onBack={home} />
     return (
       <Track
         track={track}
         progress={progress}
-        onOpen={setLessonId}
-        onBack={() => setTrackId(null)}
+        onOpen={(lessonId) => navigate({ guide: 'lesson', trackId: track.id, lessonId })}
+        onBack={home}
       />
     )
   }
 
   const tutorialDone = progress.completedLessons.includes('tutorial')
-  const inProgress = typeof progress.tutorialState === 'number' && progress.tutorialState > 0
+  const pausedAt = progress.tutorialState == null ? 0 : beatIndexFor(progress.tutorialState)
+  const inProgress = pausedAt > 0
+  const openGame = () => navigate({ guide: 'game' })
 
   return (
     <div className="stack">
       <div>
         <h1>Learn Magic</h1>
         <p className="muted">
-          Three ways in, depending on how you learn. Nothing here needs a connection.
+          Four ways in, depending on how you learn. Nothing here needs a connection.
         </p>
       </div>
 
       <SeasonBanner onExplore={onExploreQuery} />
 
-      <section className="hero hero--art" onClick={() => setMode('tutorial')} role="button" tabIndex={0}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setMode('tutorial') }}>
+      <section className="hero hero--art" onClick={openGame} role="button" tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openGame() } }}>
         <HeroArt wide={decorFor(null).coreHero.wide} portrait={decorFor(null).coreHero.portrait} />
         <div className="hero__label">Start here</div>
         <h2>Play your first game</h2>
@@ -80,7 +95,7 @@ export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onSt
           </span>
           {tutorialDone && <span className="chip chip--ok">completed</span>}
           {inProgress && !tutorialDone && (
-            <span className="chip">paused at step {progress.tutorialState + 1}</span>
+            <span className="chip">paused at step {pausedAt + 1} of {TUTORIAL_LENGTH}</span>
           )}
         </div>
       </section>
@@ -94,7 +109,7 @@ export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onSt
           {TRACKS.map((track) => {
             const done = track.lessons.filter((id) => progress.completedLessons.includes(id)).length
             return (
-              <button className="panel track" key={track.id} onClick={() => setTrackId(track.id)}>
+              <button className="panel track" key={track.id} onClick={() => navigate({ guide: 'track', trackId: track.id })}>
                 <span className="track__name">{track.name}</span>
                 <p className="muted tiny">{track.blurb}</p>
                 <div className="row">
@@ -124,7 +139,7 @@ export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onSt
             Every term in plain English. These also appear as dotted underlines everywhere
             else in the app — tap <Term id="stack" /> or <Term id="colorIdentity" /> to see.
           </p>
-          <button className="btn btn--sm" onClick={() => setMode('glossary')}>
+          <button className="btn btn--sm" onClick={() => navigate({ guide: 'glossary' })}>
             Open the glossary
           </button>
         </div>
@@ -142,6 +157,15 @@ export default function GuideView({ onNavigate, onExploreQuery, onOpenCard, onSt
           <button className="btn btn--sm" onClick={() => onNavigate('play')}>Life counter</button>
         </div>
       </section>
+    </div>
+  )
+}
+
+function Missing({ what, onBack }) {
+  return (
+    <div className="stack">
+      <button className="btn btn--ghost btn--sm self-start" onClick={onBack}>← Learn</button>
+      <div className="banner banner--warn">There is no {what} at this address. It may have been renamed.</div>
     </div>
   )
 }
@@ -176,14 +200,20 @@ function Track({ track, progress, onOpen, onBack }) {
   )
 }
 
-function Lesson({ lesson, done, onComplete, onReset, onBack }) {
+/**
+ * A lesson is complete when its question has been answered correctly, not
+ * when it has been scrolled past. A wrong answer explains itself and offers
+ * another go; nothing is lost by trying again.
+ */
+function Lesson({ lesson, done, onComplete, onReset, onBack, backLabel }) {
   const [answered, setAnswered] = useState(null)
   const chosen = answered != null ? lesson.quiz.options[answered] : null
+  const correct = lesson.quiz.options.find((o) => o.correct)
 
   return (
     <div className="stack">
       <button className="btn btn--ghost btn--sm self-start" onClick={onBack}>
-        ← Back
+        {backLabel}
       </button>
 
       <div>
@@ -237,19 +267,24 @@ function Lesson({ lesson, done, onComplete, onReset, onBack }) {
             <strong>{chosen.correct ? 'Right.' : 'Not quite.'}</strong> {chosen.why}
             {!chosen.correct && (
               <div className="mt2">
-                The answer is <strong>{lesson.quiz.options.find((o) => o.correct).text}</strong>
-                {' — '}{lesson.quiz.options.find((o) => o.correct).why}
+                The answer is <strong>{correct.text}</strong>
+                {' — '}{correct.why}
               </div>
             )}
           </div>
         )}
       </section>
 
-      <div className="row">
-        {!done && (
+      <div className="row row--wrap row--middle">
+        {!done && chosen?.correct && (
           <button className="btn btn--primary" onClick={() => { onComplete(); onBack() }}>
             Mark complete
           </button>
+        )}
+        {!done && !chosen?.correct && (
+          <span className="faint tiny">
+            {chosen ? 'Try the question again to finish this lesson.' : 'Answer the question to finish this lesson.'}
+          </span>
         )}
         {done && <button className="btn btn--ghost btn--sm" onClick={onReset}>Mark unread</button>}
         {answered != null && (

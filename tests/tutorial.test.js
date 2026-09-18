@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { TUTORIAL } from '../src/data/tutorial.js'
+import { TUTORIAL, PHASES, LEGACY_BEAT_IDS, beatIndexFor } from '../src/data/tutorial.js'
 import { TUTORIAL_CARDS } from '../src/data/tutorial-cards.js'
+import { parseManaCost } from '../src/lib/mana.js'
 import { GLOSSARY, GLOSSARY_KEYS, GLOSSARY_SECTIONS } from '../src/data/glossary.js'
 
 const cardIds = new Set(Object.keys(TUTORIAL_CARDS))
@@ -102,6 +103,134 @@ describe('tutorial script', () => {
       const growth = landsByTurn.get(turns[i]) - landsByTurn.get(turns[i - 1])
       const turnsElapsed = turns[i] - turns[i - 1]
       expect(growth, `lands grew by ${growth} across ${turnsElapsed} turn(s)`).toBeLessThanOrEqual(turnsElapsed)
+    }
+  })
+})
+
+describe('tutorial rules kept by the script', () => {
+  const byId = (board) => board.map((p) => p.id)
+  const isLand = (id) => /Land/.test(TUTORIAL_CARDS[id].type_line)
+  const manaOf = (board) => board.filter((p) => !p.tapped && !(p.sick && !isLand(p.id)) && TUTORIAL_CARDS[p.id].produced_mana).length
+
+  it('shows a phase for every beat of the game and a known one', () => {
+    for (const beat of TUTORIAL) {
+      if (beat.turn === 0) continue
+      expect(PHASES[beat.phase], `${beat.id} has phase "${beat.phase}"`).toBeTruthy()
+    }
+  })
+
+  it('asks for each action in the step it belongs to', () => {
+    for (const beat of TUTORIAL) {
+      if (beat.action.type !== 'click') continue
+      const card = TUTORIAL_CARDS[beat.action.cardId]
+      const label = beat.action.label
+      if (/^Play a/.test(label)) expect(['main1', 'main2'], `${beat.id} plays a land in ${beat.phase}`).toContain(beat.phase)
+      if (/^Cast/.test(label) && /Creature/.test(card.type_line)) expect(['main1', 'main2'], `${beat.id} casts a creature in ${beat.phase}`).toContain(beat.phase)
+      if (/^Attack/.test(label)) expect(beat.phase, `${beat.id} attacks in ${beat.phase}`).toBe('attack')
+      if (/^Block/.test(label)) expect(beat.phase, `${beat.id} blocks in ${beat.phase}`).toBe('block')
+      if (/^Block/.test(label)) expect(beat.active, `${beat.id} blocks on your own turn`).toBe('foe')
+      if (/^Attack/.test(label)) expect(beat.active, `${beat.id} attacks on their turn`).toBe('you')
+    }
+  })
+
+  it('says "select" for the gesture and keeps "tap" for the rules action', () => {
+    for (const beat of TUTORIAL) {
+      if (beat.action.type !== 'click') continue
+      expect(beat.action.hint, `${beat.id}: "${beat.action.hint}"`).toMatch(/^Select /)
+      expect(beat.action.hint).not.toMatch(/\btap\b/i)
+    }
+  })
+
+  it('untaps a permanent only in its controller\'s untap step', () => {
+    // Between two beats, a permanent of yours may go from tapped to untapped
+    // only when your turn number has advanced; theirs only when their turn
+    // number has. A beat is "their turn" when active === 'foe'.
+    for (let i = 1; i < TUTORIAL.length; i++) {
+      const prev = TUTORIAL[i - 1]
+      const beat = TUTORIAL[i]
+      for (const side of ['you', 'foe']) {
+        const before = prev[side].board
+        const after = beat[side].board
+        const wasTapped = before.filter((p) => p.tapped).length
+        const nowTapped = after.filter((p) => p.tapped).length
+        const stayed = after.filter((p) => byId(before).includes(p.id)).length
+        const untapped = Math.max(0, wasTapped - nowTapped)
+        if (!untapped) continue
+        const sideTurnBegan = side === 'you'
+          ? beat.active === 'you' && (prev.active === 'foe' || beat.turn > prev.turn)
+          : beat.active === 'foe' && (prev.active === 'you' || beat.turn > prev.turn)
+        const lostCards = stayed < before.length
+        expect(sideTurnBegan || lostCards, `${prev.id} → ${beat.id}: ${side} untapped ${untapped} permanent(s) outside an untap step`).toBe(true)
+      }
+    }
+  })
+
+  it('taps enough mana for every spell the player casts, in the beat it arrives', () => {
+    for (let i = 1; i < TUTORIAL.length; i++) {
+      const prev = TUTORIAL[i - 1]
+      const beat = TUTORIAL[i]
+      if (prev.action.type !== 'click' || !/^Cast/.test(prev.action.label)) continue
+      const card = TUTORIAL_CARDS[prev.action.cardId]
+      const cost = parseManaCost(card.mana_cost).length
+      const available = manaOf(prev.you.board)
+      expect(available, `${prev.id}: ${card.name} costs ${card.mana_cost} with ${available} mana untapped`).toBeGreaterThanOrEqual(cost)
+      const newlyTapped = beat.you.board.filter((p) => p.tapped).length - prev.you.board.filter((p) => p.tapped).length
+      expect(newlyTapped, `${beat.id}: ${card.name} cost ${cost} but ${newlyTapped} source(s) tapped`).toBeGreaterThanOrEqual(cost)
+    }
+  })
+
+  it('shows a cast creature as summoning sick in the beat it arrives', () => {
+    for (let i = 1; i < TUTORIAL.length; i++) {
+      const prev = TUTORIAL[i - 1]
+      const beat = TUTORIAL[i]
+      if (prev.action.type !== 'click' || !/^Cast/.test(prev.action.label)) continue
+      const card = TUTORIAL_CARDS[prev.action.cardId]
+      if (!/Creature/.test(card.type_line)) continue
+      const arrived = beat.you.board.find((p) => p.id === prev.action.cardId && !prev.you.board.some((q) => q.id === p.id))
+      expect(arrived?.sick, `${beat.id}: ${card.name} arrived without summoning sickness`).toBe(true)
+    }
+  })
+
+  it('never lets a summoning-sick creature attack', () => {
+    for (const beat of TUTORIAL) {
+      for (const side of ['you', 'foe']) {
+        for (const p of beat[side].board) {
+          if (p.attacking) expect(p.sick, `${beat.id}: ${p.id} attacks while summoning sick`).toBe(false)
+        }
+      }
+    }
+  })
+
+  it('never lets a life total change on a beat where nothing attacked', () => {
+    for (let i = 1; i < TUTORIAL.length; i++) {
+      const prev = TUTORIAL[i - 1]
+      const beat = TUTORIAL[i]
+      if (beat.turn - prev.turn > 1) continue // a summary beat that skips turns
+      if (beat.you.life !== prev.you.life) expect(prev.foe.board.some((p) => p.attacking), `${beat.id}: your life changed with no attacker`).toBe(true)
+      if (beat.foe.life !== prev.foe.life) expect(prev.you.board.some((p) => p.attacking) || beat.you.board.some((p) => p.attacking), `${beat.id}: their life changed with no attacker`).toBe(true)
+    }
+  })
+
+  it('says what a combat trick buys without mislabelling the trade', () => {
+    const titles = TUTORIAL.map((b) => b.title).join('\n')
+    expect(titles).not.toMatch(/two-for-one/i)
+  })
+
+  it('maps a saved place from the first release to the same moment', () => {
+    expect(LEGACY_BEAT_IDS).toHaveLength(27)
+    expect(beatIndexFor(0)).toBe(0)
+    expect(beatIndexFor(LEGACY_BEAT_IDS.indexOf('t3-stack'))).toBe(TUTORIAL.findIndex((b) => b.id === 't3-stack'))
+    expect(beatIndexFor(LEGACY_BEAT_IDS.indexOf('foe-t4-shock'))).toBe(TUTORIAL.findIndex((b) => b.id === 'foe-t3'))
+    expect(beatIndexFor('t5-wurm')).toBe(TUTORIAL.findIndex((b) => b.id === 't5-wurm'))
+    expect(beatIndexFor('nonsense')).toBe(0)
+    expect(beatIndexFor(999)).toBe(0)
+    expect(beatIndexFor(null)).toBe(0)
+  })
+
+  it('carries a source block on every bundled card', () => {
+    for (const card of Object.values(TUTORIAL_CARDS)) {
+      expect(card.source).toBeTruthy()
+      for (const key of ['oracleId', 'scryfallId', 'set', 'collectorNumber', 'checkedAt']) expect(key in card.source).toBe(true)
     }
   })
 })

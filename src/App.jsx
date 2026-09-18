@@ -48,7 +48,9 @@ export default function App() {
   }, [route.tab, tab])
   // Pressing the tab you are already on returns to that tab's own screen —
   // out of a deck, back to the deck list — as tab bars do on a phone.
-  const setTab = useCallback((id) => navigate({ tab: id, deckId: null, deckTab: null, data: false, q: null }), [])
+  const setTab = useCallback((id) => navigate({
+    tab: id, deckId: null, deckTab: null, data: false, q: null, guide: null, trackId: null, lessonId: null,
+  }), [])
 
   const [detailCard, setDetailCard] = useState(null)
   const [deckSeed, setDeckSeed] = useState(null)
