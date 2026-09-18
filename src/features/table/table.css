@@ -261,3 +261,106 @@
 .tablecoach__note--warn { color: var(--text); }
 .tablecoach__note--warn::before { content: '!'; color: var(--warn); font-weight: 700; flex: 0 0 auto; }
 .tablecoach__note span { flex: 1; }
+
+/* --- printings, treatments and foils -------------------------------------- */
+
+/*
+ * A foil, drawn rather than photographed.
+ *
+ * What a foil actually does is split white light across the card and move
+ * when the card does, so this is a wide hue-rotated gradient over the whole
+ * card under screen blending, tied to how far the card is leaning. Nothing
+ * here reproduces any printed treatment: it is a sheen over the app's own
+ * frame and the painting Scryfall serves.
+ */
+.bcard__sheen {
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: 0.75;
+  background: linear-gradient(
+    calc(115deg + var(--lean-y, 0deg) * 3),
+    transparent 6%,
+    rgba(90, 230, 255, 0.5) 20%,
+    rgba(215, 140, 255, 0.55) 32%,
+    rgba(255, 225, 120, 0.6) 44%,
+    rgba(120, 255, 190, 0.55) 56%,
+    rgba(255, 160, 220, 0.45) 68%,
+    transparent 88%
+  );
+  background-size: 260% 260%;
+  background-position: calc(50% + var(--lean-y, 0deg) * 2.2%) calc(50% - var(--lean-x, 0deg) * 2.2%);
+}
+.bcard--etched .bcard__sheen {
+  opacity: 0.4;
+  background: repeating-linear-gradient(
+    calc(100deg + var(--lean-y, 0deg) * 2),
+    transparent 0 3px,
+    rgba(230, 215, 170, 0.5) 3px 5px
+  );
+  background-size: auto;
+}
+.bcard--foil, .bcard--etched { position: relative; }
+/* The sheen goes over the painting, not over the words: a foil you cannot
+   read the name of is a worse card than a plain one. */
+.bcard__name, .bcard__stats, .bcard__counters { position: relative; z-index: 1; }
+
+/* The lean itself, and the treatments that change the frame rather than the
+   surface. Only the card being looked at leans; a tapped card keeps its
+   rotation because that is on the wrapper, not here. */
+.bcard {
+  position: relative;
+  transform: perspective(700px) rotateX(var(--lean-x, 0deg)) rotateY(var(--lean-y, 0deg));
+  transition: transform 0.12s ease-out;
+}
+.bcard--borderless { border-color: transparent; }
+.bcard--borderless .bcard__art, .bcard--fullart .bcard__art { border-radius: 5px; }
+.bcard--fullart .bcard__name, .bcard--fullart .bcard__stats { text-shadow: 0 1px 3px #000; }
+.bcard--showcase { border-width: 2px; }
+.bcard--extendedart .bcard__art { margin: -3px -3px 0; width: calc(100% + 6px); border-radius: 5px 5px 0 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bcard { transition: none; transform: none; }
+  .bcard__sheen { background-position: 50% 50%; }
+}
+
+.printings, .tokenmaker {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.printings__list, .tokenmaker__found {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--space-1);
+  max-height: 22rem; overflow: auto;
+}
+.printings__print, .tokenmaker__token {
+  width: 100%; display: flex; align-items: center; gap: var(--space-2);
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+}
+.printings__print:hover, .printings__print:focus-visible,
+.tokenmaker__token:hover, .tokenmaker__token:focus-visible { border-color: var(--accent); }
+.printings__print--mine { border-color: var(--border-strong); }
+.printings__art {
+  flex: 0 0 auto; width: 56px; aspect-ratio: 4 / 3;
+  border-radius: 4px; background: #0a0d12 center/cover no-repeat;
+  display: grid; place-items: center; color: var(--text-faint);
+}
+.printings__what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.printings__what strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.printings__tags { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.tokenmaker__field { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 8rem; }
+.tokenmaker__field--tiny { flex: 0 0 4.5rem; }
+.tokenmaker__field input {
+  font: inherit; color: inherit; padding: 6px 8px;
+  background: var(--bg-overlay); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  min-width: 0;
+}
+.tokenmaker__field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tokenmaker__blank { border-top: 1px solid var(--border); padding-top: var(--space-2); }

@@ -16,6 +16,7 @@
  * phone reads the same on a desktop. See `geometry.js`.
  */
 import { clampToField, CARD_W, CARD_H } from './geometry.js'
+import { FINISHES } from './art.js'
 
 export const ZONES = ['library', 'hand', 'battlefield', 'graveyard', 'exile', 'command']
 export const ZONE_LABELS = {
@@ -51,6 +52,7 @@ export function makeInstance({ id, cardId, owner = 'you', zone = 'library', toke
     counters: {},
     note: '',
     attachedTo: null, // an aura on a creature, an equipment on one: position, not rules
+    finish: 'normal', // which copy of the printing this is: normal, foil, etched
     token,
     custom, // a made-up card: { name, typeLine, power, toughness, colors, art }
     enteredOnTurn: 0,
@@ -148,6 +150,7 @@ export function invariants(board) {
       problems.push(`${inst.id} carries battlefield state in the ${inst.zone}`)
     }
     for (const [name, n] of Object.entries(inst.counters)) if (!Number.isFinite(n) || n === 0) problems.push(`${inst.id} has a ${name} counter of ${n}`)
+    if (inst.finish && !FINISHES.includes(inst.finish)) problems.push(`${inst.id} has a finish of ${inst.finish}`)
     if (inst.attachedTo) {
       const host = board.cards[inst.attachedTo]
       if (!host) problems.push(`${inst.id} is attached to nothing`)
@@ -172,4 +175,4 @@ export function invariants(board) {
   return problems
 }
 
-export { clampToField, CARD_W, CARD_H }
+export { clampToField, CARD_W, CARD_H, FINISHES }

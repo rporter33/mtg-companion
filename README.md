@@ -610,6 +610,33 @@ audio for a game usually played in a room where people are talking. It is off
 until it is asked for, and one burst of events makes one sound, so drawing
 seven cards is a riffle rather than seven riffles.
 
+Which copy is on the table is a choice, not a detail. A card is not one
+object: Sol Ring has been printed dozens of times, and two people playing the
+same decklist can own completely different cardboard — a borderless showcase,
+a retro frame, the one with the art someone liked in 2003. Every printing
+comes from Scryfall with its own painting, so picking one is a list of real
+covers rather than a dropdown of set codes, and what makes each one different
+is read out of Scryfall's own fields (`frame_effects`, `border_color`,
+`finishes`, `full_art`) rather than a hand-maintained table that would be
+stale by the next set. Choosing a printing changes the copies already on the
+table and the card in the deck, because that is a fact about the deck and not
+a setting on one screen.
+
+A foil is drawn rather than photographed: a wide hue-rotated gradient over the
+app's own frame under screen blending, tied to how far the card is leaning
+toward the pointer, which is how anyone actually looks at one. The lean is
+off during a drag and off entirely when motion is reduced, and a foil is said
+out loud in the card's spoken label, because a moving highlight is not
+something everyone can see. Whether your copy is foil is a fact about your
+copy, so it is a property of the card on the table rather than of the
+printing — and it can only be set to a finish the printing was actually sold
+in.
+
+Tokens come from Scryfall too, with their own paintings, searched by what they
+are. Beside that is a blank card with a name and two numbers written on it,
+which needs no connection at all — because the moment you need a token is
+mid-game, and mid-game is exactly when the wifi in a shop gives out.
+
 Turn the phone sideways. A phone in landscape is about 850 by 390, which is
 the shape this layout wants — the table on the left at the height of the
 screen, your hand and every pile beside it, nothing folded and nothing to

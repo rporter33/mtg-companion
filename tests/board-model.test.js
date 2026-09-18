@@ -4,7 +4,7 @@ import { apply } from '../src/lib/board/reducer.js'
 import { act, undo, newRun, applyAll, snapshot, restore, UNDO_DEPTH } from '../src/lib/board/runner.js'
 import { clampToField, overlaps, cardAt, freeSpot, tidy, pointToField, CARD_W, CARD_H } from '../src/lib/board/geometry.js'
 import { notesFor, manaAvailable, looksCastable } from '../src/lib/board/coach.js'
-import { libraryOf, dealAction, openingActions, mulliganActions, OPENING_HAND } from '../src/lib/board/deck.js'
+import { libraryOf, dealAction, openingActions, mulliganActions, swapPrinting, OPENING_HAND } from '../src/lib/board/deck.js'
 
 /**
  * The board is a table, not a judge, so almost none of these tests are about
@@ -493,6 +493,39 @@ describe('one card on another', () => {
     expect(after.cards[aura].attachedTo).toBe(null)
   })
 
+  it('remembers which copy of a printing this is', () => {
+    const { board, find } = seated()
+    const bear = find('bear').id
+    const foil = ok(apply(board, { type: 'finish', id: bear, value: 'foil' }))
+    expect(foil.board.cards[bear].finish).toBe('foil')
+    expect(foil.events[0]).toMatchObject({ type: 'finished', value: 'foil' })
+    refused(apply(board, { type: 'finish', id: bear, value: 'holographic' }), 'noSuchFinish')
+  })
+
+  it('swaps every copy of a printing for a nicer one, changing nothing else', () => {
+    const { board } = seated(['forest', 'forest', 'bear'])
+    const played = run(board, [
+      { type: 'draw', count: 3 },
+      { type: 'move', id: board.zones.you.library[0], zone: 'battlefield', x: 0.3, y: 0.3 },
+      { type: 'tap', id: board.zones.you.library[0] },
+    ])
+    const before = zoneOf(played, 'you', 'battlefield')[0]
+    const swapped = ok(apply(played, { type: 'reprint', from: 'forest', to: 'forest-showcase', finish: 'foil' }))
+    const copies = Object.values(swapped.board.cards).filter((c) => c.cardId === 'forest-showcase')
+    expect(copies).toHaveLength(2)
+    expect(swapped.events[0]).toMatchObject({ type: 'reprinted', count: 2 })
+    // The same card in different clothes: same instance, same spot, still tapped.
+    const after = zoneOf(swapped.board, 'you', 'battlefield')[0]
+    expect(after).toMatchObject({ id: before.id, x: before.x, y: before.y, tapped: true, finish: 'foil' })
+    expect(Object.values(swapped.board.cards).some((c) => c.cardId === 'forest')).toBe(false)
+  })
+
+  it('refuses a swap of a printing that is not on the table', () => {
+    const { board } = seated()
+    refused(apply(board, { type: 'reprint', from: 'nothing', to: 'else' }), 'noSuchCard')
+    refused(apply(board, { type: 'reprint', from: 'forest' }), 'needsACard')
+  })
+
   it('flips a coin as a two-sided die', () => {
     const { board } = seated()
     const flip = ok(apply(board, { type: 'roll', sides: 2, seed: 11, label: 'Who starts' }))
@@ -772,6 +805,28 @@ describe('one of your own decks', () => {
     const everywhere = [...handOf(run.board, 'you'), ...zoneOf(run.board, 'you', 'library')].map((c) => c.cardId).sort()
     expect(everywhere).toHaveLength(12)
     expect(first).toHaveLength(OPENING_HAND)
+  })
+
+  it('swaps a printing through the deck, merging an entry it collides with', () => {
+    const list = {
+      main: [{ cardId: 'forest', quantity: 10 }, { cardId: 'forest-nice', quantity: 2 }, { cardId: 'bear', quantity: 1 }],
+      sideboard: [{ cardId: 'forest', quantity: 1 }],
+      commanders: ['big'],
+      artCardId: 'forest',
+    }
+    const swapped = swapPrinting(list, 'forest', 'forest-nice')
+    expect(swapped.main).toEqual([{ cardId: 'forest-nice', quantity: 12 }, { cardId: 'bear', quantity: 1 }])
+    expect(swapped.sideboard).toEqual([{ cardId: 'forest-nice', quantity: 1 }])
+    expect(swapped.artCardId).toBe('forest-nice')
+    expect(swapped.updatedAt).toBeTruthy()
+  })
+
+  it('swaps a commander too, and leaves a deck it does not touch alone', () => {
+    const list = { main: [{ cardId: 'forest', quantity: 1 }], commanders: ['big'], sideboard: [] }
+    expect(swapPrinting(list, 'big', 'big-showcase').commanders).toEqual(['big-showcase'])
+    expect(swapPrinting(list, 'elsewhere', 'other')).toBe(list)
+    expect(swapPrinting(list, 'forest', 'forest')).toBe(list)
+    expect(swapPrinting(null, 'a', 'b')).toBe(null)
   })
 
   it('leaves the commander in the command zone across a mulligan', () => {

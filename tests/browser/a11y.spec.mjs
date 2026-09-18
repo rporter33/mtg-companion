@@ -384,6 +384,32 @@ await scanState('the free table, pointing at something', async () => {
   return (await page.locator('.banner').count()) > 0
 })
 
+// The two panels that are mostly pictures: a list of printings, and the
+// token maker's form. Pictures with no names are the classic failure here.
+await scanState('the free table, choosing a printing', async () => {
+  // The scan before this one left a card pointing at something; put that down
+  // and pick a card up properly.
+  await page.getByRole('button', { name: 'Never mind' }).click().catch(() => {})
+  await page.waitForTimeout(200)
+  const onTable = page.locator('.field .bcard').first()
+  if (!await onTable.count()) return false
+  await onTable.click()
+  await page.waitForTimeout(300)
+  const another = page.getByRole('button', { name: 'Another printing…' })
+  if (!await another.count()) return false
+  await another.click()
+  await page.waitForTimeout(700)
+  return (await page.locator('.printings').count()) === 1
+})
+
+await scanState('the free table, making a token', async () => {
+  const make = page.getByRole('button', { name: 'Make a token' })
+  if (!await make.count()) return false
+  await make.click()
+  await page.waitForTimeout(400)
+  return (await page.locator('.tokenmaker').count()) === 1
+})
+
 console.log('\nFindings')
 if (!seen.size) console.log('  none')
 const order = { critical: 0, serious: 1, moderate: 2, minor: 3 }

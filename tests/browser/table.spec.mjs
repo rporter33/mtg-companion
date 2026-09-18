@@ -30,9 +30,20 @@ const c = (id, name, type_line, extra = {}) => ({
 })
 const CARDS = [
   c('cmdr', 'Test Commander', 'Legendary Creature — Elf'),
-  c('forest', 'Forest', 'Basic Land — Forest', { mana_cost: '', cmc: 0, produced_mana: ['G'] }),
+  c('forest', 'Forest', 'Basic Land — Forest', { mana_cost: '', cmc: 0, produced_mana: ['G'], finishes: ['nonfoil', 'foil'] }),
   c('elf', 'Llanowar Elves', 'Creature — Elf Druid', { power: '1', toughness: '1' }),
 ]
+/** A second printing of the Forest, so there is a real choice to make. */
+const FOREST_SHOWCASE = c('forest-showcase', 'Forest', 'Basic Land — Forest', {
+  mana_cost: '', cmc: 0, produced_mana: ['G'], set: 'shw', set_name: 'Showcase Set',
+  collector_number: '272', frame_effects: ['showcase'], finishes: ['nonfoil', 'foil'],
+})
+const TREASURE = {
+  object: 'card', id: 'treasure-token', oracle_id: 'o-treasure', name: 'Treasure',
+  type_line: 'Token Artifact — Treasure', oracle_text: '{T}, Sacrifice this: Add one mana of any color.',
+  color_identity: [], colors: [], rarity: 'common', set: 'ttst', set_name: 'Tokens',
+  collector_number: '9', legalities: {}, prices: {}, layout: 'token',
+}
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
 const page = await browser.newPage({ viewport: { width: 430, height: 1300 } })
@@ -42,7 +53,17 @@ page.on('pageerror', (e) => errors.push(e.message))
 await page.route('**/api.scryfall.com/**', (route) => route.fulfill({
   status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))
 await page.route('**/api.scryfall.com/cards/collection', (route) => route.fulfill({
-  status: 200, contentType: 'application/json', body: JSON.stringify({ data: CARDS }) }))
+  status: 200, contentType: 'application/json',
+  body: JSON.stringify({ data: [...CARDS, FOREST_SHOWCASE, TREASURE] }) }))
+// Printings and token search both go through /cards/search, so the query says
+// which one is being asked for.
+await page.route('**/api.scryfall.com/cards/search**', (route) => {
+  const query = decodeURIComponent(new URL(route.request().url()).searchParams.get('q') ?? '')
+  const data = query.includes('oracleid:o-forest') ? [CARDS[1], FOREST_SHOWCASE]
+    : query.includes('t:token') ? [TREASURE]
+      : []
+  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ object: 'list', data, total_cards: data.length, has_more: false }) })
+})
 
 await page.goto(TARGET, { waitUntil: 'networkidle' })
 await page.evaluate(() => localStorage.setItem('mtg-companion:v1', JSON.stringify({
@@ -354,6 +375,82 @@ await page.getByRole('button', { name: /^Sound/ }).click()
 await page.waitForTimeout(200)
 check('and stays on once it is',
   (await page.getByRole('button', { name: /^Sound/ }).getAttribute('aria-pressed')) === 'true')
+
+// ---------------------------------------------------------------------------
+// Which copy of the card is on the table. Two people can play the same
+// decklist and own completely different objects, and that is most of why
+// anyone cares about their deck.
+
+console.log('\nChoosing a printing')
+await clickAt(...RIGHT)
+await page.getByRole('button', { name: 'Another printing…' }).click()
+await page.waitForTimeout(700)
+check('every printing is offered, with its painting and where it is from',
+  (await page.locator('.printings__print').count()) === 2,
+  await page.locator('.printings').innerText().catch(() => 'no panel'))
+check('and the copy in the deck is marked as the one you have',
+  (await page.locator('.printings__print--mine').count()) === 1)
+check('a different frame is named rather than guessed at',
+  (await page.locator('.printings').innerText()).includes('showcase'))
+
+await page.locator('.printings__print', { hasText: 'Showcase Set' }).click()
+await page.waitForTimeout(600)
+check('the copies on the table change',
+  (await page.locator('.field .bcard--showcase').count()) > 0,
+  `${await page.locator('.field .bcard').count()} cards, none showcase`)
+check('and so does the deck, so it is still that printing next game',
+  await page.evaluate(() => {
+    const deck = JSON.parse(localStorage.getItem('mtg-companion:v1:deck:d2') ?? '{}')
+    return (deck.main ?? []).every((e) => e.cardId === 'forest-showcase')
+  }))
+
+console.log('\nFoils')
+// The card is still in hand after choosing its printing — you might want to
+// say it is a foil while you are there — so no need to pick it up again.
+check('the card stays picked up after choosing its printing',
+  (await page.locator('.actions').count()) === 1)
+await page.getByRole('button', { name: 'Mine is foil' }).click()
+await page.waitForTimeout(300)
+check('a foil is drawn as one', (await page.locator('.field .bcard--foil').count()) === 1)
+check('and said out loud, because a sheen is not readable to everyone',
+  (await page.locator('.field .bcard--foil').getAttribute('aria-label')).includes('foil'))
+await page.getByRole('button', { name: 'An ordinary copy' }).click()
+await page.waitForTimeout(300)
+check('and it can be an ordinary copy again', (await page.locator('.field .bcard--foil').count()) === 0)
+await page.getByRole('button', { name: 'Put it down' }).click()
+await page.waitForTimeout(200)
+
+console.log('\nTokens and blank cards')
+const started = await onField()
+await openRail()
+await page.getByRole('button', { name: 'Make a token' }).click()
+await page.waitForTimeout(300)
+await page.getByLabel('Search for a token').fill('treasure')
+await page.getByRole('button', { name: 'Find it' }).click()
+await page.waitForTimeout(700)
+check('a real token is found with its own painting',
+  (await page.locator('.tokenmaker__token').count()) === 1,
+  await page.locator('.tokenmaker').innerText())
+await page.locator('.tokenmaker__token').click()
+await page.waitForTimeout(500)
+check('and goes onto the table', (await onField()) === started + 1)
+check('under its own name',
+  (await page.locator('.field .bcard').last().innerText()).includes('Treasure'),
+  await page.locator('.field .bcard').last().innerText())
+
+await openRail()
+await page.getByRole('button', { name: 'Make a token' }).click()
+await page.waitForTimeout(300)
+await page.getByLabel('Name', { exact: true }).fill('Zombie')
+await page.getByLabel('Power').fill('2')
+await page.getByLabel('Toughness').fill('2')
+await page.getByRole('button', { name: 'Put it on the table' }).click()
+await page.waitForTimeout(500)
+check('a blank card with a name on it needs no connection at all',
+  (await onField()) === started + 2)
+check('and carries the numbers you wrote on it',
+  (await page.locator('.field .bcard').last().innerText()).includes('2/2'),
+  await page.locator('.field .bcard').last().innerText())
 
 // A phone turned sideways is the shape this layout wants: the table on the
 // left at the height of the screen, hand and piles beside it, and nothing

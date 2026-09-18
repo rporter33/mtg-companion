@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { navigate } from '../../lib/router.js'
-import { listDecks, getDeck, getTable, saveTable, clearTable, getPrefs, setPref } from '../../lib/storage.js'
+import { listDecks, getDeck, saveDeck, getTable, saveTable, clearTable, getPrefs, setPref } from '../../lib/storage.js'
 import { createBoard, handOf, librarySize, zoneOf, nameOf, hostOf, ZONE_LABELS, DEFAULT_COUNTERS } from '../../lib/board/model.js'
 import { newRun, act, applyAll, undo, snapshot, restore } from '../../lib/board/runner.js'
-import { openingActions, mulliganActions, libraryOf, OPENING_HAND } from '../../lib/board/deck.js'
+import { openingActions, mulliganActions, libraryOf, swapPrinting, OPENING_HAND } from '../../lib/board/deck.js'
+import { treatmentOf, finishFor } from '../../lib/board/art.js'
+import { prefersReducedMotion } from '../../lib/table/motion.js'
+import { getCardsByIds } from '../../lib/scryfall.js'
+import { pinCards } from '../../lib/cache.js'
 import { isLandCard } from '../../lib/deck.js'
 import useDeckCards from '../decks/useDeckCards.js'
 import { playFor } from '../../lib/board/sound.js'
@@ -11,6 +15,8 @@ import useDrag from './useDrag.js'
 import Field from './Field.jsx'
 import BoardCard from './BoardCard.jsx'
 import Coach from './Coach.jsx'
+import Printings from './Printings.jsx'
+import TokenMaker from './TokenMaker.jsx'
 import './table.css'
 
 /**
@@ -104,8 +110,23 @@ function Pick() {
 
 const PILES = ['graveyard', 'exile', 'command']
 
-function Seat({ deck, onOpenCard }) {
-  const { cards, loading, missing, lookup } = useDeckCards(deck)
+function Seat({ deck: initialDeck, onOpenCard }) {
+  // The deck is kept here because choosing a printing rewrites it, and the
+  // table should show the copy that was just chosen without a reload.
+  const [deck, setDeck] = useState(initialDeck)
+  const { cards, loading, missing, lookup: deckLookup } = useDeckCards(deck)
+  /*
+   * Cards on the table that the deck has never heard of: a token made
+   * mid-game, or a printing swapped in. Kept beside the deck's own cards and
+   * pinned in the cache, so a token is still a token after a reload.
+   */
+  const [extra, setExtra] = useState(() => new Map())
+  const lookup = useCallback((id) => deckLookup(id) ?? extra.get(id) ?? null, [deckLookup, extra])
+  const remember = useCallback((card) => {
+    if (!card?.id) return
+    setExtra((was) => new Map(was).set(card.id, card))
+    pinCards([card.id]).catch(() => { /* it will be fetched again if it has to be */ })
+  }, [])
   const [run, setRun] = useState(null)
   const [selected, setSelected] = useState(null)
   const [peeking, setPeeking] = useState(0)
@@ -120,6 +141,10 @@ function Seat({ deck, onOpenCard }) {
   // table. So the counts and the rarer buttons fold away behind one press,
   // and the quick ones live in a strip under your hand.
   const [railOpen, setRailOpen] = useState(false)
+  // One panel at a time, under the table: the printings of a card, or the
+  // token maker.
+  const [panel, setPanel] = useState(null)
+  const reduced = prefersReducedMotion(prefs.reduceMotion ?? null)
   const fieldRef = useRef(null)
   const actionsRef = useRef(null)
 
@@ -130,6 +155,34 @@ function Seat({ deck, onOpenCard }) {
     const seed = Math.floor(Math.random() * 1e9)
     return applyAll(newRun(createBoard({ seed })), openingActions(deck, { seed })).run
   }, [deck])
+
+  /*
+   * Anything on the table the deck cannot name. After a reload that is every
+   * token made last session and every printing swapped in; they are real
+   * cards on a real table and they should come back with their paintings.
+   */
+  const unknownIds = useMemo(() => {
+    if (!run?.board) return ''
+    return [...new Set(Object.values(run.board.cards)
+      .map((inst) => inst.cardId)
+      .filter((id) => id && !cards.has(id) && !extra.has(id)))].sort().join(',')
+  }, [run?.board, cards, extra])
+
+  useEffect(() => {
+    if (!unknownIds) return undefined
+    let cancelled = false
+    getCardsByIds(unknownIds.split(','))
+      .then((found) => {
+        if (cancelled || !found.size) return
+        setExtra((was) => {
+          const next = new Map(was)
+          for (const [id, card] of found) next.set(id, card)
+          return next
+        })
+      })
+      .catch(() => { /* offline: they sit on the table without a name */ })
+    return () => { cancelled = true }
+  }, [unknownIds])
 
   useEffect(() => {
     const saved = getTable()
@@ -232,6 +285,28 @@ function Seat({ deck, onOpenCard }) {
   }
   const aimAt = (mode) => { setAiming({ id: selected, mode }); setSelected(null) }
 
+  /*
+   * Choosing a printing does two things, and both matter. The copies on this
+   * table change, because those are the cards in front of you; and the deck
+   * changes, because that is a fact about the deck rather than a setting on
+   * this screen. Next game it is still the copy you chose.
+   */
+  const choosePrinting = (print, finish) => {
+    const from = selectedInst?.cardId
+    setPanel(null)
+    if (!from || !print?.id || from === print.id) return
+    remember(print)
+    doAction({ type: 'reprint', from, to: print.id, finish })
+    const next = swapPrinting(deck, from, print.id)
+    if (next !== deck) { setDeck(next); saveDeck(next) }
+  }
+
+  const makeToken = ({ cardId = null, card = null, custom = null }) => {
+    if (card) remember(card)
+    doAction({ type: 'makeToken', cardId, custom })
+    setPanel(null)
+  }
+
   return (
     <div className="stack tabletop">
       <div className="row row--wrap tabletop__top">
@@ -286,7 +361,25 @@ function Seat({ deck, onOpenCard }) {
               card={cardFor(selectedInst)}
               onDo={(action) => { doAction(action); if (action.type === 'move') setSelected(null) }}
               onInspect={() => { const card = cardFor(selectedInst); if (card) onOpenCard(card) }}
-              onClose={() => setSelected(null)}
+              onPrintings={() => setPanel(panel === 'printings' ? null : 'printings')}
+              onClose={() => { setSelected(null); setPanel(null) }}
+            />
+          )}
+
+          {panel === 'printings' && selectedInst && cardFor(selectedInst) && (
+            <Printings
+              card={cardFor(selectedInst)}
+              finish={selectedInst.finish}
+              onChoose={choosePrinting}
+              onClose={() => setPanel(null)}
+            />
+          )}
+
+          {panel === 'token' && (
+            <TokenMaker
+              colors={deck.commanders?.length ? (lookup(deck.commanders[0])?.color_identity ?? []) : []}
+              onMake={makeToken}
+              onClose={() => setPanel(null)}
             />
           )}
 
@@ -311,6 +404,7 @@ function Seat({ deck, onOpenCard }) {
                       name={nameFor(inst)}
                       inst={inst}
                       size="hand"
+                      tilt={!reduced}
                       selected={selected === inst.id}
                       onPointerDown={(e) => begin(e, { id: inst.id, from: 'hand' })}
                       onClick={() => select(inst.id)}
@@ -378,6 +472,15 @@ function Seat({ deck, onOpenCard }) {
                 </section>
               )
             })}
+
+            <section className="pile">
+              <h2 className="pile__title">Tokens</h2>
+              <div className="row row--wrap">
+                <button className="btn btn--ghost btn--sm" onClick={() => setPanel(panel === 'token' ? null : 'token')} aria-expanded={panel === 'token'}>
+                  Make a token
+                </button>
+              </div>
+            </section>
 
             <Dice board={board} onRoll={(sides, label) => doAction({ type: 'roll', sides, label, seed: Math.floor(Math.random() * 1e9) })} />
 
@@ -503,9 +606,11 @@ const MOVES = [
   { zone: 'command', label: 'To the command zone' },
 ]
 
-function Actions({ inst, name, card, host, onDo, onAim, onInspect, onClose, panelRef }) {
+function Actions({ inst, name, card, host, onDo, onAim, onInspect, onPrintings, onClose, panelRef }) {
   const onField = inst.zone === 'battlefield'
   const counters = Object.entries(inst.counters).filter(([, n]) => n)
+  const treatment = card ? treatmentOf(card) : null
+  const foil = inst.finish !== 'normal'
   return (
     <section className="actions" aria-label={`Actions for ${name}`} ref={panelRef}>
       <div className="row row--wrap">
@@ -531,6 +636,18 @@ function Actions({ inst, name, card, host, onDo, onAim, onInspect, onClose, pane
         {onField && !inst.attachedTo && <button className="btn btn--ghost btn--sm" onClick={() => onAim('attach')}>Put it on…</button>}
         {inst.attachedTo && <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'detach', id: inst.id })}>Take it off</button>}
         {card && <button className="btn btn--ghost btn--sm" onClick={onInspect}>Read it</button>}
+        {card && (treatment.foilable || treatment.etchable || foil) && (
+          <button
+            className="btn btn--ghost btn--sm"
+            aria-pressed={foil}
+            onClick={() => onDo({ type: 'finish', id: inst.id, value: foil ? 'normal' : finishFor(card, treatment.etchable && !treatment.foilable ? 'etched' : 'foil') })}
+          >
+            {foil ? 'An ordinary copy' : 'Mine is foil'}
+          </button>
+        )}
+        {card && !inst.token && (
+          <button className="btn btn--ghost btn--sm" onClick={onPrintings}>Another printing…</button>
+        )}
       </div>
 
       {onField && <Counters inst={inst} counters={counters} onDo={onDo} />}

@@ -19,6 +19,7 @@
  */
 import { rng, shuffle } from '../goldfish.js'
 import { ZONES, ORDERED_ZONES, makeInstance, clampToField, attachedTo, CARD_W, CARD_H } from './model.js'
+import { FINISHES } from './art.js'
 import { freeSpot, tidy as tidyPositions } from './geometry.js'
 
 const refuse = (code, message) => ({ ok: false, reason: { code, message } })
@@ -190,6 +191,40 @@ const HANDLERS = {
     if (!inst) return refuse('noSuchCard', 'That card is not on this table.')
     inst.faceDown = value === undefined ? !inst.faceDown : Boolean(value)
     emit(board, { type: inst.faceDown ? 'turnedDown' : 'turnedUp', instanceId: inst.id })
+    return null
+  },
+
+  /**
+   * Which copy of the printing this is. Not a rule and not a property of the
+   * card: two people with the same decklist can have one foil Sol Ring
+   * between them, and the one who has it wants to see it.
+   */
+  finish(board, { id, value = 'normal' }) {
+    const inst = board.cards[id]
+    if (!inst) return refuse('noSuchCard', 'That card is not on this table.')
+    if (!FINISHES.includes(value)) return refuse('noSuchFinish', 'Cards come in ordinary, foil and etched.')
+    inst.finish = value
+    emit(board, { type: 'finished', instanceId: id, value })
+    return null
+  },
+
+  /**
+   * Swapping every copy of one printing for another, which is what happens
+   * when someone opens a nicer version and puts it in the deck. Identity,
+   * position and everything done to a card are untouched: it is the same
+   * card in different clothes.
+   */
+  reprint(board, { from, to, finish }) {
+    if (!from || !to) return refuse('needsACard', 'A swap needs a printing to change from and one to change to.')
+    let n = 0
+    for (const inst of Object.values(board.cards)) {
+      if (inst.cardId !== from) continue
+      inst.cardId = to
+      if (finish && FINISHES.includes(finish)) inst.finish = finish
+      n += 1
+    }
+    if (!n) return refuse('noSuchCard', 'No copy of that printing is on this table.')
+    emit(board, { type: 'reprinted', from, to, count: n })
     return null
   },
 
