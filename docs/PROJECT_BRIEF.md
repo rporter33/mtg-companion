@@ -473,7 +473,32 @@ printing picker is in the deck editor too.
 
 ## 10. What is next
 
-### T4b — two devices (specified, not built)
+### T4b-1 — the replication protocol and transport (built)
+
+`src/lib/board/net.js` is host-authoritative replication over the board's
+action log: `hello / welcome / intent / action / refused / resync / seat / bye`,
+every applied action numbered, a gap triggering a resync rather than a guess,
+and one ownership rule (you may move what you control). `loopback()` in the
+same file is a wire in memory, which is how the whole protocol is tested
+without a browser or a network.
+
+`src/lib/board/webrtc.js` is the same `{ send, onMessage, close }` shape over a
+WebRTC data channel, plus the signalling client. `scripts/signal-server.mjs`
+is the service: `POST /rooms`, `POST /rooms/<code>/from/<who>`,
+`GET /rooms/<code>/to/<who>?since=<n>`, with held requests instead of polling
+loops. `tests/browser/together.spec.mjs` connects two real browsers through it
+and asserts that nothing about the game was relayed.
+
+### T4b-2 — seats and the shared table (specified, not built)
+
+The model and the protocol are multi-seat already; the interface is not. What
+is left: two battlefields on screen rather than one (each player's own square
+field, the opponent's mirrored so their lands are nearest them), hands that
+only their owner can see, the room panel for hosting and joining, and hot seat
+— one device passed around, which needs no transport at all and is the
+cheapest way to prove the multi-seat UI.
+
+### T4 — two devices (specified, not built)
 
 The user's decision, already made: **one tiny signalling service, then
 peer-to-peer.** Both "a table plus everyone's phones" and "two players over

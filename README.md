@@ -696,6 +696,51 @@ anywhere else in the app: the whole promise of this table is that nothing on it
 tells you what to do, and a coach that could not be told to be quiet would break
 that promise even while being right.
 
+## Two devices, one table
+
+The board was written for this from the first commit. Every action is small,
+serialisable and free of any clock, the only randomness is a seeded shuffle,
+and which row a card belongs in travels *in* the action rather than being
+looked up locally — so two devices applying the same actions in the same order
+reach the same table. What was left to write is not a networked game engine.
+It is an agreement about order.
+
+**One player is the table.** Somebody has to decide what happened when two
+people reach for the same card, and the alternative — every peer applying its
+own actions and reconciling afterwards — means writing conflict resolution for
+a game that has none, and being wrong occasionally in a way nobody can see. So
+the host applies actions and numbers them; everyone else sends an intent and
+waits for the numbered action to come back. A guest does not apply its own
+actions early: optimistic application would buy a few milliseconds and cost a
+class of bug where the table flickers back to a state you just left. Peer to
+peer in one room is a handful of milliseconds. The simpler thing is also the
+correct one.
+
+A gap in the numbering means a message was lost, and rather than guessing, the
+guest asks for the table again — which is cheap, because a table is one
+snapshot and not a game's worth of history.
+
+The protocol judges nothing: the table still enforces no rules. The one thing
+it checks is whose card it is. You may move what you control, which is the
+rule at a real table — nobody reaches across and taps someone else's creature
+— and it happens to be the same word the rules use when a spell takes control
+of something, so a stolen creature becomes yours to turn sideways with no
+special case.
+
+**The connection is peer to peer**, over a WebRTC data channel. The only
+server is `scripts/signal-server.mjs`: it hands out a room code, passes the
+offer, the answer and the network candidates between the two browsers, and
+then has nothing more to do. **No board, no deck and no card ever goes through
+it**, and a browser test asserts exactly that by reading back everything the
+service relayed and checking there is no card in it. It is forty lines of
+`node:http` with no dependencies — small enough to be a single serverless
+function, and smaller than any library that would have signalled for it. Room
+codes avoid every character that sounds or looks like another, because people
+read them to each other out loud.
+
+`npm run signal` runs it locally; `tests/browser/together.spec.mjs` drives two
+real browsers through it.
+
 ## Data
 
 Card data, images, rulings and prices come from [Scryfall](https://scryfall.com),
