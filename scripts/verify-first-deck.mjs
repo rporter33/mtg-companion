@@ -21,25 +21,27 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /**
  * One request, paced and patient. Scryfall's documented ask is a short
- * gap between requests, but a run at eight a second was cut off after
- * about thirty and blocked for a minute, so the pace here is under three
- * a second: the whole pass takes under a minute and never trips the
- * limit. If it is tripped anyway (a run just before this one, say), a
- * 429 waits as long as Scryfall says, or a growing pause, and tries
- * again, up to five times, before it is a failure.
+ * gap between requests, but real runs were cut off every twenty or so
+ * even at three a second and blocked for a minute each time, and the
+ * window is not published, so the script does not guess it: it starts
+ * at under three a second and doubles the gap every time Scryfall says
+ * stop, so a run finds the pace it is allowed and keeps it. A 429 waits
+ * as long as Scryfall says, or a growing pause, and tries again, up to
+ * five times, before it is a failure.
  */
-const GAP_MS = Number(process.env.SCRYFALL_GAP_MS) || 350
+let gapMs = Number(process.env.SCRYFALL_GAP_MS) || 350
 let requests = 0
 
 async function request(url, init = {}) {
   for (let attempt = 0; ; attempt++) {
     const response = await fetch(url, { ...init, headers: { Accept: 'application/json', 'User-Agent': UA, ...(init.headers ?? {}) } })
     requests++
-    await wait(GAP_MS)
+    await wait(gapMs)
     if ((response.status === 429 || response.status >= 500) && attempt < 5) {
       const after = Number(response.headers.get('retry-after'))
       const pause = Number.isFinite(after) && after > 0 ? after * 1000 : 1000 * 2 ** attempt
-      console.error(`Scryfall answered ${response.status} after ${requests} requests; waiting ${pause / 1000}s, then trying again (${attempt + 1} of 5)`)
+      if (response.status === 429) gapMs = Math.min(gapMs * 2, 5000)
+      console.error(`Scryfall answered ${response.status} after ${requests} requests; waiting ${pause / 1000}s, then trying again (${attempt + 1} of 5) at one request every ${gapMs / 1000}s`)
       await wait(pause)
       continue
     }
