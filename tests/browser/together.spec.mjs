@@ -16,7 +16,7 @@
  */
 
 import { chromium } from 'playwright'
-import { spawn } from 'node:child_process'
+import { createServer } from 'vite'
 import { server as signalServer } from '../../scripts/signal-server.mjs'
 
 let pass = 0
@@ -31,28 +31,24 @@ const check = (label, ok, detail) => {
 await new Promise((resolve) => signalServer.listen(0, resolve))
 const SIGNAL = `http://127.0.0.1:${signalServer.address().port}`
 
-const dev = spawn('npx', ['vite', '--port', '4199', '--strictPort'], { cwd: process.cwd(), stdio: 'ignore' })
-const ready = async () => {
-  for (let i = 0; i < 60; i++) {
-    try { if ((await fetch('http://127.0.0.1:4199/')).ok) return true } catch { /* not yet */ }
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  return false
-}
-const up = await ready()
-if (!up) {
-  console.log('  FAIL  the dev server did not start')
-  dev.kill()
-  signalServer.close()
-  process.exit(1)
-}
+/*
+ * Vite in this process rather than a spawned `npx vite` on a fixed port.
+ * Spawning meant waiting a fixed number of seconds for a port to answer and
+ * guessing at why when it did not — which is how this spec failed on CI while
+ * passing here, with its output swallowed and a deploy blocked behind it.
+ * Started in process, it is listening when `listen` returns, it says what went
+ * wrong if it cannot, and port 0 means no clash with anything else running.
+ */
+const dev = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' })
+await dev.listen()
+const ORIGIN = dev.resolvedUrls.local[0]
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
 const errors = []
 const open = async () => {
   const page = await browser.newPage()
   page.on('pageerror', (e) => errors.push(e.message))
-  await page.goto('http://127.0.0.1:4199/', { waitUntil: 'domcontentloaded' })
+  await page.goto(ORIGIN, { waitUntil: 'domcontentloaded' })
   return page
 }
 
@@ -160,7 +156,7 @@ if (joined.ready) {
 check('no console errors in either page', errors.length === 0, errors.join('; '))
 
 await browser.close()
-dev.kill()
+await dev.close()
 signalServer.closeAllConnections?.()
 signalServer.close()
 console.log(`\n${pass} passed, ${fail} failed`)

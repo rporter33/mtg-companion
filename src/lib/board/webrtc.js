@@ -73,14 +73,24 @@ export function peer({ role, code, signal: service, onOpen, onClose, onError } =
 
   const attach = (ch) => {
     channel = ch
-    ch.onopen = () => {
+    const opened = () => {
       for (const message of queued.splice(0)) ch.send(JSON.stringify(message))
       onOpen?.()
     }
+    ch.onopen = opened
     ch.onclose = () => { if (!closed) onClose?.() }
     ch.onmessage = (event) => {
       try { handler?.(JSON.parse(event.data), role === 'host' ? 'guest' : 'host') } catch { /* not ours */ }
     }
+    /*
+     * A channel handed to us by `ondatachannel` can already be open, in which
+     * case its open event has been and gone before there was anything to hear
+     * it. Waiting for one that will never come means the queue never flushes,
+     * the guest's hello is never sent, and the table never arrives — on a
+     * connection that reports itself as connected, which is what makes it so
+     * hard to see.
+     */
+    if (ch.readyState === 'open') opened()
   }
 
   if (role === 'host') attach(connection.createDataChannel('table', { ordered: true }))
