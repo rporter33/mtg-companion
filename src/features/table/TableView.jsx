@@ -7,6 +7,7 @@ import { untappedSources, withinReach } from '../../lib/board/mana.js'
 import { openingActions, mulliganActions, libraryOf, swapPrinting, OPENING_HAND } from '../../lib/board/deck.js'
 import { treatmentOf, finishFor } from '../../lib/board/art.js'
 import { laneFor, refuseBattlefield, zoneWhenPlayed, isPermanent } from '../../lib/board/placement.js'
+import { fan } from '../../lib/board/geometry.js'
 import { prefersReducedMotion } from '../../lib/table/motion.js'
 import { getCardsByIds } from '../../lib/scryfall.js'
 import { pinCards } from '../../lib/cache.js'
@@ -337,6 +338,9 @@ function Seat({ deck: initialDeck, onOpenCard }) {
 
   const selectedInst = selected ? board.cards[selected] : null
   const hand = handOf(board, 'you')
+  // How the hand lies in your hand: overlapped and arced, so a full grip
+  // costs the same strip as a small one and every card can be bigger for it.
+  const spread = fan(hand.length)
   const topOfLibrary = zoneOf(board, 'you', 'library').slice(0, peeking)
   const nameFor = (inst) => nameOf(board, inst.id, lookup)
   const cardFor = (inst) => (inst.custom ? null : lookup(inst.cardId))
@@ -507,9 +511,22 @@ function Seat({ deck: initialDeck, onOpenCard }) {
             {!hand.length ? (
               <p className="faint tiny">Nothing in hand. Draw a card.</p>
             ) : (
-              <div className="tabletop__handrow">
-                {hand.map((inst) => (
-                  <span className="tabletop__handcard" key={inst.id}>
+              <div className="tabletop__handrow" style={{ '--overlap': spread.overlap, '--span': spread.span }}>
+                {hand.map((inst, i) => (
+                  <span
+                    className="tabletop__handcard"
+                    key={inst.id}
+                    style={{
+                      '--angle': `${spread.cards[i].angle}deg`,
+                      '--drop': spread.cards[i].drop,
+                      '--badge': spread.cards[i].badge,
+                      // Later cards lie on top, so the rightmost is the one
+                      // card in the fan you can see whole. A custom property
+                      // rather than zIndex, because an inline z-index would
+                      // outrank the rule that lifts a card clear on hover.
+                      '--i': i,
+                    }}
+                  >
                     <HandCost card={cardFor(inst)} pool={pool} />
                     <BoardCard
                       card={cardFor(inst)}

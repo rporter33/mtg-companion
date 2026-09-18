@@ -113,3 +113,74 @@ export function pointToField(point, rect) {
   if (!rect || !rect.width || !rect.height) return { x: 0.5, y: 0.5 }
   return { x: clamp01((point.x - rect.left) / rect.width), y: clamp01((point.y - rect.top) / rect.height) }
 }
+
+/**
+ * How far the fan of cards in your hand spreads.
+ *
+ * A hand is not a row. Held in one hand the cards overlap, each showing a
+ * sliver of the one behind, and the whole thing arcs — which is not
+ * decoration: it is the reason seven cards fit in the space of three and a
+ * half. The screen is short in the direction a row of separate cards costs
+ * most, so closing the gaps is what lets every card be bigger rather than
+ * smaller.
+ *
+ * `FAN_WIDTH` is how many card widths the fan may spread past its first card,
+ * so a hand of fourteen takes the same strip as a hand of five and only the
+ * overlap deepens. `FAN_ARC` caps the total rotation, `FAN_STEP` the rotation
+ * between neighbours, so a small hand fans gently rather than flying open.
+ */
+const FAN_WIDTH = 2.6
+const FAN_ARC = 26
+const FAN_STEP = 4
+const FAN_DROP = 0.05
+
+/** Two decimals: these become CSS, and the rest of a float is noise in a style attribute. */
+const round = (n) => Math.round(n * 100) / 100
+
+/**
+ * Three decimals for the overlap alone, because it is the one number that is
+ * multiplied by the size of the hand. Rounded to two, a sixtieth of a card
+ * width of error becomes a third of a card across sixty of them, and the fan
+ * quietly outgrows the strip it was measured to fit.
+ */
+const round3 = (n) => Math.round(n * 1000) / 1000
+
+/**
+ * The fan for a hand of `count` cards.
+ *
+ * Returns the overlap once — every card is laid on the last by the same
+ * amount — the `span` the whole fan occupies in card widths, and then, per
+ * card, the angle it is turned, how far it drops below its neighbours, and
+ * where its cost badge belongs.
+ *
+ * The badge is the fiddly one: a card in the middle of a fan only shows its
+ * left edge, so a badge centred on the card would be hidden by the card in
+ * front of it. Every card but the last gets its badge over the sliver that is
+ * actually visible.
+ *
+ * `span` is what lets the cards be sized to the strip rather than guessed at.
+ * A hand that is laid out first and measured afterwards is a hand that
+ * sometimes overflows; given the span, the stylesheet divides the width it
+ * has by it and every card comes out as large as it can be and no larger.
+ */
+export function fan(count) {
+  const n = Math.max(0, Math.floor(count) || 0)
+  if (n === 0) return { overlap: 0, span: 0, cards: [] }
+  if (n === 1) return { overlap: 0, span: 1, cards: [{ angle: 0, drop: 0, badge: 0.5 }] }
+
+  const step = Math.min(1, FAN_WIDTH / (n - 1))
+  const between = Math.min(FAN_STEP, FAN_ARC / (n - 1))
+  const cards = []
+  for (let i = 0; i < n; i++) {
+    // -1 at the left of the fan, 0 in the middle, 1 at the right.
+    const t = (i - (n - 1) / 2) / ((n - 1) / 2)
+    cards.push({
+      angle: round(t * between * (n - 1) / 2),
+      // Squared, so the drop is a curve rather than a wedge: the cards either
+      // side of the middle barely move and the outermost ones fall away.
+      drop: round(FAN_DROP * t * t),
+      badge: i === n - 1 ? 0.5 : round(step / 2),
+    })
+  }
+  return { overlap: round3(1 - step), span: round3(1 + (n - 1) * step), cards }
+}

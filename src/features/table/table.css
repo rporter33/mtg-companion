@@ -195,21 +195,73 @@
 .actions__name { font-size: 0.95rem; }
 
 /*
- * A card in hand is now all picture, so the gap between them can close and
- * each can be wider in the same strip: the space that used to go on a name
- * printed under the card goes on the card. The row scrolls sideways, so this
- * costs nothing vertically — which is the direction the screen is short in.
+ * Your hand, held the way a hand is held: overlapped, arced, and turned a
+ * little further with each card out from the middle.
+ *
+ * A row of separate cards spends most of the strip on the gaps between them,
+ * so seven cards means seven small cards. Fanned, the same seven take the
+ * width of three and a half, and the width that buys goes back into the
+ * cards — which is the whole trade. `fan()` in board/geometry.js works out
+ * the overlap, the angles and where each cost badge has to sit; everything
+ * here is those numbers applied.
+ *
+ * The card under the pointer straightens up and lifts clear, because a card
+ * you are about to pick up is one you want to see whole.
+ *
+ * What a fan cannot fix: the sliver each card shows comes out at about the
+ * width of the strip divided by the number of cards, whatever the overlap,
+ * so a hand of fourteen on a phone leaves under thirty points each and the
+ * cost badges begin to crowd one another. That is the screen, not the
+ * layout — a plain row would give every card less still. The card under the
+ * pointer comes to the front, which is what the crowded case has instead.
  */
 .tabletop__handrow {
   display: flex;
-  gap: var(--space-1);
-  overflow-x: auto;
-  /* The costs sit above the cards, and a sideways scroller clips what
-     overflows it in both directions — so the row keeps a little headroom for
-     them rather than shearing them in half. */
-  padding: 0.7rem 0 var(--space-1);
+  justify-content: center;
+  /* Nothing is clipped here. The cards are sized to fit the strip rather than
+     laid out and then scrolled, and a scroll container would cut the corners
+     the rotation throws outside the box along with the cost badges above it. */
+  overflow: visible;
+  /* Room above for the cost badges and the lift, and below for the corners
+     the outermost cards swing down. */
+  padding: 1.8rem 0 0.9rem;
+
+  /*
+   * How wide a card can be: as wide as the strip divided by the fan, and
+   * never wider than a card wants to be on this screen.
+   *
+   * `--span` is what `fan()` worked out the whole hand comes to in card
+   * widths; the half on top of it is overhang, because a card turned thirteen
+   * degrees reaches past its own box by about a fifth of its width at each
+   * end of the fan. Dividing rather than guessing is what makes a hand of
+   * fourteen fit the same strip as a hand of four.
+   */
+  --hand-max: 108px;
+  --hand-w: min(var(--hand-max), calc(100% / (var(--span, 1) + 0.5)));
 }
-.tabletop__handcard { width: 80px; flex: 0 0 auto; position: relative; }
+.tabletop__handcard {
+  width: var(--hand-w);
+  flex: 0 0 auto;
+  position: relative;
+  /* Turned about a point below the card, so the fan pivots where your thumb
+     would be rather than about each card's own middle. */
+  transform-origin: 50% 135%;
+  z-index: var(--i, 0);
+  /* The drop is a fraction of the card's own height, so it stays in
+     proportion without needing to know what --hand-w came out as. */
+  transform: rotate(var(--angle, 0deg)) translateY(calc(var(--drop, 0) * 100%));
+  transition: transform 0.14s ease;
+}
+.tabletop__handcard + .tabletop__handcard {
+  margin-left: calc(var(--overlap, 0) * var(--hand-w) * -1);
+}
+/* `focus-within` and not `:focus`: what takes focus is the card button
+   inside, and it is the whole slot — badge included — that has to come up. */
+.tabletop__handcard:hover,
+.tabletop__handcard:focus-within {
+  z-index: 60;
+  transform: rotate(0deg) translateY(-10%);
+}
 .tabletop__revealed { position: absolute; top: 2px; right: 2px; }
 
 .table-picker { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
@@ -249,7 +301,7 @@
   .tabletop__rail { display: flex; }
   .tabletop__more, .tablecoach__more { display: none; }
   .tablecoach__note:nth-child(n + 2) { display: flex; }
-  .tabletop__handcard { width: 104px; }
+  .tabletop__handrow { --hand-max: 136px; }
 }
 
 /* --- arrows, counters, dice and notes ------------------------------------ */
@@ -354,6 +406,9 @@
 @media (prefers-reduced-motion: reduce) {
   .bcard { transition: none; transform: none; }
   .bcard__sheen { background-position: 50% 50%; }
+  /* The fan itself stays — it is layout, not motion — but nothing slides
+     into place when a card is lifted out of it. */
+  .tabletop__handcard { transition: none; }
 }
 
 .tokenmaker {
@@ -627,8 +682,20 @@
 
 .tabletop__cost {
   position: absolute;
-  top: -0.6rem;
-  left: 50%;
+  /*
+   * In a band clear of every card, not just of its own.
+   *
+   * Each card in the fan is turned, and a transform makes its own stacking
+   * context, so a badge inside one cannot be lifted over the card laid on
+   * top of it however high its z-index. The way out is height: above the top
+   * edge of the *neighbouring* card rather than its own, which is a little
+   * over a line, and then no card is in front of it to begin with.
+   */
+  top: -1.5rem;
+  /* Over the part of the card that is not covered by the one in front of it.
+     `--badge` is a fraction of a card width, and it is half of the last
+     card because the last card in a fan is the one you can see whole. */
+  left: calc(var(--badge, 0.5) * 100%);
   transform: translateX(-50%);
   z-index: 2;
   display: inline-flex;
@@ -645,6 +712,11 @@
 .tabletop__cost--far { opacity: 0.45; }
 
 /* (.tabletop__handcard is already positioned, which the cost above relies on.) */
+
+/* A card lifted out of the fan is no longer covered, so its cost goes back
+   over the middle of it. */
+.tabletop__handcard:hover .tabletop__cost,
+.tabletop__handcard:focus-within .tabletop__cost { left: 50%; }
 
 /* --- the counters that sit beside a player ------------------------------ */
 .counters { display: grid; gap: var(--space-3); }

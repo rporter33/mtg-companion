@@ -3,7 +3,7 @@ import { createBoard, invariants, battlefield, handOf, librarySize, nameOf, stac
 import { laneById } from '../src/lib/board/placement.js'
 import { apply } from '../src/lib/board/reducer.js'
 import { act, undo, newRun, applyAll, snapshot, restore, UNDO_DEPTH } from '../src/lib/board/runner.js'
-import { clampToField, overlaps, cardAt, freeSpot, tidy, pointToField, CARD_W, CARD_H } from '../src/lib/board/geometry.js'
+import { clampToField, overlaps, cardAt, freeSpot, tidy, pointToField, fan, CARD_W, CARD_H } from '../src/lib/board/geometry.js'
 import { notesFor, manaAvailable, looksCastable } from '../src/lib/board/coach.js'
 import { libraryOf, dealAction, openingActions, mulliganActions, swapPrinting, OPENING_HAND } from '../src/lib/board/deck.js'
 
@@ -946,5 +946,98 @@ describe('one of your own decks', () => {
     const { run } = applyAll(newRun(createBoard({ seed: 2 })), openingActions(deck, { seed: 2 }))
     const after = applyAll(run, mulliganActions(run.board, { seed: 5 })).run
     expect(after.board.zones.you.command.map((id) => after.board.cards[id].cardId)).toEqual(['big'])
+  })
+})
+
+/**
+ * The fan is pure arithmetic over one number, so what is worth pinning is the
+ * behaviour at the edges: that it stays inside its strip however many cards
+ * are held, that it never overlaps a card into invisibility, and that the
+ * badge lands somewhere a player can actually see.
+ */
+describe('the fan of cards in your hand', () => {
+  const width = (n) => fan(n).span
+
+  it('lays one card flat and dead centre', () => {
+    expect(fan(1)).toEqual({ overlap: 0, span: 1, cards: [{ angle: 0, drop: 0, badge: 0.5 }] })
+  })
+
+  it('has nothing to fan for an empty hand', () => {
+    expect(fan(0)).toEqual({ overlap: 0, span: 0, cards: [] })
+  })
+
+  it('leaves two cards side by side rather than stacking them', () => {
+    expect(fan(2).overlap).toBe(0)
+  })
+
+  it('keeps a hand of any size inside the same strip', () => {
+    // The whole point: seven cards and sixty cards cost the same width, so a
+    // full grip never pushes the table off the screen.
+    for (const n of [7, 20, 60]) expect(width(n)).toBeLessThanOrEqual(3.6)
+  })
+
+  it('reports a span the overlap actually adds up to', () => {
+    // The stylesheet sizes the cards from `span` and lays them out from
+    // `overlap`. If the two disagree the hand is either short of the edge or
+    // over it, so they are rounded to agree to within a rounding.
+    for (const n of [2, 5, 7, 13, 40]) {
+      const { overlap, span, cards } = fan(n)
+      expect(1 + (cards.length - 1) * (1 - overlap)).toBeCloseTo(span, 1)
+    }
+  })
+
+  it('has no span at all for an empty hand', () => {
+    expect(fan(0).span).toBe(0)
+    expect(fan(1).span).toBe(1)
+  })
+
+  it('opens wider as cards are added, until the strip is full', () => {
+    // Up to four cards they lie side by side and the hand simply gets wider.
+    expect(width(2)).toBe(2)
+    expect(width(3)).toBe(3)
+    // After that the strip is full, so the cards overlap instead.
+    expect(width(5)).toBeCloseTo(width(12), 1)
+  })
+
+  it('is symmetrical about the middle', () => {
+    const { cards } = fan(7)
+    expect(cards[0].angle).toBe(-cards[6].angle)
+    expect(cards[1].angle).toBe(-cards[5].angle)
+    expect(cards[3].angle).toBe(0)
+  })
+
+  it('turns the outermost cards furthest and drops them lowest', () => {
+    const { cards } = fan(7)
+    expect(Math.abs(cards[0].angle)).toBeGreaterThan(Math.abs(cards[2].angle))
+    expect(cards[0].drop).toBeGreaterThan(cards[3].drop)
+    expect(cards[3].drop).toBe(0)
+  })
+
+  it('never opens a small hand as wide as a large one', () => {
+    const wide = Math.abs(fan(3).cards[0].angle)
+    const many = Math.abs(fan(12).cards[0].angle)
+    expect(wide).toBeLessThan(many)
+  })
+
+  it('caps the whole arc however many cards are held', () => {
+    for (const n of [7, 12, 30]) {
+      const { cards } = fan(n)
+      expect(Math.abs(cards[0].angle) + Math.abs(cards[n - 1].angle)).toBeLessThanOrEqual(26)
+    }
+  })
+
+  it('puts every badge over the part of its card that is still visible', () => {
+    const { overlap, cards } = fan(9)
+    const showing = 1 - overlap
+    // Every card but the last is covered from `showing` rightwards, so a
+    // badge at or past that line is a badge nobody can read.
+    for (const card of cards.slice(0, -1)) expect(card.badge).toBeLessThan(showing)
+    expect(cards.at(-1).badge).toBe(0.5)
+  })
+
+  it('survives being asked about a hand that is not a number', () => {
+    expect(fan(NaN).cards).toEqual([])
+    expect(fan(-3).cards).toEqual([])
+    expect(fan(2.7).cards).toHaveLength(2)
   })
 })

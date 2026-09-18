@@ -12,6 +12,14 @@ list, `moxgate.com` among them. So the evidence here is:
 - **Ten screenshots** of the running app on an iPad, held sideways, in a solo
   Commander game and at the lobby. These are the primary source and the reason
   most of this document can be specific about layout and wording.
+- **Three screen recordings**, 12, 24 and 20 seconds, of the same iPad: the
+  lobby, seating an opponent, and the first two turns of a game. Sampled at
+  two frames a second and de-duplicated, they came to 29 distinct screens.
+  They are what the section *What the recordings added* below is drawn from,
+  and they are better evidence than the screenshots for anything involving a
+  sequence — what a button says before and after it is pressed, what the log
+  looks like as it fills. They carry no sound, so nothing here is taken from
+  narration.
 - **The public index**: Moxgate's own pages as summarised by a search engine —
   its [front page](https://www.moxgate.com/), [solo mode](https://www.moxgate.com/solo),
   [learn page](https://www.moxgate.com/learn/), [bug fixes and rulings](https://www.moxgate.com/bugs/),
@@ -103,7 +111,9 @@ not anticipate. One `Done`.
 
 ### The hand
 
-Mana costs float above each card as pips — `{2}{R}`, `{2}`, `{T}` — so you read
+The cards overlap and arc — a fan, not a row — which is why seven of them fit
+in the width of three and a half and can each be half as wide again as a row
+would allow. Mana costs float above each card as pips — `{2}{R}`, `{2}`, `{T}` — so you read
 what a card costs without reading the card. In the later screenshots several
 hand cards have a green glow and others do not: castability, shown on the card
 itself. The left rail carries the phase chip (`MAIN 1`, `DRAW`, `UP NEXT`),
@@ -131,6 +141,107 @@ paused, and a line explaining what solitaire means. `Preview deck` and
 
 The counts are what make the filters usable. You are not guessing whether a
 filter has anything behind it.
+
+
+## What the recordings added
+
+The screenshots showed the table at rest. The recordings show it moving, and
+four things only a sequence could have shown.
+
+### A confirm dialog names the consequence, not the action
+
+Starting a solo game with nobody in the second seat brings up:
+
+> **No opponent seated**
+> Every seat but yours is empty, so nobody will play against you. You'll be
+> drawing and casting on your own. Good for testing a deck, not a game.
+> `Play alone anyway`  ·  `Seat an opponent`
+
+No "Are you sure?", no OK and Cancel. The title is the situation, the body is
+what will happen, and each button says what pressing it does. This is a house
+style worth stealing outright — it needs no engine and it is better than what
+this app does in several places today.
+
+The same idea runs through the buttons: picking a rival changes
+`Roll the dice →` into `Start game vs Sythis →`.
+
+### The prompt teaches the step, and its wording changes with the step
+
+At each stop the panel says where you are, then what the step is *for*:
+
+| Step | What it says | The teaching line under it |
+| --- | --- | --- |
+| Your upkeep | Nothing to respond with. | Some cards trigger now. Most turns, nothing does. |
+| Your first main | Make a play, or pass. | Play a land and cast your spells |
+| Your combat | Nothing to respond with. | Choose which creatures attack |
+| Sythis's end step | Nothing to **flash in**. | — |
+
+Two halves, and they do not port together. "Nothing to respond with" is a
+claim about the rules and is theirs alone. The teaching line is a fact about
+the turn, which is already written down here in `docs/TURN_STRUCTURE.md` — so
+`TurnTracker` can say the second half and must not say the first.
+
+The wording shifting to "nothing to flash in" at end step is the kind of care
+worth matching.
+
+### Pace is chosen once, as a posture, not as a settings page
+
+Before the first turn:
+
+> **How do you want to play?** You can change any of this later in Settings.
+> **Fast** — Keep it moving. *Fewer clicks.*
+> **Controlled** — See every window. *More passing.*
+> **Learning** — Explain as you go. *Phases explained.* "Stops at every
+> window, and each phase says what it is for the first few times you see it."
+
+Underneath, an `Advanced` disclosure holds the three settings the presets
+actually set: playback speed, auto-pay mana, full control. The preset is a
+bundle; the disclosure is the truth. "The first few times you see it" is the
+detail that makes Learning tolerable rather than nagging.
+
+### Hidden information is visibly hidden in the log
+
+`Sythis drew a card` is greyed and has no thumbnail. `You drew Mithril Coat`
+is in full colour with the card's art beside it. The log never pretends to
+know what it cannot see, and it shows that it does not know by how the line
+looks rather than by saying so. That rule belongs in `readLog` the moment
+there is a second seat (T4b-2).
+
+### Smaller things, all portable
+
+- Zone tiles in the corners — `LIB 92`, `CMD 1`, `GY`, `EXILE` — as small
+  stacked cards with a count, mirrored top and bottom for the two seats.
+- The phase is a pill on the life plate (`MAIN I`, `DRAW`, `UP NEXT`,
+  `THEIR TURN`), and the active seat's plate gets a ring. The turn state
+  lives next to the player it is about.
+- The opening hand is a prompt floating on the battlefield — *Opening Hand,
+  7 cards* · `Mulligan — Draw 7, free` · `Keep Hand →` — not a modal.
+- `Available Actions` is two panes: the list on the left grouped by zone with
+  a count, the whole card plus the cost and effect of the selected action on
+  the right, and the rule restated at the bottom — *tap an action to preview
+  it here, tap it again to do it*. It minimises as well as closes.
+- The opponent picker has difficulty tabs carrying counts
+  (Beginner 7, Intermediate 13, Advanced 15), and each rival card gives an
+  archetype, a one-line description of what the deck actually does, who built
+  it, and *Beats ~77% of challengers*. The playstyle slider under it is
+  labelled *Tactics, not difficulty*.
+
+### What the recordings talked me out of
+
+On the battlefield Moxgate does **not** show the whole card. A permanent is
+cropped to its art with a name strip under it — *FOREST · LAND* with a green
+pip — and the tile is landscape, so far more fits on screen.
+
+It is tempting, and it is wrong here. Their engine taps cards for you and
+carries the tapped state in its own panel; ours does not, so the rotation *is*
+the signal that a card is tapped, and it only reads as one if the card is
+portrait to begin with. A landscape tile rotated ninety degrees becomes
+portrait, which says "untapped" to anyone who has played with paper. Add that
+the ask was for cards that look like the cards, and the crop is a step back
+towards the drawn tile it replaced.
+
+So the battlefield keeps the whole printed face. The space the crop would
+have saved was found in the hand instead, where there is nothing to tap.
 
 ## The difference that decides everything
 
@@ -205,3 +316,13 @@ Five milestones, in value order for a Commander player on a phone.
   random deck, and a table panel.
 
 Each is testable without a rules engine, which is the point.
+
+Then, from the recordings:
+
+- **MG6 — The hand as a fan.** Done: `fan()` in `src/lib/board/geometry.js`.
+- **MG7 — Saying what will happen.** The confirm-dialog style above, applied
+  to the places this app currently asks "Are you sure?".
+- **MG8 — The step, taught.** The teaching half of the prompt, from
+  `docs/TURN_STRUCTURE.md`, and the phase pill beside the life total.
+- **MG9 — A posture, not a settings page.** Presets over the table's options,
+  with the disclosure that shows what each one actually sets.

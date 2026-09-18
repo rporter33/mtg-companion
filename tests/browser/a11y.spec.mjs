@@ -352,7 +352,9 @@ await scanState('the free table', async () => {
 await scanState('the free table, a card picked up', async () => {
   const held = page.locator('.tabletop__handcard .bcard').first()
   if (!await held.count()) return false
-  await held.click()
+  // The hand is a fan, so the leftmost card shows only its left edge; that
+  // sliver is what a person taps and so what this taps.
+  await held.click({ position: { x: 6, y: 40 } })
   await page.waitForTimeout(300)
   return (await page.locator('.actions').count()) === 1
 })

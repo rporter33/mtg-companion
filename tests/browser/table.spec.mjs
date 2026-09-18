@@ -118,6 +118,14 @@ const openRail = async () => {
   await page.waitForTimeout(300)
 }
 const onField = () => page.locator('.field .bcard').count()
+/*
+ * A card in hand is fanned, so the card to its right covers everything but
+ * its left edge. That is the point of a fan and it is what a person taps —
+ * the sliver they can see — so the suite taps there too. Clicking the middle
+ * of a card in a fan means clicking the card lying on top of it, which is
+ * exactly what would happen with paper.
+ */
+const SLIVER = { position: { x: 6, y: 40 } }
 const inHand = () => page.locator('.tabletop__handcard .bcard').count()
 const pileCount = async (title) => {
   await openRail()
@@ -146,7 +154,7 @@ check('the battlefield starts empty', (await onField()) === 0)
 check('the address names the deck on the table', page.url().includes('#/table/d1'), page.url())
 
 console.log('\nPutting a card on the table')
-await page.locator('.tabletop__handcard .bcard').first().click()
+await page.locator('.tabletop__handcard .bcard').first().click(SLIVER)
 await page.waitForTimeout(200)
 check('picking a card up offers what a hand can do with it',
   (await page.locator('.actions').count()) === 1)
@@ -262,7 +270,7 @@ const clickAt = async (fx, fy) => {
 }
 /** Plays the first card in hand and drags it to a spot of its own. */
 const placeAt = async (fx, fy) => {
-  await page.locator('.tabletop__handcard .bcard').first().click()
+  await page.locator('.tabletop__handcard .bcard').first().click(SLIVER)
   await page.waitForTimeout(150)
   await page.getByRole('button', { name: 'To the battlefield' }).click()
   await page.waitForTimeout(250)
@@ -502,7 +510,7 @@ check('and named in words, not only drawn',
 const playNamed = async (name) => {
   const held = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(new RegExp(name)) }).locator('.bcard').first()
   if (!await held.count()) return false
-  await held.click()
+  await held.click(SLIVER)
   await page.waitForTimeout(200)
   await page.getByRole('button', { name: 'To the battlefield' }).click()
   await page.waitForTimeout(350)
@@ -533,7 +541,7 @@ console.log('\nAn instant does not stay on the battlefield')
   const bolt = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(/Lightning Bolt/) }).locator('.bcard').first()
   check('there is one in hand to try it with', (await bolt.count()) > 0)
   const onField = await page.locator('.field .bcard').count()
-  await bolt.click()
+  await bolt.click(SLIVER)
   await page.waitForTimeout(200)
   check('the table does not even offer to put it there',
     (await page.getByRole('button', { name: 'To the battlefield' }).count()) === 0,
@@ -590,7 +598,7 @@ await openRail()
 {
   // Put something in the graveyard to look through.
   const inHand = page.locator('.tabletop__handcard .bcard').first()
-  await inHand.click()
+  await inHand.click(SLIVER)
   await page.waitForTimeout(200)
   const toYard = page.getByRole('button', { name: 'To the graveyard' })
   if (await toYard.count()) { await toYard.click(); await page.waitForTimeout(350) }
@@ -637,6 +645,83 @@ await openRail()
   await page.getByRole('button', { name: 'Close the library' }).click()
   await page.waitForTimeout(200)
   check('and it closes again', (await lib.locator('.zonebrowse').count()) === 0)
+}
+
+console.log('\nThe hand is a fan, not a row')
+{
+  // Draw the hand back up so there is a fan to measure rather than whatever
+  // is left after the cards played above.
+  while ((await inHand()) < 6) {
+    await page.getByRole('button', { name: 'Draw', exact: true }).click()
+    await page.waitForTimeout(120)
+  }
+  const shape = await page.evaluate(() => {
+    const row = document.querySelector('.tabletop__handrow')
+    const slots = [...document.querySelectorAll('.tabletop__handcard')]
+    const box = (n) => n.getBoundingClientRect()
+    const r = box(row)
+    return {
+      row: { left: r.left, right: r.right, width: r.width },
+      widths: slots.map((n) => box(n.querySelector('.bcard')).width),
+      lefts: slots.map((n) => box(n).left),
+      rights: slots.map((n) => box(n).right),
+      angles: slots.map((n) => new DOMMatrix(getComputedStyle(n).transform).m12),
+      // A badge and the slot it belongs to, so each can be checked against
+      // the card that is lying on top of it.
+      badges: slots.map((n) => {
+        const pip = n.querySelector('.tabletop__cost')
+        return pip ? { left: box(pip).left, right: box(pip).right } : null
+      }),
+    }
+  })
+
+  check('every card is laid over the one before it',
+    shape.lefts.every((left, i) => i === 0 || left > shape.lefts[i - 1]) &&
+    shape.lefts.every((left, i) => i === 0 || left < shape.rights[i - 1]),
+    JSON.stringify({ lefts: shape.lefts, rights: shape.rights }))
+
+  // The whole reason for a fan: seven cards laid side by side would each have
+  // to be a seventh of the strip, and overlapped they are far wider than that.
+  check('so each card is wider than a row would allow',
+    shape.widths[0] > (shape.row.width / shape.widths.length) * 1.4,
+    JSON.stringify({ card: shape.widths[0], row: shape.row.width, n: shape.widths.length }))
+
+  // The corners a turned card throws outside its own box are allowed to
+  // overhang into the padding around the strip; the cards themselves are not
+  // allowed to run off it, which is what the sizing from `span` prevents.
+  check('and the whole hand still fits the strip it is in',
+    Math.min(...shape.lefts) >= shape.row.left - 20 &&
+    Math.max(...shape.rights) <= shape.row.right + 20,
+    JSON.stringify({ leftmost: Math.min(...shape.lefts), rightmost: Math.max(...shape.rights), row: shape.row }))
+
+  check('the cards are turned, and not all by the same amount',
+    new Set(shape.angles.map((a) => a.toFixed(3))).size > 2, JSON.stringify(shape.angles))
+
+  /*
+   * A cost nobody can read is a cost that is not there.
+   *
+   * What is checked is that none is dropped, that each belongs to its own
+   * card, and that they read left to right in the order the cards do — a
+   * badge landing over the wrong card is worse than no badge. How far a
+   * rotated badge's corners reach is not checked, because a turned card's
+   * bounding box is not where the card looks like it is.
+   */
+  const costs = await page.evaluate(() => [...document.querySelectorAll('.tabletop__handcard')].map((slot) => {
+    const pip = slot.querySelector('.tabletop__cost')
+    const label = slot.querySelector('.bcard')?.getAttribute('aria-label') ?? ''
+    if (!pip) return { label, badge: null }
+    const b = pip.getBoundingClientRect()
+    const c = slot.getBoundingClientRect()
+    return { label, badge: { mid: (b.left + b.right) / 2 }, slot: { left: c.left, right: c.right } }
+  }))
+  const shown = costs.filter((c) => c.badge)
+  check('there are costs above the fan at all', shown.length > 0, JSON.stringify(costs.map((c) => c.label)))
+  check('and each one sits over its own card',
+    shown.every((c) => c.badge.mid >= c.slot.left && c.badge.mid <= c.slot.right),
+    JSON.stringify(shown.map((c) => [Math.round(c.slot.left), Math.round(c.badge.mid), Math.round(c.slot.right)])))
+  check('and they read across in the order the cards do',
+    shown.every((c, i) => i === 0 || c.badge.mid > shown[i - 1].badge.mid),
+    JSON.stringify(shown.map((c) => Math.round(c.badge.mid))))
 }
 
 console.log('\nCards look like cards')
@@ -768,7 +853,7 @@ check('the rows come off', (await page.locator('.playmat__lane').count()) === 0)
 {
   const bolt = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(/Lightning Bolt/) }).locator('.bcard').first()
   if (await bolt.count()) {
-    await bolt.click()
+    await bolt.click(SLIVER)
     await page.waitForTimeout(200)
     check('and an instant may sit wherever you like again',
       (await page.getByRole('button', { name: 'To the battlefield' }).count()) === 1)
