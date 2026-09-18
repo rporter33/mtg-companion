@@ -69,11 +69,29 @@ export function memoryBackend(initial = null, rootKey = 'mtg-companion:v1') {
  * `typeof localStorage !== 'undefined'` is true in Safari private mode right
  * up until the write throws.
  */
+/** The browser's "no room" errors, by the names and codes it has used over the years. */
+export const isQuotaError = (e) => Boolean(e) && (
+  e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014
+)
+
+/**
+ * localStorage when the browser lets us at it, memory otherwise. A full
+ * store is not an absent one: reads still work and a refused write is
+ * handled upstream by making room, so a probe refused for lack of space
+ * keeps localStorage. Only an access that throws outright (private mode
+ * in some browsers, storage disabled) falls back to memory, where nothing
+ * outlives the page.
+ */
 export function defaultBackend(prefix) {
   try {
     const probe = `${prefix}:probe`
-    localStorage.setItem(probe, '1')
-    localStorage.removeItem(probe)
+    try {
+      localStorage.setItem(probe, '1')
+      localStorage.removeItem(probe)
+    } catch (e) {
+      if (!isQuotaError(e)) throw e
+      void localStorage.length // still readable; a full store is served, not hidden
+    }
     return localStorageBackend(prefix)
   } catch {
     return memoryBackend()

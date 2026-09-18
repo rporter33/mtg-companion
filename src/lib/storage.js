@@ -95,6 +95,10 @@ const EMPTY = {
   decks: [],
   games: [],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
+  // The practice table: one saved run per exercise (its action log, which
+  // replays to the same state), paper practice by self-report, and the
+  // evidence record. Bounded: a run keeps at most PRACTICE_LOG_LIMIT actions.
+  practice: { runs: {}, paper: {}, evidence: {} },
   prefs: {
     market: 'usd',
     currency: 'usd', showCardImages: true, lastFormat: 'commander',
@@ -164,6 +168,7 @@ function assemble({ root, decks }) {
     ...EMPTY,
     ...merged,
     guide: { ...EMPTY.guide, ...(merged.guide ?? {}) },
+    practice: { ...EMPTY.practice, ...(merged.practice ?? {}) },
     prefs: { ...EMPTY.prefs, ...(merged.prefs ?? {}) },
   }
 }
@@ -413,6 +418,69 @@ export function saveTutorialState(tutorialState) {
   return update((state) => ({ ...state, guide: { ...state.guide, tutorialState } }))
 }
 
+// --- practice ------------------------------------------------------------
+
+export const PRACTICE_LOG_LIMIT = 400
+
+export function getPractice() {
+  return read().practice
+}
+
+/** Saves the current run of an exercise: its action log and the coach's side-state. Committed checkpoints only. */
+export function savePracticeRun(scenarioId, run) {
+  return update((state) => ({
+    ...state,
+    practice: {
+      ...state.practice,
+      runs: {
+        ...state.practice.runs,
+        [scenarioId]: {
+          version: run.version ?? 1,
+          log: (run.log ?? []).slice(-PRACTICE_LOG_LIMIT),
+          hints: run.hints ?? [],
+          explained: run.explained ?? null,
+          savedAt: run.savedAt ?? new Date().toISOString(),
+        },
+      },
+    },
+  }))
+}
+
+export function clearPracticeRun(scenarioId) {
+  return update((state) => {
+    const runs = { ...state.practice.runs }
+    delete runs[scenarioId]
+    return { ...state, practice: { ...state.practice, runs } }
+  })
+}
+
+/** Paper practice is self-reported: it is recorded as such and never counts as a demonstration. */
+export function markPaperPractice(scenarioId, done = true) {
+  return update((state) => {
+    const paper = { ...state.practice.paper }
+    if (done) paper[scenarioId] = { doneAt: new Date().toISOString(), selfReported: true }
+    else delete paper[scenarioId]
+    return { ...state, practice: { ...state.practice, paper } }
+  })
+}
+
+/** Evidence per lesson: viewed, practiced, demonstrated, each with when. Never removed by revisiting. */
+export function recordEvidence(lessonId, kind, detail = {}) {
+  return update((state) => {
+    const current = state.practice.evidence[lessonId] ?? {}
+    if (current[kind]) return state
+    return {
+      ...state,
+      practice: { ...state.practice, evidence: { ...state.practice.evidence, [lessonId]: { ...current, [kind]: { at: new Date().toISOString(), ...detail } } } },
+    }
+  })
+}
+
+/** Clears practice progress only. Decks, collection, games, guide and prefs are untouched. */
+export function resetPractice() {
+  return update((state) => ({ ...state, practice: { runs: {}, paper: {}, evidence: {} } }))
+}
+
 // --- collection ----------------------------------------------------------
 
 export function getCollection() {
@@ -490,8 +558,31 @@ export function importAll(json, { replace = false } = {}) {
         // this device's own place wins, since it is the one being played.
         tutorialState: state.guide.tutorialState ?? incoming.guide?.tutorialState ?? null,
       },
+      practice: mergePractice(state.practice, incoming.practice),
     }
   })
+}
+
+/**
+ * Practice merges by evidence: a run is kept from whichever side saved it
+ * later, paper self-reports and evidence are unioned and never lost, and
+ * the earliest date wins for evidence already held on both sides.
+ */
+function mergePractice(local, incoming) {
+  const base = { runs: {}, paper: {}, evidence: {}, ...(local ?? {}) }
+  if (!incoming || typeof incoming !== 'object') return base
+  const runs = { ...base.runs }
+  for (const [id, run] of Object.entries(incoming.runs ?? {})) {
+    if (!run || !Array.isArray(run.log)) continue
+    const mine = runs[id]
+    if (!mine || String(run.savedAt ?? '') > String(mine.savedAt ?? '')) runs[id] = { ...run, log: run.log.slice(-PRACTICE_LOG_LIMIT) }
+  }
+  const paper = { ...(incoming.paper ?? {}), ...base.paper }
+  const evidence = { ...base.evidence }
+  for (const [lesson, kinds] of Object.entries(incoming.evidence ?? {})) {
+    evidence[lesson] = { ...(kinds ?? {}), ...(evidence[lesson] ?? {}) }
+  }
+  return { runs, paper, evidence }
 }
 
 export function clearAll() {

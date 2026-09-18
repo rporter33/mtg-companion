@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { memoryBackend, localStorageBackend } from '../src/lib/storage-backend.js'
 import {
   useBackend, backendName, loadState, saveDeck, listDecks, deleteDeck,
-  markLessonComplete, saveTutorialState, getGuideProgress, exportAll, importAll, clearAll, setPref, getPrefs,
+  markLessonComplete, saveTutorialState, getPractice, savePracticeRun, clearPracticeRun, markPaperPractice, recordEvidence, resetPractice, PRACTICE_LOG_LIMIT, getGuideProgress, exportAll, importAll, clearAll, setPref, getPrefs,
 } from '../src/lib/storage.js'
 import { createDeck } from '../src/lib/deck.js'
 
@@ -78,6 +78,58 @@ describe('guide progress', () => {
     markLessonComplete('goal')
     markLessonComplete('goal')
     expect(getGuideProgress().completedLessons).toEqual(['goal'])
+  })
+})
+
+describe('practice', () => {
+  it('saves a run as its log, bounded, and clears it', () => {
+    savePracticeRun('mana-guided', { log: Array.from({ length: 500 }, (_, i) => ({ type: 'pass', i })), hints: ['h'], explained: { index: 0, correct: true } })
+    const run = getPractice().runs['mana-guided']
+    expect(run.log).toHaveLength(PRACTICE_LOG_LIMIT)
+    expect(run.log[0].i).toBe(100)
+    expect(run.hints).toEqual(['h'])
+    expect(run.version).toBe(1)
+    clearPracticeRun('mana-guided')
+    expect(getPractice().runs['mana-guided']).toBeUndefined()
+  })
+  it('records paper practice as self-reported and evidence once, never overwriting an earlier date', () => {
+    markPaperPractice('mana-guided')
+    expect(getPractice().paper['mana-guided'].selfReported).toBe(true)
+    markPaperPractice('mana-guided', false)
+    expect(getPractice().paper['mana-guided']).toBeUndefined()
+    recordEvidence('mana-first-creature', 'viewed', { scenarioId: 'a' })
+    const first = getPractice().evidence['mana-first-creature'].viewed
+    recordEvidence('mana-first-creature', 'viewed', { scenarioId: 'b' })
+    expect(getPractice().evidence['mana-first-creature'].viewed).toEqual(first)
+    recordEvidence('mana-first-creature', 'demonstrated')
+    expect(Object.keys(getPractice().evidence['mana-first-creature']).sort()).toEqual(['demonstrated', 'viewed'])
+  })
+  it('resets practice alone', () => {
+    saveDeck(createDeck({ name: 'Keep me', formatId: 'commander' }))
+    markLessonComplete('goal')
+    savePracticeRun('x', { log: [{ type: 'pass' }] })
+    resetPractice()
+    expect(getPractice()).toEqual({ runs: {}, paper: {}, evidence: {} })
+    expect(listDecks()).toHaveLength(1)
+    expect(getGuideProgress().completedLessons).toEqual(['goal'])
+  })
+  it('merges on import: later run wins, paper and evidence are unioned', () => {
+    savePracticeRun('a', { log: [{ type: 'pass' }], savedAt: '2026-01-02T00:00:00Z' })
+    savePracticeRun('b', { log: [{ type: 'pass' }], savedAt: '2026-01-09T00:00:00Z' })
+    markPaperPractice('a')
+    recordEvidence('lesson', 'viewed')
+    const json = exportAll()
+    clearAll()
+    savePracticeRun('a', { log: [{ type: 'pass' }, { type: 'pass' }], savedAt: '2026-01-05T00:00:00Z' })
+    savePracticeRun('b', { log: [{ type: 'pass' }, { type: 'pass' }, { type: 'pass' }], savedAt: '2026-01-01T00:00:00Z' })
+    markPaperPractice('c')
+    recordEvidence('lesson', 'practiced')
+    importAll(json)
+    const practice = getPractice()
+    expect(practice.runs.a.log).toHaveLength(2) // local is later
+    expect(practice.runs.b.log).toHaveLength(1) // incoming is later
+    expect(Object.keys(practice.paper).sort()).toEqual(['a', 'c'])
+    expect(Object.keys(practice.evidence.lesson).sort()).toEqual(['practiced', 'viewed'])
   })
 })
 

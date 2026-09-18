@@ -53,3 +53,26 @@
   .practice > .row:first-child, .practice > div:nth-child(2) { grid-column: 1 / -1; }
   .practice .coach { grid-column: 2; grid-row: 3 / span 4; position: sticky; top: var(--space-2); }
 }
+
+/* Cues: a card or strip is marked for a moment after a committed event. The
+   class is applied by the screen from the model's events and removed on a
+   timer; with motion reduced it is never applied, and the journal carries
+   the same information in words. */
+.permanent--cue-tap .cardface, .permanent--cue-untap .cardface { animation: cue-tap 0.32s ease-out; }
+.permanent--cue-enter .cardface, .permanent--cue-resolve .cardface { animation: cue-enter 0.32s ease-out; }
+.permanent--cue-hit .cardface, .strip--cue-hit { animation: cue-hit 0.32s ease-out; }
+.permanent--cue-grow .cardface { animation: cue-grow 0.32s ease-out; }
+.permanent--cue-leave .cardface { animation: cue-leave 0.32s ease-in; }
+.table__spell--cue-toStack { animation: cue-enter 0.32s ease-out; }
+@keyframes cue-tap { from { box-shadow: 0 0 0 0 var(--accent); } to { box-shadow: 0 0 0 10px transparent; } }
+@keyframes cue-enter { from { transform: translateY(10px); opacity: 0.2; } to { transform: none; opacity: 1; } }
+@keyframes cue-hit { 0% { box-shadow: 0 0 0 0 var(--error); } 100% { box-shadow: 0 0 0 10px transparent; } }
+@keyframes cue-grow { 0% { transform: scale(1); } 50% { transform: scale(1.08); } 100% { transform: scale(1); } }
+@keyframes cue-leave { from { opacity: 1; } to { opacity: 0.3; } }
+.practice--still .cardface, .practice--still .strip, .practice--still .table__spell { animation: none !important; transition: none !important; }
+
+.practice__journal { min-height: 1.4em; border-left: 2px solid var(--border); padding-left: var(--space-2); }
+.practice__details summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+.practice__log { margin: var(--space-2) 0; padding-left: 1.4em; max-height: 240px; overflow: auto; }
+.practice__paper ul, .practice__paper ol { padding-left: 1.4em; }
+.practice__replay { padding: var(--space-2); border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); }

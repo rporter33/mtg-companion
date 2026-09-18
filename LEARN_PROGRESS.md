@@ -95,6 +95,39 @@ resume from it. Milestones are the ones agreed on 18 September 2026 from the
   400.7, 405, 500.1, 500.4, 502.3–502.4, 504.1, 506–510, 508.8, 514.1–514.3,
   601.2, 605.3, 608.2b, 611.2, 702.10, 704.
 
+## M2 — motion from events, replay, paper, persistence (done)
+
+- `src/lib/table/motion.js`: one sentence per event (`narrate`), cues
+  naming only cards and players (`cuesFrom`), `prefersReducedMotion`
+  reading the app preference then the system. The screen applies a cue
+  class for 320ms after a committed event and never with motion reduced;
+  the journal and live region carry the same information in words. A
+  "Motion: on / reduced" control on the table stores `prefs.reduceMotion`.
+- Persistence: a `practice` record in storage (`runs` keyed by scenario
+  holding the action log, bounded to 400 actions, with hints and the
+  answered question; `paper` self-reports; `evidence` per lesson). A
+  reload replays the saved log to the same state and says so; a log that
+  no longer applies in full, or from another content version, is dropped.
+  Import merges: later run wins, paper and evidence unioned, the earliest
+  date kept. `resetPractice` clears practice alone.
+- Replay: "Step through it" renders the table as it was at any point of
+  the log with the controls removed; it cannot append to the log.
+- Paper prompt on every scenario: needs, steps, words to say, a check,
+  and a checkbox recorded as self-reported, never as a demonstration.
+- Evidence recorded so far: viewed on arrival, practiced on completion
+  with the hint count. Demonstrated is M4.
+- Storage failure: the run keeps working from memory and the screen says
+  it may not survive a reload.
+- Image failure: not applicable; every card on the table is drawn.
+- Found on the way: the storage probe treated a write refused for lack
+  of room as "no localStorage" and served an empty memory store, so a
+  browser that had merely run out of space showed no decks. The probe
+  now tells a full store from an absent one (`tests/storage-backend.test.js`).
+- Tests: `tests/table-motion.test.js`, storage practice tests, browser
+  spec additions (reload resume, Back, replay isolation, paper
+  self-report, reduced-motion equivalence on a page with the system
+  setting, keyboard-only completion with Enter alone). 57 checks.
+
 ## Next
 
-M2 — motion from events, replay, paper prompts, persistence and resume.
+M3 — combat and responses on the shared model.

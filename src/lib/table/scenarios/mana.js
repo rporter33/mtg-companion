@@ -24,6 +24,7 @@ const castingIs = (state, cardId) => state.casting && state.cards[state.casting.
 export const MANA_GUIDED = {
   id: 'mana-guided',
   lessonId: LESSON,
+  version: 1,
   variant: 'guided',
   title: 'Cast your first creature',
   summary: 'Two lands, one creature, and the whole payment shown a step at a time.',
@@ -108,6 +109,7 @@ export const MANA_GUIDED = {
 export const MANA_INDEPENDENT = {
   id: 'mana-independent',
   lessonId: LESSON,
+  version: 1,
   variant: 'independent',
   title: 'Cast it yourself',
   summary: 'A different creature, more sources than it needs, and no highlights.',
@@ -149,6 +151,7 @@ export const MANA_INDEPENDENT = {
 export const MANA_WRONG_COLOUR = {
   id: 'mana-wrong-colour',
   lessonId: LESSON,
+  version: 1,
   variant: 'independent',
   title: 'Enough mana, wrong colour',
   summary: 'Four lands and a four-mana creature that still cannot be cast.',
