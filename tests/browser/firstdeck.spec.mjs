@@ -240,6 +240,7 @@ check('the colours step asks what kind of deck, Commander first',
 await formats.getByRole('button', { name: 'Modern' }).click()
 await page.waitForTimeout(200)
 check('it says what a sixty-card format means', /Modern is a sixty-card, two-player format/.test(await body()))
+check('and the intro no longer promises a commander', /Nothing is saved until you start the deck/.test(await body()), (await body()).match(/Nothing is saved[^\n]*/)?.[0])
 await page.getByRole('button', { name: /Next: how you play/ }).click()
 await page.waitForTimeout(200)
 check('the way on is a start, not a commander', (await page.getByRole('button', { name: /Next: start a deck in/ }).count()) === 1)

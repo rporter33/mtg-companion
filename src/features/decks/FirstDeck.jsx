@@ -167,7 +167,7 @@ export default function FirstDeck({ onOpenCard }) {
       </div>
       <div>
         <h1>Your first deck</h1>
-        <p className="muted">Four short steps. Nothing is saved until you choose a commander, and you can change any of it later.</p>
+        <p className="muted">Four short steps. Nothing is saved until you {commanderFormat ? 'choose a commander' : 'start the deck'}, and you can change any of it later.</p>
       </div>
 
       <ol className="steps" aria-label="Steps">
