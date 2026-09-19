@@ -243,6 +243,15 @@ towards the drawn tile it replaced.
 So the battlefield keeps the whole printed face. The space the crop would
 have saved was found in the hand instead, where there is nothing to tap.
 
+**Superseded, 2026-09-19.** That reasoning holds only while the table enforces
+nothing. The rebuild described in `docs/table-rebuild/` puts a real engine
+underneath, and an engine knows which permanents are tapped — so the state can
+be shown by dimming and a glyph as well as by rotation, and the crop's much
+greater density is worth having. The decision is reversed there, and the
+condition attached to it is that tapped must still read at a glance. This
+paragraph stays because the reasoning is right for the table that exists
+today.
+
 ## The difference that decides everything
 
 Moxgate knows what every card does. This project deliberately does not.

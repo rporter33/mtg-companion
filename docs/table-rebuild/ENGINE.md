@@ -196,6 +196,15 @@ be made on the evidence below.
    was blocked from this session. This is the number that decides A vs B.
 2. **XMage's protocol** — is there a documented way to drive the server from a
    non-Swing client, or does it mean reverse-engineering their wire format?
+2b. **Can the engine enumerate a player's legal actions on demand?** This is
+   now a first-class criterion, not a nicety: `FRICTION.md` Law 1 says the
+   game never stops at a window where the player can do nothing, and obeying
+   it means asking *"does this player hold any legal action besides passing?"*
+   before rendering a prompt. **Argentum** documents exactly this
+   (`legalActions`, and pausing on `PendingDecision`s). **XMage is unverified
+   here.** If it can only say "your turn to choose" without enumerating what
+   is choosable, the product's whole differentiator gets expensive — and that
+   should outweigh a card-count advantage.
 3. **XMage's per-module licensing** — the root file is MIT; confirm nothing
    vendored inside is not.
 4. **Bundle size** with a jlink-trimmed JRE, against the "runs smoothly"

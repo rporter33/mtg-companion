@@ -156,9 +156,17 @@ Landscape. Reading clockwise from the top:
 filling a landscape tile with a name strip under it — `FOREST` left, `LAND`
 right, a green mana pip on the left. A freshly played card glows green.
 
-> This project deliberately does **not** copy that crop. See the last section
-> of `../MOXGATE_STUDY.md` for why: our rotation is the only thing that says
-> "tapped", and a landscape tile turned ninety degrees reads as untapped.
+> **We now copy this.** An earlier decision kept the whole printed face,
+> because in an *unenforced* table rotation is the only thing that says
+> "tapped", and a landscape tile turned ninety degrees reads as untapped. With
+> an engine tracking tapped state that objection largely goes: the app knows,
+> and can dim the tile and put a tap glyph on it as well as turning it. The
+> crop fits two to three times as many permanents on a screen, which serves
+> the friction thesis in `FRICTION.md`.
+>
+> What still has to be solved, and tested: **tapped must read instantly**.
+> Rotation alone is not enough on a landscape tile, so pair it with a dim and
+> a glyph — and keep "tapped" in the spoken label, per `HOUSE-RULES.md`.
 
 **Opening hand** (`v2_03`) is a prompt floating on the battlefield, not a
 modal: *Opening Hand / 7 cards* · `Mulligan / Draw 7, free` · `Keep Hand →`.
@@ -236,8 +244,13 @@ is deliberately weaker and says so on screen.
 ## What ports without an engine, and what does not
 
 **Ports as-is** — all of §1–§4, §5, §6, §7 (layout, plates, zone tiles,
-opening-hand prompt), §9 in full, §10 reframed as *physical* actions rather
-than *legal* ones, and the whole confirm-dialog and button-labelling style.
+opening-hand prompt, and now the cropped battlefield tile), §9 in full, §10,
+and the whole confirm-dialog and button-labelling style.
+
+**Ports, but fixed** — §8 and §10 carry Moxgate's two friction faults. The
+prompt panel must not stop for a window the player cannot act in, and the
+actions panel must act on one tap. See `FRICTION.md`; those two changes are
+the point of the rebuild.
 
 **Needs the engine** — the castability glow (§11), `AVAILABLE MANA` as a true
 number, "nothing to respond with" (the claim, not the teaching line), legal

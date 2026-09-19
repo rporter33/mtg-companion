@@ -69,6 +69,22 @@ old one comes out in a commit of its own.
 
 ---
 
+## Scope, and the order it ships in
+
+All four modes are in scope — **solo vs AI**, **1v1 with a friend**,
+**Commander pods (3–6)**, **draft and sealed**. The owner's instruction is to
+**build solo vs AI first and then plan the rest**, so:
+
+- **Everything before Phase 5 targets one human against one AI.** That is the
+  core loop, it is what both candidate engines ship an AI for, and it is the
+  easiest thing to demo.
+- **Design for more seats, build for two.** Phase 2 exists so the state model
+  is per-player from the start; a two-seat assumption baked into the client is
+  the thing that makes pods a rewrite later rather than a feature.
+- **Once solo vs AI works end to end, stop and plan the rest** before
+  continuing. Commander pods are the most valuable of the three, because
+  Moxgate's own lobby apologises for having them paused.
+
 ## Phase 1 — The shell, no engine
 
 Everything in `TARGET.md` §1–§7 and §9 that needs no rules knowledge. This is
@@ -86,7 +102,9 @@ blocked.
 - **Buttons that name their object** — `Start game vs Sythis →`.
 - **The table layout** (§7): both life plates with the phase pill and the ring
   on the active seat, the mirrored playmat, corner zone tiles with counts, the
-  actions rail, the opening-hand prompt floating rather than modal.
+  actions rail, the opening-hand prompt floating rather than modal, and the
+  **cropped landscape battlefield tile** — with a tapped treatment that reads
+  at a glance, since rotation alone will not carry it on a wide tile.
 - **The log** (§9) in full, including **hidden information visibly hidden** —
   greyed, no thumbnail — and step dividers with passed steps nested faintly
   beneath them. `src/lib/board/log.js` is most of the way there.
@@ -176,7 +194,13 @@ all of them, and the work is asking it the right question:
 - The castability glow (§11), now truthful.
 - `AVAILABLE MANA` as a real number.
 - The prompt panel (§8) with both halves: the rules claim *and* the teaching
-  line. Keep the wording shifts — "nothing to flash in" at end step.
+  line. Keep the wording shifts — "nothing to flash in" at end step. **But
+  obey `FRICTION.md` Law 1**: if the panel's sentence would be "nothing to
+  respond with", it should not be on screen at all. The panel appears when the
+  player can act; otherwise the game moves on and the log records the step.
+- **One tap acts** (`FRICTION.md` Law 2), with preview on hover and
+  long-press, undo for anything reversible, and a named-consequence dialog
+  only where a choice genuinely cannot be taken back.
 - `Available Actions` (§10) listing **legal** actions, two panes, preview then
   confirm.
 - Automatic triggers, legal attack and block declaration.

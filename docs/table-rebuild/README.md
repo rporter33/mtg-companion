@@ -14,6 +14,7 @@ This folder is everything needed to start that work cold:
 | `CURRENT.md` | What the Table is today — every file, what it does, what is tested. |
 | `TARGET.md` | Moxgate, screen by screen, from 10 screenshots and 3 recordings. |
 | `ENGINE.md` | **The decision that governs everything else.** Read before planning. |
+| `FRICTION.md` | **The two things we beat Moxgate on.** The design law. |
 | `PLAN.md` | Phases, and how to build without breaking the working app. |
 | `HOUSE-RULES.md` | The conventions this repo is held to. Non-negotiable. |
 | `frames/` | 29 de-duplicated frames from the recordings — the primary evidence. |
@@ -107,13 +108,27 @@ Settled with the owner on 2026-09-19, so the new session does not re-open them:
 - **Neither engine is chosen yet, on purpose.** The first task is the
   verification list at the end of `ENGINE.md`; the choice is made on evidence.
 - **The study frames are committed.**
+- **We form entirely around Moxgate**, including the cropped landscape
+  battlefield tile that an earlier decision rejected. `TARGET.md` is the
+  specification and it should be matched, not reinterpreted. The one house
+  convention that survives is that the app says what it is unsure of — which
+  under a real engine only applies in degraded mode anyway.
+- **Moxgate's users like it. Their one complaint is that it is cumbersome**,
+  in two specific places: being asked to confirm non-events, and two taps to
+  do one thing. `FRICTION.md` turns those into testable laws. They are the
+  reason for the rebuild, so read that file before building any of §8 or §10.
+  Everything *not* named there — the five setup dialogs, the amount of chrome
+  — was judged fine and must not be "simplified".
+- **Build order: solo vs AI first.** 1v1, Commander pods (3–6) and
+  draft/sealed are all in scope, but the single-player loop ships first and
+  the rest get a plan once it works.
 
 ## How to start
 
 1. Read `ENGINE.md`, then **do the verification list at the end of it**. That
    is the first task, and it is research, not code.
 2. Report what you find and settle XMage vs Argentum with the owner.
-3. Read `CURRENT.md` and `HOUSE-RULES.md`.
+3. Read `FRICTION.md`, then `CURRENT.md` and `HOUSE-RULES.md`.
 4. Read `TARGET.md` with `frames/` open beside it.
 5. Start Phase 1 in `PLAN.md` — it is not blocked on any of the above.
 
