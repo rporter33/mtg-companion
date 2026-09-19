@@ -15,6 +15,8 @@ This folder is everything needed to start that work cold:
 | `TARGET.md` | Moxgate, screen by screen, from 10 screenshots and 3 recordings. |
 | `ENGINE.md` | **The decision that governs everything else.** Read before planning. |
 | `FRICTION.md` | **The two things we beat Moxgate on.** The design law. |
+| `SPIKE.md` | The engine, actually built and run. Measured numbers. |
+| `spike/` | The Kotlin that produced them. Reproduces in ~6 minutes. |
 | `PLAN.md` | Phases, and how to build without breaking the working app. |
 | `HOUSE-RULES.md` | The conventions this repo is held to. Non-negotiable. |
 | `frames/` | 29 de-duplicated frames from the recordings — the primary evidence. |
@@ -133,10 +135,10 @@ Settled with the owner on 2026-09-19, so the new session does not re-open them:
    the two questions still open at the end of the VERIFIED section.
 2. Read `FRICTION.md`. It is the point of the rebuild.
 3. Read `CURRENT.md`, `HOUSE-RULES.md`, and `TARGET.md` with `frames/` open.
-4. **Do the spike first** — Phase 3 step 2 in `PLAN.md`: stand Argentum up
-   locally and drive a whole game through it from a script, no UI. A day that
-   tells you whether the rest of the plan is real.
-5. Then start Phase 1, which is not blocked on any of it.
+4. **The spike is already done** — read `SPIKE.md`. Argentum was built and
+   run: 20 games end to end, the wire measured, Law 1 quantified. Re-run it
+   with `spike/` if you want the loop in front of you.
+5. Start Phase 1. It is not blocked on anything.
 
 ### About `frames/`
 

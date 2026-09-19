@@ -133,13 +133,21 @@ Integration, not authorship. The work, in order:
    `ENGINE.md`. Two questions remain open there: bundle size with a trimmed
    JRE, and whether `rules-engine` survives a Kotlin/JS port. Neither blocks
    starting.
-2. **The spike, and do it first.** `just init && just server`, then drive a
-   whole game through it from a script with no UI of our own: seat two
-   players, mulligan, play a land, cast a creature, attack, pass. What you are
-   really measuring is three things — how the WebSocket protocol is shaped,
-   whether `legalActions` is cheap enough to ask at every priority window
-   (`FRICTION.md` Law 1 depends on it), and how much of the game state comes
-   over per update. A day here is worth a fortnight later.
+2. **The spike is done — read `SPIKE.md` before anything else.** Argentum was
+   built and run: 20 games end to end at 809 ms each, `legalActions()` at a
+   260 µs median, a `StateDelta` at 2.65 KB against a 16.7 KB full state, and
+   hidden information already enforced per viewer. `spike/` reproduces it in
+   about six minutes.
+
+   The biggest thing it changed: **we do not need their `game-server`.** The
+   whole client protocol — `ClientStateTransformer`, `StateDiffCalculator`,
+   `StateDelta`, `ClientDTO`, `Visibility` — lives in `rules-engine/…/view/`,
+   not in their Spring Boot app. So we write a thin server of our own around
+   `rules-engine` + `gym` + `view/`, and skip Keycloak, Redis, matchmaking and
+   their lobby, which `TARGET.md` replaces anyway.
+
+   **We therefore own the wire format**, which means Law 1 and Law 2 are
+   designed into the protocol rather than worked around in the client.
 3. **A transport boundary in our code**: one module that speaks to the engine
    and nothing else in the app knows what is behind it. It should be
    swappable for the unenforced table — same questions asked, different

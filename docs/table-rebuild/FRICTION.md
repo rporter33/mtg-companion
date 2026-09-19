@@ -34,28 +34,36 @@ against `Controlled · MORE PASSING` (`v2_05`). **We make it the default and the
 only sensible behaviour**, rather than an option the player has to find.
 
 **The rule**: the game pauses at a priority window **only** when the player
-holds at least one legal action other than passing. Otherwise it passes and
-moves on, and the log records that the step happened.
+holds at least one **affordable** action other than passing. Otherwise it
+passes and moves on, and the log records that the step happened.
+
+> **"Affordable", not "legal" — this was measured and it matters.**
+> The spike (`SPIKE.md` §2) ran 20 games and counted 20,337 priority windows.
+> Windows where passing is the only *legal* action: **1.4%**. Windows where
+> nothing is *affordable*: **49.9%**. The engine enumerates actions the player
+> cannot pay for and flags them `affordable = false`, so a rule written against
+> "has a legal action" would fire on one window in seventy and leave the rest
+> of the ceremony untouched. `LegalAction.affordable` is the field to read.
+>
+> The 49.9% came from random agents, which tap out more than a real player
+> would; treat it as the shape of the answer until it is re-measured against
+> the built-in AI.
 
 ### This is an engine requirement, not a UI one
 
 To obey Law 1 the client must be able to ask, cheaply and before rendering
 anything:
 
-> *Does this player have any legal action right now other than passing
-> priority?*
+> *Does this player have any **affordable** action right now other than
+> passing priority?*
 
-- **Argentum** exposes exactly this: its gym API is documented as
-  `reset / step / observe / legalActions`, and it "pauses on `PendingDecision`s
-  (scry, targets, search, distribute…)". Legal actions are a first-class
-  concept.
-- **XMage** — **unverified, and this is now a selection criterion.** Add it to
-  the verification list in `ENGINE.md`. If the answer is "the server tells the
-  client to choose, but will not enumerate what is choosable", Law 1 becomes
-  expensive and that counts heavily against it.
+**Argentum answers it, and cheaply — measured.** `GameEnvironment.legalActions()`
+timed at 20,337 real game states came out at a median of **260 µs**, p90 509 µs,
+p99 854 µs. Called once per window, server-side, that is about **0.26 s of
+enumeration across an entire 40-turn game**. Law 1 costs nothing.
 
-An engine that cannot answer that question forces us back to Moxgate's
-behaviour, which is the thing we are trying to beat.
+(XMage can also enumerate — `Player.getPlayable()`, and `GameView` carries a
+`PlayableObjectsList` to the client. It lost on transport, not on this.)
 
 ### Where it must still stop
 
@@ -76,11 +84,16 @@ question.**
 
 ### How to test it
 
-A browser spec that plays several turns against the AI holding a hand of only
-sorcery-speed cards, and asserts the number of times the client asked for
-input. It should be zero outside the player's own main phases. Then the same
-game with a Lightning Bolt in hand, which should stop at every opponent
-window. That is a real regression test for the product's whole thesis.
+Two levels, and keep both.
+
+`spike/Spike.kt` measures it against the engine directly, in seconds, with no
+UI in the way. It is the fast loop and it is already written.
+
+Then a browser spec: play several turns against the AI holding a hand of only
+sorcery-speed cards, and assert how many times the client asked for input. It
+should be zero outside the player's own main phases. Run the same game again
+with a Lightning Bolt in hand and it should stop at every opponent window.
+That is a regression test for the product's whole thesis.
 
 ---
 
