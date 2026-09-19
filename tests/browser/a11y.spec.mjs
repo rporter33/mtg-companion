@@ -352,9 +352,23 @@ await scanState('the free table', async () => {
 await scanState('the free table, a card picked up', async () => {
   const held = page.locator('.tabletop__handcard .bcard').first()
   if (!await held.count()) return false
-  // The hand is a fan, so the leftmost card shows only its left edge; that
-  // sliver is what a person taps and so what this taps.
-  await held.click({ position: { x: 6, y: 40 } })
+  // The hand is a fan: tap the strip of the card that is actually exposed,
+  // measured from where the next card starts. See tapHand in table.spec.mjs
+  // for why a fixed offset is wrong.
+  await held.scrollIntoViewIfNeeded()
+  const point = await held.evaluate((el) => {
+    const slot = el.closest('.tabletop__handcard')
+    const box = slot.getBoundingClientRect()
+    const y = box.top + box.height / 2
+    let from = null
+    for (let x = box.left + 1; x < box.right; x += 1) {
+      const hit = document.elementFromPoint(x, y)
+      if (hit && slot.contains(hit)) { if (from === null) from = x }
+      else if (from !== null) return { x: (from + x) / 2, y }
+    }
+    return from === null ? null : { x: (from + box.right) / 2, y }
+  })
+  await page.mouse.click(point.x, point.y)
   await page.waitForTimeout(300)
   return (await page.locator('.actions').count()) === 1
 })

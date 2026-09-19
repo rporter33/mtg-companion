@@ -119,13 +119,53 @@ const openRail = async () => {
 }
 const onField = () => page.locator('.field .bcard').count()
 /*
- * A card in hand is fanned, so the card to its right covers everything but
- * its left edge. That is the point of a fan and it is what a person taps —
- * the sliver they can see — so the suite taps there too. Clicking the middle
- * of a card in a fan means clicking the card lying on top of it, which is
- * exactly what would happen with paper.
+ * Tapping a card in the fan, where a person would tap it.
+ *
+ * The middle of a fanned card is the card lying on top of it, exactly as with
+ * paper, so a tap has to land on the strip that is actually showing. Finding
+ * that strip by arithmetic does not work, and both reasons were found the
+ * hard way:
+ *
+ *  - Every card is rotated, so its box has empty corners belonging to
+ *    whatever is behind it. Measured at 430px wide, the first x that really
+ *    belongs to a card ran from 1px to 21px depending on where in the fan it
+ *    sat and how high up you looked.
+ *  - The strip narrows as the hand grows — `fan()` deepens the overlap — so a
+ *    fixed fraction is right for seven cards and wrong for nineteen.
+ *
+ * So this asks the browser instead of computing: scan across the card at half
+ * its height and find the first run of pixels that hit-test to this card, then
+ * tap the middle of that run. It is the same test the browser applies to a
+ * real finger, so if this cannot find a point, neither could a player — which
+ * is worth failing loudly for.
+ *
+ * Measured, the strip is never empty: 46px on a phone at seven cards, 18px at
+ * fifteen, 12px at twenty-one, and 8px in the landscape layout at its worst.
+ * Small at the top end, but always there.
  */
-const SLIVER = { position: { x: 6, y: 40 } }
+const tapHand = async (card) => {
+  // elementFromPoint only answers for what is on screen, so the hand has to be
+  // in the viewport before anything is asked about it. Playwright's own click
+  // scrolls first; a raw mouse click does not, and neither does the hit-test.
+  // Probing a hand that had scrolled out of view reported every card as fully
+  // covered, which sent me looking for a layout bug that was not there.
+  await card.scrollIntoViewIfNeeded()
+  const point = await card.evaluate((el) => {
+    const slot = el.closest('.tabletop__handcard')
+    const box = slot.getBoundingClientRect()
+    const y = box.top + box.height / 2
+    let from = null
+    for (let x = box.left + 1; x < box.right; x += 1) {
+      const hit = document.elementFromPoint(x, y)
+      if (hit && slot.contains(hit)) { if (from === null) from = x }
+      else if (from !== null) return { x: (from + x) / 2, y }
+    }
+    return from === null ? null : { x: (from + box.right) / 2, y }
+  })
+  if (!point) throw new Error('no part of that hand card is tappable — it is fully covered')
+  await page.mouse.click(point.x, point.y)
+}
+
 const inHand = () => page.locator('.tabletop__handcard .bcard').count()
 const pileCount = async (title) => {
   await openRail()
@@ -154,7 +194,7 @@ check('the battlefield starts empty', (await onField()) === 0)
 check('the address names the deck on the table', page.url().includes('#/table/d1'), page.url())
 
 console.log('\nPutting a card on the table')
-await page.locator('.tabletop__handcard .bcard').first().click(SLIVER)
+await tapHand(page.locator('.tabletop__handcard .bcard').first())
 await page.waitForTimeout(200)
 check('picking a card up offers what a hand can do with it',
   (await page.locator('.actions').count()) === 1)
@@ -270,7 +310,7 @@ const clickAt = async (fx, fy) => {
 }
 /** Plays the first card in hand and drags it to a spot of its own. */
 const placeAt = async (fx, fy) => {
-  await page.locator('.tabletop__handcard .bcard').first().click(SLIVER)
+  await tapHand(page.locator('.tabletop__handcard .bcard').first())
   await page.waitForTimeout(150)
   await page.getByRole('button', { name: 'To the battlefield' }).click()
   await page.waitForTimeout(250)
@@ -510,7 +550,7 @@ check('and named in words, not only drawn',
 const playNamed = async (name) => {
   const held = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(new RegExp(name)) }).locator('.bcard').first()
   if (!await held.count()) return false
-  await held.click(SLIVER)
+  await tapHand(held)
   await page.waitForTimeout(200)
   await page.getByRole('button', { name: 'To the battlefield' }).click()
   await page.waitForTimeout(350)
@@ -541,7 +581,7 @@ console.log('\nAn instant does not stay on the battlefield')
   const bolt = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(/Lightning Bolt/) }).locator('.bcard').first()
   check('there is one in hand to try it with', (await bolt.count()) > 0)
   const onField = await page.locator('.field .bcard').count()
-  await bolt.click(SLIVER)
+  await tapHand(bolt)
   await page.waitForTimeout(200)
   check('the table does not even offer to put it there',
     (await page.getByRole('button', { name: 'To the battlefield' }).count()) === 0,
@@ -598,7 +638,7 @@ await openRail()
 {
   // Put something in the graveyard to look through.
   const inHand = page.locator('.tabletop__handcard .bcard').first()
-  await inHand.click(SLIVER)
+  await tapHand(inHand)
   await page.waitForTimeout(200)
   const toYard = page.getByRole('button', { name: 'To the graveyard' })
   if (await toYard.count()) { await toYard.click(); await page.waitForTimeout(350) }
@@ -853,7 +893,7 @@ check('the rows come off', (await page.locator('.playmat__lane').count()) === 0)
 {
   const bolt = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(/Lightning Bolt/) }).locator('.bcard').first()
   if (await bolt.count()) {
-    await bolt.click(SLIVER)
+    await tapHand(bolt)
     await page.waitForTimeout(200)
     check('and an instant may sit wherever you like again',
       (await page.getByRole('button', { name: 'To the battlefield' }).count()) === 1)
