@@ -16,7 +16,7 @@ This folder is everything needed to start that work cold:
 | `ENGINE.md` | **The decision that governs everything else.** Read before planning. |
 | `PLAN.md` | Phases, and how to build without breaking the working app. |
 | `HOUSE-RULES.md` | The conventions this repo is held to. Non-negotiable. |
-| `frames/` | 29 de-duplicated frames — **held back from git, see below**. |
+| `frames/` | 29 de-duplicated frames from the recordings — the primary evidence. |
 | `extract-frames.py` | How `frames/` was made, for the next batch of video. |
 
 ---
@@ -96,29 +96,37 @@ untouched until the new one is at parity, and the switch is one flag.
 
 ---
 
+## Decisions already taken
+
+Settled with the owner on 2026-09-19, so the new session does not re-open them:
+
+- **Both web and desktop are rules-enforced.** The owner will pay for hosting,
+  so the web build gets a hosted engine rather than falling back to the
+  play-by-hand table. That fallback still gets built — it is what runs when
+  the engine is unreachable — but it is no longer the web *plan*.
+- **Neither engine is chosen yet, on purpose.** The first task is the
+  verification list at the end of `ENGINE.md`; the choice is made on evidence.
+- **The study frames are committed.**
+
 ## How to start
 
-1. Read `ENGINE.md`. Put the four options to the owner. Get a decision.
-2. Read `CURRENT.md` and `HOUSE-RULES.md`.
-3. Read `TARGET.md` with `frames/` open beside it — the frames are named
-   `v<clip>_<order>_at<time>.jpg` and `TARGET.md` cites them by name.
-4. Write the plan into `PLAN.md` under the chosen option, then build.
+1. Read `ENGINE.md`, then **do the verification list at the end of it**. That
+   is the first task, and it is research, not code.
+2. Report what you find and settle XMage vs Argentum with the owner.
+3. Read `CURRENT.md` and `HOUSE-RULES.md`.
+4. Read `TARGET.md` with `frames/` open beside it.
+5. Start Phase 1 in `PLAN.md` — it is not blocked on any of the above.
 
 ### About `frames/`
 
-The 29 frames are **not committed**. They are screenshots of another product
-and this repository is public; committing them is easy and undoing it is not,
-so that is the owner's call rather than mine. Two ways to get them into a new
-session:
+The 29 frames are committed, at the owner's direction, as study material for
+this folder. They are named `v<clip>_<order>_at<time>.jpg` and `TARGET.md`
+cites each one by name. `extract-frames.py` regenerates them, or makes a new
+batch from the next set of recordings:
 
-- **Re-attach the three recordings in chat.** They are 15, 22 and 27 MB, and
-  `extract-frames.py` turns them back into exactly these frames in seconds:
-  `python3 extract-frames.py <video.mp4> frames/`
-- **Or delete `frames/.gitignore` and commit them**, if the owner is happy for
-  them to be public.
-
-`TARGET.md` was written *from* the frames and cites each one by name, so it
-stands on its own if the pictures are not to hand.
+```
+python3 extract-frames.py <video.mp4> frames/
+```
 
 One warning about the evidence: the recordings have **no sound**, the site
 itself was unreachable from the build environment, and nothing here is a claim

@@ -175,6 +175,21 @@ point. **Choose Argentum if the codebase matters more** — it is far pleasanter
 to work with, already has a React client, and is the only candidate that could
 plausibly be made to run in a browser.
 
+## Decided, 2026-09-19
+
+The owner has settled the deployment question: **both halves are
+rules-enforced**, and hosting for the web engine is approved. So the shape is
+not "desktop real, web by hand" — it is a hosted engine for the browser *and*
+a bundled one for desktop, behind the same transport boundary, with the
+unenforced table demoted to what runs when no engine can be reached.
+
+That makes **the protocol boundary the single most important design decision**
+in Phase 3: one module that speaks to an engine, indifferent to whether that
+engine is on localhost, on a server, or absent.
+
+The choice between XMage and Argentum is deliberately **not** made. It is to
+be made on the evidence below.
+
 ## What to verify before committing
 
 1. **Argentum's real card coverage** — `magic.wingedsheep.com/set-completion`
@@ -189,23 +204,12 @@ plausibly be made to run in a browser.
    `kotlin.reflect`, `java.*` imports and `ServiceLoader`. If it is close, the
    browser path opens and this stops being a server project at all.
 
-## The question to put to the owner
+## How to report the verification back
 
-> I got this wrong first time and the correction is good news. Two mature
-> engines — **XMage** and **Argentum** — are **MIT licensed**, so we can use
-> and even ship them. XMage has **32,000+ cards**, full rules and an AI, and
-> can run entirely offline on a local server.
->
-> So the plan becomes: **keep building our own client** (which is most of what
-> makes Moxgate feel like Moxgate, and is mostly built), and put a real engine
-> underneath it.
->
-> - **Desktop** gets everything: every card, every rule, an AI, fully offline,
->   by bundling the engine in the app. No hosting bill.
-> - **Web** needs a hosted engine — the only part that costs money — or falls
->   back to today's play-by-hand table.
->
-> Two questions: **are you willing to pay for hosting so the web version is
-> rules-enforced too**, or is web-plays-by-hand / desktop-plays-for-real an
-> acceptable split? And **coverage or codebase** — XMage's 32,000 cards, or
-> Argentum's much nicer Kotlin engine with a React client already in our stack?
+Both candidates are viable and the difference is evidence, not taste. When the
+five checks above are done, put it to the owner as a table — coverage, how
+hard the protocol is to drive, bundle size, and the browser-port question —
+with a recommendation and the reasoning. Not a list of options to choose from
+cold: a recommendation, and what would change it.
+
+Hosting a second small instance to try both is cheap next to picking wrong.

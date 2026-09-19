@@ -128,9 +128,12 @@ Integration, not authorship. The work, in order:
 5. **Desktop packaging**: Tauri or Electron, bundled JRE, engine on localhost,
    lifecycle handled (start, health-check, shut down cleanly, survive a
    crash). Under MIT this is a packaging job, not a licensing negotiation.
-6. **Web**: either a hosted instance behind the same transport boundary, or
-   the fallback to the unenforced table when no engine is reachable. The
-   boundary in step 3 is what makes that a configuration rather than a fork.
+6. **Web**: a hosted instance behind the same transport boundary — the owner
+   has approved hosting, so the browser build is rules-enforced too. The
+   unenforced table is then not the web *plan* but the **degraded mode**: what
+   runs when the engine is unreachable, on a train or during an outage. Say so
+   on screen when it happens, per the house rule that the app admits what it
+   does not know.
 
 **Do not fork the engine.** Contribute upstream if something is missing. A
 fork is a maintenance burden that outlives the enthusiasm that created it.
