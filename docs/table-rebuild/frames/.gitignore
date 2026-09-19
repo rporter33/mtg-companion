@@ -1,0 +1,8 @@
+# The 29 study frames are held back from git on purpose.
+#
+# They are screenshots of somebody else's product, and this repository is
+# public. Committing them is easy and undoing it is not, so the decision is
+# the owner's — see the note in README.md. The frames exist on disk in the
+# session that made them, and `../extract-frames.py` regenerates them from
+# the recordings in seconds.
+*.jpg
