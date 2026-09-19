@@ -129,12 +129,17 @@ to be per-player rather than "mine and the rest", which an engine assumes.
 
 Integration, not authorship. The work, in order:
 
-1. **Verify the open questions at the end of `ENGINE.md`** before writing
-   anything — Argentum's real card coverage, XMage's protocol, bundle size
-   with a trimmed JRE.
-2. **Stand the engine up locally** and drive a whole game through it from a
-   script, with no UI. This is the spike that tells you whether the protocol
-   is workable. Do it before committing to either candidate.
+1. **The engine is Argentum** — settled, see the VERIFIED section of
+   `ENGINE.md`. Two questions remain open there: bundle size with a trimmed
+   JRE, and whether `rules-engine` survives a Kotlin/JS port. Neither blocks
+   starting.
+2. **The spike, and do it first.** `just init && just server`, then drive a
+   whole game through it from a script with no UI of our own: seat two
+   players, mulligan, play a land, cast a creature, attack, pass. What you are
+   really measuring is three things — how the WebSocket protocol is shaped,
+   whether `legalActions` is cheap enough to ask at every priority window
+   (`FRICTION.md` Law 1 depends on it), and how much of the game state comes
+   over per update. A day here is worth a fortnight later.
 3. **A transport boundary in our code**: one module that speaks to the engine
    and nothing else in the app knows what is behind it. It should be
    swappable for the unenforced table — same questions asked, different

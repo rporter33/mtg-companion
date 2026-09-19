@@ -105,8 +105,12 @@ Settled with the owner on 2026-09-19, so the new session does not re-open them:
   so the web build gets a hosted engine rather than falling back to the
   play-by-hand table. That fallback still gets built — it is what runs when
   the engine is unreachable — but it is no longer the web *plan*.
-- **Neither engine is chosen yet, on purpose.** The first task is the
-  verification list at the end of `ENGINE.md`; the choice is made on evidence.
+- **The engine is Argentum** (`wingedsheep/argentum-engine`, MIT, Kotlin),
+  settled 2026-09-19 on evidence, not preference. XMage has more cards —
+  32,000 against 12,979 — but speaks JBoss Remoting with Java serialization,
+  which a browser cannot reach at all; using it would mean maintaining a Java
+  bridge forever. Argentum already ships a React/TypeScript client over
+  WebSocket. The reasoning is in the VERIFIED section of `ENGINE.md`.
 - **The study frames are committed.**
 - **We form entirely around Moxgate**, including the cropped landscape
   battlefield tile that an earlier decision rejected. `TARGET.md` is the
@@ -125,12 +129,14 @@ Settled with the owner on 2026-09-19, so the new session does not re-open them:
 
 ## How to start
 
-1. Read `ENGINE.md`, then **do the verification list at the end of it**. That
-   is the first task, and it is research, not code.
-2. Report what you find and settle XMage vs Argentum with the owner.
-3. Read `FRICTION.md`, then `CURRENT.md` and `HOUSE-RULES.md`.
-4. Read `TARGET.md` with `frames/` open beside it.
-5. Start Phase 1 in `PLAN.md` — it is not blocked on any of the above.
+1. Read `ENGINE.md` — the engine is decided, so read it for *why*, and for
+   the two questions still open at the end of the VERIFIED section.
+2. Read `FRICTION.md`. It is the point of the rebuild.
+3. Read `CURRENT.md`, `HOUSE-RULES.md`, and `TARGET.md` with `frames/` open.
+4. **Do the spike first** — Phase 3 step 2 in `PLAN.md`: stand Argentum up
+   locally and drive a whole game through it from a script, no UI. A day that
+   tells you whether the rest of the plan is real.
+5. Then start Phase 1, which is not blocked on any of it.
 
 ### About `frames/`
 

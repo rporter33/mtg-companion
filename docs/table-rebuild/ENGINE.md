@@ -1,6 +1,7 @@
 # The engine decision
 
-**Nothing else in this folder can be planned until this is settled.**
+**Settled on 2026-09-19: Argentum Engine.** The evidence is in the VERIFIED
+section below; the options and reasoning that led there are kept after it.
 
 > **This document was rewritten on 2026-09-19 after actually checking.** The
 > first draft asserted that the mature engines were "Java and copyleft" and
@@ -29,8 +30,8 @@ is **"which one, and what does using it cost"**.
 
 | Engine | Language | Licence | Scale | Shape |
 | --- | --- | --- | --- | --- |
-| **XMage** (`magefree/mage`) | Java | **MIT** | **32,000+ unique cards**, 91,000+ reprints | Client/server. **Local server = fully offline play vs AI.** 2.4k stars |
-| **Argentum** (`wingedsheep/argentum-engine`) | Kotlin | **MIT** | Unverified — tracker page is blocked from here | Pure-functional engine library + Spring Boot server + **React/TS web client**. Built-in AI |
+| **XMage** (`magefree/mage`) | Java | **MIT** | **32,000+ unique cards**, 91,000+ reprints | Client/server over **JBoss Remoting + Java serialization — not reachable from a browser.** 2.4k stars |
+| **Argentum** (`wingedsheep/argentum-engine`) | Kotlin | **MIT** | **12,979 cards** (2026-09-03, verified) | Pure-functional engine library + Spring Boot server + **React/TS web client over WebSocket**. Built-in AI |
 | **Forge** (`Card-Forge/forge`) | Java | **GPL-3.0** | Very large, not stated in README | Desktop (Win/Mac/Linux), Android, early iOS. 2.7k stars. **This is what Moxgate uses** |
 | `MTG-Paradox-Engine/mtg-paradox-engine` | TypeScript | — | **4 stars, 12 commits** | A toy. Not a dependency |
 
@@ -85,6 +86,87 @@ blocked here and is the first thing to check. Next to XMage's 32,000, a young
 project's coverage could be a fraction of that.
 
 ---
+
+---
+
+## VERIFIED, 2026-09-19 — the decision is Argentum
+
+The verification list at the bottom of this document was run. Three of the
+five questions are answered, and together they decide it.
+
+### 1. Can each engine enumerate legal actions? **Both can.**
+
+`FRICTION.md` Law 1 needs the engine to answer *"does this player hold any
+legal action besides passing?"* before the client renders a prompt.
+
+- **XMage**: `Player.java` exposes `getPlayable(Game, boolean)`,
+  `getPlayableObjects(Game, Zone)` and `getPlayableActivatedAbilities(...)`,
+  and — crucially — `GameView.java` carries a `PlayableObjectsList
+  canPlayObjects` field with a getter and setter, so **the playable list is
+  already sent to the client**. That is how its own client highlights castable
+  cards.
+- **Argentum**: documents `legalActions` in its gym API and pauses on
+  `PendingDecision`s.
+
+So this stops being the discriminator. The next question is.
+
+### 2. Can the engine be driven from a browser? **Only Argentum.**
+
+This is the finding that decides the project.
+
+**XMage's transport is JBoss Remoting over a bisocket, using Java
+serialization.** `SessionImpl.java` imports `org.jboss.remoting.*`,
+`org.jboss.remoting.transport.bisocket.Bisocket` and `TransporterClient`, and
+every view class — `PlayerView`, `GameView` — is `implements Serializable`.
+
+There is no JSON, no HTTP, no WebSocket. **A browser cannot speak this at
+all.** Using XMage from our React client would mean writing and permanently
+maintaining a Java bridge process: JBoss Remoting on one side, WebSocket/JSON
+on the other, marshalling XMage's internal view classes — which are not a
+public API and change without notice. That bridge would be the largest and
+most fragile component in the whole system, and it would exist forever.
+
+**Argentum** ships a React/TypeScript web client with *"real-time game state
+sync via WebSocket"*, plus a documented HTTP gym API. It is already the stack
+this repo is written in.
+
+### 3. Argentum's card coverage: **12,979 distinct cards**
+
+The live tracker is blocked from this environment, but the repository commits
+the chart that feeds it. `card-implementation-progress.html` carries the raw
+series: `DATES` runs from **2026-01-18** to **2026-09-03**, and the final
+value of `TOTALS` is **12,979**.
+
+The curve is steep and still accelerating — recent daily additions in that
+series include 272, 375, 333, **705**, 402. Eight months of one person's work.
+
+XMage's 32,000+ is more. But 12,979 covers essentially everything anyone
+actually plays, the gap is closing fast, and **`Argentum Assay` flags cards
+that need no new engine vocabulary** — so the cheap ones are identified and a
+card we need can be contributed upstream rather than waited for.
+
+### The decision
+
+**Argentum Engine.** Not because it has more cards — it has fewer — but
+because XMage's wire protocol is unreachable from a browser and Argentum's is
+the one we already speak. A permanent Java bridge is a worse problem than
+19,000 missing cards, most of which nobody plays.
+
+**The risk, stated plainly**: Argentum is eight months old with a single
+copyright holder. That is a real bus-factor problem. What makes it acceptable:
+MIT, a `rules-engine` module with no server dependencies, and immutable state
+— so if the project stops, we can fork a self-contained library rather than
+being stranded inside somebody's application.
+
+### Still open
+
+- **Bundle size** with a jlink-trimmed JRE, against the "runs smoothly"
+  requirement.
+- **Whether `rules-engine` survives a Kotlin/JS port** — grep for
+  `kotlin.reflect`, `java.*` imports and `ServiceLoader`. If it is close, the
+  browser path opens and the hosted server becomes optional rather than
+  structural. This is now the most valuable speculative work in the project.
+- XMage's per-module licensing is **moot** unless the decision is revisited.
 
 ## The options, revised
 
