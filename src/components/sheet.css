@@ -66,3 +66,16 @@
   .sheet--lg { max-width: 940px; }
   .sheet__grabber { display: none; }
 }
+
+/* --- a question with its consequence in it (Confirm.jsx) ---------------- */
+
+.confirm { display: grid; gap: var(--space-4); }
+.confirm__body { margin: 0; color: var(--text-muted); line-height: 1.5; }
+.confirm__body p { margin: 0; }
+.confirm__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: flex-end; }
+/* The way out is last, and reads as the quiet option. */
+.confirm__actions .btn--ghost { margin-right: auto; order: -1; }
+
+@media (min-width: 720px) {
+  .sheet--sm { max-width: 440px; }
+}

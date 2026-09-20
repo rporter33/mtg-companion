@@ -27,6 +27,7 @@ import PlayerCounters from '../../components/table/PlayerCounters.jsx'
 import ZoneBrowser from '../../components/table/ZoneBrowser.jsx'
 import TokenMaker from '../../components/table/TokenMaker.jsx'
 import Printings from '../../components/Printings.jsx'
+import Confirm from '../../components/Confirm.jsx'
 import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
 import useTravel from './useTravel.js'
@@ -99,6 +100,8 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   const [panel, setPanel] = useState(null)
   const [peeking, setPeeking] = useState(0)
   const [turnsOpen, setTurnsOpen] = useState(false)
+  // A question being asked in the house style: 'deal' or 'mulligan', or null.
+  const [asking, setAsking] = useState(null)
   const [mulligans, setMulligans] = useState(0)
   // The opening hand is kept once, and the prompt goes away for the game.
   const [localKept, setLocalKept] = useState(false)
@@ -298,14 +301,22 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   }, [board, doAction])
 
   if (!run || !me) {
+    // The table's own shape, empty, rather than a spinner: what is about to
+    // appear is already where it will be, and the line says what is being
+    // waited for.
+    const why = room
+      ? (shared.status === 'open' ? 'Taking a seat…' : shared.status === 'connecting' ? 'Joining the table…' : 'The relay is not answering yet. Trying again…')
+      : (missing.length ? 'Some cards could not be loaded; dealing anyway…' : 'Fetching the cards, then dealing…')
     return (
-      <div className="stack">
-        <div className="view-loading" aria-busy="true" />
-        {room && (
-          <p className="faint tiny" role="status">
-            {shared.status === 'open' ? 'Taking a seat…' : shared.status === 'connecting' ? 'Joining the table…' : 'The relay is not answering yet. Trying again…'}
-          </p>
-        )}
+      <div className="game game--loading" aria-busy="true">
+        <div className="game__them"><div className="plate plate--them skeleton" /><span className="skeleton skeleton--line" /></div>
+        <div className="game__field"><div className="field field--tile skeleton"><p className="field__empty" role="status">{why}</p></div></div>
+        <div className="game__you">
+          <div className="game__seat"><div className="plate plate--you skeleton" /><div className="rail"><span className="rail__btn skeleton" /><span className="rail__btn skeleton" /><span className="rail__btn skeleton" /></div></div>
+          <div className="game__hand skeleton skeleton--hand" />
+          <div className="ztiles">{PILES.map((z) => <span key={z} className="ztile"><span className="ztile__label">{TILE_LABELS[z]}</span><span className="ztile__face skeleton" /></span>)}</div>
+        </div>
+        <aside className="game__side"><div className="gamelog skeleton skeleton--log" /></aside>
       </div>
     )
   }
@@ -743,14 +754,38 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
             shared={Boolean(room)}
             onDo={doAction}
             onToken={() => setPanel('token')}
-            onMulligan={mulligan}
-            onDealAgain={dealAgain}
+            onMulligan={() => setAsking('mulligan')}
+            onDealAgain={() => setAsking('deal')}
             onTogglePref={togglePref}
             onLeave={() => navigate({ tab: 'game', gameDeckId: null, gameRoom: null })}
           />
         )}
       </aside>
       <Peek peek={peek} />
+
+      {/* The house style: the title is the situation, the body the consequence, the buttons what they do. */}
+      <Confirm
+        open={asking === 'deal'}
+        title="Deal again"
+        onClose={() => setAsking(null)}
+        actions={[
+          { label: 'Deal a new hand', kind: 'primary', onPress: () => { setAsking(null); dealAgain() } },
+          { label: 'Keep playing', kind: 'ghost', onPress: () => setAsking(null) },
+        ]}
+      >
+        This game ends here. Every card goes back into the deck, it is shuffled, and seven are dealt again. The log starts over.
+      </Confirm>
+      <Confirm
+        open={asking === 'mulligan'}
+        title="Mulligan"
+        onClose={() => setAsking(null)}
+        actions={[
+          { label: 'Take the mulligan', kind: 'primary', onPress: () => { setAsking(null); mulligan() } },
+          { label: 'Keep this hand', kind: 'ghost', onPress: () => setAsking(null) },
+        ]}
+      >
+        Your hand goes back, the library is shuffled, and you draw seven again. After keeping, you owe {Math.min(mulligans + 1, OPENING_HAND)} to the bottom.
+      </Confirm>
     </div>
   )
 }

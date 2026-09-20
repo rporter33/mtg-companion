@@ -10,6 +10,7 @@ import useLegalityWatch from './useLegalityWatch.js'
 import Term from '../../components/Term.jsx'
 import { navigate } from '../../lib/router.js'
 import DeckArt from '../../components/DeckArt.jsx'
+import Confirm from '../../components/Confirm.jsx'
 import { artUrl, faceIdFor } from '../../lib/deck-art.js'
 import { getCard } from '../../lib/cache.js'
 import { getPrefs } from '../../lib/storage.js'
@@ -40,6 +41,9 @@ if (typeof window !== 'undefined') {
 const Loading = () => <div className="view-loading" aria-busy="true" />
 
 export default function DecksView({ onOpenCard, offline, route, seed, onSeedConsumed }) {
+  // The deck a delete is being asked about, or null: the question is a
+  // dialog in the house style rather than the browser's own.
+  const [deleting, setDeleting] = useState(null)
   const [decks, setDecks] = useState(() => listDecks())
   const [creating, setCreating] = useState(false)
   const [pending, setPending] = useState(null)
@@ -171,15 +175,22 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
             key={deck.id}
             deck={deck}
             onOpen={() => openDeck(deck.id)}
-            onDelete={() => {
-              if (confirm(`Delete "${deck.name}"? This cannot be undone.`)) {
-                deleteDeck(deck.id)
-                refresh()
-              }
-            }}
+            onDelete={() => setDeleting(deck)}
           />
         ))}
       </div>
+
+      <Confirm
+        open={Boolean(deleting)}
+        title={deleting ? `Delete ${deleting.name}` : ''}
+        onClose={() => setDeleting(null)}
+        actions={[
+          { label: deleting ? `Delete ${deleting.name}` : 'Delete', kind: 'danger', onPress: () => { deleteDeck(deleting.id); setDeleting(null); refresh() } },
+          { label: 'Keep it', kind: 'ghost', onPress: () => setDeleting(null) },
+        ]}
+      >
+        The deck goes, with every version in its history. This cannot be undone.
+      </Confirm>
     </div>
   )
 }

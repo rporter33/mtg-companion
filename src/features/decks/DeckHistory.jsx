@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react'
+import Confirm from '../../components/Confirm.jsx'
 import { getCardsByIds } from '../../lib/scryfall.js'
 import {
   captureVersion, restoreVersion, deleteVersion, relabelVersion, diffVersions,
@@ -57,6 +58,8 @@ function useHistoryLookup(deck, editorLookup) {
 
 export default function DeckHistory({ deck, lookup: editorLookup, market, onChange }) {
   const [comparing, setComparing] = useState(null)
+  // The version a delete is being asked about, or null.
+  const [deleting, setDeleting] = useState(null)
   const versions = deck.versions ?? []
   const lookup = useHistoryLookup(deck, editorLookup)
 
@@ -108,7 +111,7 @@ export default function DeckHistory({ deck, lookup: editorLookup, market, onChan
                 open={comparing === v.id}
                 onCompare={() => setComparing(comparing === v.id ? null : v.id)}
                 onRestore={() => onChange(restoreVersion(deck, v.id))}
-                onDelete={() => onChange(deleteVersion(deck, v.id))}
+                onDelete={() => setDeleting(v)}
                 onRelabel={(text) => onChange(relabelVersion(deck, v.id, text))}
                 current={current}
               />
@@ -116,6 +119,18 @@ export default function DeckHistory({ deck, lookup: editorLookup, market, onChan
           </div>
         </section>
       )}
+
+      <Confirm
+        open={Boolean(deleting)}
+        title={deleting ? `Delete version ${deleting.label || deleting.id}` : ''}
+        onClose={() => setDeleting(null)}
+        actions={[
+          { label: 'Delete the version', kind: 'danger', onPress: () => { onChange(deleteVersion(deck, deleting.id)); setDeleting(null) } },
+          { label: 'Keep it', kind: 'ghost', onPress: () => setDeleting(null) },
+        ]}
+      >
+        The saved list goes; the deck as it is now is untouched. This cannot be undone.
+      </Confirm>
     </div>
   )
 }

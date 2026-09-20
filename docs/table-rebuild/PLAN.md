@@ -236,6 +236,19 @@ browser with its `t:` search, the coach and its silence, the untapped
 count. Along the way a made token stopped landing on whatever already sat
 at the row's centre: it takes the next free place, as a played card does.
 
+**Milestone 3, clarity everywhere — in progress.** The confirm-dialog house
+style is a component, `src/components/Confirm.jsx`: the title is the
+situation, the body the consequence, and every button says what pressing
+it does, never OK or Cancel. It asks before a deck is deleted, before a
+saved version is deleted, before dealing again and before a mid-game
+mulligan; the browser's own `confirm()` is gone from the app. The §3 "no
+opponent seated" dialog itself is not built: with no engine there is no
+opponent to seat, so the seats panel says so and a dialog with one real
+choice would be noise. The table's loading state is the table's own shape,
+faintly, with the one line that says what is being waited for, in place of
+a spinner. The tile was looked at on a phone upright, a phone sideways and a
+desktop, and holds at all three.
+
 **The common-card bundle waits on network**: Scryfall is not reachable from
 the build environment this was written in, so a bundle generated blind
 could not be checked. The script and loader are a small job once it is.

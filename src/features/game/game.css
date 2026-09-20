@@ -351,3 +351,24 @@
 .peek__face { display: block; width: 100%; height: 100%; object-fit: cover; }
 @keyframes facepeek-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .facepeek { animation: none; } }
+
+/* --- while the table is being laid ---------------------------------------- */
+/*
+ * The shape of what is coming, faintly, in place of a spinner. Blocks with
+ * the table's own proportions, a slow shimmer, and the one line that says
+ * what is being waited for.
+ */
+.skeleton { position: relative; overflow: hidden; background: var(--bg-raised) !important; border-color: var(--border) !important; color: transparent !important; }
+.skeleton::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, #ffffff0a, transparent);
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+.plate.skeleton { min-height: 6rem; }
+.skeleton--line { display: block; height: 1rem; width: 12rem; border-radius: 4px; }
+.skeleton--hand { min-height: 8rem; border-radius: var(--radius); }
+.skeleton--log { min-height: 10rem; }
+.rail__btn.skeleton { min-width: 6rem; }
+.game--loading .field__empty { color: var(--text-muted); }
+@keyframes skeleton-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .skeleton::after { animation: none; } }
