@@ -132,3 +132,19 @@ describe('reading the log', () => {
     expect(readLog([{ type: 'drew', player: 'you', instanceId: 'gone', turn: 1, seq: 1 }], null)[0].items[0].cardId).toBe(null)
   })
 })
+
+describe('who is speaking, at a shared table', () => {
+  it('calls the other seats by name when told their names, and by seat otherwise', async () => {
+    const { readLog } = await import('../src/lib/board/log.js')
+    const events = [
+      { type: 'life', player: 'p2', value: 18, delta: -2, seq: 1, turn: 1 },
+      { type: 'life', player: 'p1', value: 19, delta: -1, seq: 2, turn: 1 },
+    ]
+    const board = { cards: {}, players: ['p1', 'p2'], active: 'p1', turn: 1 }
+    const named = readLog(events, board, { you: 'p1', who: (p) => ({ p2: 'Bob' })[p] })
+    const whos = named.flatMap((t) => t.items).filter((i) => i.kind === 'entry').map((i) => i.who)
+    expect(whos).toEqual(['Bob', 'You'])
+    const unnamed = readLog(events, board, { you: 'p1' })
+    expect(unnamed.flatMap((t) => t.items).filter((i) => i.kind === 'entry').map((i) => i.who)).toEqual(['p2', 'You'])
+  })
+})

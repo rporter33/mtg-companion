@@ -77,8 +77,12 @@ function phrase(event, name) {
   }
 }
 
-/** The subject of the sentence. Only the seat you are sitting in is "You". */
-const speaker = (player, you) => (player === you ? 'You' : (player ?? 'Someone'))
+/**
+ * The subject of the sentence. Only the seat you are sitting in is "You";
+ * at a shared table the other seats are called by name, given a `who` that
+ * knows them, and by their seat id otherwise.
+ */
+const speaker = (player, you, who = null) => (player === you ? 'You' : (player ? (who?.(player) ?? player) : 'Someone'))
 
 /**
  * Reads the events back as turns.
@@ -90,7 +94,7 @@ const speaker = (player, you) => (player === you ? 'You' : (player ?? 'Someone')
  * Returns `[{ turn, active, items }]` where an item is either
  * `{ kind: 'entry', text, cardId, who }` or `{ kind: 'steps', from, to }`.
  */
-export function readLog(events = [], board = null, { you = 'you' } = {}) {
+export function readLog(events = [], board = null, { you = 'you', who = null } = {}) {
   const cards = board?.cards ?? {}
   const turns = []
   let current = null
@@ -129,7 +133,7 @@ export function readLog(events = [], board = null, { you = 'you' } = {}) {
     if (!said) continue
     group.items.push({
       kind: 'entry',
-      who: speaker(player, you),
+      who: speaker(player, you, who),
       text: said,
       cardId: inst?.cardId ?? null,
       instanceId: event.instanceId ?? null,

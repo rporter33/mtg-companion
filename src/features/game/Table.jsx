@@ -26,6 +26,8 @@ import PlayerCounters from '../../components/table/PlayerCounters.jsx'
 import ZoneBrowser from '../../components/table/ZoneBrowser.jsx'
 import TokenMaker from '../../components/table/TokenMaker.jsx'
 import Printings from '../../components/Printings.jsx'
+import useRoom from './useRoom.js'
+import { relayAddress } from './relayAddress.js'
 import '../../components/table/table.css'
 
 /**
@@ -53,20 +55,26 @@ import '../../components/table/table.css'
  * The prompt panel of §8 appears when there is something to say: today,
  * only the opening hand.
  *
- * The seat opposite is open, and says so. The layout is built for two; the
- * engine seats the second.
+ * Alone, the table is yours and lives in this browser. At a shared table
+ * (`room`), the relay holds it: every press is sent and nothing changes on
+ * screen until it comes back, the seat opposite is a real person seen
+ * across the table with their permanents mirrored, and undo is not offered
+ * because the table is not only yours to wind back.
  */
 const PILES = ['library', 'command', 'graveyard', 'exile']
 const TILE_LABELS = { library: 'Lib', command: 'Cmd', graveyard: 'GY', exile: 'Exile' }
+/** The zones anyone at the table may look through. A hand and a library are not among them. */
+const PUBLIC_PILES = ['graveyard', 'exile']
 const COMBAT_STEPS = ['beginCombat', 'attackers', 'blockers', 'firstStrike', 'damage', 'endCombat']
 
-export default function Table({ deck: initialDeck, onOpenCard }) {
+export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   // The deck is kept here because choosing a printing rewrites it, and the
   // table should show the copy just chosen without a reload.
   const [deck, setDeck] = useState(initialDeck)
   const { cards, loading, missing, lookup: deckLookup } = useDeckCards(deck)
-  // Cards on the table the deck has never heard of: a token, or a printing
-  // swapped in. Pinned, so they are still themselves after a reload.
+  // Cards on the table the deck has never heard of: a token, a printing
+  // swapped in, or — at a shared table — everything the other seat plays.
+  // Pinned, so they are still themselves after a reload.
   const [extra, setExtra] = useState(() => new Map())
   const lookup = useCallback((id) => deckLookup(id) ?? extra.get(id) ?? null, [deckLookup, extra])
   const remember = useCallback((card) => {
@@ -75,7 +83,7 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
     pinCards([card.id]).catch(() => { /* it will be fetched again if it has to be */ })
   }, [])
 
-  const [run, setRun] = useState(null)
+  const [localRun, setLocalRun] = useState(null)
   // The last card touched. One tap acts on a card and also makes it the one
   // ACTIONS on the rail is about, so the rarer things are one press away.
   const [selected, setSelected] = useState(null)
@@ -88,16 +96,32 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
   const [peeking, setPeeking] = useState(0)
   const [mulligans, setMulligans] = useState(0)
   // The opening hand is kept once, and the prompt goes away for the game.
-  const [kept, setKept] = useState(false)
+  const [localKept, setLocalKept] = useState(false)
   const [prefs, setPrefs] = useState(() => getPrefs())
   const reduced = prefersReducedMotion(prefs.reduceMotion ?? null)
   const showImages = prefs.showCardImages !== false
   const fieldRef = useRef(null)
 
+  // Deal once, and not before the cards have arrived: which row a card
+  // belongs in is read off its type line, and at first paint there is none
+  // to read. `loading` is false on the very first render, so readiness is
+  // "something came back", true only once the fetch settled either way.
+  const ready = !deck.main?.length || cards.size > 0 || missing.length > 0
+
+  const shared = useRoom({
+    address: room ? relayAddress() : null,
+    code: room,
+    name: prefs.playerName || 'Player',
+    deck,
+    deckLookup,
+    cardsReady: ready,
+  })
+
   /*
-   * A fresh deal. The lanes go in with the seat action rather than being
-   * looked up inside the reducer: the board still knows nothing about what a
-   * card is, and two devices replaying the same log reach the same table.
+   * A fresh deal, alone. The lanes go in with the seat action rather than
+   * being looked up inside the reducer: the board still knows nothing about
+   * what a card is, and two devices replaying the same log reach the same
+   * table.
    */
   const fresh = useCallback(() => {
     const seed = Math.floor(Math.random() * 1e9)
@@ -108,6 +132,8 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
     )
     return applyAll(newRun(createBoard({ seed, guided: prefs.tablePlaymat !== false })), actions).run
   }, [deck, deckLookup, prefs.tablePlaymat])
+
+  const run = room ? shared.run : localRun
 
   // Anything on the table the deck cannot name comes back with its painting.
   const unknownIds = useMemo(() => {
@@ -134,54 +160,52 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
   }, [unknownIds])
 
   /*
-   * Deal once, and not before the cards have arrived: which row a card
-   * belongs in is read off its type line, and at first paint there is none
-   * to read. A restored board already carries its rows and needs no wait.
-   * The slot is this table's own; the old table's game is not touched.
+   * Alone: the board this deck was left on, or a fresh deal. The slot is
+   * this table's own; the old table's game is not touched. A restored board
+   * already carries its rows and needs no wait for the cards.
    */
-  const ready = !deck.main?.length || cards.size > 0 || missing.length > 0
   const dealt = useRef(false)
   useEffect(() => {
-    if (dealt.current) return
+    if (room || dealt.current) return
     const saved = getGameTable()
     if (saved?.deckId === deck.id) {
       const restored = restore(saved)
       if (restored) {
         dealt.current = true
-        setRun(restored)
+        setLocalRun(restored)
         setMulligans(saved.mulligans ?? 0)
         // A save from before `kept` existed is a game already under way.
-        setKept(saved.kept ?? true)
+        setLocalKept(saved.kept ?? true)
         return
       }
     }
     if (!ready) return
     dealt.current = true
-    setRun(fresh())
+    setLocalRun(fresh())
     setMulligans(0)
-    setKept(false)
+    setLocalKept(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deck.id, ready])
+  }, [room, deck.id, ready])
 
   /*
    * Saved a moment after things settle, with a deadline so a board being
    * played — changing every few hundred milliseconds — still gets written.
    * And written on the way out regardless: a tab closed within half a second
    * of the last press used to lose that press, because the timer it was
-   * waiting on died with the page.
+   * waiting on died with the page. A shared table is saved by the relay.
    */
   const lastSaveAt = useRef(0)
   const latest = useRef(null)
-  latest.current = run ? snapshot(run, { deckId: deck.id, deckName: deck.name, mulligans, kept }) : null
+  latest.current = !room && localRun ? snapshot(localRun, { deckId: deck.id, deckName: deck.name, mulligans, kept: localKept }) : null
   useEffect(() => {
-    if (!run) return undefined
+    if (room || !localRun) return undefined
     const overdue = Date.now() - lastSaveAt.current > 2000
     const timer = setTimeout(() => {
       lastSaveAt.current = Date.now()
       saveGameTable(latest.current)
     }, overdue ? 0 : 400)
     return () => clearTimeout(timer)
-  }, [run, deck.id, deck.name, mulligans, kept])
+  }, [room, localRun, deck.id, deck.name, mulligans, localKept])
   useEffect(() => {
     const flush = () => { if (latest.current) saveGameTable(latest.current) }
     window.addEventListener('pagehide', flush)
@@ -190,19 +214,27 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
 
   const board = run?.board
   const soundOn = prefs.tableSound
-  const doAction = useCallback((action) => setRun((r) => {
+  const localDo = useCallback((action) => setLocalRun((r) => {
     if (!r) return r
     const next = act(r, action)
     playFor(next.lastEvents, soundOn)
     return next
   }), [soundOn])
-  const doAll = useCallback((actions) => setRun((r) => {
+  const localDoAll = useCallback((actions) => setLocalRun((r) => {
     if (!r) return r
     const next = applyAll(r, actions).run
     playFor(next.lastEvents, soundOn)
     return next
   }), [soundOn])
+  const doAction = room ? shared.doAction : localDo
+  const doAll = room ? shared.doAll : localDoAll
+  const kept = room ? shared.kept : localKept
+  const setKept = room ? shared.setKept : setLocalKept
   const togglePref = useCallback((key) => { setPrefs(setPref(key, !prefs[key]).prefs) }, [prefs])
+
+  // Which seat is yours. Alone it is the board's one seat; at a shared table
+  // it is whatever chair the relay gave you.
+  const me = room ? shared.seat : 'you'
 
   /*
    * Playing a card from hand. A permanent goes to the battlefield, into its
@@ -210,41 +242,52 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
    * goes. The one tap and the drag both end here.
    */
   const play = useCallback((id, point = {}) => {
-    setRun((r) => {
-      if (!r) return r
-      const inst = r.board.cards[id]
-      if (!inst) return r
-      const card = inst.custom ? null : deckLookup(inst.cardId) ?? null
-      const zone = r.board.guided && card ? zoneWhenPlayed(card, inst) : 'battlefield'
-      const next = act(r, zone === 'stack'
-        ? { type: 'move', id, zone: 'stack' }
-        : { type: 'move', id, zone: 'battlefield', ...point })
-      playFor(next.lastEvents, soundOn)
-      return next
-    })
-  }, [deckLookup, soundOn])
+    const inst = board?.cards[id]
+    if (!inst) return
+    const card = inst.custom ? null : deckLookup(inst.cardId) ?? null
+    const zone = board.guided && card ? zoneWhenPlayed(card, inst) : 'battlefield'
+    doAction(zone === 'stack'
+      ? { type: 'move', id, zone: 'stack' }
+      : { type: 'move', id, zone: 'battlefield', ...point })
+  }, [board, deckLookup, doAction])
 
   const onSlide = useCallback((id, point) => doAction({ type: 'move', id, zone: 'battlefield', ...point }), [doAction])
   const onPlay = useCallback((id, point) => { setSelected(id); play(id, point) }, [play])
   const { drag, begin, justDragged } = useDrag({ fieldRef, onSlide, onPlay })
 
-  const nudge = useCallback((id, dx, dy) => setRun((r) => {
-    const inst = r.board.cards[id]
-    if (!inst) return r
-    return act(r, { type: 'move', id, zone: 'battlefield', x: inst.x + dx, y: inst.y + dy })
-  }), [])
+  const nudge = useCallback((id, dx, dy) => {
+    const inst = board?.cards[id]
+    if (!inst) return
+    doAction({ type: 'move', id, zone: 'battlefield', x: inst.x + dx, y: inst.y + dy })
+  }, [board, doAction])
 
-  if (!run) return <div className="view-loading" aria-busy="true" />
+  if (!run || !me) {
+    return (
+      <div className="stack">
+        <div className="view-loading" aria-busy="true" />
+        {room && (
+          <p className="faint tiny" role="status">
+            {shared.status === 'open' ? 'Taking a seat…' : shared.status === 'connecting' ? 'Joining the table…' : 'The relay is not answering yet. Trying again…'}
+          </p>
+        )}
+      </div>
+    )
+  }
 
   const selectedInst = selected ? board.cards[selected] ?? null : null
-  const hand = handOf(board, 'you')
+  const hand = handOf(board, me)
   const spread = fan(hand.length)
   const nameFor = (inst) => nameOf(board, inst.id, lookup)
   const cardFor = (inst) => (inst.custom ? null : lookup(inst.cardId))
-  const pool = untappedSources(board, 'you', cardFor)
+  const pool = untappedSources(board, me, cardFor)
   const step = STEPS.find((s) => s.id === board.step) ?? STEPS[0]
+  const myTurn = board.active === me
   const inCombat = COMBAT_STEPS.includes(board.step)
   const commander = deck.commanders?.length ? lookup(deck.commanders[0]) : null
+  const refusal = room ? shared.refusal : run.refusal
+  const others = room ? board.players.filter((p) => p !== me) : []
+  const seatOf = (p) => shared.seats.find((s) => s.seat === p) ?? null
+  const nameOfSeat = (p) => seatOf(p)?.name ?? `Seat ${p.replace(/^p/, '')}`
 
   /*
    * One tap. In hand it plays the card; on the battlefield it taps it; in a
@@ -287,13 +330,13 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
     doAction({ type: 'makeToken', cardId, custom })
     setPanel(null)
   }
-  const dealAgain = () => { setSelected(null); setAiming(null); setPanel(null); setPeeking(0); setMulligans(0); setKept(false); setRun(fresh()) }
-  const mulligan = () => { setMulligans(mulligans + 1); doAll(mulliganActions(board, { seed: Math.floor(Math.random() * 1e9) })) }
-  const openZone = (zone) => setPanel(panel === `zone:${zone}` ? null : `zone:${zone}`)
-  const zoneOpen = panel?.startsWith('zone:') ? panel.slice(5) : null
+  const dealAgain = () => { setSelected(null); setAiming(null); setPanel(null); setPeeking(0); setMulligans(0); setLocalKept(false); setLocalRun(fresh()) }
+  const mulligan = () => { setMulligans(mulligans + 1); doAll(mulliganActions(board, { player: me, seed: Math.floor(Math.random() * 1e9) })) }
+  const openZone = (zone, who = me) => setPanel(panel === `zone:${zone}@${who}` ? null : `zone:${zone}@${who}`)
+  const [zoneOpen, zoneWho] = panel?.startsWith('zone:') ? panel.slice(5).split('@') : [null, null]
 
   return (
-    <div className={`game${drag ? ' game--carrying' : ''}`}>
+    <div className={`game${drag ? ' game--carrying' : ''}${room ? ' game--shared' : ''}`}>
       {drag && drag.moved && drag.from !== 'battlefield' && board.cards[drag.id] && (
         <div className="carried" style={{ left: `${drag.x}px`, top: `${drag.y}px` }} aria-hidden="true">
           <BoardCard card={cardFor(board.cards[drag.id])} name={nameFor(board.cards[drag.id])} inst={board.cards[drag.id]} size="hand" dragging />
@@ -301,21 +344,93 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
       )}
 
       {/* --- the seat opposite ------------------------------------------- */}
-      <div className="game__them">
-        <Plate who="them" status="Open seat" name="Nobody yet" life={null} />
-        <p className="game__theirhand faint tiny">Nobody sits here yet. Opponents arrive with the engine.</p>
-        <div className="ztiles ztiles--them" aria-hidden="true">
-          {PILES.map((zone) => (
-            <span key={zone} className="ztile ztile--empty">
-              <span className="ztile__label">{TILE_LABELS[zone]}</span>
-              <span className="ztile__face" />
-            </span>
-          ))}
+      {others.length === 0 ? (
+        <div className="game__them">
+          <Plate who="them" status="Open seat" name="Nobody yet" life={null} />
+          <p className="game__theirhand faint tiny">Nobody sits here yet. Opponents arrive with the engine.</p>
+          <div className="ztiles ztiles--them" aria-hidden="true">
+            {PILES.map((zone) => (
+              <span key={zone} className="ztile ztile--empty">
+                <span className="ztile__label">{TILE_LABELS[zone]}</span>
+                <span className="ztile__face" />
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : others.map((them) => {
+        const sitting = seatOf(them)
+        const theirHand = handOf(board, them).length
+        const theirCommander = zoneOf(board, them, 'command')[0]
+        const face = theirCommander && showImages ? artUrl(cardFor(theirCommander)) : null
+        return (
+          <div className={`game__them game__them--seated${sitting?.here ? '' : ' game__them--away'}`} key={them}>
+            <Plate
+              who="them"
+              status={!sitting ? 'Open seat' : !sitting.here ? 'Away' : board.active === them ? 'Their turn' : 'Waiting'}
+              active={board.active === them}
+              name={nameOfSeat(them)}
+              life={sitting ? board.life[them] : null}
+            />
+            <div className="game__theirhand" aria-label={`${nameOfSeat(them)}'s hand, ${theirHand} card${theirHand === 1 ? '' : 's'}`} role="img">
+              {theirHand ? (
+                <span className="backs" aria-hidden="true">
+                  {Array.from({ length: Math.min(theirHand, 12) }, (_, i) => <span key={i} className="back" />)}
+                  {theirHand > 12 && <span className="backs__more">+{theirHand - 12}</span>}
+                </span>
+              ) : <span className="faint tiny">{sitting ? 'Nothing in hand' : 'Nobody sits here yet'}</span>}
+            </div>
+            <div className="ztiles ztiles--them" role="group" aria-label={`${nameOfSeat(them)}'s zones`}>
+              {PILES.map((zone) => {
+                const n = zone === 'library' ? librarySize(board, them) : zoneOf(board, them, zone).length
+                const open = PUBLIC_PILES.includes(zone)
+                const Tag = open ? 'button' : 'span'
+                return (
+                  <Tag
+                    key={zone}
+                    className={`ztile${open ? '' : ' ztile--closed'}${zoneOpen === zone && zoneWho === them ? ' ztile--open' : ''}`}
+                    onClick={open ? () => openZone(zone, them) : undefined}
+                    aria-expanded={open ? zoneOpen === zone && zoneWho === them : undefined}
+                    aria-label={`${nameOfSeat(them)}'s ${ZONE_LABELS[zone].toLowerCase()}, ${n} card${n === 1 ? '' : 's'}`}
+                  >
+                    <span className="ztile__label" aria-hidden="true">{TILE_LABELS[zone]}</span>
+                    <span className={`ztile__face${zone === 'library' && n ? ' ztile__face--back' : ''}`} style={zone === 'command' && face ? { backgroundImage: `url("${face}")` } : undefined} aria-hidden="true">
+                      {!n && <span className="ztile__nil">—</span>}
+                    </span>
+                    {n > 0 && <span className="ztile__count" aria-hidden="true">{n}</span>}
+                  </Tag>
+                )
+              })}
+            </div>
+            <div className="game__theirfield">
+              <Field
+                fieldRef={{ current: null }}
+                board={board}
+                lookup={lookup}
+                player={them}
+                selectedId={selected}
+                drag={null}
+                aiming={aiming}
+                onBegin={() => {}}
+                onSelect={touch}
+                onContext={hold}
+                onBackground={() => { if (panel === 'actions') setPanel(null) }}
+                images={showImages}
+                tile
+                mirror
+              />
+            </div>
+          </div>
+        )
+      })}
 
       {/* --- the battlefield ---------------------------------------------- */}
       <div className={`game__field${kept ? '' : ' game__field--prompt'}`}>
+        {room && shared.status !== 'open' && (
+          <div className="banner banner--warn" role="status">
+            {shared.status === 'reconnecting' ? 'Lost the table for a moment. Reconnecting…' : 'Connecting to the table…'}
+            {' '}Nothing you press will happen until it is back.
+          </div>
+        )}
         {missing.length > 0 && (
           <div className="banner banner--warn">
             {missing.length} card{missing.length === 1 ? '' : 's'} in this deck could not be loaded, so
@@ -323,11 +438,12 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
           </div>
         )}
         {loading && <p className="faint tiny m0">Loading the paintings…</p>}
-        {run.refusal && <div className="banner banner--info" role="status">{run.refusal.message}</div>}
+        {refusal && <div className="banner banner--info" role="status">{refusal.message}</div>}
         <Field
           fieldRef={fieldRef}
           board={board}
           lookup={lookup}
+          player={me}
           selectedId={selected}
           drag={drag}
           aiming={aiming}
@@ -349,7 +465,7 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
             <button className="btn btn--ghost btn--sm" onClick={() => setAiming(null)}>Never mind</button>
           </div>
         )}
-        {!kept && (
+        {!kept && hand.length > 0 && (
           <OpeningHand count={hand.length} mulligans={mulligans} onMulligan={mulligan} onKeep={() => setKept(true)} />
         )}
       </div>
@@ -359,10 +475,10 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
         <div className="game__seat">
           <Plate
             who="you"
-            status={board.active === 'you' ? step.name : 'Waiting'}
-            active={board.active === 'you'}
-            name="You"
-            life={board.life.you}
+            status={myTurn ? step.name : 'Waiting'}
+            active={myTurn}
+            name={room ? (prefs.playerName || 'You') : 'You'}
+            life={board.life[me]}
             onLife={(delta) => doAction({ type: 'life', delta })}
           >
             <div className="plate__mana">
@@ -377,10 +493,20 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
             <button className="rail__btn" onClick={() => doAction(inCombat ? { type: 'step' } : { type: 'step', to: 'beginCombat' })}>
               {inCombat ? '⚔ Next step' : '⚔ Combat'}
             </button>
-            <button className="rail__btn rail__btn--go" onClick={() => doAll([{ type: 'nextTurn' }, { type: 'untapAll' }])}>
+            <button
+              className="rail__btn rail__btn--go"
+              onClick={() => (room ? doAction({ type: 'nextTurn' }) : doAll([{ type: 'nextTurn' }, { type: 'untapAll' }]))}
+              disabled={room && !myTurn}
+              title={room && !myTurn ? 'Only the player whose turn it is can end it.' : undefined}
+            >
               → End turn
             </button>
-            <button className="rail__btn" onClick={() => setRun((r) => undo(r))} disabled={!run.past.length}>
+            <button
+              className="rail__btn"
+              onClick={() => setLocalRun((r) => undo(r))}
+              disabled={room ? true : !run.past.length}
+              title={room ? 'A shared table is not only yours to wind back. Ask, and move it back by hand.' : undefined}
+            >
               ↶ Undo
             </button>
             <button className={`rail__btn${panel === 'more' ? ' rail__btn--on' : ''}`} onClick={() => setPanel(panel === 'more' ? null : 'more')} aria-expanded={panel === 'more'} aria-label="More">
@@ -425,14 +551,15 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
 
         <div className="ztiles" role="group" aria-label="Your zones">
           {PILES.map((zone) => {
-            const n = zone === 'library' ? librarySize(board, 'you') : zoneOf(board, 'you', zone).length
+            const n = zone === 'library' ? librarySize(board, me) : zoneOf(board, me, zone).length
             const face = zone === 'command' && showImages ? artUrl(commander) : null
+            const isOpen = zoneOpen === zone && zoneWho === me
             return (
               <button
                 key={zone}
-                className={`ztile${zoneOpen === zone ? ' ztile--open' : ''}`}
+                className={`ztile${isOpen ? ' ztile--open' : ''}`}
                 onClick={() => openZone(zone)}
-                aria-expanded={zoneOpen === zone}
+                aria-expanded={isOpen}
                 aria-label={`${ZONE_LABELS[zone]}, ${n} card${n === 1 ? '' : 's'}`}
               >
                 <span className="ztile__label" aria-hidden="true">{TILE_LABELS[zone]}</span>
@@ -448,11 +575,29 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
 
       {/* --- the side column: the log, and whatever is open --------------- */}
       <aside className="game__side">
-        <GameLog board={board} events={run.events} lookup={lookup} restored={run.restored} />
-        {prefs.tableCoach && <Coach board={board} events={run.events} lookup={lookup} onSilence={() => togglePref('tableCoach')} />}
+        {room && (
+          <section className="pile game__seats" aria-label="Who is at the table">
+            <h2 className="pile__title">Table <span className="chip tiny">{room}</span></h2>
+            <ul className="game__seatlist" role="list">
+              {board.players.map((p) => {
+                const s = seatOf(p)
+                return (
+                  <li key={p} className={`game__seatrow${p === me ? ' game__seatrow--you' : ''}${s && !s.here ? ' game__seatrow--away' : ''}`}>
+                    <span className="game__dot" aria-hidden="true" />
+                    <span>{p === me ? 'You' : s ? s.name : 'Open seat'}</span>
+                    <span className="faint tiny">{!s ? '' : !s.here ? 'away' : board.active === p ? (p === me ? 'your turn' : 'their turn') : ''}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+        )}
+        <GameLog board={board} events={run.events} lookup={lookup} restored={run.restored} you={me} who={room ? nameOfSeat : null} />
+        {prefs.tableCoach && <Coach board={board} events={run.events} lookup={lookup} player={me} onSilence={() => togglePref('tableCoach')} />}
 
         <StackShelf
           board={board}
+          player={me}
           nameFor={nameFor}
           cardFor={cardFor}
           onResolve={(inst) => {
@@ -471,6 +616,7 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
               name={nameFor(selectedInst)}
               card={cardFor(selectedInst)}
               host={hostOf(board, selectedInst.id)}
+              mine={selectedInst.controller === me || selectedInst.owner === me}
               permanent={!board.guided || !cardFor(selectedInst) || isPermanent(cardFor(selectedInst), selectedInst)}
               onDo={(action) => doAction(action)}
               onAim={aimAt}
@@ -496,13 +642,14 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
         {zoneOpen && (
           <section className="pile" aria-label={ZONE_LABELS[zoneOpen]}>
             <h2 className="pile__title">
-              {ZONE_LABELS[zoneOpen]}
-              <span className="chip tiny">{zoneOpen === 'library' ? librarySize(board, 'you') : zoneOf(board, 'you', zoneOpen).length}</span>
+              {zoneWho !== me ? `${nameOfSeat(zoneWho)}'s ${ZONE_LABELS[zoneOpen].toLowerCase()}` : ZONE_LABELS[zoneOpen]}
+              <span className="chip tiny">{zoneOpen === 'library' ? librarySize(board, zoneWho) : zoneOf(board, zoneWho, zoneOpen).length}</span>
               <button className="btn btn--ghost btn--sm" onClick={() => setPanel(null)}>Close</button>
             </h2>
-            {zoneOpen === 'library' ? (
+            {zoneOpen === 'library' && zoneWho === me ? (
               <Library
                 board={board}
+                player={me}
                 nameFor={nameFor}
                 cardFor={cardFor}
                 peeking={peeking}
@@ -516,7 +663,7 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
             ) : (
               <ZoneBrowser
                 label={ZONE_LABELS[zoneOpen].toLowerCase()}
-                instances={zoneOf(board, 'you', zoneOpen).slice().reverse()}
+                instances={zoneOf(board, zoneWho, zoneOpen).slice().reverse()}
                 cardFor={cardFor}
                 nameFor={nameFor}
                 selected={selected}
@@ -529,13 +676,15 @@ export default function Table({ deck: initialDeck, onOpenCard }) {
         {panel === 'more' && (
           <More
             board={board}
+            player={me}
             prefs={prefs}
+            shared={Boolean(room)}
             onDo={doAction}
             onToken={() => setPanel('token')}
             onMulligan={mulligan}
             onDealAgain={dealAgain}
             onTogglePref={togglePref}
-            onLeave={() => navigate({ tab: 'game', gameDeckId: null })}
+            onLeave={() => navigate({ tab: 'game', gameDeckId: null, gameRoom: null })}
           />
         )}
       </aside>
@@ -594,8 +743,8 @@ function OpeningHand({ count, mulligans, onMulligan, onKeep }) {
  * The stack, as a shelf. The last thing on is the first to resolve, and
  * nothing here resolves on the player's behalf.
  */
-function StackShelf({ board, nameFor, cardFor, onResolve, onCounter }) {
-  const waiting = zoneOf(board, 'you', 'stack')
+function StackShelf({ board, player, nameFor, cardFor, onResolve, onCounter }) {
+  const waiting = zoneOf(board, player, 'stack')
   if (!waiting.length) return null
   const top = waiting[waiting.length - 1]
   return (
@@ -627,9 +776,9 @@ function StackShelf({ board, nameFor, cardFor, onResolve, onCounter }) {
  * Searching it is what a paper table always allows; shuffling afterwards is
  * the player's job there too, hence the reminder.
  */
-function Library({ board, nameFor, cardFor, peeking, onPeek, onShuffle, onDraw, onDo, selected, onSelect }) {
+function Library({ board, player, nameFor, cardFor, peeking, onPeek, onShuffle, onDraw, onDo, selected, onSelect }) {
   const [searching, setSearching] = useState(false)
-  const top = zoneOf(board, 'you', 'library').slice(0, peeking)
+  const top = zoneOf(board, player, 'library').slice(0, peeking)
   return (
     <>
       <div className="row row--wrap">
@@ -654,7 +803,7 @@ function Library({ board, nameFor, cardFor, peeking, onPeek, onShuffle, onDraw, 
       )}
       {searching && (
         <>
-          <ZoneBrowser label="library" instances={zoneOf(board, 'you', 'library')} cardFor={cardFor} nameFor={nameFor} selected={selected} onSelect={onSelect} />
+          <ZoneBrowser label="library" instances={zoneOf(board, player, 'library')} cardFor={cardFor} nameFor={nameFor} selected={selected} onSelect={onSelect} />
           <p className="faint tiny m0">Shuffle when you are done, the way you would in paper.</p>
         </>
       )}
@@ -683,9 +832,10 @@ function whereIs(zone) {
 /**
  * The rarer things to do with the card last touched. One press each; the
  * common ones — play it, tap it — never come here, because a tap on the card
- * already did them.
+ * already did them. Somebody else's card offers only what anyone at a table
+ * may do to it: read it, and point at it.
  */
-function Actions({ inst, name, card, host, permanent = true, onDo, onAim, onInspect, onPrintings, onClose }) {
+function Actions({ inst, name, card, host, mine = true, permanent = true, onDo, onAim, onInspect, onPrintings, onClose }) {
   const onField = inst.zone === 'battlefield'
   const counters = Object.entries(inst.counters).filter(([, n]) => n)
   const treatment = card ? treatmentOf(card) : null
@@ -697,20 +847,21 @@ function Actions({ inst, name, card, host, permanent = true, onDo, onAim, onInsp
         <span className="faint tiny">
           {whereIs(inst.zone)}
           {host ? ` · on ${host.id === inst.id ? 'itself' : 'another card'}` : ''}
+          {mine ? '' : ' · not yours'}
         </span>
         <span className="spacer" />
         <button className="btn btn--ghost btn--sm" onClick={onClose}>Close</button>
       </div>
       <div className="row row--wrap">
-        {onField && <button className="btn btn--sm" onClick={() => onDo({ type: 'tap', id: inst.id })}>{inst.tapped ? 'Untap' : 'Tap'}</button>}
-        <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'flip', id: inst.id })}>{inst.faceDown ? 'Turn it up' : 'Turn it face down'}</button>
-        <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'reveal', id: inst.id })}>Reveal</button>
+        {mine && onField && <button className="btn btn--sm" onClick={() => onDo({ type: 'tap', id: inst.id })}>{inst.tapped ? 'Untap' : 'Tap'}</button>}
+        {mine && <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'flip', id: inst.id })}>{inst.faceDown ? 'Turn it up' : 'Turn it face down'}</button>}
+        {mine && <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'reveal', id: inst.id })}>Reveal</button>}
         {onField && <button className="btn btn--ghost btn--sm" onClick={() => onAim('attack')}>Attacking…</button>}
         {onField && <button className="btn btn--ghost btn--sm" onClick={() => onAim('target')}>Pointing at…</button>}
-        {onField && !inst.attachedTo && <button className="btn btn--ghost btn--sm" onClick={() => onAim('attach')}>Put it on…</button>}
-        {inst.attachedTo && <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'detach', id: inst.id })}>Take it off</button>}
+        {mine && onField && !inst.attachedTo && <button className="btn btn--ghost btn--sm" onClick={() => onAim('attach')}>Put it on…</button>}
+        {mine && inst.attachedTo && <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'detach', id: inst.id })}>Take it off</button>}
         {card && <button className="btn btn--ghost btn--sm" onClick={onInspect}>Read it</button>}
-        {card && (treatment.foilable || treatment.etchable || foil) && (
+        {mine && card && (treatment.foilable || treatment.etchable || foil) && (
           <button
             className="btn btn--ghost btn--sm"
             aria-pressed={foil}
@@ -719,9 +870,9 @@ function Actions({ inst, name, card, host, permanent = true, onDo, onAim, onInsp
             {foil ? 'An ordinary copy' : 'Mine is foil'}
           </button>
         )}
-        {card && !inst.token && <button className="btn btn--ghost btn--sm" onClick={onPrintings}>Another printing…</button>}
+        {mine && card && !inst.token && <button className="btn btn--ghost btn--sm" onClick={onPrintings}>Another printing…</button>}
       </div>
-      {onField && (
+      {mine && onField && (
         <div className="row row--wrap counters">
           {counters.map(([label, n]) => (
             <span className="counters__on" key={label}>
@@ -735,16 +886,18 @@ function Actions({ inst, name, card, host, permanent = true, onDo, onAim, onInsp
           ))}
         </div>
       )}
-      <div className="row row--wrap">
-        {MOVES
-          .filter((move) => move.zone !== inst.zone || move.to)
-          .filter((move) => move.zone !== 'battlefield' || permanent)
-          .map((move) => (
-            <button key={`${move.zone}${move.to ?? ''}`} className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'move', id: inst.id, zone: move.zone, to: move.to ?? 'top' })}>
-              {move.label}
-            </button>
-          ))}
-      </div>
+      {mine && (
+        <div className="row row--wrap">
+          {MOVES
+            .filter((move) => move.zone !== inst.zone || move.to)
+            .filter((move) => move.zone !== 'battlefield' || permanent)
+            .map((move) => (
+              <button key={`${move.zone}${move.to ?? ''}`} className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'move', id: inst.id, zone: move.zone, to: move.to ?? 'top' })}>
+                {move.label}
+              </button>
+            ))}
+        </div>
+      )}
     </section>
   )
 }
@@ -753,7 +906,7 @@ function Actions({ inst, name, card, host, permanent = true, onDo, onAim, onInsp
  * Behind the dots on the rail: everything a game needs now and then and a
  * screen should not spend space on all the time.
  */
-function More({ board, prefs, onDo, onToken, onMulligan, onDealAgain, onTogglePref, onLeave }) {
+function More({ board, player, prefs, shared, onDo, onToken, onMulligan, onDealAgain, onTogglePref, onLeave }) {
   return (
     <div className="more">
       <section className="pile">
@@ -766,13 +919,13 @@ function More({ board, prefs, onDo, onToken, onMulligan, onDealAgain, onTogglePr
         </div>
       </section>
       <section className="pile">
-        <h2 className="pile__title">Life <span className="chip tiny">{board.life.you}</span></h2>
+        <h2 className="pile__title">Life <span className="chip tiny">{board.life[player]}</span></h2>
         <div className="row row--wrap">
           <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'life', delta: -5 })}>−5</button>
           <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'life', delta: 5 })}>+5</button>
-          <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'life', value: board.life.you === 40 ? 20 : 40 })}>Set to {board.life.you === 40 ? '20' : '40'}</button>
+          <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'life', value: board.life[player] === 40 ? 20 : 40 })}>Set to {board.life[player] === 40 ? '20' : '40'}</button>
         </div>
-        <PlayerCounters board={board} onChange={(name, delta) => onDo({ type: 'playerCounter', name, delta })} />
+        <PlayerCounters board={board} player={player} onChange={(name, delta) => onDo({ type: 'playerCounter', name, delta })} />
       </section>
       <section className="pile">
         <h2 className="pile__title">Tokens and dice</h2>
@@ -797,22 +950,25 @@ function More({ board, prefs, onDo, onToken, onMulligan, onDealAgain, onTogglePr
         <h2 className="pile__title">This game</h2>
         <div className="row row--wrap">
           <button className="btn btn--ghost btn--sm" onClick={onMulligan}>Mulligan</button>
-          <button className="btn btn--ghost btn--sm" onClick={onDealAgain}>Deal again</button>
+          {!shared && <button className="btn btn--ghost btn--sm" onClick={onDealAgain}>Deal again</button>}
           <button className="btn btn--ghost btn--sm" onClick={onLeave}>← Lobby</button>
         </div>
+        {shared && <p className="faint tiny m0">Leaving keeps your seat: the relay holds the table, and this browser remembers which chair was yours.</p>}
       </section>
       <section className="pile">
         <h2 className="pile__title">This table</h2>
         <div className="row row--wrap">
           <button className="btn btn--ghost btn--sm" onClick={() => onTogglePref('tableCoach')} aria-pressed={prefs.tableCoach}>Notes {prefs.tableCoach ? 'on' : 'off'}</button>
           <button className="btn btn--ghost btn--sm" onClick={() => onTogglePref('tableSound')} aria-pressed={prefs.tableSound}>Sound {prefs.tableSound ? 'on' : 'off'}</button>
-          <button
-            className="btn btn--ghost btn--sm"
-            aria-pressed={board.guided}
-            onClick={() => { setPref('tablePlaymat', !board.guided); onDo({ type: 'setGuided', value: !board.guided }) }}
-          >
-            Playmat {board.guided ? 'on' : 'off'}
-          </button>
+          {!shared && (
+            <button
+              className="btn btn--ghost btn--sm"
+              aria-pressed={board.guided}
+              onClick={() => { setPref('tablePlaymat', !board.guided); onDo({ type: 'setGuided', value: !board.guided }) }}
+            >
+              Playmat {board.guided ? 'on' : 'off'}
+            </button>
+          )}
         </div>
         <p className="faint tiny m0">
           Nothing here checks whether a play is legal. With the playmat on, a card sits in the row its kind

@@ -294,3 +294,38 @@
   .ztiles { display: grid; grid-template-columns: repeat(2, auto); }
   .game__side { position: sticky; top: var(--space-2); max-height: calc(100vh - var(--space-4)); overflow: auto; }
 }
+
+/* --- a shared table ------------------------------------------------------- */
+
+.lobby__field { display: grid; gap: var(--space-1); }
+.lobby__invite { display: grid; gap: var(--space-1); padding-top: var(--space-2); border-top: 1px solid var(--border); }
+.lobby__link { font-size: var(--text-xs); word-break: break-all; color: var(--text-muted); user-select: all; }
+.lobby__seat--away { opacity: 0.7; }
+
+.game__them--seated { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-2) var(--space-3); align-items: start; border-style: solid; }
+.game__them--seated .game__theirhand { min-height: 2rem; display: flex; align-items: center; }
+.game__theirfield { grid-column: 1 / -1; }
+.game__them--away .plate { opacity: 0.7; }
+/* The mirror shows their side as you see it across the table, so it is
+   drawn shallower than yours: their permanents, not their whole table. */
+.game__theirfield .field--tile { aspect-ratio: 16 / 5; }
+.game__theirfield .field--tile .field__slot { --card-w: 12%; }
+.ztile--closed { cursor: default; }
+
+/* Their hand: card backs, overlapped, the app's own weave. */
+.backs { display: inline-flex; align-items: center; }
+.back {
+  display: inline-block; width: 1.5rem; aspect-ratio: 63 / 88;
+  border: 1px solid var(--border-strong); border-radius: 3px;
+  background: repeating-linear-gradient(45deg, #2b2416 0 3px, #211b10 3px 6px);
+  box-shadow: var(--shadow);
+}
+.back + .back { margin-left: -0.6rem; }
+.backs__more { margin-left: var(--space-1); font-size: var(--text-xs); color: var(--text-muted); }
+
+.game__seatlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.game__seatrow { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
+.game__seatrow--you { font-weight: 600; }
+.game__seatrow--away { color: var(--text-muted); }
+.game__dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--ok); flex: 0 0 auto; }
+.game__seatrow--away .game__dot { background: var(--border-strong); }

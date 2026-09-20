@@ -754,7 +754,11 @@ Those are the things the creator of Moxgate said were not obvious until
 they broke, and they are built in from the first commit. The relay still
 knows no rules of Magic. It is a table, not a judge, on the server exactly
 as in a browser. `npm run relay` runs it; `tests/browser/relay.spec.mjs`
-drives two real browsers through a cut socket and a server restart.
+drives two real browsers through a cut socket and a server restart, and
+`tests/browser/game-room.spec.mjs` does the same through the screens: one
+person opens a room from the lobby and copies the link, the other opens it,
+both sit down, and what one plays the other sees across the table. Until a
+relay is hosted, the seats panel takes the address of one you run yourself.
 
 ## Data
 

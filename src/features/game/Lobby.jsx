@@ -9,6 +9,7 @@ import { EXAMPLE_DECKS } from '../../data/example-decks.js'
 import DeckArt from '../../components/DeckArt.jsx'
 import ManaCost from '../../components/ManaCost.jsx'
 import useShelfCards from './useShelfCards.js'
+import Seats from './Seats.jsx'
 
 /**
  * The lobby: pick a deck, see who is at the table, start.
@@ -32,7 +33,7 @@ import useShelfCards from './useShelfCards.js'
 const FRONT = ['commander', 'standard', 'pauper']
 const COLOURS = ['W', 'U', 'B', 'R', 'G']
 
-export default function Lobby({ decks }) {
+export default function Lobby({ decks, room = null }) {
   const counts = useMemo(() => countBy(decks, (d) => d.formatId), [decks])
   const [format, setFormat] = useState(() => firstWithDecks(counts))
   const [query, setQuery] = useState('')
@@ -82,14 +83,14 @@ export default function Lobby({ decks }) {
   const rest = Object.keys(FORMATS).filter((id) => !FRONT.includes(id))
   const guide = useMemo(() => pickGuide(format), [format])
 
-  const start = (deck) => navigate({ tab: 'game', gameDeckId: deck.id })
+  const start = (deck) => navigate({ tab: 'game', gameDeckId: deck.id, gameRoom: room })
   const pickFormat = (id) => { setFormat(id); setChosen(null); setWanted(new Set()) }
 
   return (
     <div className="lobby">
       <header className="lobby__head">
         <h1 className="lobby__title">
-          <span className="lobby__mode">Solo:</span> {FORMATS[format]?.name ?? format}
+          <span className="lobby__mode">{room ? 'Together:' : 'Solo:'}</span> {FORMATS[format]?.name ?? format}
         </h1>
         <p className="muted m0">{blurb(format)}</p>
       </header>
@@ -184,32 +185,7 @@ export default function Lobby({ decks }) {
           )}
         </section>
 
-        <aside className="lobby__seats" aria-label="Table">
-          <h2 className="lobby__label">Table · 1 / 2</h2>
-          <ul className="lobby__seatlist" role="list">
-            <li className="lobby__seat lobby__seat--you">
-              <span className="lobby__avatar" aria-hidden="true">Y</span>
-              <span>You</span>
-            </li>
-            <li className="lobby__seat lobby__seat--open">
-              <span className="lobby__avatar" aria-hidden="true">2</span>
-              <span className="faint">
-                Open seat
-                <span className="tiny"> · nobody to seat yet</span>
-              </span>
-            </li>
-          </ul>
-          {/*
-            Moxgate's line changes from "Solitaire: no opponent yet" to
-            "Rules Enforced: the engine runs the game" once someone is seated.
-            Ours changes the same way when the engine lands; until then it
-            tells the truth about what starting will get you.
-          */}
-          <p className="lobby__notice tiny">
-            <strong>Solitaire:</strong> no opponent yet. You will be drawing and casting on your own —
-            good for testing a deck. Opponents arrive with the engine.
-          </p>
-        </aside>
+        <Seats room={room} />
       </div>
 
       <footer className="lobby__foot">
@@ -227,7 +203,9 @@ export default function Lobby({ decks }) {
           disabled={!chosenDeck}
           onClick={() => chosenDeck && start(chosenDeck)}
         >
-          {chosenDeck ? `Start game with ${chosenDeck.name} →` : 'Start game →'}
+          {room
+            ? (chosenDeck ? `Sit down with ${chosenDeck.name} →` : 'Sit down →')
+            : (chosenDeck ? `Start game with ${chosenDeck.name} →` : 'Start game →')}
         </button>
       </footer>
     </div>

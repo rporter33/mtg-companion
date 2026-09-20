@@ -46,6 +46,15 @@ describe('parseRoute', () => {
     expect(withPatch(parseRoute('#/game/deck_9'), { tab: 'table' }).gameDeckId).toBe(null)
     expect(parseRoute('#/game/deck_9').tableDeckId).toBe(null)
   })
+  it('reads a shared table by its room code, with or without a deck yet', () => {
+    expect(parseRoute('#/game/room/ABC34')).toMatchObject({ tab: 'game', gameRoom: 'ABC34', gameDeckId: null })
+    expect(parseRoute('#/game/room/ABC34/deck_9')).toMatchObject({ tab: 'game', gameRoom: 'ABC34', gameDeckId: 'deck_9' })
+    expect(buildHash(parseRoute('#/game/room/ABC34/deck_9'))).toBe('#/game/room/ABC34/deck_9')
+    expect(buildHash(parseRoute('#/game/room/ABC34'))).toBe('#/game/room/ABC34')
+    // Not a room code: not a room, and "room" is not a deck either.
+    expect(parseRoute('#/game/room/nope')).toMatchObject({ tab: 'game', gameRoom: null, gameDeckId: null })
+    expect(withPatch(parseRoute('#/game/room/ABC34/deck_9'), { tab: 'table' }).gameRoom).toBe(null)
+  })
   it('carries the card overlay on any screen', () => {
     expect(parseRoute('#/decks/abc?card=xyz')).toMatchObject({ deckId: 'abc', cardId: 'xyz' })
     expect(parseRoute('#/guide?card=xyz')).toMatchObject({ tab: 'guide', cardId: 'xyz' })

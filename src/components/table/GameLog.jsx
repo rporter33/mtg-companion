@@ -22,16 +22,16 @@ const stepName = (id) => STEPS.find((step) => step.id === id)?.name?.toLowerCase
  * scrollbar that cannot be tabbed to is one a keyboard user cannot read past
  * the first few lines of.
  */
-export default function GameLog({ board, events, lookup, restored = false, open = true, onToggle }) {
+export default function GameLog({ board, events, lookup, restored = false, open = true, onToggle, you = 'you', who = null }) {
   const [showing, setShowing] = useState(open)
   const nameFor = (cardId) => (cardId ? lookup?.(cardId)?.name ?? null : null)
 
   const turns = useMemo(
-    () => readLogNamed(events ?? [], board, nameFor).slice(0, MOST_TURNS),
+    () => readLogNamed(events ?? [], board, nameFor, { you, who }).slice(0, MOST_TURNS),
     // The events array is replaced on every action, so its identity is the
     // signal; `lookup` changes only when the card cache fills.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [events, board, lookup],
+    [events, board, lookup, you, who],
   )
 
   const toggle = () => {
@@ -72,7 +72,7 @@ export default function GameLog({ board, events, lookup, restored = false, open 
           {turns.map((turn) => (
             <li key={turn.turn}>
               <h3 className="gamelog__turn">
-                <span className="gamelog__who">{turn.active === 'you' ? 'You' : turn.active}</span>
+                <span className="gamelog__who">{turn.active === you ? 'You' : (who?.(turn.active) ?? turn.active)}</span>
                 <span aria-hidden="true"> · </span>
                 <span className="gamelog__turnno">Turn {turn.turn}</span>
               </h3>

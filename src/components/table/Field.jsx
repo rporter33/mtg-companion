@@ -22,9 +22,13 @@ const TILE_W = 0.16
 
 export default function Field({
   fieldRef, board, lookup, player = 'you', selectedId, drag, aiming, onBegin, onSelect, onContext, onNudge, onBackground,
-  images = true, tile = false,
+  images = true, tile = false, mirror = false,
 }) {
   const cards = stacked(board, player)
+  // The seat opposite is seen from across the table: their lands at the far
+  // edge, their creatures nearest you. Positions are stored as they see
+  // them and flipped only for drawing, so the two screens keep one board.
+  const yOf = (y) => (mirror ? 1 - y : y)
   const dragged = drag && drag.from === 'battlefield' && drag.moved ? drag.id : null
   const rect = () => fieldRef.current?.getBoundingClientRect()
 
@@ -39,26 +43,28 @@ export default function Field({
 
   return (
     <div
-      className={`field${tile ? ' field--tile' : ''}`}
+      className={`field${tile ? ' field--tile' : ''}${mirror ? ' field--mirror' : ''}`}
       ref={fieldRef}
       onKeyDown={onKeyDown}
       // Empty table is where you put a card down: a press on the felt itself
       // ends whatever was being held or pointed at.
       onClick={(event) => { if (!event.target.closest('.field__slot')) onBackground?.() }}
       role="group"
-      aria-label={`Battlefield, ${cards.length} card${cards.length === 1 ? '' : 's'}`}
+      aria-label={`${mirror ? 'Their battlefield' : 'Battlefield'}, ${cards.length} card${cards.length === 1 ? '' : 's'}`}
       // A tile is wider than a card and shorter, so the field is wider too:
       // positions are fractions either way, and a board laid out as tiles
       // reads the same at every size the way the square one does.
       style={{ '--card-w': `${(tile ? TILE_W : CARD_W) * 100}%`, '--card-h': `${CARD_H * 100}%` }}
     >
-      {board.guided && <Playmat board={board} drag={drag} />}
-      <Arrows board={board} />
+      {board.guided && <Playmat board={board} drag={drag} yOf={yOf} />}
+      <Arrows board={board} yOf={yOf} />
       {!cards.length && (
         <p className="field__empty">
-          {board.guided
-            ? 'Drag a card up from your hand. It will settle into the row its kind belongs in.'
-            : 'Drag a card up from your hand, or tap it to put it here.'}
+          {mirror
+            ? 'Nothing on their side of the table yet.'
+            : board.guided
+              ? 'Drag a card up from your hand. It will settle into the row its kind belongs in.'
+              : 'Drag a card up from your hand, or tap it to put it here.'}
         </p>
       )}
       {cards.map((inst) => {
@@ -67,7 +73,7 @@ export default function Field({
           <span
             key={inst.id}
             className={`field__slot${aiming && aiming.id !== inst.id ? ' field__slot--aimable' : ''}${live ? ' field__slot--carried' : ''}`}
-            style={{ left: `${(live?.x ?? inst.x) * 100}%`, top: `${(live?.y ?? inst.y) * 100}%`, zIndex: live ? 999 : inst.z }}
+            style={{ left: `${(live?.x ?? inst.x) * 100}%`, top: `${yOf(live?.y ?? inst.y) * 100}%`, zIndex: live ? 999 : inst.z }}
           >
             {/* The rotation is on this wrapper, so the word beside it stays
                 the right way up while the card turns sideways. */}
@@ -115,11 +121,11 @@ function livePosition(drag, rect) {
  * Coordinates are in the same fractions the cards use, scaled to 100, with a
  * stroke that does not stretch with the box.
  */
-function Arrows({ board }) {
+function Arrows({ board, yOf = (y) => y }) {
   if (!board.arrows.length) return null
   const end = (id) => {
     const inst = board.cards[id]
-    if (inst) return { x: inst.x * 100, y: inst.y * 100 }
+    if (inst) return { x: inst.x * 100, y: yOf(inst.y) * 100 }
     if (board.players.includes(id)) return { x: 50, y: 99 } // a player sits at the near edge
     return null
   }
@@ -164,7 +170,7 @@ function Arrows({ board }) {
  * The row under a card being dragged lights up, so you can see where it is
  * going to land before you let go.
  */
-function Playmat({ board, drag }) {
+function Playmat({ board, drag, yOf = (y) => y }) {
   const over = drag && drag.moved ? laneAt(dragY(drag)) : null
   return (
     <div className="playmat" aria-hidden="true">
@@ -172,7 +178,7 @@ function Playmat({ board, drag }) {
         <div
           key={lane.id}
           className={`playmat__lane${over === lane.id ? ' playmat__lane--over' : ''}`}
-          style={{ top: `${(lane.y - lane.band / 2) * 100}%`, height: `${lane.band * 100}%` }}
+          style={{ top: `${(yOf(lane.y) - lane.band / 2) * 100}%`, height: `${lane.band * 100}%` }}
         >
           <span className="playmat__name">{lane.short}</span>
         </div>

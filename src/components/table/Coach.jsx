@@ -14,13 +14,13 @@ import { notesFor } from '../../lib/board/coach.js'
  * next turn, and a note the player has decided they do not need this turn
  * should not come straight back because a card moved.
  */
-export default function Coach({ board, events, lookup, onSilence }) {
+export default function Coach({ board, events, lookup, onSilence, player = 'you' }) {
   const [dismissed, setDismissed] = useState(() => new Set())
   // On a narrow screen only the first note is shown until this is set; with
   // room beside the table they are all shown and this does nothing. The
   // choice is the stylesheet's, so there is no media query in here.
   const [open, setOpen] = useState(false)
-  const notes = notesFor(board, events, lookup)
+  const notes = notesFor(board, events, lookup, { player })
   const shown = notes.filter((note) => !dismissed.has(`${note.id}:${board.turn}`))
   if (!shown.length) return null
 

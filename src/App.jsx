@@ -57,7 +57,7 @@ export default function App() {
   // Pressing the tab you are already on returns to that tab's own screen —
   // out of a deck, back to the deck list — as tab bars do on a phone.
   const setTab = useCallback((id) => navigate({
-    tab: id, deckId: null, deckTab: null, data: false, q: null, guide: null, trackId: null, lessonId: null, scenarioId: null, tableDeckId: null, gameDeckId: null,
+    tab: id, deckId: null, deckTab: null, data: false, q: null, guide: null, trackId: null, lessonId: null, scenarioId: null, tableDeckId: null, gameDeckId: null, gameRoom: null,
   }), [])
 
   const [detailCard, setDetailCard] = useState(null)

@@ -219,10 +219,25 @@ one a lesson the creator paid for:
 client last uploaded; ours holds the table itself and verifies it. Same
 zero rules, one more guarantee.
 
-Next: the lobby's seats panel makes and joins rooms (invite by link), and
-the table renders the second seat's field opposite. Then a hosted relay —
-the app on GitHub Pages needs a relay URL to point at, which is the hosting
-decision already taken.
+**And the screens on it, the same day.** The lobby's seats panel opens a
+room of 2–6 seats and hands out the link (`#/game/room/<code>`); a friend
+opening it lands in the same lobby, sees who is seated, picks a deck and
+sits. The table at a shared room shows the seat opposite as a real person:
+their plate with THEIR TURN / WAITING / AWAY, their hand as card backs, their
+zone tiles (graveyard and exile openable, hand and library not), and their
+permanents mirrored so their lands are at the far edge. Somebody else's card
+offers only "read it" and "point at it"; a tap on it is refused by the relay
+and the screen says so. Only the active player can end the turn. Undo is not
+offered at a shared table, and says why. A cut socket shows a banner and
+comes back; a reload lands in the same seat with the same table. Proven by
+`tests/browser/game-room.spec.mjs` with two browser contexts, which are two
+devices as far as the app can tell.
+
+The relay's address comes from `VITE_RELAY_URL` at build time or from a
+field in the seats panel, saved as a preference — because there is no hosted
+relay yet. Next: host one, point the GitHub Pages build at it, and lay pods
+of three to six out properly (today each extra seat stacks another strip
+above the table, which works and is not the layout).
 
 Then: hidden hands, a room panel, hot seat on one device — and, because the
 board model has no two-seat assumption and a relay does not care how many
