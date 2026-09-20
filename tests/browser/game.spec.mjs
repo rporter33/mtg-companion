@@ -34,6 +34,23 @@ const STATE = {
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] }, prefs: {},
 }
 
+/*
+ * One green pixel stands in for a painting: what matters is that a deck with
+ * a commander shows that commander's art and colours, not what the art is.
+ */
+const PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAI+PjwAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw=='
+const c = (id, name, type_line, over = {}) => ({
+  object: 'card', id, oracle_id: `o-${id}`, name, mana_cost: '{1}{G}', cmc: 2, type_line,
+  oracle_text: '', color_identity: ['G'], colors: ['G'], rarity: 'common', set: 'tst',
+  set_name: 'Test', collector_number: '1', legalities: { commander: 'legal' }, prices: { usd: '1.00' }, ...over,
+})
+const CARDS = [
+  c('cmdr', 'Test Commander', 'Legendary Creature — Elf', {
+    color_identity: ['G', 'W'], image_uris: { art_crop: PIXEL, small: PIXEL, normal: PIXEL },
+  }),
+  c('elf', 'Llanowar Elves', 'Creature — Elf Druid'),
+]
+
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
 const page = await browser.newPage({ viewport: { width: 430, height: 1100 } })
 const errors = []
@@ -44,6 +61,10 @@ page.on('request', (r) => {
 })
 await page.route('**/api.scryfall.com/**', (route) => route.fulfill({
   status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))
+// Registered after the catch-all so it wins: the shelf fetches its face and
+// commander cards in one collection call.
+await page.route('**/api.scryfall.com/cards/collection', (route) => route.fulfill({
+  status: 200, contentType: 'application/json', body: JSON.stringify({ data: CARDS }) }))
 
 await page.goto(TARGET, { waitUntil: 'networkidle' })
 await page.evaluate((state) => localStorage.setItem('mtg-companion:v1', JSON.stringify(state)), STATE)
@@ -80,6 +101,48 @@ await page.waitForTimeout(150)
 check('More reveals the rest of the formats', (await tabs.count()) > 4, String(await tabs.count()))
 await page.getByRole('button', { name: /^Commander/ }).click()
 await page.waitForTimeout(150)
+
+console.log('\nThe shelf knows its decks')
+await page.locator('.lobby__deck .lobby__pips .mana').first().waitFor({ timeout: 5000 })
+check('a commander deck shows its colour identity as pips',
+  (await page.locator('.lobby__deck .lobby__pips .mana').count()) === 2)
+check('and the pips are spoken, not only drawn',
+  (await page.locator('.lobby__shelf').getByRole('img', { name: /white/i }).count()) === 1)
+check('the commander is named under the deck',
+  /Test Commander/.test(await page.locator('.lobby__deckmeta').first().innerText()))
+check('and its painting sits behind the name', (await page.locator('.lobby__deck img.deck-art').count()) === 1)
+check('a guide deck is offered, and says it rotates',
+  /rotates every visit/.test(await page.locator('.lobby__tiles').innerText()))
+
+console.log('\nThe colours filter carries counts')
+const colours = page.getByRole('button', { name: /^Colours/ })
+check('it exists on a Commander tab', (await colours.count()) === 1)
+await colours.click()
+await page.waitForTimeout(150)
+const facets = page.locator('.lobby__facet')
+check('white has one deck behind it', /1\s*$/.test(await facets.nth(0).innerText()), await facets.nth(0).innerText())
+check('blue has none', /0\s*$/.test(await facets.nth(1).innerText()), await facets.nth(1).innerText())
+await facets.nth(2).click() // black
+await page.waitForTimeout(150)
+check('asking for black empties the shelf and says so',
+  (await page.locator('.lobby__deck').count()) === 0 && /No deck here matches/.test(await page.locator('.lobby__decks').innerText()))
+await facets.nth(2).click() // black off
+await facets.nth(0).click() // white
+await page.waitForTimeout(150)
+check('asking for white finds the green-white deck', (await page.locator('.lobby__deck').count()) === 1)
+await page.getByRole('button', { name: 'Exactly these' }).click()
+await page.waitForTimeout(150)
+check('but exactly white does not, because it is also green', (await page.locator('.lobby__deck').count()) === 0)
+await facets.nth(4).click() // green
+await page.waitForTimeout(150)
+check('exactly white and green does', (await page.locator('.lobby__deck').count()) === 1)
+await page.getByRole('button', { name: /^Standard/ }).click()
+await page.waitForTimeout(150)
+check('a sixty-card tab has no colours filter, because nothing honest feeds it',
+  (await page.getByRole('button', { name: /^Colours/ }).count()) === 0)
+await page.getByRole('button', { name: /^Commander/ }).click()
+await page.waitForTimeout(150)
+check('changing tab lets the colours go', (await page.locator('.lobby__deck').count()) === 1)
 
 console.log('\nChoosing and starting')
 check('nothing is chosen at first, so Start is not offered',

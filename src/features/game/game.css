@@ -113,3 +113,29 @@
   padding-top: var(--space-3);
   border-top: 1px solid var(--border);
 }
+
+/* --- search beside the colours filter, facets dropping under both --------- */
+
+.lobby__tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.lobby__find { flex: 1 1 14rem; width: auto; }
+/* The wrapper is invisible to layout so the button sits in the row and the
+   facets, being full-width, wrap to a line of their own beneath it. */
+.lobby__filter { display: contents; }
+.lobby__facets { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.lobby__facet { display: inline-flex; align-items: center; gap: 0.35em; cursor: pointer; }
+
+/* --- a deck with its painting behind it ---------------------------------- */
+
+.lobby__deck--art { overflow: hidden; }
+.lobby__art {
+  position: absolute; inset: 0; z-index: 0;
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center 30%;
+  opacity: 0.28;
+  pointer-events: none;
+}
+.lobby__deckbody { position: relative; z-index: 1; display: grid; gap: 2px; }
+.lobby__deck--art .lobby__deckname,
+.lobby__deck--art .lobby__deckmeta { text-shadow: 0 1px 2px var(--bg); }
+.lobby__pips { display: flex; gap: 2px; margin-top: var(--space-1); }
+.lobby__tick { z-index: 2; }
