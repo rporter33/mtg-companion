@@ -114,15 +114,50 @@ blocked.
 Carry over from the current table: the fanned hand, the printed-face card,
 treatments and foils, the zone browser, player counters, tokens, arrows, dice.
 
+Three things from `CREATOR-POST.md` to build in from the start rather than
+retrofit:
+
+- **A precomputed bundle of common cards** as static JSON, loaded at startup
+  ahead of the IndexedDB cache and the API, so the lobby's deck shelf never
+  waits on the network for a Sol Ring.
+- **The drag collision order** — attachments first, then hand reordering,
+  then zone drops, then nearest centre — as the priority `placement.js` and
+  `useDrag.js` apply.
+- **The client store is the engine's own view held flat**: Argentum's
+  `ClientGameState` is already `cards: Map<id, card>` plus zones as id lists,
+  which is Moxgate's shape too. One model, memoised selectors, no second copy
+  to keep in step.
+
 **Done when**: the new route looks like `TARGET.md` with cards moved by hand.
 
-## Phase 2 — Seats
+## Phase 2 — Seats, over a relay
 
-Two players properly, which the current table has at the protocol level and
-not in the UI. `src/lib/board/net.js`, `webrtc.js` and `together.spec.mjs`
-carry over largely intact. Hidden hands, a room panel, hot seat on one device.
+Seats done properly, which the current table has at the protocol level and
+not in the UI. **Rewritten after `CREATOR-POST.md`**: the transport is a relay
+server, not WebRTC peer-to-peer. Hosting is approved, the relay *is* the
+signalling that was deferred, and it gives four things peer-to-peer cannot —
+server-held snapshots for late joiners, rooms persisted to disk across a
+restart, turn authority in one place, and reconnect with a known close code.
 
-This phase is worth doing before the engine because it forces the state model
+What carries over: the client half of `net.js` — apply locally, send, apply a
+remote action without re-broadcasting — is already this design. What is
+added is the server, and these are requirements from the first commit, each
+one a lesson the creator paid for:
+
+- Zero game logic in the relay, **except turn passing**, which the server
+  owns so two clients can never both believe it is their turn.
+- A snapshot per room held server-side, and rooms persisted as JSON on disk.
+- Ping every 30 s, drop what does not pong, so proxies with a 60 s idle
+  timeout never leave a client silently hung.
+- On SIGTERM, close every socket with **1012 Service Restart** before exiting,
+  and exponential-backoff reconnect on the client.
+
+Then: hidden hands, a room panel, hot seat on one device — and, because the
+board model has no two-seat assumption and a relay does not care how many
+clients it fans out to, **the degraded mode can seat a four-player pod in this
+phase**, which is the thing Moxgate's own lobby has paused.
+
+This phase still comes before the engine, because it forces the state model
 to be per-player rather than "mine and the rest", which an engine assumes.
 
 ## Phase 3 — The engine underneath
@@ -152,7 +187,10 @@ Integration, not authorship. The work, in order:
    and nothing else in the app knows what is behind it. It should be
    swappable for the unenforced table — same questions asked, different
    authority answering. `src/lib/board/net.js` is the precedent: the table
-   already knows how to take actions from somewhere else.
+   already knows how to take actions from somewhere else. Per
+   `CREATOR-POST.md`, this is **one thin server with two authorities**: a
+   relay for the degraded mode, the engine for the enforced one — the same
+   two layers Moxgate runs, in one process.
 4. **State mapping**: the engine's game state onto what the client renders.
    Expect this to be most of the work, and expect the engine's model to be
    richer than ours — it knows about things the current board has no word for.

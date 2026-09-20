@@ -15,6 +15,7 @@ This folder is everything needed to start that work cold:
 | `TARGET.md` | Moxgate, screen by screen, from 10 screenshots and 3 recordings. |
 | `ENGINE.md` | **The decision that governs everything else.** Read before planning. |
 | `FRICTION.md` | **The two things we beat Moxgate on.** The design law. |
+| `CREATOR-POST.md` | **Moxgate's creator on its architecture, in their words.** Outranks the screenshots. |
 | `SPIKE.md` | The engine, actually built and run. Measured numbers. |
 | `spike/` | The Kotlin that produced them. Reproduces in ~6 minutes. |
 | `PLAN.md` | Phases, and how to build without breaking the working app. |
@@ -128,11 +129,19 @@ Settled with the owner on 2026-09-19, so the new session does not re-open them:
 - **Build order: solo vs AI first.** 1v1, Commander pods (3–6) and
   draft/sealed are all in scope, but the single-player loop ships first and
   the rest get a plan once it works.
+- **Moxgate is two layers, and so are we.** Its creator's own account
+  (`CREATOR-POST.md`, 2026-09-20) says it began as an unenforced relay
+  tabletop — what this repo's Table already is — and grew a Forge-backed
+  enforced mode on top. Our "engine plus the play-by-hand table as degraded
+  mode" is that same shape, not a compromise. It also settles Phase 2:
+  **seats go through a relay server**, not peer-to-peer, which closes the
+  deferred signalling item for nothing extra.
 
 ## How to start
 
 1. Read `ENGINE.md` — the engine is decided, so read it for *why*, and for
-   the two questions still open at the end of the VERIFIED section.
+   the two questions still open at the end of the VERIFIED section. Then
+   `CREATOR-POST.md`, which is the one first-hand source here.
 2. Read `FRICTION.md`. It is the point of the rebuild.
 3. Read `CURRENT.md`, `HOUSE-RULES.md`, and `TARGET.md` with `frames/` open.
 4. **The spike is already done** — read `SPIKE.md`. Argentum was built and
