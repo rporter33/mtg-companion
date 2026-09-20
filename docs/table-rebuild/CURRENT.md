@@ -43,7 +43,8 @@ two, or replaces `table/` by growing it — see `ENGINE.md`.
 
 ## `src/features/table/` — the UI
 
-> **Moved, 2026-09-20.** Everything below except `TableView.jsx` now lives in
+> **Retired, 2026-09-20.** `TableView.jsx` is gone: the Table tab opens the
+> rebuilt table. Everything below except `TableView.jsx` now lives in
 > `src/components/table/`, shared by both tables; `HandCost.jsx` (the cost
 > floating above a card in hand) was lifted there too. The rebuilt table is
 > `src/features/game/` — `GameView.jsx`, `Lobby.jsx`, `Table.jsx`, `game.css`.

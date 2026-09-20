@@ -31,20 +31,17 @@ describe('parseRoute', () => {
     expect(parseRoute('#/practice/mana-guided')).toMatchObject({ tab: 'practice', scenarioId: 'mana-guided' })
     expect(buildHash(parseRoute('#/practice/mana-guided'))).toBe('#/practice/mana-guided')
   })
-  it('reads the free table and the deck on it', () => {
-    expect(parseRoute('#/table')).toMatchObject({ tab: 'table', tableDeckId: null })
-    expect(parseRoute('#/table/deck_9')).toMatchObject({ tab: 'table', tableDeckId: 'deck_9' })
-    expect(buildHash(parseRoute('#/table/deck_9'))).toBe('#/table/deck_9')
-    // Leaving the table forgets which deck was on it, as changing tab does.
-    expect(withPatch(parseRoute('#/table/deck_9'), { tab: 'decks' }).tableDeckId).toBe(null)
-  })
-  it('reads the rebuilt table and the deck on it', () => {
+  it('reads the table and the deck on it', () => {
     expect(parseRoute('#/game')).toMatchObject({ tab: 'game', gameDeckId: null })
     expect(parseRoute('#/game/deck_9')).toMatchObject({ tab: 'game', gameDeckId: 'deck_9' })
     expect(buildHash(parseRoute('#/game/deck_9'))).toBe('#/game/deck_9')
-    // The two tables never share a deck id: leaving one forgets it, as a tab change does.
-    expect(withPatch(parseRoute('#/game/deck_9'), { tab: 'table' }).gameDeckId).toBe(null)
-    expect(parseRoute('#/game/deck_9').tableDeckId).toBe(null)
+    expect(withPatch(parseRoute('#/game/deck_9'), { tab: 'decks' }).gameDeckId).toBe(null)
+  })
+  it('still answers the table\'s old address', () => {
+    // A bookmark from before the rebuild opens the table it always did.
+    expect(parseRoute('#/table')).toMatchObject({ tab: 'game', gameDeckId: null })
+    expect(parseRoute('#/table/deck_9')).toMatchObject({ tab: 'game', gameDeckId: 'deck_9' })
+    expect(buildHash(parseRoute('#/table/deck_9'))).toBe('#/game/deck_9')
   })
   it('reads a shared table by its room code, with or without a deck yet', () => {
     expect(parseRoute('#/game/room/ABC34')).toMatchObject({ tab: 'game', gameRoom: 'ABC34', gameDeckId: null })

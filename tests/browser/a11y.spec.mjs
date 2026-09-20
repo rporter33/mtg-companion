@@ -128,8 +128,7 @@ await scanState('the rebuilt table\'s lobby', async () => {
 await scanState('the rebuilt table', async () => {
   // A deck has to exist to sit down with. Seeded and then reloaded, because
   // storage is read once per document. Created far in the future so it sorts
-  // last: the free table's scans further down pick the first deck on the
-  // shelf, and this one has no card data behind it.
+  // last, so it never displaces a deck another scan expects first.
   await page.evaluate(() => {
     const state = JSON.parse(localStorage.getItem('mtg-companion:v1') ?? '{}')
     state.version = 4
@@ -364,104 +363,6 @@ await scanState('playtest hand', async () => {
   return (await page.locator('.hand-card').count()) === 7
 })
 
-// The free table, where every card is a draggable control. A rotation and a
-// position mean nothing to a screen reader, so the names are what carry it.
-await scanState('the free table', async () => {
-  await page.goto(`${TARGET}#/table`, { waitUntil: 'networkidle' })
-  await page.waitForTimeout(500)
-  const deck = page.locator('.table-picker__deck').first()
-  if (!await deck.count()) return false
-  await deck.click()
-  await page.waitForTimeout(900)
-  return (await page.locator('.field').count()) === 1
-})
-
-await scanState('the free table, a card picked up', async () => {
-  const held = page.locator('.tabletop__handcard .bcard').first()
-  if (!await held.count()) return false
-  // The hand is a fan: tap the strip of the card that is actually exposed,
-  // measured from where the next card starts. See tapHand in table.spec.mjs
-  // for why a fixed offset is wrong.
-  await held.scrollIntoViewIfNeeded()
-  const point = await held.evaluate((el) => {
-    const slot = el.closest('.tabletop__handcard')
-    const box = slot.getBoundingClientRect()
-    const y = box.top + box.height / 2
-    let from = null
-    for (let x = box.left + 1; x < box.right; x += 1) {
-      const hit = document.elementFromPoint(x, y)
-      if (hit && slot.contains(hit)) { if (from === null) from = x }
-      else if (from !== null) return { x: (from + x) / 2, y }
-    }
-    return from === null ? null : { x: (from + box.right) / 2, y }
-  })
-  await page.mouse.click(point.x, point.y)
-  await page.waitForTimeout(300)
-  return (await page.locator('.actions').count()) === 1
-})
-
-// Pointing at something, with a card on the table carrying counters: the two
-// states where the table stops being a list of controls and starts being a
-// place, and the two most likely to lose their names.
-// Everything the rail holds is behind one press on a phone, so open it: a
-// panel nobody can reach is also a panel nobody scans.
-await scanState('the free table, every control open', async () => {
-  const more = page.getByRole('button', { name: 'More', exact: true })
-  if (!await more.count()) return false
-  await more.click()
-  await page.waitForTimeout(400)
-  return (await page.locator('.tabletop__rail--open').count()) === 1
-})
-
-await scanState('the free table, pointing at something', async () => {
-  await page.getByRole('button', { name: 'To the battlefield' }).click()
-  await page.waitForTimeout(300)
-  const onTable = page.locator('.field .bcard').first()
-  if (!await onTable.count()) return false
-  await onTable.click()
-  await page.waitForTimeout(200)
-  await page.getByRole('button', { name: '+ +1/+1' }).click()
-  await page.waitForTimeout(200)
-  await page.getByRole('button', { name: 'Attacking…' }).click()
-  await page.waitForTimeout(300)
-  return (await page.locator('.banner').count()) > 0
-})
-
-// The two panels that are mostly pictures: a list of printings, and the
-// token maker's form. Pictures with no names are the classic failure here.
-await scanState('the free table, choosing a printing', async () => {
-  // The scan before this one left a card pointing at something; put that down
-  // and pick a card up properly.
-  await page.getByRole('button', { name: 'Never mind' }).click().catch(() => {})
-  await page.waitForTimeout(200)
-  const onTable = page.locator('.field .bcard').first()
-  if (!await onTable.count()) return false
-  await onTable.click()
-  await page.waitForTimeout(300)
-  const another = page.getByRole('button', { name: 'Another printing…' })
-  if (!await another.count()) return false
-  await another.click()
-  await page.waitForTimeout(700)
-  return (await page.locator('.printings').count()) === 1
-})
-
-await scanState('the free table, making a token', async () => {
-  const make = page.getByRole('button', { name: 'Make a token' })
-  if (!await make.count()) return false
-  await make.click()
-  await page.waitForTimeout(400)
-  return (await page.locator('.tokenmaker').count()) === 1
-})
-
-// The marked rows, the stack and the turn tracker: three things drawn as
-// much as written, which is where names go missing.
-await scanState('the free table, the turn tracker open', async () => {
-  const whole = page.getByRole('button', { name: 'The whole turn' })
-  if (!await whole.count()) return false
-  await whole.click()
-  await page.waitForTimeout(400)
-  return (await page.locator('.turns__step').count()) === 13
-})
 
 console.log('\nFindings')
 if (!seen.size) console.log('  none')

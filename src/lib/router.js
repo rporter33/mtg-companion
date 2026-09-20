@@ -12,9 +12,9 @@
  *   #/decks | #/decks/new | #/decks/new/<step> | #/decks/data | #/decks/<id> | #/decks/<id>/<tab>
  *   #/play
  *   #/practice | #/practice/<scenario>   (the practice table; reached by address only until it is linked)
- *   #/table | #/table/<deckId>           (the free table, with one of your own decks on it)
- *   #/game | #/game/<deckId>             (the rebuilt table; by address only until it replaces #/table)
+ *   #/game | #/game/<deckId>             (the table, with one of your own decks on it; the Table tab)
  *   #/game/room/<code> | #/game/room/<code>/<deckId>   (the same, at a shared table on the relay)
+ *   #/table | #/table/<deckId>           (the table's old address; still opens it, as #/game)
  *
  * plus "?card=<id>" on any of them for the card sheet, which is an overlay
  * rather than a place: closing it goes back to wherever it was opened from.
@@ -24,7 +24,7 @@
  */
 import { useMemo, useSyncExternalStore } from 'react'
 
-export const TABS = ['guide', 'cards', 'decks', 'play', 'practice', 'table', 'game']
+export const TABS = ['guide', 'cards', 'decks', 'play', 'practice', 'game']
 export const DECK_TABS = ['list', 'add', 'coach', 'analysis', 'hand', 'history', 'io']
 /** The first-deck flow's steps, in order. The bare #/decks/new means "resume". */
 export const STEP_SLUGS = ['colours', 'play', 'commander', 'list']
@@ -37,7 +37,7 @@ export const GUIDE_PLACES = ['game', 'glossary', 'track', 'lesson']
 
 const EMPTY = Object.freeze({
   tab: null, deckId: null, deckTab: null, data: false, starting: false, step: null, q: null, cardId: null,
-  guide: null, trackId: null, lessonId: null, scenarioId: null, tableDeckId: null, gameDeckId: null, gameRoom: null,
+  guide: null, trackId: null, lessonId: null, scenarioId: null, gameDeckId: null, gameRoom: null,
 })
 
 /** "#/decks/abc/analysis?card=xyz" -> { tab, deckId, deckTab, data, q, cardId }. */
@@ -51,12 +51,13 @@ export function parseRoute(hash) {
   const route = { ...EMPTY }
   route.cardId = params.get('card') || null
 
-  const [tab, second, third, fourth] = segments
+  // The table's old address still opens the table: a bookmark or a link
+  // from before the rebuild lands where it always did.
+  const [tab, second, third, fourth] = segments[0] === 'table' ? ['game', ...segments.slice(1)] : segments
   if (!TABS.includes(tab)) return route
   route.tab = tab
   if (tab === 'cards') route.q = params.get('q') || null
   if (tab === 'practice' && second) route.scenarioId = second
-  if (tab === 'table' && second) route.tableDeckId = second
   if (tab === 'game' && second === 'room') {
     // A room code is five letters read out loud; anything else is not one.
     if (/^[A-Z0-9]{5}$/.test(third ?? '')) { route.gameRoom = third; if (fourth) route.gameDeckId = fourth }
@@ -96,7 +97,6 @@ export function buildHash(route) {
     else if (route.guide === 'game' || route.guide === 'glossary') segments.push(route.guide)
   }
   if (tab === 'practice' && route.scenarioId) segments.push(encodeURIComponent(route.scenarioId))
-  if (tab === 'table' && route.tableDeckId) segments.push(encodeURIComponent(route.tableDeckId))
   if (tab === 'game' && route.gameRoom) segments.push('room', route.gameRoom)
   if (tab === 'game' && route.gameDeckId) segments.push(encodeURIComponent(route.gameDeckId))
   if (tab === 'decks') {

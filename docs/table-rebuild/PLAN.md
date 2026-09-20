@@ -249,6 +249,16 @@ faintly, with the one line that says what is being waited for, in place of
 a spinner. The tile was looked at on a phone upright, a phone sideways and a
 desktop, and holds at all three.
 
+**Milestone 4, the switch — done 2026-09-20.** The Table tab opens the
+rebuilt table; `#/table` and `#/table/<deck>` still answer, as `#/game`. A
+game left at the first table is offered for carrying over, in the house
+style, the next time its deck is opened; continuing brings it as it stood
+and lets the old slot go. `src/features/table/` is deleted with its two
+specs; the shared parts in `src/components/table/` stay, and the new
+suite is the only regression net. What the first table had that this one
+does not offer: "tidy up", whose geometry assumed a square field of whole
+cards and would need redoing for tiles. Everything else crossed over.
+
 **The common-card bundle waits on network**: Scryfall is not reachable from
 the build environment this was written in, so a bundle generated blind
 could not be checked. The script and loader are a small job once it is.

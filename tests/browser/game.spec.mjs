@@ -119,7 +119,7 @@ check('the address holds', await page.evaluate(() => location.hash) === '#/game'
 check('it opens on Solo: Commander, because that is where the decks are',
   /Solo:\s*Commander/.test(await page.locator('.lobby__title').innerText()),
   await page.locator('.lobby__title').innerText())
-check('there is no tab for it in the bar', (await page.getByRole('button', { name: 'Game', exact: true }).count()) === 0)
+check('the Table tab opens it', (await page.locator('nav').getByRole('button', { name: 'Table', exact: true }).count()) >= 1)
 check('its code is its own chunk, loaded on demand',
   [...scripts].some((s) => s.startsWith('GameView')), [...scripts].join(' '))
 
@@ -414,12 +414,49 @@ await page.waitForTimeout(400)
 check('says so rather than throwing', /not on this device/.test(await page.locator('main').innerText()))
 check('and offers the way back', (await page.getByRole('button', { name: 'Back to the lobby' }).count()) === 1)
 
-console.log('\nThe wall: the old table is untouched')
+console.log('\nThe old address, and a game left at the old table')
 await page.goto(`${TARGET}#/table`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(400)
+check('#/table still opens the table: the lobby', (await page.locator('.lobby').count()) === 1)
+// A game with d1 left at the first table, in the shape that table saved,
+// and nothing saved for d1 here. Set while no table is mounted, so nothing
+// writes over it on the way out.
+await page.evaluate(() => {
+  const state = JSON.parse(localStorage.getItem('mtg-companion:v1'))
+  state.game = { saved: null }
+  state.table = { saved: {
+    version: 1, deckId: 'd1', deckName: 'Elves Forever', mulligans: 0, savedAt: '2026-09-18T06:00:00Z',
+    board: {
+      version: 1, players: ['you'], seed: 7, turn: 3, active: 'you', step: null,
+      life: { you: 17 }, counters: { you: {} },
+      cards: {
+        'you:0:elf': { id: 'you:0:elf', cardId: 'elf', owner: 'you', controller: 'you', zone: 'battlefield', x: 0.3, y: 0.35, tapped: true, faceDown: false, flipped: false, counters: {}, note: '', token: false, custom: null, attachedTo: null, finish: 'normal', enteredOnTurn: 1, z: 4 },
+        'you:1:elf': { id: 'you:1:elf', cardId: 'elf', owner: 'you', controller: 'you', zone: 'hand', x: 0.5, y: 0.5, tapped: false, faceDown: false, flipped: false, counters: {}, note: '', token: false, custom: null, attachedTo: null, finish: 'normal', enteredOnTurn: 0, z: 0 },
+      },
+      zones: { you: { library: [], hand: ['you:1:elf'], battlefield: ['you:0:elf'], graveyard: [], exile: [], command: [] } },
+      revealed: [], arrows: [], dice: [], notes: '', log: [], nextZ: 5, seq: 12, events: [],
+    },
+  } }
+  localStorage.setItem('mtg-companion:v1', JSON.stringify(state))
+})
+await page.reload({ waitUntil: 'networkidle' })
+await page.goto(`${TARGET}#/table/d1`, { waitUntil: 'networkidle' })
 await page.waitForTimeout(500)
-check('#/table still shows its own picker', (await page.locator('.table-picker').count()) === 1)
-check('with all three decks, as before', (await page.locator('.table-picker__deck').count()) === 3)
-check('and nothing of the lobby leaked into it', (await page.locator('.lobby').count()) === 0)
+check('the old address with a deck opens that deck here', await page.evaluate(() => location.hash) === '#/table/d1' && (await page.locator('.game').count()) === 1)
+{
+  const ask = page.getByRole('dialog')
+  check('and a game left at the old table is offered, not taken', (await ask.count()) === 1 && /Pick up where you left off/.test(await ask.getAttribute('aria-label') ?? ''))
+  await ask.getByRole('button', { name: 'Continue that game' }).click()
+  await page.waitForTimeout(500)
+  check('continuing brings it here as it stood: the tapped card, the life, the hand',
+    (await page.locator('.field .bcard--tapped').count()) === 1 && (await inHand()) === 1 && (await page.locator('.plate--you .plate__total').innerText()).trim() === '17',
+    `field ${await onField()} hand ${await inHand()}`)
+  const slots = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('mtg-companion:v1'))
+    return { old: state.table?.saved ?? null, here: state.game?.saved?.deckId ?? null }
+  })
+  check('and the old slot is let go, so it is never asked twice', slots.old === null && slots.here === 'd1', JSON.stringify(slots))
+}
 
 console.log('\nDeleting a deck asks the same way')
 await page.goto(`${TARGET}#/decks`, { waitUntil: 'networkidle' })

@@ -18,8 +18,7 @@ const VIEWS = {
   play: () => import('./features/play/PlayView.jsx'),
   guide: () => import('./features/guide/GuideView.jsx'),
   practice: () => import('./features/practice/PracticeView.jsx'),
-  table: () => import('./features/table/TableView.jsx'),
-  // The rebuilt table. Reached by address only, so it warms like the rest but has no tab.
+  // The table: the rebuilt one, which replaced the first on 2026-09-20.
   game: () => import('./features/game/GameView.jsx'),
 }
 
@@ -28,7 +27,6 @@ const DecksView = lazy(VIEWS.decks)
 const PlayView = lazy(VIEWS.play)
 const GuideView = lazy(VIEWS.guide)
 const PracticeView = lazy(VIEWS.practice)
-const TableView = lazy(VIEWS.table)
 const GameView = lazy(VIEWS.game)
 import { loadState, PERSIST_FAILED_EVENT, ROOM_MADE_EVENT } from './lib/storage.js'
 import { useRoute, navigate } from './lib/router.js'
@@ -41,7 +39,7 @@ const TABS = [
   { id: 'guide', label: 'Learn', icon: GuideIcon },
   { id: 'cards', label: 'Cards', icon: SearchIcon },
   { id: 'decks', label: 'Decks', icon: DeckIcon },
-  { id: 'table', label: 'Table', icon: TableIcon },
+  { id: 'game', label: 'Table', icon: TableIcon },
   { id: 'play',  label: 'Play',  icon: LifeIcon },
 ]
 
@@ -57,7 +55,7 @@ export default function App() {
   // Pressing the tab you are already on returns to that tab's own screen —
   // out of a deck, back to the deck list — as tab bars do on a phone.
   const setTab = useCallback((id) => navigate({
-    tab: id, deckId: null, deckTab: null, data: false, q: null, guide: null, trackId: null, lessonId: null, scenarioId: null, tableDeckId: null, gameDeckId: null, gameRoom: null,
+    tab: id, deckId: null, deckTab: null, data: false, q: null, guide: null, trackId: null, lessonId: null, scenarioId: null, gameDeckId: null, gameRoom: null,
   }), [])
 
   const [detailCard, setDetailCard] = useState(null)
@@ -196,7 +194,6 @@ export default function App() {
       )
       case 'play':  return <PlayView />
       case 'practice': return <PracticeView route={route} onOpenCard={openCard} />
-      case 'table': return <TableView route={route} onOpenCard={openCard} />
       case 'game':  return <GameView route={route} onOpenCard={openCard} />
       default:      return (
         <GuideView

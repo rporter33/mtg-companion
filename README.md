@@ -579,8 +579,14 @@ The decks are practice decks, not legal decks for any format.
 
 ## The free table
 
-At `#/table`, and on the Table tab, is the other half of the idea: a table that
-judges nothing. Where `src/lib/table/` knows nineteen cards completely and
+On the Table tab, at `#/game` (the old `#/table` still answers), is the other
+half of the idea: a table that judges nothing. The screen there is the
+rebuilt one — Moxgate's shape, one tap acting, cards that travel, a log
+that says where the game went — built beside the first table and switched
+in on 2026-09-20 once it had proved everything the first one had, check for
+check (`tests/browser/game-parity.spec.mjs`). A game left at the first table
+is offered for carrying over the next time its deck is opened. The board
+model beneath is unchanged: Where `src/lib/table/` knows nineteen cards completely and
 refuses what is illegal, `src/lib/board/` knows where every card is and never
 what a card does. That one restriction is what lets any card on Scryfall be
 played the moment it is fetched, rules text and all — the player enforces the

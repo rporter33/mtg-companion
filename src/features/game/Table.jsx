@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { navigate } from '../../lib/router.js'
-import { saveDeck, getGameTable, saveGameTable, getPrefs, setPref } from '../../lib/storage.js'
+import { saveDeck, getGameTable, saveGameTable, getTable, clearTable, getPrefs, setPref } from '../../lib/storage.js'
 import { createBoard, handOf, librarySize, zoneOf, nameOf, hostOf, ZONE_LABELS, DEFAULT_COUNTERS } from '../../lib/board/model.js'
 import { newRun, act, applyAll, undo, snapshot, restore } from '../../lib/board/runner.js'
 import { untappedSources } from '../../lib/board/mana.js'
@@ -100,8 +100,10 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   const [panel, setPanel] = useState(null)
   const [peeking, setPeeking] = useState(0)
   const [turnsOpen, setTurnsOpen] = useState(false)
-  // A question being asked in the house style: 'deal' or 'mulligan', or null.
+  // A question being asked in the house style: 'deal', 'mulligan', or
+  // 'carry' (a game with this deck was left at the first table), or null.
   const [asking, setAsking] = useState(null)
+  const carried = useRef(null)
   const [mulligans, setMulligans] = useState(0)
   // The opening hand is kept once, and the prompt goes away for the game.
   const [localKept, setLocalKept] = useState(false)
@@ -187,13 +189,39 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
         return
       }
     }
-    if (!ready) return
+    /*
+     * A game with this deck left at the first table, before this one
+     * replaced it. Its save has the same shape, so it can be picked up here
+     * — but that is the person's to decide, so it is asked, in the house
+     * style, before anything is dealt.
+     */
+    const old = getTable()
+    if (old?.deckId === deck.id && asking !== 'carry') {
+      const restored = restore(old)
+      if (restored) { carried.current = { run: restored, mulligans: old.mulligans ?? 0 }; setAsking('carry'); return }
+    }
+    if (!ready || asking === 'carry') return
     dealt.current = true
     setLocalRun(fresh())
     setMulligans(0)
     setLocalKept(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, deck.id, ready])
+  }, [room, deck.id, ready, asking])
+  const carryOn = () => {
+    const c = carried.current
+    dealt.current = true
+    clearTable()
+    setAsking(null)
+    if (c) { setLocalRun(c.run); setMulligans(c.mulligans); setLocalKept(true) }
+  }
+  const letGo = () => {
+    dealt.current = true
+    clearTable()
+    setAsking(null)
+    setLocalRun(fresh())
+    setMulligans(0)
+    setLocalKept(false)
+  }
 
   /*
    * Saved a moment after things settle, with a deadline so a board being
@@ -304,7 +332,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
     // The table's own shape, empty, rather than a spinner: what is about to
     // appear is already where it will be, and the line says what is being
     // waited for.
-    const why = room
+    const why = asking === 'carry' ? 'A game with this deck is waiting at the old table.' : room
       ? (shared.status === 'open' ? 'Taking a seat…' : shared.status === 'connecting' ? 'Joining the table…' : 'The relay is not answering yet. Trying again…')
       : (missing.length ? 'Some cards could not be loaded; dealing anyway…' : 'Fetching the cards, then dealing…')
     return (
@@ -317,6 +345,17 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
           <div className="ztiles">{PILES.map((z) => <span key={z} className="ztile"><span className="ztile__label">{TILE_LABELS[z]}</span><span className="ztile__face skeleton" /></span>)}</div>
         </div>
         <aside className="game__side"><div className="gamelog skeleton skeleton--log" /></aside>
+        <Confirm
+          open={asking === 'carry'}
+          title="Pick up where you left off"
+          onClose={letGo}
+          actions={[
+            { label: 'Continue that game', kind: 'primary', onPress: carryOn },
+            { label: 'Deal a new hand', kind: 'ghost', onPress: letGo },
+          ]}
+        >
+          A game with this deck was left at the table before this one. Continuing brings it here as it stood; dealing a new hand lets it go.
+        </Confirm>
       </div>
     )
   }
