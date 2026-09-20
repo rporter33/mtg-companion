@@ -180,6 +180,24 @@ onto the graveyard tile sends it there; back onto the hand brings it to
 hand. Hand reordering is deliberately not a drop target: the board keeps no
 hand order, and inventing one for a drag would be a second model.
 
+**Render discipline, measured rather than assumed** (2026-09-20): the
+creator's `React.memo` and stable-array work exists because their board got
+slow at scale. Ours was measured before copying it — a solo table with 30,
+80 and 130 permanents already on the battlefield, twenty taps each, timed
+from the click to the tapped class appearing in the DOM (a MutationObserver,
+not a frame wait, which had put a 33 ms floor under the first attempt):
+
+| Permanents | Median | p90 | Worst |
+| --- | --- | --- | --- |
+| 30 | 2.3 ms | 4.5 ms | 6.3 ms |
+| 80 | 2.9 ms | 5.3 ms | 7.4 ms |
+| 130 | 3.4 ms | 4.9 ms | 9.7 ms |
+
+All inside one 16 ms frame with no memoisation at all, so none is added.
+The number to watch is the worst case at 130; if the table ever grows a
+feature that re-renders every tile per action (a hover glow on castable
+cards, say), measure again before and after.
+
 **The common-card bundle waits on network**: Scryfall is not reachable from
 the build environment this was written in, so a bundle generated blind
 could not be checked. The script and loader are a small job once it is.
