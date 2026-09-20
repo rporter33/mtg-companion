@@ -38,6 +38,14 @@ describe('parseRoute', () => {
     // Leaving the table forgets which deck was on it, as changing tab does.
     expect(withPatch(parseRoute('#/table/deck_9'), { tab: 'decks' }).tableDeckId).toBe(null)
   })
+  it('reads the rebuilt table and the deck on it', () => {
+    expect(parseRoute('#/game')).toMatchObject({ tab: 'game', gameDeckId: null })
+    expect(parseRoute('#/game/deck_9')).toMatchObject({ tab: 'game', gameDeckId: 'deck_9' })
+    expect(buildHash(parseRoute('#/game/deck_9'))).toBe('#/game/deck_9')
+    // The two tables never share a deck id: leaving one forgets it, as a tab change does.
+    expect(withPatch(parseRoute('#/game/deck_9'), { tab: 'table' }).gameDeckId).toBe(null)
+    expect(parseRoute('#/game/deck_9').tableDeckId).toBe(null)
+  })
   it('carries the card overlay on any screen', () => {
     expect(parseRoute('#/decks/abc?card=xyz')).toMatchObject({ deckId: 'abc', cardId: 'xyz' })
     expect(parseRoute('#/guide?card=xyz')).toMatchObject({ tab: 'guide', cardId: 'xyz' })

@@ -22,7 +22,7 @@ const check = (label, ok, detail) => {
   else { fail++; console.log(`  FAIL  ${label}`); if (detail) console.log(`        ${detail}`) }
 }
 
-const VIEWS = ['CardsView', 'DecksView', 'PlayView', 'GuideView', 'TableView']
+const VIEWS = ['CardsView', 'DecksView', 'PlayView', 'GuideView', 'TableView', 'GameView']
 // Inside the Decks chunk, the rarer screens are lazy too and prefetched the
 // same way, so they must also be fetched without being visited.
 const DECK_SCREENS = ['FirstDeck', 'YourData', 'DeckPlaytest', 'DeckHistory', 'DeckImportExport']

@@ -118,6 +118,13 @@ async function scanState(label, open) {
   console.log(`  ${label}: ${await scan(label)} violation type(s)`)
 }
 
+await scanState('the rebuilt table\'s lobby', async () => {
+  // Reached by address only — there is no tab for it yet.
+  await page.evaluate(() => { location.hash = '#/game' })
+  await page.waitForTimeout(700)
+  return (await page.locator('.lobby').count()) === 1
+})
+
 await scanState('card search results', async () => {
   await go('Cards')
   const box = page.getByLabel('Search cards')

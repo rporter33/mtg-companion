@@ -1,0 +1,68 @@
+import { useMemo } from 'react'
+import { listDecks } from '../../lib/storage.js'
+import { navigate } from '../../lib/router.js'
+import Lobby from './Lobby.jsx'
+import './game.css'
+
+/**
+ * The rebuilt table, at #/game.
+ *
+ * This is the shell described in docs/table-rebuild: Moxgate's shape with the
+ * two frictions taken out, built beside the existing Table rather than inside
+ * it. Nothing here imports from features/table, and nothing there imports
+ * from here — the one shared thing is the deck data, which both read from
+ * storage. That separation is the whole point: the old table keeps working,
+ * untouched, until this one is better on every axis.
+ *
+ * Reached by address only until then, which is how the practice table
+ * arrived too. There is no tab for it and nothing links to it, so nobody
+ * lands here by accident while it is half built.
+ */
+/*
+ * Every way back to the lobby says `gameDeckId: null` out loud. The router
+ * keeps a tab's own state when the tab does not change, so from #/game/d1 a
+ * plain navigate({ tab: 'game' }) stays exactly where it is; only a key set to
+ * null is cleared. The first spec run caught this — the button did nothing.
+ */
+export default function GameView({ route, onOpenCard }) {
+  const decks = useMemo(() => listDecks(), [])
+  const deck = route.gameDeckId ? decks.find((d) => d.id === route.gameDeckId) ?? null : null
+
+  if (route.gameDeckId && !deck) {
+    return (
+      <div className="stack">
+        <div className="banner banner--warn" role="alert">
+          That deck is not on this device any more.
+          <div className="row" style={{ marginTop: 'var(--space-2)' }}>
+            <button className="btn btn--primary btn--sm" onClick={() => navigate({ tab: 'game', gameDeckId: null })}>Back to the lobby</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (deck) return <TableSoon deck={deck} onOpenCard={onOpenCard} />
+  return <Lobby decks={decks} />
+}
+
+/**
+ * Where the table will be. It says so rather than pretending: a screen that
+ * looks finished and is not would cost more trust than an honest placeholder.
+ */
+function TableSoon({ deck }) {
+  return (
+    <div className="stack">
+      <button className="btn btn--ghost btn--sm" style={{ alignSelf: 'flex-start' }} onClick={() => navigate({ tab: 'game', gameDeckId: null })}>
+        ← Lobby
+      </button>
+      <section className="hero">
+        <div className="hero__label">Not built yet</div>
+        <h1>{deck.name}</h1>
+        <p className="muted">
+          The table for this route is the next thing to be built. The lobby you came from is real;
+          this screen is the marker for what follows it.
+        </p>
+      </section>
+    </div>
+  )
+}

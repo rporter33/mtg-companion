@@ -13,6 +13,7 @@
  *   #/play
  *   #/practice | #/practice/<scenario>   (the practice table; reached by address only until it is linked)
  *   #/table | #/table/<deckId>           (the free table, with one of your own decks on it)
+ *   #/game | #/game/<deckId>             (the rebuilt table; by address only until it replaces #/table)
  *
  * plus "?card=<id>" on any of them for the card sheet, which is an overlay
  * rather than a place: closing it goes back to wherever it was opened from.
@@ -22,7 +23,7 @@
  */
 import { useMemo, useSyncExternalStore } from 'react'
 
-export const TABS = ['guide', 'cards', 'decks', 'play', 'practice', 'table']
+export const TABS = ['guide', 'cards', 'decks', 'play', 'practice', 'table', 'game']
 export const DECK_TABS = ['list', 'add', 'coach', 'analysis', 'hand', 'history', 'io']
 /** The first-deck flow's steps, in order. The bare #/decks/new means "resume". */
 export const STEP_SLUGS = ['colours', 'play', 'commander', 'list']
@@ -35,7 +36,7 @@ export const GUIDE_PLACES = ['game', 'glossary', 'track', 'lesson']
 
 const EMPTY = Object.freeze({
   tab: null, deckId: null, deckTab: null, data: false, starting: false, step: null, q: null, cardId: null,
-  guide: null, trackId: null, lessonId: null, scenarioId: null, tableDeckId: null,
+  guide: null, trackId: null, lessonId: null, scenarioId: null, tableDeckId: null, gameDeckId: null,
 })
 
 /** "#/decks/abc/analysis?card=xyz" -> { tab, deckId, deckTab, data, q, cardId }. */
@@ -55,6 +56,7 @@ export function parseRoute(hash) {
   if (tab === 'cards') route.q = params.get('q') || null
   if (tab === 'practice' && second) route.scenarioId = second
   if (tab === 'table' && second) route.tableDeckId = second
+  if (tab === 'game' && second) route.gameDeckId = second
   if (tab === 'guide' && GUIDE_PLACES.includes(second)) {
     if (second === 'track' && third) {
       route.guide = fourth ? 'lesson' : 'track'
@@ -91,6 +93,7 @@ export function buildHash(route) {
   }
   if (tab === 'practice' && route.scenarioId) segments.push(encodeURIComponent(route.scenarioId))
   if (tab === 'table' && route.tableDeckId) segments.push(encodeURIComponent(route.tableDeckId))
+  if (tab === 'game' && route.gameDeckId) segments.push(encodeURIComponent(route.gameDeckId))
   if (tab === 'decks') {
     if (route.data) segments.push('data')
     else if (route.starting) {
