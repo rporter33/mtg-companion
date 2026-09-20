@@ -128,6 +128,49 @@
    alone says nothing to anyone who cannot see it. */
 .field__slot--tapped { transform: translate(-50%, -50%) rotate(84deg); }
 
+/* --- the tile: a permanent as Moxgate draws one ------------------------- */
+/*
+ * The painting cropped to a landscape box, the name and its kind on a strip
+ * under it. Tapped turns it a little, dims it and marks it, because a wide
+ * tile on its side does not read as tapped the way a tall card does; the
+ * three together do. The field that holds tiles is wider than square for the
+ * same reason the tile is.
+ */
+.bcard--tile { padding: 2px; gap: 0; border-radius: 7px; aspect-ratio: 3 / 2; cursor: pointer; }
+.bcard__art--tile { border-radius: 5px 5px 0 0; background-position: center 35%; position: relative; }
+.bcard__strip {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; gap: 4px;
+  padding: 2px 4px 1px;
+  font-size: clamp(0.5rem, 10cqw, 0.7rem);
+  line-height: 1.2;
+}
+/* One line, cut with an ellipsis: the flexed two-line clamp the card uses
+   shrank to nothing beside the stats on a tile this narrow. */
+.bcard--tile .bcard__name { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-transform: uppercase; letter-spacing: 0.03em; font-size: inherit; }
+.bcard--tile .bcard__stats { font-size: inherit; color: var(--text); font-weight: 600; }
+.bcard__kind { color: var(--text-faint); font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.06em; }
+.bcard--tile .bcard__counters { padding: 0 4px 2px; }
+.bcard--tapped.bcard--tile { filter: saturate(0.5) brightness(0.72); }
+/* On a phone a tile is sixty points across: the name is worth more than the
+   kind, so the kind goes first. */
+@container (max-width: 84px) { .bcard__kind { display: none; } }
+.bcard__tapglyph {
+  position: absolute; top: 3px; right: 4px;
+  width: 1.3em; height: 1.3em; display: grid; place-items: center;
+  border-radius: 50%; background: #000000aa; color: var(--warn);
+  font-size: clamp(0.6rem, 12cqw, 0.9rem); line-height: 1;
+}
+/* Arrived this turn glows green at the edge, as Moxgate's just-played card
+   does — kept for the turn, because that is the summoning-sickness cue. */
+.bcard--tile-arrived { box-shadow: 0 0 0 1px var(--ok), 0 0 12px #4ea87a66; }
+.field--tile { aspect-ratio: 4 / 3; }
+/* A tile turns less than a card: enough to say "sideways", not so much the
+   strip becomes unreadable. */
+.field--tile .field__turn--tapped { transform: rotate(12deg); }
+@media (min-width: 900px), (orientation: landscape) and (min-width: 620px) {
+  .field--tile { aspect-ratio: 16 / 9; }
+}
+
 /* --- piles and the rail -------------------------------------------------- */
 
 .tabletop__side { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }

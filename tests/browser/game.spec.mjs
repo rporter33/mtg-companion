@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 /**
- * The rebuilt table's lobby, at #/game — and the wall around it.
+ * The rebuilt table at #/game: the lobby, the table, and the wall around them.
  *
- * Two things are checked, and the second matters more than the first. That
- * the lobby shows a person's decks and lets them pick one is the feature.
- * That the old table at #/table is untouched — same picker, same chunk, no
- * new script pulled in — is the promise this rebuild was made under: nothing
- * that works today breaks while the new thing is half built.
+ * Three things are checked. That the lobby shows a person's decks and lets
+ * them pick one. That the table keeps the two laws in
+ * docs/table-rebuild/FRICTION.md — one tap plays a card and one tap taps it,
+ * with no confirming tap in between — and remembers itself under its own
+ * key. And that the old table at #/table is untouched — same picker, same
+ * saved slot, nothing of the new one leaked in — which is the promise this
+ * rebuild was made under: nothing that works today breaks while the new
+ * thing is half built.
  */
 
 import { chromium } from 'playwright'
@@ -48,8 +51,32 @@ const CARDS = [
   c('cmdr', 'Test Commander', 'Legendary Creature — Elf', {
     color_identity: ['G', 'W'], image_uris: { art_crop: PIXEL, small: PIXEL, normal: PIXEL },
   }),
-  c('elf', 'Llanowar Elves', 'Creature — Elf Druid'),
+  c('elf', 'Llanowar Elves', 'Creature — Elf Druid', { power: '1', toughness: '1' }),
 ]
+
+/*
+ * Tapping a card in the fan by its visible sliver. A rotated card's box has
+ * empty corners, so the middle of the box can belong to the neighbour; this
+ * scans the slot at mid-height for the first run of points that are actually
+ * this card and clicks the middle of it. Same helper as table.spec.mjs.
+ */
+const tapHand = async (card) => {
+  await card.scrollIntoViewIfNeeded()
+  const point = await card.evaluate((el) => {
+    const slot = el.closest('.tabletop__handcard')
+    const box = slot.getBoundingClientRect()
+    const y = box.top + box.height / 2
+    let from = null
+    for (let x = box.left + 1; x < box.right; x += 1) {
+      const hit = document.elementFromPoint(x, y)
+      if (hit && slot.contains(hit)) { if (from === null) from = x }
+      else if (from !== null) return { x: (from + x) / 2, y }
+    }
+    return from === null ? null : { x: (from + box.right) / 2, y }
+  })
+  if (!point) throw new Error('no part of that hand card is tappable — it is fully covered')
+  await page.mouse.click(point.x, point.y)
+}
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
 const page = await browser.newPage({ viewport: { width: 430, height: 1100 } })
@@ -164,8 +191,93 @@ await page.getByRole('button', { name: /^Start game/ }).click()
 await page.waitForTimeout(400)
 check('starting carries the deck in the address', await page.evaluate(() => location.hash) === '#/game/d1',
   await page.evaluate(() => location.hash))
-check('and lands on an honest placeholder, not a fake table',
-  /not built yet/i.test(await page.locator('main').innerText()))
+await page.locator('.game').waitFor({ timeout: 5000 })
+check('and lands on the table', (await page.locator('.game').count()) === 1)
+
+console.log('\nThe table, read clockwise')
+const inHand = () => page.locator('.tabletop__handcard .bcard').count()
+const onField = () => page.locator('.field .bcard--tile').count()
+check('the seat opposite is open, and says so',
+  /Open seat/i.test(await page.locator('.plate--them').innerText()), await page.locator('.plate--them').innerText())
+check('your plate wears the ring for the active seat', (await page.locator('.plate--you.plate--active').count()) === 1)
+check('with the phase as a pill', /untap/i.test(await page.locator('.plate--you .plate__status').innerText()))
+check('and twenty life', (await page.locator('.plate--you .plate__total').innerText()).trim() === '20')
+check('the four zone tiles carry counts',
+  (await page.getByRole('button', { name: /^Library, 92 cards/ }).count()) === 1
+  && (await page.getByRole('button', { name: /^Command zone, 1 card$/ }).count()) === 1)
+check('the rail has the four presses that matter, and undo',
+  (await page.locator('.rail .rail__btn').count()) === 5
+  && /end turn/i.test(await page.locator('.rail').innerText()) && /undo/i.test(await page.locator('.rail').innerText()))
+check('seven cards are fanned in hand', (await inHand()) === 7)
+
+console.log('\nThe opening hand floats on the battlefield')
+check('the prompt is over the field, not a modal', (await page.locator('.game__field .prompt').count()) === 1)
+check('and names both choices',
+  (await page.getByRole('button', { name: /^Mulligan/ }).count()) === 1 && (await page.getByRole('button', { name: 'Keep hand →' }).count()) === 1)
+await page.getByRole('button', { name: /^Mulligan/ }).click()
+await page.waitForTimeout(300)
+check('a mulligan draws seven again', (await inHand()) === 7)
+check('and the prompt counts it, and says what is owed',
+  /1 mulligan/.test(await page.locator('.prompt').innerText()) && /put 2 on the bottom/.test(await page.locator('.prompt').innerText()),
+  await page.locator('.prompt').innerText())
+await page.getByRole('button', { name: 'Keep hand →' }).click()
+await page.waitForTimeout(200)
+check('keeping puts the prompt away', (await page.locator('.prompt').count()) === 0)
+check('and the debt is still written down', /put 1 on the bottom/.test(await page.locator('.game__hand').innerText()))
+
+console.log('\nLaw 2: one tap does the thing')
+await tapHand(page.locator('.tabletop__handcard .bcard').last())
+await page.waitForTimeout(300)
+check('one tap on a card in hand plays it', (await onField()) === 1 && (await inHand()) === 6)
+check('with no confirming panel in between', (await page.locator('.actions').count()) === 0)
+const tile = page.locator('.field .bcard--tile').first()
+check('the permanent is a tile: a name strip and its kind',
+  /LLANOWAR/i.test(await tile.locator('.bcard__name').innerText()) && /creature/i.test(await tile.locator('.bcard__kind').innerText()))
+check('and glows for having arrived this turn', (await page.locator('.field .bcard--tile-arrived').count()) === 1)
+await tile.click()
+await page.waitForTimeout(300)
+check('one tap on the tile taps it', (await page.locator('.field .bcard--tapped').count()) === 1)
+check('and says so in words as well as by the glyph',
+  /tapped/.test(await tile.getAttribute('aria-label')) && (await tile.locator('.bcard__tapglyph').count()) === 1,
+  await tile.getAttribute('aria-label'))
+await page.getByRole('button', { name: /undo/i }).click()
+await page.waitForTimeout(200)
+check('undo is on the rail, and undoes it', (await page.locator('.field .bcard--tapped').count()) === 0)
+await tile.click({ button: 'right' })
+await page.waitForTimeout(200)
+check('holding a card opens the rarer actions without doing anything to it',
+  (await page.locator('.actions').count()) === 1 && (await page.locator('.field .bcard--tapped').count()) === 0)
+check('and they are about that card', /Llanowar Elves/.test(await page.locator('.actions').innerText()))
+await page.getByRole('button', { name: 'To the graveyard' }).click()
+await page.waitForTimeout(200)
+check('a move from the panel lands, and the tile count says so',
+  (await onField()) === 0 && (await page.getByRole('button', { name: /^Graveyard, 1 card$/ }).count()) === 1)
+
+console.log('\nThe tiles open their zones')
+await page.getByRole('button', { name: /^Library, 92 cards/ }).click()
+await page.waitForTimeout(200)
+check('the library tile opens the library beside the log', (await page.locator('.game__side').getByRole('button', { name: 'Shuffle' }).count()) === 1)
+await page.locator('.game__side').getByRole('button', { name: 'Draw', exact: true }).click()
+await page.waitForTimeout(200)
+check('drawing from it draws', (await inHand()) === 7 && (await page.getByRole('button', { name: /^Library, 91 cards/ }).count()) === 1)
+await page.getByRole('button', { name: /end turn/i }).click()
+await page.waitForTimeout(300)
+check('end turn is one press, and the log shows the new turn', /turn 2/i.test(await page.locator('.gamelog').innerText()))
+
+console.log('\nIt remembers itself, under its own key')
+await page.reload({ waitUntil: 'networkidle' })
+await page.locator('.game').waitFor({ timeout: 5000 })
+await page.waitForTimeout(400)
+check('the game comes back after a reload',
+  (await page.getByRole('button', { name: /^Graveyard, 1 card$/ }).count()) === 1 && (await inHand()) === 7)
+check('with the opening hand already kept', (await page.locator('.prompt').count()) === 0)
+const slots = await page.evaluate(() => {
+  const state = JSON.parse(localStorage.getItem('mtg-companion:v1'))
+  return { game: state.game?.saved?.deckId ?? null, table: state.table?.saved ?? null }
+})
+check('saved under game, not under the old table\'s slot', slots.game === 'd1' && slots.table === null, JSON.stringify(slots))
+await page.getByRole('button', { name: 'More' }).click()
+await page.waitForTimeout(200)
 await page.getByRole('button', { name: '← Lobby' }).click()
 await page.waitForTimeout(300)
 check('Lobby goes back to the lobby', await page.evaluate(() => location.hash) === '#/game')

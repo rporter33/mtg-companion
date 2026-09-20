@@ -139,3 +139,158 @@
 .lobby__deck--art .lobby__deckmeta { text-shadow: 0 1px 2px var(--bg); }
 .lobby__pips { display: flex; gap: 2px; margin-top: var(--space-1); }
 .lobby__tick { z-index: 2; }
+
+/* ==========================================================================
+   The table, at #/game/<deck>. TARGET.md §7, read clockwise: the seat
+   opposite along the top, the battlefield with the log beside it, and along
+   the bottom your plate and rail, your hand, your zone tiles.
+   ========================================================================== */
+
+.game {
+  display: grid; gap: var(--space-2);
+  grid-template-areas: "them" "field" "you" "side";
+  /* A table is not a document: a press-and-drag is a drag, not a selection. */
+  user-select: none; -webkit-user-select: none;
+}
+.game--carrying { cursor: grabbing; }
+.game .gamelog, .game .tablecoach, .game .turns__does { user-select: text; -webkit-user-select: text; }
+.game__them { grid-area: them; }
+.game__field { grid-area: field; position: relative; display: flex; flex-direction: column; gap: var(--space-2); }
+.game__you { grid-area: you; }
+.game__side { grid-area: side; display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+
+/* --- the seat opposite ---------------------------------------------------- */
+
+.game__them {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2);
+  border: 1px dashed var(--border); border-radius: var(--radius);
+}
+.game__theirhand { flex: 1 1 10rem; margin: 0; }
+/* Dimmed by its faces, never by its words: text under an opacity fails the
+   contrast bar the a11y sweep holds every screen to. */
+.ztiles--them .ztile__face { opacity: 0.55; }
+
+/* --- the life plate ------------------------------------------------------- */
+
+.plate {
+  display: grid; gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  min-width: 7.5rem;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.plate--active { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok), 0 0 14px #4ea87a44; }
+.plate--them { border-style: dashed; }
+.plate--them .plate__status, .plate--them .plate__total { color: var(--text-muted); }
+.plate__status {
+  justify-self: start;
+  padding: 1px 8px; border-radius: 999px;
+  font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-faint); border: 1px solid var(--border);
+}
+.plate__status--turn { color: var(--ok); border-color: #4ea87a66; background: #4ea87a18; }
+.plate__name { font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); }
+.plate__life { display: flex; align-items: center; gap: var(--space-2); }
+.plate__total { font-size: 1.8rem; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 2.2ch; text-align: center; line-height: 1.1; }
+.plate__step {
+  width: 1.6rem; height: 1.6rem; display: grid; place-items: center;
+  font: inherit; font-size: 1rem; line-height: 1; color: var(--text-muted); cursor: pointer;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 50%;
+}
+.plate__step:hover, .plate__step:focus-visible { color: var(--text); border-color: var(--accent); }
+.plate__mana { display: grid; gap: 2px; padding-top: var(--space-1); border-top: 1px solid var(--border); margin-top: var(--space-1); }
+.plate__label { font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); }
+
+/* --- the actions rail ----------------------------------------------------- */
+
+.rail { display: flex; flex-wrap: wrap; gap: var(--space-1); align-content: start; }
+.rail__btn {
+  padding: var(--space-1) var(--space-3); min-height: 32px;
+  font: inherit; font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-muted); cursor: pointer;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: 999px;
+}
+.rail__btn:hover:not(:disabled), .rail__btn:focus-visible { color: var(--text); border-color: var(--accent); }
+.rail__btn:disabled { opacity: 0.45; cursor: default; }
+.rail__btn--on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.rail__btn--go { color: var(--text); border-color: var(--border-strong); }
+
+.game__seat { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: start; }
+
+/* --- your hand ------------------------------------------------------------ */
+
+.game__hand { position: relative; min-width: 0; }
+.game__owed { position: absolute; top: 0; left: 0; z-index: 70; }
+
+/* --- the zone tiles ------------------------------------------------------- */
+
+.ztiles { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.ztile {
+  position: relative; display: grid; gap: 2px; justify-items: center;
+  padding: 0; font: inherit; color: inherit; cursor: pointer;
+  background: transparent; border: 0;
+}
+.ztile--empty { cursor: default; }
+.ztile__label { font-size: 0.6rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-faint); }
+.ztile__face {
+  width: 2.6rem; aspect-ratio: 63 / 88;
+  display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg-raised) center / cover no-repeat;
+  color: var(--text-faint);
+}
+.ztile--empty .ztile__face { border-style: dashed; }
+/* The app draws its own card back: a plain weave, no printed mark. */
+.ztile__face--back {
+  border-color: var(--border-strong);
+  background-image: repeating-linear-gradient(45deg, #2b2416 0 3px, #211b10 3px 6px);
+}
+.ztile:hover .ztile__face, .ztile:focus-visible .ztile__face, .ztile--open .ztile__face { border-color: var(--accent); }
+.ztile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.ztile__count {
+  position: absolute; top: 0.85rem; right: -0.35rem;
+  min-width: 1.3rem; padding: 0 4px; border-radius: 999px;
+  font-size: 0.65rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.3rem; text-align: center;
+  color: var(--bg); background: var(--accent);
+}
+
+/* --- the prompt, floating on the battlefield ------------------------------ */
+
+.prompt {
+  position: absolute; left: 50%; bottom: var(--space-3); z-index: 20;
+  transform: translateX(-50%);
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-2);
+  max-width: calc(100% - var(--space-4));
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-overlay); border: 1px solid var(--accent); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg); backdrop-filter: blur(6px);
+}
+.prompt__lead { display: grid; gap: 1px; padding-right: var(--space-2); }
+.prompt__title { font-size: var(--text-md); }
+.prompt__sub { font-size: var(--text-xs); color: var(--text-muted); }
+.prompt__btn { display: grid; gap: 0; justify-items: center; line-height: 1.2; }
+.prompt__hint { font-size: 0.65rem; font-weight: 400; color: var(--text-muted); }
+.btn--primary .prompt__hint { color: inherit; }
+
+.game__aim { margin: 0; }
+/* The field's own "drag a card up" line would show through under the prompt. */
+.game__field--prompt .field__empty { display: none; }
+.more { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* --- held sideways, or on a desktop --------------------------------------- */
+/*
+ * The shape Moxgate is: the battlefield takes the width, the log sits beside
+ * it, and the bottom row is plate and rail, hand, tiles, left to right.
+ */
+@media (min-width: 900px), (orientation: landscape) and (min-width: 620px) {
+  .game {
+    grid-template-columns: minmax(0, 1fr) 19rem;
+    grid-template-areas: "them side" "field side" "you side";
+    align-items: start;
+  }
+  .game__you { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-3); align-items: end; }
+  .game__seat { flex-wrap: nowrap; }
+  .rail { flex-direction: column; flex-wrap: nowrap; }
+  .ztiles { display: grid; grid-template-columns: repeat(2, auto); }
+  .game__side { position: sticky; top: var(--space-2); max-height: calc(100vh - var(--space-4)); overflow: auto; }
+}

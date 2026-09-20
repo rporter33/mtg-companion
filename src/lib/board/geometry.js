@@ -76,6 +76,28 @@ export function freeSpot(wanted, taken, { w = CARD_W, h = CARD_H } = {}) {
 }
 
 /**
+ * A free place along a row, for a card put down without saying where.
+ *
+ * Out from the middle, alternating sides, so the row fills the way a hand
+ * lays creatures out: the first in the centre, the next beside it, the next
+ * on the other side. Without this, three creatures played by one tap each
+ * landed on exactly the same spot and only the top one could be pointed at.
+ * When the row is full the card goes in the middle anyway, on top, which is
+ * at least visible; nudging is the player's from there.
+ */
+export function freeAlong(y, taken, { w = CARD_W, h = CARD_H } = {}) {
+  const step = w * 1.15
+  const most = Math.floor(0.5 / step)
+  for (let i = 0; i <= most; i++) {
+    for (const side of i === 0 ? [0] : [1, -1]) {
+      const spot = clampToField(0.5 + side * i * step, y, { w, h })
+      if (!taken.some((c) => overlaps(spot, c, { w, h, share: 0.9 }))) return spot
+    }
+  }
+  return clampToField(0.5, y, { w, h })
+}
+
+/**
  * Tidies a set of cards into rows, the way a player straightens a board
  * mid-game. Lands go to the back row, everything else in front, because
  * that is how almost everyone lays a table out.

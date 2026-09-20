@@ -104,6 +104,11 @@ const EMPTY = {
   // every deck's last game would grow without a ceiling for no gain. No
   // schema bump: a file without this gets the default from here.
   table: { saved: null },
+  // The rebuilt table at #/game keeps its own board. It cannot share the
+  // free table's slot: starting a game there would silently overwrite a game
+  // left in progress here, and a person has every right to have both. No
+  // schema bump, for the same reason as above.
+  game: { saved: null },
   prefs: {
     market: 'usd',
     currency: 'usd', showCardImages: true, lastFormat: 'commander',
@@ -179,6 +184,7 @@ function assemble({ root, decks }) {
     guide: { ...EMPTY.guide, ...(merged.guide ?? {}) },
     practice: { ...EMPTY.practice, ...(merged.practice ?? {}) },
     table: { ...EMPTY.table, ...(merged.table ?? {}) },
+    game: { ...EMPTY.game, ...(merged.game ?? {}) },
     prefs: { ...EMPTY.prefs, ...(merged.prefs ?? {}) },
   }
 }
@@ -526,6 +532,25 @@ export function saveTable(saved) {
 
 export function clearTable() {
   return update((state) => ({ ...state, table: { saved: null } }))
+}
+
+// --- the rebuilt table ---------------------------------------------------
+
+/**
+ * The rebuilt table's saved board, or null. Its own slot; see EMPTY. Named
+ * for the route, because `saveGame` above already belongs to the life
+ * counter's record of finished games.
+ */
+export function getGameTable() {
+  return read().game?.saved ?? null
+}
+
+export function saveGameTable(saved) {
+  return update((state) => ({ ...state, game: { saved } }))
+}
+
+export function clearGameTable() {
+  return update((state) => ({ ...state, game: { saved: null } }))
 }
 
 // --- collection ----------------------------------------------------------

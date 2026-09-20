@@ -125,6 +125,26 @@ await scanState('the rebuilt table\'s lobby', async () => {
   return (await page.locator('.lobby').count()) === 1
 })
 
+await scanState('the rebuilt table', async () => {
+  // A deck has to exist to sit down with. Seeded and then reloaded, because
+  // storage is read once per document. Created far in the future so it sorts
+  // last: the free table's scans further down pick the first deck on the
+  // shelf, and this one has no card data behind it.
+  await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('mtg-companion:v1') ?? '{}')
+    state.version = 4
+    state.decks = [...(state.decks ?? []), {
+      id: 'a11y', name: 'Sweep', formatId: 'commander', commanders: [], signatureSpell: null, categoryOrder: [], versions: [],
+      main: [{ cardId: 'elf', quantity: 60 }], sideboard: [], createdAt: '2099-01-01T00:00:00Z', updatedAt: '2099-01-01T00:00:00Z',
+    }]
+    localStorage.setItem('mtg-companion:v1', JSON.stringify(state))
+  })
+  await page.goto(`${TARGET}#/game/a11y`, { waitUntil: 'networkidle' })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  return (await page.locator('.game .plate--you').count()) === 1
+})
+
 await scanState('card search results', async () => {
   await go('Cards')
   const box = page.getByLabel('Search cards')

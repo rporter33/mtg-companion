@@ -17,10 +17,12 @@ import BoardCard from './BoardCard.jsx'
  * rows has thrown that away.
  */
 const NUDGE = 0.02
+/** A tile's width as a fraction of the field, which is wider than a card's. */
+const TILE_W = 0.16
 
 export default function Field({
-  fieldRef, board, lookup, player = 'you', selectedId, drag, aiming, onBegin, onSelect, onNudge, onBackground,
-  images = true,
+  fieldRef, board, lookup, player = 'you', selectedId, drag, aiming, onBegin, onSelect, onContext, onNudge, onBackground,
+  images = true, tile = false,
 }) {
   const cards = stacked(board, player)
   const dragged = drag && drag.from === 'battlefield' && drag.moved ? drag.id : null
@@ -37,7 +39,7 @@ export default function Field({
 
   return (
     <div
-      className="field"
+      className={`field${tile ? ' field--tile' : ''}`}
       ref={fieldRef}
       onKeyDown={onKeyDown}
       // Empty table is where you put a card down: a press on the felt itself
@@ -45,7 +47,10 @@ export default function Field({
       onClick={(event) => { if (!event.target.closest('.field__slot')) onBackground?.() }}
       role="group"
       aria-label={`Battlefield, ${cards.length} card${cards.length === 1 ? '' : 's'}`}
-      style={{ '--card-w': `${CARD_W * 100}%`, '--card-h': `${CARD_H * 100}%` }}
+      // A tile is wider than a card and shorter, so the field is wider too:
+      // positions are fractions either way, and a board laid out as tiles
+      // reads the same at every size the way the square one does.
+      style={{ '--card-w': `${(tile ? TILE_W : CARD_W) * 100}%`, '--card-h': `${CARD_H * 100}%` }}
     >
       {board.guided && <Playmat board={board} drag={drag} />}
       <Arrows board={board} />
@@ -73,12 +78,15 @@ export default function Field({
                 inst={inst}
                 selected={selectedId === inst.id}
                 dragging={Boolean(live)}
+                size={tile ? 'tile' : 'field'}
+                arrived={tile && inst.enteredOnTurn === board.turn}
                 onPointerDown={(e) => onBegin(e, { id: inst.id, from: 'battlefield' })}
                 onClick={() => onSelect(inst.id)}
+                onContextMenu={onContext ? (e) => { e.preventDefault(); onContext(inst.id) } : undefined}
                 images={images}
               />
             </span>
-            {inst.tapped && <span className="field__flag">tapped</span>}
+            {inst.tapped && !tile && <span className="field__flag">tapped</span>}
           </span>
         )
       })}

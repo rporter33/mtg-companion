@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { listDecks } from '../../lib/storage.js'
 import { navigate } from '../../lib/router.js'
 import Lobby from './Lobby.jsx'
+import Table from './Table.jsx'
 import './game.css'
 
 /**
@@ -41,28 +42,9 @@ export default function GameView({ route, onOpenCard }) {
     )
   }
 
-  if (deck) return <TableSoon deck={deck} onOpenCard={onOpenCard} />
+  // Keyed by deck, so leaving one game for another is a new table rather than
+  // the old one's state with a different deck underneath it.
+  if (deck) return <Table key={deck.id} deck={deck} onOpenCard={onOpenCard} />
   return <Lobby decks={decks} />
 }
 
-/**
- * Where the table will be. It says so rather than pretending: a screen that
- * looks finished and is not would cost more trust than an honest placeholder.
- */
-function TableSoon({ deck }) {
-  return (
-    <div className="stack">
-      <button className="btn btn--ghost btn--sm" style={{ alignSelf: 'flex-start' }} onClick={() => navigate({ tab: 'game', gameDeckId: null })}>
-        ← Lobby
-      </button>
-      <section className="hero">
-        <div className="hero__label">Not built yet</div>
-        <h1>{deck.name}</h1>
-        <p className="muted">
-          The table for this route is the next thing to be built. The lobby you came from is real;
-          this screen is the marker for what follows it.
-        </p>
-      </section>
-    </div>
-  )
-}

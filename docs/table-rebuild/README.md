@@ -147,7 +147,8 @@ Settled with the owner on 2026-09-19, so the new session does not re-open them:
 4. **The spike is already done** — read `SPIKE.md`. Argentum was built and
    run: 20 games end to end, the wire measured, Law 1 quantified. Re-run it
    with `spike/` if you want the loop in front of you.
-5. Start Phase 1. It is not blocked on anything.
+5. Phase 1 is under way — the lobby and the table screen are shipped at
+   `#/game`. `PLAN.md` says exactly where it stands and what is left.
 
 ### About `frames/`
 

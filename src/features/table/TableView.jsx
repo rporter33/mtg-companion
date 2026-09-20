@@ -3,7 +3,7 @@ import { navigate } from '../../lib/router.js'
 import { listDecks, getDeck, saveDeck, getTable, saveTable, clearTable, getPrefs, setPref } from '../../lib/storage.js'
 import { createBoard, handOf, librarySize, zoneOf, nameOf, hostOf, ZONE_LABELS, DEFAULT_COUNTERS } from '../../lib/board/model.js'
 import { newRun, act, applyAll, undo, snapshot, restore } from '../../lib/board/runner.js'
-import { untappedSources, withinReach } from '../../lib/board/mana.js'
+import { untappedSources } from '../../lib/board/mana.js'
 import { openingActions, mulliganActions, libraryOf, swapPrinting, OPENING_HAND } from '../../lib/board/deck.js'
 import { treatmentOf, finishFor } from '../../lib/board/art.js'
 import { laneFor, refuseBattlefield, zoneWhenPlayed, isPermanent } from '../../lib/board/placement.js'
@@ -23,9 +23,9 @@ import GameLog from '../../components/table/GameLog.jsx'
 import Pool from '../../components/table/Pool.jsx'
 import PlayerCounters from '../../components/table/PlayerCounters.jsx'
 import ZoneBrowser from '../../components/table/ZoneBrowser.jsx'
-import ManaCost from '../../components/ManaCost.jsx'
 import Printings from '../../components/Printings.jsx'
 import TokenMaker from '../../components/table/TokenMaker.jsx'
+import HandCost from '../../components/table/HandCost.jsx'
 import '../../components/table/table.css'
 
 /**
@@ -965,31 +965,3 @@ function Dice({ board, onRoll }) {
   )
 }
 
-
-/**
- * A card's cost, floating above it in hand.
- *
- * Borrowed from Moxgate, and the best small idea in their hand: you read what
- * a card costs without reading the card, so a fanned hand of seven is legible
- * at a glance rather than seven things to squint at.
- *
- * The reach hint is ours and is weaker than theirs by design. Theirs knows
- * what you can cast; this compares two numbers and is wrong about cost
- * reduction, alternative costs and anything that taps for more than one — so
- * it only ever dims a cost, never forbids a play, and says what it ignores.
- */
-function HandCost({ card, pool }) {
-  const cost = card?.mana_cost ?? card?.card_faces?.[0]?.mana_cost ?? ''
-  if (!cost) return null
-  const reach = withinReach(card, pool)
-  return (
-    <span
-      className={`tabletop__cost${reach === 'no' ? ' tabletop__cost--far' : ''}`}
-      title={reach === 'no'
-        ? 'More than your untapped sources, counted one per card. It does not read conditions or cost reductions.'
-        : undefined}
-    >
-      <ManaCost cost={cost} />
-    </span>
-  )
-}

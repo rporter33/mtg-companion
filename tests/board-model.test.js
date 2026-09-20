@@ -1041,3 +1041,30 @@ describe('the fan of cards in your hand', () => {
     expect(fan(2.7).cards).toHaveLength(2)
   })
 })
+
+describe('a card put down without a point', () => {
+  it('takes the next free place along its row rather than the middle', async () => {
+    const { freeAlong, CARD_W } = await import('../src/lib/board/geometry.js')
+    const taken = []
+    const spots = []
+    for (let i = 0; i < 4; i++) {
+      const spot = freeAlong(0.35, taken)
+      spots.push(spot)
+      taken.push(spot)
+    }
+    expect(spots[0]).toEqual({ x: 0.5, y: 0.35 })
+    expect(spots[1].x).toBeGreaterThan(0.5)
+    expect(spots[2].x).toBeLessThan(0.5)
+    expect(spots[3].x).toBeGreaterThan(spots[1].x)
+    // Every one sits on the row, and none share a place.
+    expect(spots.every((s) => s.y === 0.35)).toBe(true)
+    expect(new Set(spots.map((s) => s.x)).size).toBe(4)
+    expect(Math.abs(spots[1].x - spots[0].x)).toBeGreaterThanOrEqual(CARD_W)
+  })
+
+  it('gives up gracefully when the row is full', async () => {
+    const { freeAlong } = await import('../src/lib/board/geometry.js')
+    const taken = Array.from({ length: 40 }, (_, i) => ({ x: i / 40, y: 0.35 }))
+    expect(freeAlong(0.35, taken)).toEqual({ x: 0.5, y: 0.35 })
+  })
+})

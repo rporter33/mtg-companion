@@ -22,7 +22,7 @@ import { ZONES, ORDERED_ZONES, makeInstance, clampToField, attachedTo, CARD_W, C
 import { FINISHES } from './art.js'
 import { snapToLane, laneById } from './placement.js'
 import { nextStep as stepAfter, STEPS, FIRST_STEP } from '../../data/turn-structure.js'
-import { freeSpot, tidy as tidyPositions } from './geometry.js'
+import { freeSpot, tidy as tidyPositions, freeAlong } from './geometry.js'
 
 const refuse = (code, message) => ({ ok: false, reason: { code, message } })
 const clone = (board) => (typeof structuredClone === 'function' ? structuredClone(board) : JSON.parse(JSON.stringify(board)))
@@ -80,7 +80,10 @@ function place(board, id, zone, { to = 'top', x, y, owner } = {}) {
      */
     let spot
     if (board.guided && inst.lane) {
-      spot = snapToLane(inst.lane, { x: wanted.x })
+      const inLane = snapToLane(inst.lane, { x: wanted.x })
+      // Put down without a point — played by a tap, not dropped — the card
+      // takes the nearest free place along its row rather than the middle.
+      spot = x == null ? freeAlong(inLane.y, others) : inLane
     } else {
       spot = x == null && y == null ? freeSpot(wanted, others) : wanted
     }

@@ -27,8 +27,8 @@ import { typeLineOf } from '../../lib/formats.js'
  * anyone else.
  */
 export default function BoardCard({
-  card, inst, name, size = 'field', selected = false, onPointerDown, onClick,
-  dragging = false, tilt = false, images = true,
+  card, inst, name, size = 'field', selected = false, onPointerDown, onClick, onContextMenu,
+  dragging = false, tilt = false, images = true, arrived = false,
 }) {
   const art = artUrl(card)
   const type = inst?.custom?.typeLine ?? typeLineOf(card ?? {})
@@ -37,7 +37,19 @@ export default function BoardCard({
   const finish = card ? finishOf(card, inst) : 'normal'
   const lean = useLean(tilt && !dragging)
   const counters = Object.entries(inst?.counters ?? {}).filter(([, n]) => n)
-  const photo = images && !inst?.faceDown && !inst?.custom ? faceUrls(card) : null
+  // The tile shows the painting cropped, never the printed face: that is what
+  // a tile is. So the photo path is for the two whole-card sizes only.
+  const photo = size !== 'tile' && images && !inst?.faceDown && !inst?.custom ? faceUrls(card) : null
+
+  if (size === 'tile') {
+    return (
+      <Tile
+        card={card} inst={inst} name={name} type={type} stats={stats} art={images ? art : null}
+        counters={counters} finish={finish} treatment={treatment} selected={selected} arrived={arrived}
+        onPointerDown={onPointerDown} onClick={onClick} onContextMenu={onContextMenu} dragging={dragging}
+      />
+    )
+  }
 
   // "tapped" is said in the spoken label and printed beside the card by
   // whatever is laying it out, never inside the card: the card is rotated,
@@ -64,6 +76,7 @@ export default function BoardCard({
       aria-label={describe({ card, inst, name, type, stats, counters, finish, treatment })}
       onPointerDown={onPointerDown}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       {...lean.handlers}
       style={lean.style}
     >
@@ -93,6 +106,71 @@ export default function BoardCard({
       {finish !== 'normal' && !inst?.faceDown && <span className="bcard__sheen" aria-hidden="true" />}
     </button>
   )
+}
+
+/**
+ * A permanent as a tile: the painting, cropped to a landscape box, with the
+ * name and its kind on a strip beneath. Moxgate's battlefield card, copied.
+ *
+ * The crop fits two or three times as many permanents on a screen as the
+ * whole face does, and a permanent on the battlefield is mostly looked at
+ * rather than read — what it does was read when it was cast. The whole face
+ * is a long-press away for anyone who wants it.
+ *
+ * Tapped has to read at a glance, and on a wide tile a rotation alone does
+ * not carry it, so a tapped tile is also dimmed and wears a glyph. The word
+ * is still in the spoken label, for the same reason it always was.
+ *
+ * `arrived` is the green edge Moxgate puts on a card just played. Ours stays
+ * for the turn rather than fading, because "came in this turn" is the one
+ * thing the board knows about summoning sickness, and it is worth reading.
+ */
+function Tile({ card, inst, name, type, stats, art, counters, finish, treatment, selected, arrived, onPointerDown, onClick, onContextMenu, dragging }) {
+  const classes = [
+    'bcard', 'bcard--tile',
+    inst?.tapped ? 'bcard--tapped' : '',
+    inst?.faceDown ? 'bcard--down' : '',
+    selected ? 'bcard--selected' : '',
+    dragging ? 'bcard--dragging' : '',
+    arrived ? 'bcard--tile-arrived' : '',
+  ].filter(Boolean).join(' ')
+  const shown = inst?.faceDown ? 'Face down' : (name ?? card?.name ?? 'Card')
+  return (
+    <button
+      type="button"
+      className={classes}
+      data-identity={identityOf(card)}
+      aria-pressed={selected}
+      aria-label={describe({ card, inst, name, type, stats, counters, finish, treatment })}
+      onPointerDown={onPointerDown}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+    >
+      <span className="bcard__art bcard__art--tile" style={art && !inst?.faceDown ? { backgroundImage: `url("${art}")` } : undefined} aria-hidden="true">
+        {(!art || inst?.faceDown) && <span className="bcard__glyph">{inst?.faceDown ? '★' : glyphFor(type)}</span>}
+        {inst?.tapped && <span className="bcard__tapglyph">⤵</span>}
+      </span>
+      <span className="bcard__strip" aria-hidden="true">
+        <span className="bcard__name">{shown}</span>
+        {stats && !inst?.faceDown && <span className="bcard__stats">{stats}</span>}
+        {!inst?.faceDown && <span className="bcard__kind">{kindOf(type)}</span>}
+      </span>
+      {counters.length > 0 && (
+        <span className="bcard__counters">{counters.map(([label, n]) => `${n > 0 ? '+' : ''}${n} ${label}`).join(' · ')}</span>
+      )}
+    </button>
+  )
+}
+
+/**
+ * The one word Moxgate prints on the right of the strip: what kind of thing
+ * this is. A creature-land is a land here, matching the row it sits in.
+ */
+function kindOf(type) {
+  for (const word of ['Land', 'Planeswalker', 'Battle', 'Creature', 'Artifact', 'Enchantment', 'Instant', 'Sorcery']) {
+    if (new RegExp(`\\b${word}\\b`).test(type)) return word
+  }
+  return type ? 'Permanent' : ''
 }
 
 /**

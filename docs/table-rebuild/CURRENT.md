@@ -43,6 +43,11 @@ two, or replaces `table/` by growing it — see `ENGINE.md`.
 
 ## `src/features/table/` — the UI
 
+> **Moved, 2026-09-20.** Everything below except `TableView.jsx` now lives in
+> `src/components/table/`, shared by both tables; `HandCost.jsx` (the cost
+> floating above a card in hand) was lifted there too. The rebuilt table is
+> `src/features/game/` — `GameView.jsx`, `Lobby.jsx`, `Table.jsx`, `game.css`.
+
 | File | Lines | What it is |
 | --- | --- | --- |
 | `TableView.jsx` | 995 | The whole table screen. Too big; a rebuild should split it. |

@@ -140,6 +140,37 @@ retrofit:
 
 **Done when**: the new route looks like `TARGET.md` with cards moved by hand.
 
+### Where Phase 1 stands — 2026-09-20
+
+Shipped, at `#/game`, reached by address only:
+
+- **The lobby** (§2): format tabs with counts, search, the colours filter
+  with counts on every facet, random / import / guide tiles, the shelf with
+  art, commander, colour pips, and the seats panel with its honest
+  "Solitaire" line. Not yet: the bracket and archetype chips on the shelf.
+- **The table** (§7): both plates with the phase pill and the ring on the
+  active seat (the seat opposite open and saying so), the battlefield of
+  **cropped landscape tiles** with the tapped treatment — turned a little,
+  dimmed, a glyph, and "tapped" spoken — the ACTIONS / COMBAT / END TURN /
+  UNDO rail, the fanned hand with costs floating above it, the four zone
+  tiles with counts that open their zones beside the log, and the opening
+  hand as a prompt floating on the field. Under its own storage slot
+  (`game.saved`), so it never overwrites a game left at `#/table`.
+- **Law 2 is in**: one tap plays a card from hand, one tap taps a permanent,
+  no confirming tap; the rarer actions are a long-press or right-click away,
+  and undo is always on the rail. Tested in `tests/browser/game.spec.mjs`.
+- **Law 1 is deliberately not simulated.** With no engine the table never
+  stops the player at a step; the step pill is a tracker. The §8 prompt
+  panel exists only for the opening hand until the engine can say
+  truthfully that there is nothing to respond with.
+- The mirrored playmat is one seat deep. The layout is built for two; the
+  second seat's field arrives with the seat, in Phase 2.
+
+Still to do in Phase 1: the confirm-dialog house style (§3) as a component;
+the log's hidden-information greying and nested step dividers (§9); the
+pace presets (§5); the common-card bundle; the drag collision order; hover
+zoom for a card in hand.
+
 ## Phase 2 — Seats, over a relay
 
 Seats done properly, which the current table has at the protocol level and
