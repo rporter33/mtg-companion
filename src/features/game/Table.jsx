@@ -21,6 +21,7 @@ import BoardCard from '../../components/table/BoardCard.jsx'
 import HandCost from '../../components/table/HandCost.jsx'
 import Coach from '../../components/table/Coach.jsx'
 import GameLog from '../../components/table/GameLog.jsx'
+import TurnTracker from '../../components/table/TurnTracker.jsx'
 import Pool from '../../components/table/Pool.jsx'
 import PlayerCounters from '../../components/table/PlayerCounters.jsx'
 import ZoneBrowser from '../../components/table/ZoneBrowser.jsx'
@@ -97,6 +98,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   // opened from its tile, the token maker, the printings, or the rest.
   const [panel, setPanel] = useState(null)
   const [peeking, setPeeking] = useState(0)
+  const [turnsOpen, setTurnsOpen] = useState(false)
   const [mulligans, setMulligans] = useState(0)
   // The opening hand is kept once, and the prompt goes away for the game.
   const [localKept, setLocalKept] = useState(false)
@@ -319,6 +321,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   const inCombat = COMBAT_STEPS.includes(board.step)
   const commander = deck.commanders?.length ? lookup(deck.commanders[0]) : null
   const refusal = room ? shared.refusal : run.refusal
+  // Whether the first-strike damage step happens at all this turn (510.4),
+  // read off the creatures on the table rather than asked for.
+  const hasFirstStrike = zoneOf(board, me, 'battlefield').some((inst) => /\b(first strike|double strike)\b/i.test(cardFor(inst)?.oracle_text ?? ''))
   const others = room ? board.players.filter((p) => p !== me) : []
   const seatOf = (p) => shared.seats.find((s) => s.seat === p) ?? null
   const nameOfSeat = (p) => seatOf(p)?.name ?? `Seat ${p.replace(/^p/, '')}`
@@ -636,6 +641,20 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
           </section>
         )}
         <GameLog board={board} events={run.events} lookup={lookup} restored={run.restored} you={me} who={room ? nameOfSeat : null} />
+        {/*
+          Where you are in the turn, taught from the rules by number. Moxgate's
+          prompt panel says "Your upkeep" and a teaching line at every stop;
+          this says the same without stopping anyone, and cites the rule,
+          which is the difference between being told and being shown.
+        */}
+        <TurnTracker
+          board={board}
+          hasFirstStrike={hasFirstStrike}
+          open={turnsOpen}
+          onToggle={() => setTurnsOpen(!turnsOpen)}
+          onStep={(options) => doAction({ type: 'step', ...options })}
+          onJump={(to) => doAction({ type: 'step', to })}
+        />
         {prefs.tableCoach && <Coach board={board} events={run.events} lookup={lookup} player={me} onSilence={() => togglePref('tableCoach')} />}
 
         <StackShelf

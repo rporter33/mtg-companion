@@ -804,7 +804,9 @@ await openRail()
   // The table has no notion of casting, so the log must never claim one.
   check('and never claim a card was cast', !/\bcast\b/i.test(said), said.slice(0, 160))
   check('turns are headed', (await page.locator('.gamelog__turn').count()) > 0)
-  const steps = await page.locator('.gamelog__steps').count()
+  // Steps something happened in get a divider; steps passed through with
+  // nothing done get listed faintly beneath it, or on a line of their own.
+  const steps = await page.locator('.gamelog__step, .gamelog__passed').count()
   check('and the steps that passed are collapsed into their own lines', steps > 0, `${steps} step lines`)
   await page.locator('.gamelog__toggle').click()
   await page.waitForTimeout(250)

@@ -4,6 +4,11 @@ import { artUrl } from '../../lib/deck-art.js'
 import { STEPS } from '../../data/turn-structure.js'
 
 const stepName = (id) => STEPS.find((step) => step.id === id)?.name?.toLowerCase() ?? id
+/** "Your upkeep", "Bob's upkeep": whose step it is, then the step. */
+const stepOf = (id, active, you, who) => {
+  const owner = active === you ? 'Your' : `${who?.(active) ?? active}'s`
+  return `${owner} ${stepName(id)}`
+}
 
 /**
  * What has happened, read back.
@@ -71,29 +76,41 @@ export default function GameLog({ board, events, lookup, restored = false, open 
           )}
           {turns.map((turn) => (
             <li key={turn.turn}>
-              <h3 className="gamelog__turn">
-                <span className="gamelog__who">{turn.active === you ? 'You' : (who?.(turn.active) ?? turn.active)}</span>
+              <h3 className={`gamelog__turn${turn.active === you ? ' gamelog__turn--you' : ''}`}>
+                {turn.active === you && <span className="gamelog__dot" aria-hidden="true" />}
+                <span className="gamelog__who">{turn.active === you ? 'Your turn' : (who?.(turn.active) ?? turn.active)}</span>
                 <span aria-hidden="true"> · </span>
                 <span className="gamelog__turnno">Turn {turn.turn}</span>
               </h3>
               <ol className="gamelog__items" role="list">
-                {turn.items.map((item, i) => (item.kind === 'steps' ? (
-                  <li className="gamelog__steps" key={`s${i}`}>
-                    {item.from === item.to
-                      ? stepName(item.to)
-                      : `${stepName(item.from)} → ${stepName(item.to)}`}
-                  </li>
-                ) : (
-                  <li className="gamelog__item" key={item.seq ?? `e${i}`}>
-                    <Thumb card={item.cardId ? lookup?.(item.cardId) : null} />
-                    <p className="gamelog__said">
-                      <span className={`gamelog__actor${item.who === 'You' ? ' gamelog__actor--you' : ''}`}>
-                        {item.who}
-                      </span>{' '}
-                      {item.text}
-                    </p>
-                  </li>
-                )))}
+                {turn.items.map((item, i) => {
+                  if (item.kind === 'step') {
+                    return (
+                      <li className="gamelog__step" key={`d${i}`}>
+                        <span className="gamelog__stepname">{stepOf(item.step, turn.active, you, who)}</span>
+                        {item.passed.length > 0 && (
+                          <span className="gamelog__passed">{item.passed.map(stepName).join(' · ')}</span>
+                        )}
+                      </li>
+                    )
+                  }
+                  if (item.kind === 'passed') {
+                    return <li className="gamelog__passed gamelog__passed--tail" key={`p${i}`}>{item.steps.map(stepName).join(' · ')}</li>
+                  }
+                  return (
+                    <li className={`gamelog__item${item.hidden ? ' gamelog__item--hidden' : ''}`} key={item.seq ?? `e${i}`}>
+                      {item.hidden
+                        ? <span className="gamelog__thumb gamelog__thumb--hidden" aria-hidden="true" />
+                        : <Thumb card={item.cardId ? lookup?.(item.cardId) : null} />}
+                      <p className="gamelog__said">
+                        <span className={`gamelog__actor${item.who === 'You' ? ' gamelog__actor--you' : ''}`}>
+                          {item.who}
+                        </span>{' '}
+                        {item.text}
+                      </p>
+                    </li>
+                  )
+                })}
               </ol>
             </li>
           ))}

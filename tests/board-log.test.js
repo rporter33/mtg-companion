@@ -50,7 +50,7 @@ describe('reading the log', () => {
       { type: 'stepped', from: 'upkeep', to: 'draw', turn: 1, seq: 2 },
       { type: 'stepped', from: 'draw', to: 'main1', turn: 1, seq: 3 },
     ], board)
-    expect(turns[0].items).toEqual([{ kind: 'steps', from: 'untap', to: 'main1' }])
+    expect(turns[0].items).toEqual([{ kind: 'passed', steps: ['upkeep', 'draw', 'main1'] }])
   })
 
   it('but breaks the run when something happens in the middle', () => {
@@ -59,7 +59,8 @@ describe('reading the log', () => {
       { type: 'drew', player: 'you', instanceId: 'you:0:forest', turn: 1, seq: 2 },
       { type: 'stepped', from: 'upkeep', to: 'draw', turn: 1, seq: 3 },
     ], board)
-    expect(turns[0].items.map((i) => i.kind)).toEqual(['steps', 'entry', 'steps'])
+    expect(turns[0].items.map((i) => i.kind)).toEqual(['step', 'entry', 'passed'])
+    expect(turns[0].items[0]).toEqual({ kind: 'step', step: 'upkeep', passed: [] })
   })
 
   it('says where a card went in the words a player would use', () => {
@@ -146,5 +147,47 @@ describe('who is speaking, at a shared table', () => {
     expect(whos).toEqual(['Bob', 'You'])
     const unnamed = readLog(events, board, { you: 'p1' })
     expect(unnamed.flatMap((t) => t.items).filter((i) => i.kind === 'entry').map((i) => i.who)).toEqual(['p2', 'You'])
+  })
+})
+
+describe('the step dividers, and what is hidden', () => {
+  const ev = (type, over = {}) => ({ type, turn: 1, seq: 1, ...over })
+  it('puts a divider on the step something happened in, listing the steps passed through beneath it', async () => {
+    const { readLog } = await import('../src/lib/board/log.js')
+    const events = [
+      ev('stepped', { from: 'untap', to: 'upkeep' }),
+      ev('stepped', { from: 'upkeep', to: 'draw' }),
+      ev('stepped', { from: 'draw', to: 'main1' }),
+      ev('life', { player: 'you', value: 19, seq: 2 }),
+      ev('stepped', { from: 'main1', to: 'beginCombat' }),
+      ev('stepped', { from: 'beginCombat', to: 'attackers' }),
+      ev('life', { player: 'you', value: 18, seq: 3 }),
+    ]
+    const items = readLog(events, null)[0].items
+    expect(items.map((i) => i.kind)).toEqual(['step', 'entry', 'step', 'entry'])
+    expect(items[0]).toEqual({ kind: 'step', step: 'main1', passed: ['upkeep', 'draw'] })
+    expect(items[2]).toEqual({ kind: 'step', step: 'attackers', passed: ['beginCombat'] })
+  })
+  it('greys what another seat did in private, and names what they did in the open', async () => {
+    const { readLog, readLogNamed } = await import('../src/lib/board/log.js')
+    const board = { cards: { c1: { id: 'c1', cardId: 'bear', owner: 'p2' }, c2: { id: 'c2', cardId: 'bolt', owner: 'p2' } }, revealed: [] }
+    const events = [
+      ev('drew', { player: 'p2', instanceId: 'c1', seq: 1 }),
+      ev('moved', { player: 'p2', instanceId: 'c2', from: 'hand', to: 'library', seq: 2 }),
+      ev('moved', { player: 'p2', instanceId: 'c2', from: 'library', to: 'battlefield', seq: 3 }),
+      ev('drew', { player: 'p1', instanceId: 'c1', seq: 4 }),
+    ]
+    const names = { bear: 'Grizzly Bears', bolt: 'Lightning Bolt' }
+    const items = readLogNamed(events, board, (id) => names[id], { you: 'p1' })[0].items.filter((i) => i.kind === 'entry')
+    expect(items.map((i) => i.hidden)).toEqual([true, true, false, false])
+    expect(items[0].text).toBe('drew a card')
+    expect(items[2].text).toBe('put Lightning Bolt onto the battlefield')
+    expect(items[3].text).toBe('drew Grizzly Bears')
+  })
+  it('does not hide a card its owner revealed', async () => {
+    const { readLog } = await import('../src/lib/board/log.js')
+    const board = { cards: { c1: { id: 'c1', cardId: 'bear', owner: 'p2' } }, revealed: ['c1'] }
+    const items = readLog([ev('drew', { player: 'p2', instanceId: 'c1' })], board, { you: 'p1' })[0].items
+    expect(items.find((i) => i.kind === 'entry').hidden).toBe(false)
   })
 })

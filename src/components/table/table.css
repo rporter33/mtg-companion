@@ -681,16 +681,32 @@
 .gamelog__thumb--none { background: var(--bg-input); }
 
 /*
- * The steps nothing happened in. Quiet on purpose: they are the spaces
- * between the entries, and reading them should feel like skipping them.
+ * Step dividers, the way Moxgate's log has them: the step something happened
+ * in, in faint small caps, with the steps passed through to reach it in
+ * fainter text beneath. Quiet on purpose: they are the spaces between the
+ * entries, and reading them should feel like skipping them.
  */
-.gamelog__steps {
-  padding: var(--space-1) 0;
-  color: var(--text-faint);
-  font-size: var(--text-xs);
-  text-align: center;
-  letter-spacing: 0.04em;
+.gamelog__step {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: var(--space-2) 0 var(--space-1);
 }
+.gamelog__stepname {
+  color: var(--text-faint);
+  font-size: 0.65rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.gamelog__passed {
+  color: var(--text-faint); opacity: 0.7;
+  font-size: 0.65rem; letter-spacing: 0.04em; text-align: center;
+}
+.gamelog__passed--tail { display: block; padding: var(--space-1) 0; }
+
+/* Your own turn: a green dot, as Moxgate marks it. */
+.gamelog__turn--you .gamelog__who { color: var(--ok); }
+.gamelog__dot { width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--ok); flex: none; }
+
+/* Hidden information is visibly hidden: greyed, and no thumbnail. */
+.gamelog__item--hidden .gamelog__said, .gamelog__item--hidden .gamelog__actor { color: var(--text-faint); }
+.gamelog__thumb--hidden { background: transparent; border-style: dashed; }
 
 @media (prefers-reduced-motion: no-preference) {
   .gamelog__item { animation: gamelog-in 160ms ease-out; }

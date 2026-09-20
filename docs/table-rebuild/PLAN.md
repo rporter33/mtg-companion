@@ -219,6 +219,17 @@ picks it up without playing or tapping it, the touch equivalent of the
 right-click (`useDrag.js`). Each has a check in `game.spec.mjs`, and the
 frames were looked at.
 
+**Milestone 2, the systems that go deep — in progress.** The log now has
+§9 in full: a divider for the step something happened in, with the steps
+passed through to reach it listed faintly beneath; your own turn headed
+with the green dot; and hidden information visibly hidden — another seat's
+draw, or a card they moved between hand and library, is greyed with no
+thumbnail and never named, even though the board holds the name. The
+rule-citing turn tracker sits under the log, which is the §8 wording done
+our way: it says where you are and what the rule is, and never stops you
+to ask. Still to prove on the new table: printings and foils, tokens,
+counters, arrows, the stack.
+
 **The common-card bundle waits on network**: Scryfall is not reachable from
 the build environment this was written in, so a bundle generated blind
 could not be checked. The script and loader are a small job once it is.

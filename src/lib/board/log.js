@@ -21,6 +21,7 @@
  * all the board holds, so it works for any card ever printed.
  */
 import { ZONE_LABELS } from './model.js'
+import { FIRST_STEP } from '../../data/turn-structure.js'
 
 /** Events that are bookkeeping rather than anything a player would recount. */
 const SILENT = new Set(['slid', 'noted', 'turnSet', 'reprinted', 'arrowDrawn', 'arrowRemoved', 'arrowsCleared'])
@@ -52,7 +53,7 @@ function phrase(event, name) {
     case 'moved': return movement(event.from, event.to).replace('{card}', card)
     case 'tapped': return `tapped ${card}`
     case 'untapped': return `untapped ${card}`
-    case 'untappedAll': return event.count ? `untapped everything — ${event.count} cards` : 'untapped everything'
+    case 'untappedAll': return event.count ? `untapped everything — ${event.count} card${event.count === 1 ? '' : 's'}` : 'untapped everything'
     case 'turnedDown': return `turned ${card} face down`
     case 'turnedUp': return `turned ${card} face up`
     case 'finished': return `changed ${card} to ${event.value}`
@@ -91,17 +92,36 @@ const speaker = (player, you, who = null) => (player === you ? 'You' : (player ?
  * that happened. Within a turn the entries stay in the order they occurred,
  * because a turn read backwards is nonsense.
  *
- * Returns `[{ turn, active, items }]` where an item is either
- * `{ kind: 'entry', text, cardId, who }` or `{ kind: 'steps', from, to }`.
+ * Returns `[{ turn, active, items }]` where an item is one of:
+ *
+ * - `{ kind: 'step', step, passed }` — a divider for the step the entries
+ *   under it happened in, with `passed` the steps gone through since the
+ *   last divider with nothing done in them, to be listed faintly beneath;
+ * - `{ kind: 'entry', text, cardId, who, hidden }` — something done;
+ * - `{ kind: 'passed', steps }` — steps gone through with nothing after them
+ *   yet: the quiet end of a turn, or where the game is right now.
+ *
+ * `hidden` marks an entry about a card the viewer is not entitled to see —
+ * another seat drawing, or moving a card between their hand and library.
+ * The board holds every card, so the name is known; the log declines to say
+ * it, and the screen shows the line greyed with no thumbnail. The log never
+ * pretends to know what it could not see across a real table.
  */
 export function readLog(events = [], board = null, { you = 'you', who = null } = {}) {
   const cards = board?.cards ?? {}
+  const revealed = new Set(board?.revealed ?? [])
   const turns = []
   let current = null
 
+  const settle = (group) => {
+    if (group?.pending.length) group.items.push({ kind: 'passed', steps: group.pending })
+    if (group) group.pending = []
+  }
+
   const open = (turn, active) => {
     if (current && current.turn === turn) return current
-    current = { turn, active, items: [] }
+    settle(current)
+    current = { turn, active, items: [], step: FIRST_STEP, pending: [], divided: null }
     turns.push(current)
     return current
   }
@@ -119,11 +139,8 @@ export function readLog(events = [], board = null, { you = 'you', who = null } =
     }
 
     if (event.type === 'stepped') {
-      // Consecutive steps with nothing between them are one line, so a turn
-      // passed without a play reads as a single hop rather than thirteen.
-      const last = group.items[group.items.length - 1]
-      if (last?.kind === 'steps') last.to = event.to
-      else group.items.push({ kind: 'steps', from: event.from, to: event.to })
+      group.step = event.to
+      group.pending.push(event.to)
       continue
     }
 
@@ -131,6 +148,16 @@ export function readLog(events = [], board = null, { you = 'you', who = null } =
     // counter event is the counter's name, not a card's.
     const said = phrase(event, null)
     if (!said) continue
+    // Something happened here: the step gets its divider, carrying whatever
+    // was passed through to reach it. Not for a turn's opening step when
+    // nothing was passed to reach it — the turn header already says where
+    // the turn began, and "your untap" above the deal would be noise.
+    const opening = group.divided === null && group.step === FIRST_STEP && !group.pending.length
+    if (group.divided !== group.step && !opening) {
+      group.items.push({ kind: 'step', step: group.step, passed: group.pending.filter((id) => id !== group.step) })
+      group.divided = group.step
+      group.pending = []
+    }
     group.items.push({
       kind: 'entry',
       who: speaker(player, you, who),
@@ -138,10 +165,28 @@ export function readLog(events = [], board = null, { you = 'you', who = null } =
       cardId: inst?.cardId ?? null,
       instanceId: event.instanceId ?? null,
       seq: event.seq,
+      hidden: isHidden(event, player, you, inst, revealed),
     })
   }
+  settle(current)
 
+  for (const group of turns) { delete group.step; delete group.pending; delete group.divided }
   return turns.reverse()
+}
+
+/**
+ * Whether an entry is about something the viewer could not have seen: a
+ * card another seat drew, or moved between their hand and their library.
+ * Their battlefield, graveyard and exile are public, as is anything they
+ * chose to reveal.
+ */
+const PRIVATE = new Set(['hand', 'library'])
+function isHidden(event, player, you, inst, revealed) {
+  if (player === you) return false
+  if (inst && revealed.has(inst.id)) return false
+  if (event.type === 'drew') return true
+  if (event.type === 'moved') return PRIVATE.has(event.from) && PRIVATE.has(event.to)
+  return false
 }
 
 /**
@@ -157,7 +202,8 @@ export function readLogNamed(events, board, nameFor, options) {
   const cards = board?.cards ?? {}
   for (const turn of turns) {
     for (const item of turn.items) {
-      if (item.kind !== 'entry' || !item.instanceId) continue
+      // A hidden card stays "a card": the name is known here and withheld.
+      if (item.kind !== 'entry' || !item.instanceId || item.hidden) continue
       const name = nameFor(cards[item.instanceId]?.cardId)
       if (name) item.text = item.text.replace('a card', name)
     }
