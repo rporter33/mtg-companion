@@ -326,7 +326,12 @@ const HANDLERS = {
       list(board, player, 'battlefield').push(id)
       const others = list(board, player, 'battlefield').filter((o) => o !== id).map((o) => board.cards[o])
       const wanted = clampToField(x ?? 0.5, y ?? 0.4)
-      const spot = board.guided && lane ? snapToLane(lane, { x: wanted.x }) : freeSpot(wanted, others)
+      // Made without a point, a token takes the next free place along its
+      // row, as a played card does: three treasures should not be one pile
+      // unless somebody piled them.
+      const spot = board.guided && lane
+        ? (x == null ? freeAlong(snapToLane(lane).y, others) : snapToLane(lane, { x: wanted.x }))
+        : freeSpot(wanted, others)
       Object.assign(board.cards[id], spot, { z: board.nextZ++ })
       emit(board, { type: 'tokenMade', instanceId: id, player })
     }

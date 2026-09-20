@@ -227,8 +227,14 @@ draw, or a card they moved between hand and library, is greyed with no
 thumbnail and never named, even though the board holds the name. The
 rule-citing turn tracker sits under the log, which is the §8 wording done
 our way: it says where you are and what the rule is, and never stops you
-to ask. Still to prove on the new table: printings and foils, tokens,
-counters, arrows, the stack.
+to ask. And the old table's systems are now proven on the new one in
+`tests/browser/game-parity.spec.mjs`, run through the one-tap screens: an
+instant refused the battlefield and sent to the stack, arrows and pointing,
+counters and face-down, dice, choosing a printing that the deck then keeps,
+foils with their sheen on the tile, real tokens and blank cards, the pile
+browser with its `t:` search, the coach and its silence, the untapped
+count. Along the way a made token stopped landing on whatever already sat
+at the row's centre: it takes the next free place, as a played card does.
 
 **The common-card bundle waits on network**: Scryfall is not reachable from
 the build environment this was written in, so a bundle generated blind

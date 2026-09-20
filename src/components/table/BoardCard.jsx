@@ -133,6 +133,8 @@ function Tile({ card, inst, name, type, stats, art, counters, finish, treatment,
     selected ? 'bcard--selected' : '',
     dragging ? 'bcard--dragging' : '',
     arrived ? 'bcard--tile-arrived' : '',
+    // A foil is a foil on a tile too: the sheen runs over the cropped art.
+    finish !== 'normal' && !inst?.faceDown ? `bcard--${finish}` : '',
   ].filter(Boolean).join(' ')
   const shown = inst?.faceDown ? 'Face down' : (name ?? card?.name ?? 'Card')
   return (
@@ -158,6 +160,7 @@ function Tile({ card, inst, name, type, stats, art, counters, finish, treatment,
       {counters.length > 0 && (
         <span className="bcard__counters">{counters.map(([label, n]) => `${n > 0 ? '+' : ''}${n} ${label}`).join(' · ')}</span>
       )}
+      {finish !== 'normal' && !inst?.faceDown && <span className="bcard__sheen" aria-hidden="true" />}
     </button>
   )
 }

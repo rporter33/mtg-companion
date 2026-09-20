@@ -1068,3 +1068,19 @@ describe('a card put down without a point', () => {
     expect(freeAlong(0.35, taken)).toEqual({ x: 0.5, y: 0.35 })
   })
 })
+
+describe('tokens made without a point', () => {
+  it('take their own places along the row rather than one pile', async () => {
+    const { createBoard } = await import('../src/lib/board/model.js')
+    const { apply } = await import('../src/lib/board/reducer.js')
+    let board = createBoard({ seed: 1 })
+    for (let i = 0; i < 3; i++) {
+      const r = apply(board, { type: 'makeToken', custom: { name: 'Treasure', typeLine: 'Token Artifact' }, lane: 'other' })
+      expect(r.ok).toBe(true)
+      board = r.board
+    }
+    const spots = board.zones.you.battlefield.map((id) => board.cards[id]).map((c) => `${c.x},${c.y}`)
+    expect(new Set(spots).size).toBe(3)
+    expect(new Set(board.zones.you.battlefield.map((id) => board.cards[id].y)).size).toBe(1)
+  })
+})
