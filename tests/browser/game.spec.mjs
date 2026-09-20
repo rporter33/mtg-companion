@@ -51,7 +51,9 @@ const CARDS = [
   c('cmdr', 'Test Commander', 'Legendary Creature — Elf', {
     color_identity: ['G', 'W'], image_uris: { art_crop: PIXEL, small: PIXEL, normal: PIXEL },
   }),
-  c('elf', 'Llanowar Elves', 'Creature — Elf Druid', { power: '1', toughness: '1' }),
+  c('elf', 'Llanowar Elves', 'Creature — Elf Druid', {
+    power: '1', toughness: '1', image_uris: { art_crop: PIXEL, small: PIXEL, normal: PIXEL },
+  }),
 ]
 
 /*
@@ -236,9 +238,15 @@ check('keeping puts the prompt away', (await page.locator('.prompt').count()) ==
 check('and the debt is still written down', /put 1 on the bottom/.test(await page.locator('.game__hand').innerText()))
 
 console.log('\nLaw 2: one tap does the thing')
+/** Script-made animations only: the ones useTravel makes, not CSS transitions. */
+const travelling = () => page.evaluate(() => document.getAnimations().filter((a) => a.constructor.name === 'Animation').length)
 await tapHand(page.locator('.tabletop__handcard .bcard').last())
+const travelled = await page.waitForFunction(
+  () => document.getAnimations().some((a) => a.constructor.name === 'Animation'), null, { timeout: 1000 },
+).then(() => true).catch(() => false)
 await page.waitForTimeout(300)
 check('one tap on a card in hand plays it', (await onField()) === 1 && (await inHand()) === 6)
+check('and the card travels there rather than appearing', travelled)
 check('with no confirming panel in between', (await page.locator('.actions').count()) === 0)
 const tile = page.locator('.field .bcard--tile').first()
 check('the permanent is a tile: a name strip and its kind',
@@ -253,15 +261,58 @@ check('and says so in words as well as by the glyph',
 await page.getByRole('button', { name: /undo/i }).click()
 await page.waitForTimeout(200)
 check('undo is on the rail, and undoes it', (await page.locator('.field .bcard--tapped').count()) === 0)
+
+console.log('\nA finger resting on a card')
+{
+  await page.locator('.field').first().scrollIntoViewIfNeeded()
+  const before = await page.locator('.field .bcard--tapped').count()
+  // A touch pointer, held still: neither a tap nor a drag.
+  await page.locator('.field .bcard--tile').first().evaluate((el) => {
+    const box = el.getBoundingClientRect()
+    el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', pointerId: 7, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2, isPrimary: true, button: 0 }))
+  })
+  await page.waitForTimeout(650)
+  await page.evaluate(() => window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch', pointerId: 7 })))
+  await page.waitForTimeout(150)
+  check('picks it up without tapping it', (await page.locator('.actions').count()) === 1 && (await page.locator('.field .bcard--tapped').count()) === before)
+  check('and the panel is about that card', /Llanowar Elves/.test(await page.locator('.actions').innerText()))
+  await page.getByRole('button', { name: 'Close' }).click()
+}
+
 await tile.click({ button: 'right' })
 await page.waitForTimeout(200)
 check('holding a card opens the rarer actions without doing anything to it',
   (await page.locator('.actions').count()) === 1 && (await page.locator('.field .bcard--tapped').count()) === 0)
 check('and they are about that card', /Llanowar Elves/.test(await page.locator('.actions').innerText()))
 await page.getByRole('button', { name: 'To the graveyard' }).click()
+const ghosted = await page.waitForFunction(() => document.querySelector('.ghost'), null, { timeout: 1000 }).then(() => true).catch(() => false)
 await page.waitForTimeout(200)
+check('a card going to a pile leaves a ghost that shrinks into its tile', ghosted)
 check('a move from the panel lands, and the tile count says so',
   (await onField()) === 0 && (await page.getByRole('button', { name: /^Graveyard, 1 card$/ }).count()) === 1)
+
+console.log('\nReading a card without picking it up')
+{
+  const p = await handPoint(page.locator('.tabletop__handcard .bcard').last())
+  await page.mouse.move(p.x, p.y)
+  await page.waitForTimeout(150)
+  check('nothing shows the instant the pointer arrives', (await page.locator('.facepeek').count()) === 0)
+  await page.waitForTimeout(450)
+  check('resting on a card shows its printed face beside it', (await page.locator('.facepeek img').count()) === 1)
+  const box = await page.locator('.facepeek').boundingBox()
+  check('and not under the pointer', box && (box.x > p.x + 8 || box.x + box.width < p.x - 8), JSON.stringify(box))
+  await page.mouse.move(5, 5)
+  await page.waitForTimeout(100)
+  check('moving away puts it away', (await page.locator('.facepeek').count()) === 0)
+  const q = await handPoint(page.locator('.tabletop__handcard .bcard').first())
+  await page.mouse.move(q.x, q.y)
+  await page.keyboard.down('z')
+  await page.waitForTimeout(60)
+  check('Z shows it at once', (await page.locator('.facepeek').count()) === 1)
+  await page.keyboard.up('z')
+  await page.mouse.move(5, 5)
+  await page.waitForTimeout(100)
+}
 
 console.log('\nDropping: the most specific thing under the pointer wins')
 {
@@ -317,6 +368,26 @@ await page.waitForTimeout(200)
 await page.getByRole('button', { name: '← Lobby' }).click()
 await page.waitForTimeout(300)
 check('Lobby goes back to the lobby', await page.evaluate(() => location.hash) === '#/game')
+
+console.log('\nWith motion reduced')
+// Leave the table first: it writes its game on the way out, and a slot
+// cleared while it is still mounted would be filled straight back in.
+await page.goto(`${TARGET}#/game`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(200)
+await page.evaluate(() => {
+  const state = JSON.parse(localStorage.getItem('mtg-companion:v1'))
+  state.prefs = { ...(state.prefs ?? {}), reduceMotion: true }
+  state.game = { saved: null }
+  localStorage.setItem('mtg-companion:v1', JSON.stringify(state))
+})
+await page.reload({ waitUntil: 'networkidle' })
+await page.goto(`${TARGET}#/game/d1`, { waitUntil: 'networkidle' })
+await page.locator('.game').waitFor({ timeout: 5000 })
+await page.waitForTimeout(400)
+await page.getByRole('button', { name: 'Keep hand →' }).click()
+await tapHand(page.locator('.tabletop__handcard .bcard').last())
+await page.waitForTimeout(80)
+check('a card simply is where it is: nothing travels', (await onField()) === 1 && (await travelling()) === 0)
 
 console.log('\nA deck that is gone')
 await page.goto(`${TARGET}#/game/nope`, { waitUntil: 'networkidle' })

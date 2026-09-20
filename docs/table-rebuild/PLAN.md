@@ -198,6 +198,27 @@ The number to watch is the worst case at 130; if the table ever grows a
 feature that re-renders every tile per action (a hover glow on castable
 cards, say), measure again before and after.
 
+### The client first — 2026-09-20
+
+The owner's call: no multiplayer until the client is as polished and as deep
+as Moxgate's. The relay and its screens stay built, tested and unadvertised;
+the seats panel only offers a room once somebody types a relay address.
+Four milestones, each shipping something felt: motion and touch; the systems
+that go deep (the log, the step wording, mana pips, the untested parts of the
+old table); clarity everywhere (dialogs, empty and loading states, the tile
+at every size); then the switch of the Table tab and the engine.
+
+**Milestone 1, motion and touch — done.** A card travels: FLIP between hand
+and field on the element itself, a cloned ghost shrinking into the pile it
+went to, a card growing out of the pile it came from (`useTravel.js`), off
+entirely under reduced motion. A press answers before the table does.
+Resting the pointer on a card shows its printed face beside it, above a card
+in hand so its neighbours stay visible, at once with Z, and never right
+after a press (`Peek.jsx`). A finger resting on a card for half a second
+picks it up without playing or tapping it, the touch equivalent of the
+right-click (`useDrag.js`). Each has a check in `game.spec.mjs`, and the
+frames were looked at.
+
 **The common-card bundle waits on network**: Scryfall is not reachable from
 the build environment this was written in, so a bundle generated blind
 could not be checked. The script and loader are a small job once it is.

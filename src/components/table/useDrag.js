@@ -15,14 +15,21 @@ import { pointToField } from '../../lib/board/geometry.js'
  * users get the same actions without a pointer ever being involved.
  */
 const THRESHOLD = 6 // pixels of travel before a press counts as a drag
+/** How long a finger rests before a press means "pick it up" rather than tap or drag. */
+const HOLD_MS = 450
 
 /**
  * `onDrop(session, point)`, when given, decides everything about where a
  * released card goes and the two older callbacks are not called: it is the
  * priority-ordered drop the rebuilt table uses. Without it, a release inside
  * the battlefield slides or plays the card as it always did.
+ *
+ * `onHold(id)`, when given, is a finger or a stylus resting on a card
+ * without moving: the touch equivalent of a right-click, which a phone does
+ * not have. The press is then neither a tap nor a drag — the click it would
+ * produce is swallowed and the release does nothing.
  */
-export default function useDrag({ fieldRef, onSlide, onPlay, onDrop = null }) {
+export default function useDrag({ fieldRef, onSlide, onPlay, onDrop = null, onHold = null }) {
   const [drag, setDrag] = useState(null)
   const session = useRef(null)
   const detach = useRef(null)
@@ -37,19 +44,35 @@ export default function useDrag({ fieldRef, onSlide, onPlay, onDrop = null }) {
     // The field's box comes along for the ride so the lane under the card can
     // light up without measuring the layout on every pointer move.
     const rect = fieldRef.current?.getBoundingClientRect() ?? null
-    const started = { id, from, rect, originX: event.clientX, originY: event.clientY, moved: false, x: event.clientX, y: event.clientY }
+    const started = { id, from, rect, originX: event.clientX, originY: event.clientY, moved: false, x: event.clientX, y: event.clientY, held: false }
     session.current = started
     setDrag(started)
+
+    let holdTimer = null
+    if (onHold && (event.pointerType === 'touch' || event.pointerType === 'pen')) {
+      holdTimer = setTimeout(() => {
+        const s = session.current
+        if (!s || s.moved) return
+        s.held = true
+        detach.current?.()
+        session.current = null
+        setDrag(null)
+        swallow.current = true
+        setTimeout(() => { swallow.current = false }, 400)
+        onHold(id)
+      }, HOLD_MS)
+    }
 
     const move = (e) => {
       const s = session.current
       if (!s) return
-      if (Math.abs(e.clientX - s.originX) > THRESHOLD || Math.abs(e.clientY - s.originY) > THRESHOLD) s.moved = true
+      if (Math.abs(e.clientX - s.originX) > THRESHOLD || Math.abs(e.clientY - s.originY) > THRESHOLD) { s.moved = true; clearTimeout(holdTimer) }
       s.x = e.clientX
       s.y = e.clientY
       setDrag({ ...s })
     }
     const finish = (e) => {
+      clearTimeout(holdTimer)
       detach.current?.()
       const s = session.current
       session.current = null
@@ -76,7 +99,7 @@ export default function useDrag({ fieldRef, onSlide, onPlay, onDrop = null }) {
       window.removeEventListener('pointercancel', finish)
       detach.current = null
     }
-  }, [fieldRef, onSlide, onPlay, onDrop])
+  }, [fieldRef, onSlide, onPlay, onDrop, onHold])
 
   /** True for the instant after a drag, so the click it produces is ignored. */
   const justDragged = useCallback(() => swallow.current, [])

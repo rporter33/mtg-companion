@@ -28,6 +28,8 @@ import TokenMaker from '../../components/table/TokenMaker.jsx'
 import Printings from '../../components/Printings.jsx'
 import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
+import useTravel from './useTravel.js'
+import Peek, { usePeek } from './Peek.jsx'
 import { relayAddress } from './relayAddress.js'
 import '../../components/table/table.css'
 
@@ -276,7 +278,16 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
     const actions = actionsForDrop(target, { id: session.id, from: session.from })
     if (actions.length) doAll(actions)
   }, [board, play, doAll])
-  const { drag, begin, justDragged } = useDrag({ fieldRef, onDrop })
+  // The long way in, from a finger: rest on a card and it is picked up
+  // without being played or tapped, the same as a right-click.
+  const holdRef = useRef(null)
+  const onHold = useCallback((id) => holdRef.current?.(id), [])
+  const { drag, begin, justDragged } = useDrag({ fieldRef, onDrop, onHold })
+
+  // Cards travel between places, unless motion is reduced.
+  useTravel(rootRef, { board, reduced, me: room ? shared.seat : 'you' })
+  // Resting the pointer on a card shows its printed face; Z shows it at once.
+  const { peek, enter: peekAt, leave: peekOff } = usePeek({ enabled: showImages })
 
   const nudge = useCallback((id, dx, dy) => {
     const inst = board?.cards[id]
@@ -337,6 +348,8 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   }
   // The long way in: pick the card up without doing anything to it.
   const hold = (id) => { setSelected(id); setAiming(null); setPanel('actions') }
+  holdRef.current = hold
+  const hoverCard = (id, rect) => { if (id && board.cards[id]) peekAt(cardFor(board.cards[id]), rect); else peekOff() }
   const aimAt = (mode) => { setAiming({ id: selected, mode }); setPanel(null) }
 
   const choosePrinting = (print, finish) => {
@@ -386,7 +399,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
         const theirCommander = zoneOf(board, them, 'command')[0]
         const face = theirCommander && showImages ? artUrl(cardFor(theirCommander)) : null
         return (
-          <div className={`game__them game__them--seated${sitting?.here ? '' : ' game__them--away'}`} key={them}>
+          <div className={`game__them game__them--seated${sitting?.here ? '' : ' game__them--away'}`} key={them} data-seat={them}>
             <Plate
               who="them"
               status={!sitting ? 'Open seat' : !sitting.here ? 'Away' : board.active === them ? 'Their turn' : 'Waiting'}
@@ -410,6 +423,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
                 return (
                   <Tag
                     key={zone}
+                    data-zone={zone}
                     className={`ztile${open ? '' : ' ztile--closed'}${zoneOpen === zone && zoneWho === them ? ' ztile--open' : ''}`}
                     onClick={open ? () => openZone(zone, them) : undefined}
                     aria-expanded={open ? zoneOpen === zone && zoneWho === them : undefined}
@@ -436,6 +450,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
                 onBegin={() => {}}
                 onSelect={touch}
                 onContext={hold}
+                onHover={hoverCard}
                 onBackground={() => { if (panel === 'actions') setPanel(null) }}
                 images={showImages}
                 tile
@@ -473,6 +488,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
           onBegin={begin}
           onSelect={touch}
           onContext={hold}
+          onHover={hoverCard}
           onNudge={nudge}
           onBackground={() => { if (!justDragged()) { setAiming(null); if (panel === 'actions') setPanel(null) } }}
           images={showImages}
@@ -550,7 +566,10 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
                 <span
                   className="tabletop__handcard"
                   key={inst.id}
+                  data-id={inst.id}
                   style={{ '--angle': `${spread.cards[i].angle}deg`, '--drop': spread.cards[i].drop, '--badge': spread.cards[i].badge, '--i': i }}
+                  onPointerEnter={(e) => { if (e.pointerType === 'mouse') hoverCard(inst.id, e.currentTarget.getBoundingClientRect()) }}
+                  onPointerLeave={() => hoverCard(null)}
                 >
                   <HandCost card={cardFor(inst)} pool={pool} />
                   <BoardCard
@@ -712,6 +731,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
           />
         )}
       </aside>
+      <Peek peek={peek} />
     </div>
   )
 }

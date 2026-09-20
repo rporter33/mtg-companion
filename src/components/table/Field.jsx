@@ -21,7 +21,7 @@ const NUDGE = 0.02
 const TILE_W = 0.16
 
 export default function Field({
-  fieldRef, board, lookup, player = 'you', selectedId, drag, aiming, onBegin, onSelect, onContext, onNudge, onBackground,
+  fieldRef, board, lookup, player = 'you', selectedId, drag, aiming, onBegin, onSelect, onContext, onHover, onNudge, onBackground,
   images = true, tile = false, mirror = false,
 }) {
   const cards = stacked(board, player)
@@ -74,6 +74,8 @@ export default function Field({
             key={inst.id}
             data-id={inst.id}
             className={`field__slot${aiming && aiming.id !== inst.id ? ' field__slot--aimable' : ''}${live ? ' field__slot--carried' : ''}`}
+            onPointerEnter={onHover ? (e) => { if (e.pointerType === 'mouse') onHover(inst.id, e.currentTarget.getBoundingClientRect()) } : undefined}
+            onPointerLeave={onHover ? () => onHover(null) : undefined}
             style={{ left: `${(live?.x ?? inst.x) * 100}%`, top: `${yOf(live?.y ?? inst.y) * 100}%`, zIndex: live ? 999 : inst.z }}
           >
             {/* The rotation is on this wrapper, so the word beside it stays
