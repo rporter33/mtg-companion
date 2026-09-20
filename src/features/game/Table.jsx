@@ -26,6 +26,7 @@ import PlayerCounters from '../../components/table/PlayerCounters.jsx'
 import ZoneBrowser from '../../components/table/ZoneBrowser.jsx'
 import TokenMaker from '../../components/table/TokenMaker.jsx'
 import Printings from '../../components/Printings.jsx'
+import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
 import { relayAddress } from './relayAddress.js'
 import '../../components/table/table.css'
@@ -251,9 +252,31 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
       : { type: 'move', id, zone: 'battlefield', ...point })
   }, [board, deckLookup, doAction])
 
-  const onSlide = useCallback((id, point) => doAction({ type: 'move', id, zone: 'battlefield', ...point }), [doAction])
-  const onPlay = useCallback((id, point) => { setSelected(id); play(id, point) }, [play])
-  const { drag, begin, justDragged } = useDrag({ fieldRef, onSlide, onPlay })
+  /*
+   * A released card goes where the most specific thing under the pointer
+   * says: onto a card, into a zone tile, back to hand, or onto the table at
+   * that point. The rectangles are read off the screen at release, which is
+   * once per drag rather than once per frame, and drop.js decides the order.
+   * A spell dropped on the table goes to the stack, as a tap would send it.
+   */
+  const rootRef = useRef(null)
+  const onDrop = useCallback((session, point) => {
+    const root = rootRef.current
+    if (!root || !board) return
+    const rectOf = (el) => el?.getBoundingClientRect() ?? null
+    const target = dropTarget(point, {
+      dragged: session.id,
+      cards: [...root.querySelectorAll('.game__field .field__slot[data-id]')].map((el) => ({ id: el.dataset.id, rect: rectOf(el) })),
+      zones: [...root.querySelectorAll('.game__you .ztile[data-zone]')].map((el) => ({ zone: el.dataset.zone, rect: rectOf(el) })),
+      hand: rectOf(root.querySelector('.game__hand')),
+      field: rectOf(fieldRef.current),
+    })
+    setSelected(session.id)
+    if (target?.kind === 'field' && session.from !== 'battlefield') { play(session.id, { x: target.x, y: target.y }); return }
+    const actions = actionsForDrop(target, { id: session.id, from: session.from })
+    if (actions.length) doAll(actions)
+  }, [board, play, doAll])
+  const { drag, begin, justDragged } = useDrag({ fieldRef, onDrop })
 
   const nudge = useCallback((id, dx, dy) => {
     const inst = board?.cards[id]
@@ -336,7 +359,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   const [zoneOpen, zoneWho] = panel?.startsWith('zone:') ? panel.slice(5).split('@') : [null, null]
 
   return (
-    <div className={`game${drag ? ' game--carrying' : ''}${room ? ' game--shared' : ''}`}>
+    <div className={`game${drag ? ' game--carrying' : ''}${room ? ' game--shared' : ''}`} ref={rootRef}>
       {drag && drag.moved && drag.from !== 'battlefield' && board.cards[drag.id] && (
         <div className="carried" style={{ left: `${drag.x}px`, top: `${drag.y}px` }} aria-hidden="true">
           <BoardCard card={cardFor(board.cards[drag.id])} name={nameFor(board.cards[drag.id])} inst={board.cards[drag.id]} size="hand" dragging />
@@ -557,6 +580,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
             return (
               <button
                 key={zone}
+                data-zone={zone}
                 className={`ztile${isOpen ? ' ztile--open' : ''}`}
                 onClick={() => openZone(zone)}
                 aria-expanded={isOpen}

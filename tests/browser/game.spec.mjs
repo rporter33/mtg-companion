@@ -60,7 +60,7 @@ const CARDS = [
  * scans the slot at mid-height for the first run of points that are actually
  * this card and clicks the middle of it. Same helper as table.spec.mjs.
  */
-const tapHand = async (card) => {
+const handPoint = async (card) => {
   await card.scrollIntoViewIfNeeded()
   const point = await card.evaluate((el) => {
     const slot = el.closest('.tabletop__handcard')
@@ -75,8 +75,18 @@ const tapHand = async (card) => {
     return from === null ? null : { x: (from + box.right) / 2, y }
   })
   if (!point) throw new Error('no part of that hand card is tappable — it is fully covered')
-  await page.mouse.click(point.x, point.y)
+  return point
 }
+const tapHand = async (card) => { const p = await handPoint(card); await page.mouse.click(p.x, p.y) }
+/** Drags from a point to a point with a real pointer, slowly enough to count as a drag. */
+const dragTo = async (from, to) => {
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(300)
+}
+const middle = (box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 })
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
 const page = await browser.newPage({ viewport: { width: 430, height: 1100 } })
@@ -253,13 +263,39 @@ await page.waitForTimeout(200)
 check('a move from the panel lands, and the tile count says so',
   (await onField()) === 0 && (await page.getByRole('button', { name: /^Graveyard, 1 card$/ }).count()) === 1)
 
+console.log('\nDropping: the most specific thing under the pointer wins')
+{
+  const field = await page.locator('.field').boundingBox()
+  await dragTo(await handPoint(page.locator('.tabletop__handcard .bcard').last()), { x: field.x + field.width * 0.3, y: field.y + field.height * 0.35 })
+  check('a card dragged from hand onto the table lands there', (await onField()) === 1 && (await inHand()) === 5)
+  const host = await page.locator('.field .field__slot').first().boundingBox()
+  await dragTo(await handPoint(page.locator('.tabletop__handcard .bcard').last()), middle(host))
+  check('one dragged onto a permanent is put on it, not just beside it',
+    (await onField()) === 2 && /attached/.test(await page.locator('.gamelog').innerText()), (await page.locator('.gamelog').innerText()).slice(0, 200))
+  // The inner column scrolls, and a box read on something scrolled out of
+  // view is a box the pointer cannot reach: the field goes back in view first.
+  await page.locator('.field').first().scrollIntoViewIfNeeded()
+  const rider = await page.locator('.field .field__slot').last().boundingBox()
+  const gy = await page.getByRole('button', { name: /^Graveyard, 1 card$/ }).boundingBox()
+  await dragTo(middle(rider), middle(gy))
+  check('one dragged onto a zone tile goes to that zone',
+    (await onField()) === 1 && (await page.getByRole('button', { name: /^Graveyard, 2 cards$/ }).count()) === 1,
+    `field ${await onField()}, hand ${await inHand()}, tiles ${(await page.locator('.game__you .ztile').allInnerTexts()).join(' ').replace(/\n/g, ' ')}, banner ${await page.locator('.banner').allInnerTexts()}`)
+  await page.locator('.field').first().scrollIntoViewIfNeeded()
+  const left = await page.locator('.field .field__slot').first().boundingBox()
+  const handBox = await page.locator('.game__hand').boundingBox()
+  await dragTo(middle(left), { x: handBox.x + handBox.width * 0.5, y: handBox.y + handBox.height * 0.6 })
+  check('and one dragged back onto the hand comes to hand', (await onField()) === 0 && (await inHand()) === 5,
+    `field ${await onField()}, hand ${await inHand()}`)
+}
+
 console.log('\nThe tiles open their zones')
 await page.getByRole('button', { name: /^Library, 92 cards/ }).click()
 await page.waitForTimeout(200)
 check('the library tile opens the library beside the log', (await page.locator('.game__side').getByRole('button', { name: 'Shuffle' }).count()) === 1)
 await page.locator('.game__side').getByRole('button', { name: 'Draw', exact: true }).click()
 await page.waitForTimeout(200)
-check('drawing from it draws', (await inHand()) === 7 && (await page.getByRole('button', { name: /^Library, 91 cards/ }).count()) === 1)
+check('drawing from it draws', (await inHand()) === 6 && (await page.getByRole('button', { name: /^Library, 91 cards/ }).count()) === 1)
 await page.getByRole('button', { name: /end turn/i }).click()
 await page.waitForTimeout(300)
 check('end turn is one press, and the log shows the new turn', /turn 2/i.test(await page.locator('.gamelog').innerText()))
@@ -269,7 +305,7 @@ await page.reload({ waitUntil: 'networkidle' })
 await page.locator('.game').waitFor({ timeout: 5000 })
 await page.waitForTimeout(400)
 check('the game comes back after a reload',
-  (await page.getByRole('button', { name: /^Graveyard, 1 card$/ }).count()) === 1 && (await inHand()) === 7)
+  (await page.getByRole('button', { name: /^Graveyard, 2 cards$/ }).count()) === 1 && (await inHand()) === 6)
 check('with the opening hand already kept', (await page.locator('.prompt').count()) === 0)
 const slots = await page.evaluate(() => {
   const state = JSON.parse(localStorage.getItem('mtg-companion:v1'))

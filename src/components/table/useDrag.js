@@ -16,7 +16,13 @@ import { pointToField } from '../../lib/board/geometry.js'
  */
 const THRESHOLD = 6 // pixels of travel before a press counts as a drag
 
-export default function useDrag({ fieldRef, onSlide, onPlay }) {
+/**
+ * `onDrop(session, point)`, when given, decides everything about where a
+ * released card goes and the two older callbacks are not called: it is the
+ * priority-ordered drop the rebuilt table uses. Without it, a release inside
+ * the battlefield slides or plays the card as it always did.
+ */
+export default function useDrag({ fieldRef, onSlide, onPlay, onDrop = null }) {
   const [drag, setDrag] = useState(null)
   const session = useRef(null)
   const detach = useRef(null)
@@ -52,6 +58,7 @@ export default function useDrag({ fieldRef, onSlide, onPlay }) {
       // A moved drag has done its job; the click it would produce is not wanted.
       swallow.current = true
       setTimeout(() => { swallow.current = false }, 0)
+      if (onDrop) { onDrop(s, { x: e.clientX, y: e.clientY }); return }
       const rect = fieldRef.current?.getBoundingClientRect()
       const inside = rect && e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom
       if (!inside) return
@@ -69,7 +76,7 @@ export default function useDrag({ fieldRef, onSlide, onPlay }) {
       window.removeEventListener('pointercancel', finish)
       detach.current = null
     }
-  }, [fieldRef, onSlide, onPlay])
+  }, [fieldRef, onSlide, onPlay, onDrop])
 
   /** True for the instant after a drag, so the click it produces is ignored. */
   const justDragged = useCallback(() => swallow.current, [])

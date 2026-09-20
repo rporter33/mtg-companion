@@ -168,8 +168,21 @@ Shipped, at `#/game`, reached by address only:
 
 Still to do in Phase 1: the confirm-dialog house style (§3) as a component;
 the log's hidden-information greying and nested step dividers (§9); the
-pace presets (§5); the common-card bundle; the drag collision order; hover
-zoom for a card in hand.
+pace presets (§5); the common-card bundle; hover zoom for a card in hand.
+
+**The drag collision order is in** (2026-09-20): `src/lib/board/drop.js`
+decides where a released card goes in the creator's priority — the card
+under the pointer (attach; the smallest when they pile), then a zone tile,
+then the hand strip, then the battlefield at that point — as a pure
+function over rectangles with its own tests, and the table gathers the
+rectangles once at release. Dragging a card onto a permanent puts it on it;
+onto the graveyard tile sends it there; back onto the hand brings it to
+hand. Hand reordering is deliberately not a drop target: the board keeps no
+hand order, and inventing one for a drag would be a second model.
+
+**The common-card bundle waits on network**: Scryfall is not reachable from
+the build environment this was written in, so a bundle generated blind
+could not be checked. The script and loader are a small job once it is.
 
 ## Phase 2 — Seats, over a relay
 

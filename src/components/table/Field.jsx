@@ -72,6 +72,7 @@ export default function Field({
         return (
           <span
             key={inst.id}
+            data-id={inst.id}
             className={`field__slot${aiming && aiming.id !== inst.id ? ' field__slot--aimable' : ''}${live ? ' field__slot--carried' : ''}`}
             style={{ left: `${(live?.x ?? inst.x) * 100}%`, top: `${yOf(live?.y ?? inst.y) * 100}%`, zIndex: live ? 999 : inst.z }}
           >
