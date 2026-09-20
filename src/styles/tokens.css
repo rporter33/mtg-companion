@@ -136,6 +136,16 @@
   --warn:  #d9a441;
   --error: #e06c5f;
 
+  /* The playmat. The one surface in the app that is paper rather than ink:
+     the table studied in docs/table-rebuild/TARGET.md §7 is a parchment mat
+     inside dark chrome, and the tiles, being dark, read on it the way ink
+     reads on a page. Light pools at the centre and the edges wear darker. */
+  --mat:       #CDB88C;
+  --mat-light: #E4D5B0;
+  --mat-shade: #8A7350;
+  --mat-ink:   #4A3A1E;
+  --mat-rule:  rgba(74, 58, 30, 0.24);
+
   --radius:    10px;
   --shadow: 0 2px 8px #00000066;
   --shadow-lg: var(--shadow-card);

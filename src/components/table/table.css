@@ -163,7 +163,31 @@
 /* Arrived this turn glows green at the edge, as Moxgate's just-played card
    does — kept for the turn, because that is the summoning-sickness cue. */
 .bcard--tile-arrived { box-shadow: 0 0 0 1px var(--ok), 0 0 12px #4ea87a66; }
-.field--tile { aspect-ratio: 4 / 3; }
+
+/* The playmat under the tiles is parchment, not ink: the table Moxgate is
+   (docs/table-rebuild/TARGET.md §7, frames v2_12 and v3_09) has paper under
+   the permanents and dark chrome around it, and a dark tile on paper reads
+   at a glance the way one on more darkness does not. Light pools at the
+   centre, the edges wear darker, the weave is a faint tooth. Nothing is
+   drawn on it that a mat does not have. */
+.field--tile {
+  aspect-ratio: 4 / 3;
+  border-color: var(--mat-shade);
+  background:
+    radial-gradient(70% 60% at 50% 45%, var(--mat-light), transparent 75%),
+    radial-gradient(130% 110% at 50% 50%, transparent 50%, var(--mat-shade) 100%),
+    repeating-linear-gradient(90deg, rgba(74, 58, 30, 0.035) 0 2px, transparent 2px 5px),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 4px),
+    var(--mat);
+}
+.field--tile .playmat__lane { border-top-style: solid; border-color: var(--mat-rule); }
+.field--tile .playmat__lane:last-child { border-bottom-color: var(--mat-rule); }
+.field--tile .playmat__name { color: var(--mat-ink); opacity: 0.8; }
+.field--tile .playmat__lane--over { background: rgba(184, 148, 70, 0.24); border-color: var(--gold-500); }
+.field--tile .playmat__lane--over .playmat__name { color: var(--mat-ink); }
+.field--tile .field__empty { color: var(--mat-ink); }
+/* A dotted gold line vanishes on parchment; ink does not. */
+.field--tile .field__arrow--target { stroke: var(--mat-ink); }
 /* A tile turns less than a card: enough to say "sideways", not so much the
    strip becomes unreadable. */
 .field--tile .field__turn--tapped { transform: rotate(12deg); }

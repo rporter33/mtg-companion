@@ -458,6 +458,14 @@ These are original implementation recommendations, not official brand values.
   --radius-md: 0.75rem;
   --radius-lg: 1.25rem;
   --shadow-card: 0 12px 32px rgba(0, 0, 0, 0.38);
+
+  /* The playmat: the table's battlefield is parchment inside the dark shell,
+     after the tabletop studied in docs/table-rebuild/TARGET.md §7. */
+  --mat: #CDB88C;
+  --mat-light: #E4D5B0;
+  --mat-shade: #8A7350;
+  --mat-ink: #4A3A1E;
+  --mat-rule: rgba(74, 58, 30, 0.24);
 }
 ```
 

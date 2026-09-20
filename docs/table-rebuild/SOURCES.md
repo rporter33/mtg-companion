@@ -50,9 +50,10 @@ mention Argentum at all, which says only that its author did not look.
 
 - **The look.** The owner still likes Moxgate's look, and the pack is a
   backend pack: it has nothing on the interface. `TARGET.md` and `frames/`
-  remain the whole of the visual evidence. The retrofit of the table's
-  surface toward those frames — the parchment playmat, the faint lane rules,
-  the purple prompt accents — is its own piece of work and is planned as one.
+  remain the whole of the visual evidence. The parchment playmat from those
+  frames is now the table's (`TARGET.md` §7); the chrome around it stays the
+  app's own dark and gold rather than Moxgate's purple, which is a brand, not
+  a table.
 - **Verifying Scryfall's limits.** `scryfall.com` and `api.scryfall.com`
   return 403 from the build container. The per-endpoint figures above should
   be read against https://scryfall.com/docs/api/rate-limits from a machine

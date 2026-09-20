@@ -167,6 +167,14 @@ right, a green mana pip on the left. A freshly played card glows green.
 > What still has to be solved, and tested: **tapped must read instantly**.
 > Rotation alone is not enough on a landscape tile, so pair it with a dim and
 > a glyph — and keep "tapped" in the spoken label, per `HOUSE-RULES.md`.
+>
+> **The playmat is copied too** (2026-09-20). The battlefield is parchment
+> inside the app's dark chrome — `--mat` and its four companions in
+> `tokens.css` — with the lane rules drawn solid and faint in ink, and the
+> lane names, the empty-table line and the pointing arrow in ink as well,
+> since gold and pale grey both vanish on paper. The pooled light and the
+> darker edges are gradients; the frames' decorative sun is not reproduced,
+> because it is Moxgate's and a mat needs nothing drawn on it.
 
 **Opening hand** (`v2_03`) is a prompt floating on the battlefield, not a
 modal: *Opening Hand / 7 cards* · `Mulligan / Draw 7, free` · `Keep Hand →`.
