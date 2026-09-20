@@ -741,6 +741,21 @@ read them to each other out loud.
 `npm run signal` runs it locally; `tests/browser/together.spec.mjs` drives two
 real browsers through it.
 
+**The rebuilt table uses a relay instead**, `scripts/relay-server.mjs`, and
+the trade is deliberate. A relay does see the board — it holds it, running the
+same board model the browsers run — and in return gives four things peer to
+peer cannot: a late joiner gets the whole table from the server rather than
+from a player who may have gone; a room is written to disk as JSON, so a
+deploy mid-game is a pause and not an end; whose turn it is is decided in
+one place, so two browsers can never both believe it is theirs; and a socket
+that goes quiet is dropped by a thirty-second heartbeat and told `1012` on a
+restart, so the browser's own backoff reconnect fires instead of hanging.
+Those are the things the creator of Moxgate said were not obvious until
+they broke, and they are built in from the first commit. The relay still
+knows no rules of Magic. It is a table, not a judge, on the server exactly
+as in a browser. `npm run relay` runs it; `tests/browser/relay.spec.mjs`
+drives two real browsers through a cut socket and a server restart.
+
 ## Data
 
 Card data, images, rulings and prices come from [Scryfall](https://scryfall.com),

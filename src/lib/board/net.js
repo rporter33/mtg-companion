@@ -73,8 +73,17 @@ export function mayDo(board, seat, action) {
  * Holds the run, applies what it is asked, numbers every action it applies
  * and tells everyone. `send(message, to)` with no `to` is a broadcast.
  */
-export function host({ run = newRun(createBoard({ players: ['p1'] })), seat = 'p1', send, name = 'Table' } = {}) {
-  const state = { run, seat, seq: 0, seats: new Map([[seat, { seat, name, here: true }]]), log: [] }
+/**
+ * `seat: null` is a table nobody is sitting at — a relay server holding the
+ * game for the people who are. `seq` and `seats` are how such a table comes
+ * back from disk: the numbering carries on where it stopped, and everyone
+ * who was seated is still seated, just not here until they reconnect.
+ */
+export function host({ run = newRun(createBoard({ players: ['p1'] })), seat = 'p1', send, name = 'Table', seq = 0, seats = null } = {}) {
+  const sitting = new Map()
+  if (seat) sitting.set(seat, { seat, name, here: true })
+  for (const s of seats ?? []) if (s?.seat) sitting.set(s.seat, { seat: s.seat, name: s.name || 'Player', here: false })
+  const state = { run, seat, seq, seats: sitting, log: [] }
 
   /**
    * Applies an action, numbers it, and tells everyone it happened.
@@ -98,6 +107,29 @@ export function host({ run = newRun(createBoard({ players: ['p1'] })), seat = 'p
     return { ok: true, seq: state.seq }
   }
 
+  /**
+   * The seat a newcomer gets. Their own old seat back if they had one and it
+   * is empty — a reconnect — otherwise the first free one in order, or null
+   * when the board has no more.
+   */
+  const seatFor = (wanted) => {
+    const players = state.run.board.players
+    const free = (s) => players.includes(s) && !(state.seats.get(s)?.here)
+    if (wanted && free(wanted)) return wanted
+    return players.find((s) => !state.seats.has(s)) ?? null
+  }
+
+  /** The next seat with somebody in it, in turn order, after the active one. */
+  const nextOccupied = () => {
+    const players = state.run.board.players
+    const i = players.indexOf(state.run.board.active)
+    for (let k = 1; k <= players.length; k++) {
+      const s = players[(i + k) % players.length]
+      if (state.seats.has(s)) return s
+    }
+    return state.run.board.active
+  }
+
   const table = () => ({
     t: KIND.welcome,
     protocol: PROTOCOL,
@@ -114,11 +146,12 @@ export function host({ run = newRun(createBoard({ players: ['p1'] })), seat = 'p
     }
     switch (message.t) {
       case KIND.hello: {
-        const taken = new Set(state.seats.keys())
-        const given = message.seat && !taken.has(message.seat)
-          ? message.seat
-          : `p${state.seats.size + 1}`
-        state.seats.set(given, { seat: given, name: message.name || 'Player', here: true })
+        const given = seatFor(message.seat)
+        if (!given) {
+          send?.({ t: KIND.refused, protocol: PROTOCOL, reason: { code: 'full', message: 'Every seat at this table is taken.' } }, from)
+          return
+        }
+        state.seats.set(given, { seat: given, name: message.name || state.seats.get(given)?.name || 'Player', here: true })
         send?.({ ...table(), seat: given }, from)
         send?.({ t: KIND.seat, protocol: PROTOCOL, seats: [...state.seats.values()] })
         break
@@ -134,7 +167,27 @@ export function host({ run = newRun(createBoard({ players: ['p1'] })), seat = 'p
           }, from)
           return
         }
-        const result = apply(message.action, message.seat, message.id)
+        let action = message.action
+        /*
+         * The one thing decided here and nowhere else: whose turn it is.
+         * Only the active player may pass, and the table says who is next —
+         * the next seat anyone is actually sitting in, so a four-seat table
+         * with two people at it does not hand turns to empty chairs. A
+         * client's own idea of the next player is ignored, so nobody can pass
+         * the turn to themselves. This is the "both players think it is their
+         * turn" case, closed the same way Moxgate closes it: in one place.
+         */
+        if (action.type === 'nextTurn') {
+          if (message.seat !== state.run.board.active) {
+            send?.({
+              t: KIND.refused, id: message.id, protocol: PROTOCOL,
+              reason: { code: 'notYourTurn', message: 'Only the player whose turn it is can end it.' },
+            }, from)
+            return
+          }
+          action = { type: 'nextTurn', player: nextOccupied() }
+        }
+        const result = apply(action, message.seat, message.id)
         if (!result.ok) send?.({ t: KIND.refused, id: message.id, protocol: PROTOCOL, reason: result.reason }, from)
         break
       }

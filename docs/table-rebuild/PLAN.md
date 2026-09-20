@@ -193,6 +193,37 @@ one a lesson the creator paid for:
 - On SIGTERM, close every socket with **1012 Service Restart** before exiting,
   and exponential-backoff reconnect on the client.
 
+### Where Phase 2 stands — 2026-09-20
+
+**The relay is built and tested**, with no UI on it yet:
+
+- `scripts/relay-server.mjs`: rooms of 2–6 seats, one table per room held
+  server-side by the same `host()` the old table used, so the snapshot a
+  late joiner gets is always current and always passes the board's
+  invariants. Turn authority: only the active player may pass, and the
+  server names the next seat with somebody in it, ignoring whatever the
+  client sent. Heartbeat every 30 s, `1012` on SIGTERM, rooms as JSON on
+  disk, a week's idle expiry, and the built app served from the same
+  process when asked. `npm run relay`.
+- `src/lib/board/relay.js`: the browser's wire — the same `{ send,
+  onMessage, close }` shape as the loopback and the WebRTC peer — with
+  exponential-backoff reconnect, a status callback for the screen, and
+  `onOpen` where the guest says hello again and gets its seat back.
+- `net.js`'s host gained a seatless mode, seat reclaim on reconnect, and the
+  turn rule; every earlier protocol test still passes unchanged.
+- Proven by `tests/relay-server.test.js` over real sockets and
+  `tests/browser/relay.spec.mjs` with two real browsers through a cut
+  socket and a server restart.
+
+**Improvement on Moxgate, stated once**: their server relays whatever a
+client last uploaded; ours holds the table itself and verifies it. Same
+zero rules, one more guarantee.
+
+Next: the lobby's seats panel makes and joins rooms (invite by link), and
+the table renders the second seat's field opposite. Then a hosted relay —
+the app on GitHub Pages needs a relay URL to point at, which is the hosting
+decision already taken.
+
 Then: hidden hands, a room panel, hot seat on one device — and, because the
 board model has no two-seat assumption and a relay does not care how many
 clients it fans out to, **the degraded mode can seat a four-player pod in this

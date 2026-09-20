@@ -1,0 +1,354 @@
+#!/usr/bin/env node
+/**
+ * The relay: one table per room, held for the people playing at it.
+ *
+ * Moxgate's creator describes theirs as a pure relay with zero game logic —
+ * every client runs the full game, the server broadcasts what each one did,
+ * and the only thing decided server-side is whose turn it is. This one keeps
+ * that shape and improves on it in one respect: the server runs the same
+ * board model the clients do (`src/lib/board/`), so it holds the table
+ * itself rather than whatever a client last uploaded. That buys a snapshot
+ * for late joiners that is always current and always passes the board's own
+ * invariants, actions numbered in one place, and the "not your card" and
+ * "not your turn" refusals decided once. It still knows no rules of Magic:
+ * the board is a table, not a judge, on the server exactly as in a browser.
+ *
+ * The four things the creator called non-obvious are built in from the
+ * first commit rather than learned the hard way:
+ *
+ *   - a hosting proxy drops a socket idle for sixty seconds, so the server
+ *     pings every thirty and terminates anything that does not pong, which
+ *     lets a client's backoff reconnect fire cleanly instead of hanging;
+ *   - on SIGTERM every socket is closed with 1012 (Service Restart), so a
+ *     client knows to reconnect rather than show a broken board;
+ *   - rooms are written to disk as JSON, so a deploy mid-game keeps the game;
+ *   - a late joiner or a reconnect gets the whole table from the server,
+ *     without asking a host who may have gone.
+ *
+ *   node scripts/relay-server.mjs                 # localhost:8788
+ *   PORT=9000 ROOMS_DIR=/data/rooms STATIC_DIR=dist node scripts/relay-server.mjs
+ *
+ * The API, in full:
+ *   POST /rooms            body: { seats?: 2..6 }   -> { code, seats }
+ *   GET  /rooms/<code>                              -> { code, seats, seq, players }
+ *   WS   /rooms/<code>/ws                           the protocol in src/lib/board/net.js
+ *   GET  /*                 the built app, when STATIC_DIR is set
+ *
+ * One process serves all three, the way Moxgate's does, because the relay is
+ * nearly free to run and a second service would cost more than it saves.
+ */
+import { createServer } from 'node:http'
+import { randomInt } from 'node:crypto'
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync, existsSync, statSync } from 'node:fs'
+import { join, extname, normalize } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { WebSocketServer } from 'ws'
+import { host, KIND, PROTOCOL, restore } from '../src/lib/board/net.js'
+import { newRun } from '../src/lib/board/runner.js'
+import { createBoard } from '../src/lib/board/model.js'
+
+/** Room codes: nothing that sounds or looks like something else read aloud. */
+export const ALPHABET = 'ABCDEFGHJKLMNPQRTUVWXYZ346789'
+export const makeCode = () => Array.from({ length: 5 }, () => ALPHABET[randomInt(ALPHABET.length)]).join('')
+
+/** The close code that means "back in a moment": reconnect, do not give up. */
+export const SERVICE_RESTART = 1012
+export const MIN_SEATS = 2
+export const MAX_SEATS = 6
+/** How long a room lives with nobody doing anything in it. */
+export const IDLE_MS = 7 * 24 * 60 * 60 * 1000
+
+const TYPES = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon',
+  '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.map': 'application/json',
+}
+
+/**
+ * Builds a relay. Everything is a parameter so a test can run one on port 0
+ * with a fast ping and a temporary rooms directory; `main` below runs it
+ * from the environment.
+ */
+export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = null, idleMs = IDLE_MS, now = Date.now } = {}) {
+  const rooms = new Map()
+  let nextSocketId = 1
+
+  // --- rooms ---------------------------------------------------------------
+
+  const roomFile = (code) => (roomsDir ? join(roomsDir, `${code}.json`) : null)
+
+  /** What goes to disk: the table and who is at it, nothing derived. */
+  const record = (room) => ({
+    version: 1,
+    code: room.code,
+    seq: room.table.seq,
+    snapshot: room.table.table().snapshot,
+    seats: room.table.seats.map(({ seat, name }) => ({ seat, name })),
+    touchedAt: room.touchedAt,
+  })
+
+  const flush = (room) => {
+    const file = roomFile(room.code)
+    if (!file) return
+    clearTimeout(room.flushTimer)
+    room.flushTimer = null
+    try { writeFileSync(file, JSON.stringify(record(room))) } catch { /* a full disk loses a save, not the game */ }
+  }
+
+  // Written a moment after things settle rather than on every action: a
+  // card being dragged is many actions a second and the disk is not.
+  const touch = (room) => {
+    room.touchedAt = now()
+    if (!roomFile(room.code) || room.flushTimer) return
+    room.flushTimer = setTimeout(() => flush(room), 250)
+  }
+
+  const wire = (room) => {
+    room.table = host({
+      run: room.run,
+      seat: null,
+      seq: room.seq,
+      seats: room.seats,
+      send: (message, to) => {
+        if (to) {
+          const socket = room.sockets.get(to)
+          if (message.t === KIND.welcome && message.seat) socket && (socket.seat = message.seat)
+          deliver(socket, message)
+        } else {
+          for (const socket of room.sockets.values()) deliver(socket, message)
+        }
+        if (message.t === KIND.action || message.t === KIND.seat) touch(room)
+      },
+    })
+    delete room.run
+    delete room.seq
+    delete room.seats
+    return room
+  }
+
+  const makeRoom = ({ seats = MIN_SEATS } = {}) => {
+    const n = Math.min(MAX_SEATS, Math.max(MIN_SEATS, Math.floor(Number(seats)) || MIN_SEATS))
+    let code = makeCode()
+    while (rooms.has(code)) code = makeCode()
+    const players = Array.from({ length: n }, (_, i) => `p${i + 1}`)
+    const room = wire({
+      code, sockets: new Map(), touchedAt: now(), flushTimer: null,
+      run: newRun(createBoard({ players, seed: randomInt(1e9), active: 'p1' })), seq: 0, seats: null,
+    })
+    rooms.set(code, room)
+    touch(room)
+    return room
+  }
+
+  /**
+   * Rooms back from disk. A file this build cannot make sense of is left
+   * where it is and skipped, never deleted: the next build may read it.
+   * Rooms nobody has touched for a week are dropped.
+   */
+  const loadRooms = () => {
+    if (!roomsDir) return
+    mkdirSync(roomsDir, { recursive: true })
+    for (const name of readdirSync(roomsDir)) {
+      if (!name.endsWith('.json')) continue
+      try {
+        const saved = JSON.parse(readFileSync(join(roomsDir, name), 'utf8'))
+        if (saved.version !== 1 || !saved.code) continue
+        if (now() - (saved.touchedAt ?? 0) > idleMs) { unlinkSync(join(roomsDir, name)); continue }
+        const run = restore(saved.snapshot)
+        if (!run) continue
+        rooms.set(saved.code, wire({
+          code: saved.code, sockets: new Map(), touchedAt: saved.touchedAt ?? now(), flushTimer: null,
+          run, seq: saved.seq ?? 0, seats: saved.seats ?? [],
+        }))
+      } catch { /* unreadable: skipped, kept */ }
+    }
+  }
+
+  const sweep = () => {
+    for (const [code, room] of rooms) {
+      if (room.sockets.size || now() - room.touchedAt <= idleMs) continue
+      rooms.delete(code)
+      const file = roomFile(code)
+      if (file) try { unlinkSync(file) } catch { /* already gone */ }
+    }
+  }
+
+  // --- sockets -------------------------------------------------------------
+
+  const deliver = (socket, message) => {
+    if (!socket || socket.readyState !== socket.OPEN) return
+    try { socket.send(JSON.stringify(message)) } catch { /* closing under us */ }
+  }
+
+  const leave = (room, socket) => {
+    room.sockets.delete(socket.id)
+    if (socket.seat) room.table.receive({ t: KIND.bye, protocol: PROTOCOL, seat: socket.seat })
+    socket.seat = null
+  }
+
+  const wss = new WebSocketServer({ noServer: true })
+  wss.on('connection', (socket, room) => {
+    socket.id = `s${nextSocketId++}`
+    socket.seat = null
+    socket.isAlive = true
+    room.sockets.set(socket.id, socket)
+    socket.on('pong', () => { socket.isAlive = true })
+    socket.on('message', (data) => {
+      let message
+      try { message = JSON.parse(String(data)) } catch { return }
+      if (!message || typeof message !== 'object') return
+      /*
+       * Somebody coming back for their seat before the server noticed they
+       * had gone: the old socket is dead weight and the seat is theirs.
+       */
+      if (message.t === KIND.hello && message.seat) {
+        for (const other of room.sockets.values()) {
+          if (other !== socket && other.seat === message.seat) { leave(room, other); other.terminate() }
+        }
+      }
+      room.table.receive(message, socket.id)
+    })
+    socket.on('close', () => leave(room, socket))
+    socket.on('error', () => { /* close follows */ })
+  })
+
+  // Thirty seconds against a sixty-second proxy: a socket that has not
+  // answered by the next round is gone, and saying so is what lets the
+  // client's reconnect fire instead of waiting on a connection that will
+  // never speak again.
+  const heartbeat = setInterval(() => {
+    for (const socket of wss.clients) {
+      if (!socket.isAlive) { socket.terminate(); continue }
+      socket.isAlive = false
+      socket.ping()
+    }
+  }, pingMs)
+  heartbeat.unref?.()
+  const sweeper = setInterval(sweep, Math.min(idleMs, 60 * 60 * 1000))
+  sweeper.unref?.()
+
+  // --- http ----------------------------------------------------------------
+
+  const json = (res, status, body) => {
+    res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
+    res.end(JSON.stringify(body))
+  }
+
+  const readBody = (req) => new Promise((resolve) => {
+    let text = ''
+    req.on('data', (chunk) => { text += chunk; if (text.length > 4096) req.destroy() })
+    req.on('end', () => { try { resolve(text ? JSON.parse(text) : {}) } catch { resolve({}) } })
+    req.on('error', () => resolve({}))
+  })
+
+  const describe = (room) => ({
+    code: room.code,
+    seq: room.table.seq,
+    players: room.table.run.board.players,
+    seats: room.table.seats,
+  })
+
+  /** The built app, when asked to serve it. Anything not a file is the app. */
+  const serveStatic = (req, res) => {
+    if (!staticDir) { json(res, 404, { error: 'not found' }); return }
+    const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^(\.\.[/\\])+/, '')
+    let file = join(staticDir, path)
+    if (!file.startsWith(normalize(staticDir))) { json(res, 404, { error: 'not found' }); return }
+    if (!existsSync(file) || statSync(file).isDirectory()) file = join(staticDir, 'index.html')
+    if (!existsSync(file)) { json(res, 404, { error: 'not found' }); return }
+    const type = TYPES[extname(file)] ?? 'application/octet-stream'
+    // Hashed assets are immutable; the shell is not, so it is always re-checked.
+    const cache = /\/assets\//.test(file) ? 'public, max-age=31536000, immutable' : 'no-cache'
+    res.writeHead(200, { 'content-type': type, 'cache-control': cache })
+    res.end(readFileSync(file))
+  }
+
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://x')
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+        'access-control-allow-headers': 'content-type',
+      })
+      res.end()
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/rooms') {
+      const room = makeRoom(await readBody(req))
+      json(res, 201, { code: room.code, seats: room.table.run.board.players.length })
+      return
+    }
+    const m = url.pathname.match(/^\/rooms\/([A-Z0-9]{5})$/)
+    if (req.method === 'GET' && m) {
+      const room = rooms.get(m[1])
+      if (!room) { json(res, 404, { error: 'That room has gone.' }); return }
+      json(res, 200, describe(room))
+      return
+    }
+    if (url.pathname === '/health') { json(res, 200, { ok: true, rooms: rooms.size }); return }
+    if (req.method === 'GET') { serveStatic(req, res); return }
+    json(res, 404, { error: 'not found' })
+  })
+
+  server.on('upgrade', (req, socket, head) => {
+    const m = new URL(req.url, 'http://x').pathname.match(/^\/rooms\/([A-Z0-9]{5})\/ws$/)
+    const room = m ? rooms.get(m[1]) : null
+    if (!room) {
+      socket.write('HTTP/1.1 404 Not Found\r\nconnection: close\r\n\r\n')
+      socket.destroy()
+      return
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, room))
+  })
+
+  /**
+   * Going down on purpose. Every table is written first, then every socket
+   * is told 1012 — the code that means "back in a moment", which a client
+   * treats as a reason to reconnect rather than to give up.
+   */
+  const shutdown = async () => {
+    clearInterval(heartbeat)
+    clearInterval(sweeper)
+    for (const room of rooms.values()) flush(room)
+    // The close frame has to reach the client before the connection under
+    // it is torn down, or the client sees a dropped socket rather than a
+    // 1012 and waits the long way. So: say goodbye, wait briefly for the
+    // handshakes, then pull the plug on whatever is left.
+    const goodbyes = [...wss.clients].map((socket) => new Promise((done) => {
+      socket.once('close', done)
+      socket.close(SERVICE_RESTART, 'Service Restart')
+    }))
+    await Promise.race([Promise.all(goodbyes), new Promise((done) => setTimeout(done, 1000))])
+    wss.close()
+    server.closeAllConnections?.()
+    await new Promise((resolve) => server.close(() => resolve()))
+  }
+
+  loadRooms()
+
+  return {
+    server, rooms, wss, makeRoom, flush: () => { for (const room of rooms.values()) flush(room) }, shutdown, sweep,
+  }
+}
+
+// --- as a program ----------------------------------------------------------
+
+const asProgram = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]
+if (asProgram) {
+  const relay = createRelay({
+    roomsDir: process.env.ROOMS_DIR || '/tmp/rooms',
+    staticDir: process.env.STATIC_DIR || null,
+    pingMs: Number(process.env.PING_MS) || 30 * 1000,
+  })
+  const port = Number(process.env.PORT) || 8788
+  relay.server.listen(port, () => {
+    console.log(`relay on :${port}, ${relay.rooms.size} room(s) back from disk`)
+  })
+  const stop = (signal) => {
+    console.log(`${signal}: closing ${relay.wss.clients.size} socket(s) with 1012`)
+    relay.shutdown().then(() => process.exit(0))
+    setTimeout(() => process.exit(0), 3000).unref()
+  }
+  process.on('SIGTERM', () => stop('SIGTERM'))
+  process.on('SIGINT', () => stop('SIGINT'))
+}
