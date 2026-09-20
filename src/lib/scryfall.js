@@ -5,6 +5,14 @@
 // Every call in this app goes through the queue below so that holds even when
 // several components fetch at once.
 //
+// The search, named, random and collection endpoints are the expensive ones
+// on Scryfall's side and are held to two requests a second rather than ten
+// (docs/table-rebuild/SOURCES.md, "Scryfall"). So the queue spaces a request
+// by the endpoint it is for: half a second before those four, a tenth before
+// anything else. Being slower than the limit costs a person nothing they can
+// feel — a search is one request, a deck import is two — and being faster
+// costs everyone a 429.
+//
 // Note on User-Agent: Scryfall's docs ask for a descriptive one, but browsers
 // forbid scripts from setting that header, so we cannot comply from the client.
 // The rate limiting and caching are the parts we *can* honour, and do.
@@ -13,6 +21,13 @@ import { getCard, getCards, putCards, getQuery, putQuery } from './cache.js'
 
 const API = 'https://api.scryfall.com'
 const MIN_INTERVAL_MS = 100
+const SLOW_INTERVAL_MS = 500
+const SLOW = /^\/cards\/(search|named|random|collection)(?:[/?]|$)/
+
+/** How long the queue leaves before a request to this path. */
+function spacingFor(path) {
+  return SLOW.test(path) ? SLOW_INTERVAL_MS : MIN_INTERVAL_MS
+}
 // Four attempts backing off 2s / 4s / 8s / 16s — the same shape used by the
 // Socrata pipelines, so retry behaviour is consistent across projects.
 //
@@ -44,9 +59,9 @@ let lastRequestAt = 0
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-function enqueue(task) {
+function enqueue(task, spacing = MIN_INTERVAL_MS) {
   const run = chain.then(async () => {
-    const wait = MIN_INTERVAL_MS - (Date.now() - lastRequestAt)
+    const wait = spacing - (Date.now() - lastRequestAt)
     if (wait > 0) await sleep(wait)
     lastRequestAt = Date.now()
     return task()
@@ -124,7 +139,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
       }
     }
     throw lastError ?? new ScryfallError('Request failed.')
-  })
+  }, spacingFor(path))
 }
 
 // --- public API -----------------------------------------------------------
@@ -470,6 +485,8 @@ export const __internals = {
   request,
   enqueue,
   MIN_INTERVAL_MS,
+  SLOW_INTERVAL_MS,
+  spacingFor,
   MAX_RETRIES,
   /** Test seam: shrink the backoff so retry paths are testable in milliseconds. */
   setBackoffBase(ms) {

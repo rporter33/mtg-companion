@@ -180,6 +180,14 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
         ))}
       </div>
 
+      {decks.length > 0 && (
+        // Each deck card shows a painting cropped from its card, so the credit the crop lost is said here.
+        <p className="faint tiny">
+          Deck art is the property of Wizards of the Coast and the artists named on each card,
+          shown under the Fan Content Policy. Unofficial, and not endorsed by Wizards.
+        </p>
+      )}
+
       <Confirm
         open={Boolean(deleting)}
         title={deleting ? `Delete ${deleting.name}` : ''}

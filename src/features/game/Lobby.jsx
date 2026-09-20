@@ -208,6 +208,11 @@ export default function Lobby({ decks, room = null }) {
             : (chosenDeck ? `Start game with ${chosenDeck.name} →` : 'Start game →')}
         </button>
       </footer>
+      {/* The shelf shows paintings cropped from their cards, so the credit the crop lost is said here. */}
+      <p className="faint tiny lobby__credit">
+        Deck art is the property of Wizards of the Coast and the artists named on each card,
+        shown under the Fan Content Policy. Unofficial, and not endorsed by Wizards.
+      </p>
     </div>
   )
 }

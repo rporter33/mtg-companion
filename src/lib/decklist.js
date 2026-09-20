@@ -147,20 +147,28 @@ export function parseDecklist(text) {
     if (['commander', 'commanders'].includes(header)) { section = 'commander'; continue }
     if (['deck', 'maindeck', 'main', 'mainboard'].includes(header)) { section = 'main'; continue }
 
-    const match = line.match(/^(\d+)\s*[xX]?\s+(.+)$/)
+    // Cockatrice and MTGO mark each sideboard card on its own line, "SB: 2
+    // Plains", with no header at all. The prefix places that one line and
+    // leaves the section alone, so a maindeck card after it stays in the deck.
+    let text = line
+    let where = section
+    const prefixed = line.match(/^sb:\s*(\S.*)$/i)
+    if (prefixed) { text = prefixed[1]; where = 'sideboard' }
+
+    const match = text.match(/^(\d+)\s*[xX]?\s+(.+)$/)
     if (!match) {
       // Split cards are written "Fire // Ice"; Scryfall's fuzzy search wants
       // the full name, so leave the separator alone.
-      if (looksLikeBareName(line)) {
-        const parsed = stripPrinting(line)
-        if (parsed.name) bare.push({ quantity: 1, ...placeLine(parsed, section) })
+      if (looksLikeBareName(text)) {
+        const parsed = stripPrinting(text)
+        if (parsed.name) bare.push({ quantity: 1, ...placeLine(parsed, where) })
       }
       continue
     }
 
     const parsed = stripPrinting(match[2])
     if (!parsed.name) continue
-    out.push({ quantity: Number(match[1]), ...placeLine(parsed, section) })
+    out.push({ quantity: Number(match[1]), ...placeLine(parsed, where) })
   }
 
   // Ten is high enough that a stray line or a short paragraph cannot trip it,

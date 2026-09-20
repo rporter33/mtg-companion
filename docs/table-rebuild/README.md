@@ -16,6 +16,7 @@ This folder is everything needed to start that work cold:
 | `ENGINE.md` | **The decision that governs everything else.** Read before planning. |
 | `FRICTION.md` | **The two things we beat Moxgate on.** The design law. |
 | `CREATOR-POST.md` | **Moxgate's creator on its architecture, in their words.** Outranks the screenshots. |
+| `SOURCES.md` | A backend builder pack, checked claim by claim against the repo; what changed and what could not be verified. |
 | `SPIKE.md` | The engine, actually built and run. Measured numbers. |
 | `spike/` | The Kotlin that produced them. Reproduces in ~6 minutes. |
 | `PLAN.md` | Phases, and how to build without breaking the working app. |

@@ -282,6 +282,11 @@ export default function DeckEditor({
         />
       )}
       </Suspense>
+      {/* The header and the rows show paintings cropped from their cards, so the credit the crop lost is said here. */}
+      <p className="faint tiny">
+        Card art is the property of Wizards of the Coast and the artists named on each card,
+        shown under the Fan Content Policy. Unofficial, and not endorsed by Wizards.
+      </p>
     </div>
   )
 }

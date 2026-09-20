@@ -55,6 +55,20 @@ await page.route('**/api.scryfall.com/sets', (route) => route.fulfill({
   status: 200, contentType: 'application/json', body: JSON.stringify({ object: 'list', data: [] }) }))
 
 const lastQuery = () => requests[requests.length - 1]?.q ?? ''
+/**
+ * Does something that searches, and waits for the search to leave the page.
+ * The client holds searches half a second apart, the spacing Scryfall asks
+ * for, so a fixed wait after a click races the queue and reads the request
+ * before it. Waiting for the request itself, then a beat for the render,
+ * does not.
+ */
+const search = async (act, list = requests) => {
+  const was = list.length
+  await act()
+  const t0 = Date.now()
+  while (list.length === was && Date.now() - t0 < 4000) await new Promise((r) => setTimeout(r, 50))
+  await new Promise((r) => setTimeout(r, 250))
+}
 const queryBox = () => page.getByLabel('Search cards')
 
 await page.goto(TARGET, { waitUntil: 'networkidle' })
@@ -63,30 +77,25 @@ await page.waitForTimeout(300)
 
 console.log('\nFilters compose into the query')
 await queryBox().fill('bolt')
-await page.getByRole('button', { name: 'Search' }).click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: 'Search' }).click())
 check('a plain search sends the text', lastQuery() === 'bolt', lastQuery())
 
 await page.getByRole('button', { name: /^Filters/ }).click()
 await page.waitForTimeout(200)
-await page.getByRole('button', { name: 'Red', exact: true }).first().click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: 'Red', exact: true }).first().click())
 check('picking red rewrites the query', lastQuery() === 'bolt c>=r', lastQuery())
 check('the box shows the composed query', (await queryBox().inputValue()) === 'bolt c>=r',
   await queryBox().inputValue())
 
-await page.getByRole('button', { name: 'Green', exact: true }).first().click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: 'Green', exact: true }).first().click())
 check('a second colour is added in WUBRG order', lastQuery() === 'bolt c>=rg', lastQuery())
 
-await page.getByRole('button', { name: 'Exactly' }).first().click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: 'Exactly' }).first().click())
 check('changing the mode changes the operator', lastQuery() === 'bolt c=rg', lastQuery())
 
 console.log('\nHand-edited queries flow back into the controls')
 await queryBox().fill('t:goblin c<=ur is:commander')
-await page.getByRole('button', { name: 'Search' }).click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: 'Search' }).click())
 check('blue and red read as pressed',
   (await page.getByRole('button', { name: 'Blue', exact: true }).first().getAttribute('aria-pressed')) === 'true'
   && (await page.getByRole('button', { name: 'Red', exact: true }).first().getAttribute('aria-pressed')) === 'true')
@@ -94,34 +103,29 @@ check('"At most" reads as selected',
   (await page.getByRole('button', { name: 'At most' }).first().getAttribute('class')).includes('chip--active'))
 
 // The property the whole design rests on.
-await page.getByRole('button', { name: 'White', exact: true }).first().click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: 'White', exact: true }).first().click())
 check('an unmodelled operator survives a filter change',
   lastQuery().includes('is:commander'), lastQuery())
 check('the typed type filter survives too', lastQuery().includes('t:goblin'), lastQuery())
 
 console.log('\nSorting re-queries the server')
 const before = requests.length
-await page.getByLabel('Sort results by').selectOption('usd')
-await page.waitForTimeout(400)
+await search(() => page.getByLabel('Sort results by').selectOption('usd'))
 check('changing sort issues a request', requests.length > before)
 check('it asks Scryfall to sort, not the client',
   requests[requests.length - 1].order === 'usd', JSON.stringify(requests[requests.length - 1]))
 
-await page.getByRole('button', { name: /Sort (ascending|descending)/ }).click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: /Sort (ascending|descending)/ }).click())
 check('direction is sent', ['asc', 'desc'].includes(requests[requests.length - 1].dir),
   JSON.stringify(requests[requests.length - 1]))
 
 console.log('\nPaging')
 await queryBox().fill('bears')
-await page.getByRole('button', { name: 'Search' }).click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: 'Search' }).click())
 const firstCount = await page.locator('.card-grid > *').count()
 check('first page renders', firstCount === 3, String(firstCount))
 
-await page.getByRole('button', { name: /Load more/ }).click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: /Load more/ }).click())
 check('load more appends rather than replacing',
   (await page.locator('.card-grid > *').count()) === 6,
   String(await page.locator('.card-grid > *').count()))
@@ -134,13 +138,11 @@ console.log('\nClearing')
 // Set something to clear first: the button only exists while a control is on,
 // which is itself the correct behaviour.
 await queryBox().fill('bears c=g t:creature is:commander')
-await page.getByRole('button', { name: 'Search' }).click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: 'Search' }).click())
 check('"Clear filters" appears once a control is set',
   (await page.getByRole('button', { name: 'Clear filters' }).count()) === 1)
 
-await page.getByRole('button', { name: 'Clear filters' }).click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: 'Clear filters' }).click())
 check('clearing drops the colour filter', !lastQuery().includes('c='), lastQuery())
 check('clearing drops the type filter', !lastQuery().includes('t:creature'), lastQuery())
 check('clearing keeps the free text', lastQuery().includes('bears'), lastQuery())
@@ -190,20 +192,17 @@ const chip = await deckPage.locator('.scope-chip').textContent().catch(() => nul
 check('a visible chip says the search is scoped', /Test Commander/.test(chip ?? ''), chip)
 
 await deckPage.getByLabel('Search cards to add').fill('ramp')
-await deckPage.getByRole('button', { name: 'Search' }).click()
-await deckPage.waitForTimeout(400)
+await search(() => deckPage.getByRole('button', { name: 'Search' }).click(), deckRequests)
 check('the commander\'s colour identity is applied',
   deckRequests.at(-1) === 'ramp legal:commander id<=ug', deckRequests.at(-1))
 
-await deckPage.locator('.scope-chip button').click()
-await deckPage.waitForTimeout(400)
+await search(() => deckPage.locator('.scope-chip button').click(), deckRequests)
 check('removing the chip re-runs without the identity scope',
   deckRequests.at(-1) === 'ramp legal:commander', deckRequests.at(-1))
 
 // Toggling format scope proves the identity setting survived the round trip:
 // a stale closure here would send the value the user just changed away from.
-await deckPage.getByLabel(/Legal in Commander/).uncheck()
-await deckPage.waitForTimeout(400)
+await search(() => deckPage.getByLabel(/Legal in Commander/).uncheck(), deckRequests)
 check('unchecking format scope re-runs immediately, without a stale value',
   deckRequests.at(-1) === 'ramp', deckRequests.at(-1))
 

@@ -139,9 +139,21 @@ describe('rate limiting', () => {
     expect(times).toHaveLength(3)
     for (let i = 1; i < times.length; i++) {
       // Allow a small scheduler tolerance below the nominal interval.
-      expect(times[i] - times[i - 1]).toBeGreaterThanOrEqual(__internals.MIN_INTERVAL_MS - 15)
+      expect(times[i] - times[i - 1]).toBeGreaterThanOrEqual(__internals.SLOW_INTERVAL_MS - 15)
     }
   }, 10000)
+
+  it('holds search, named, random and collection to two a second and the rest to ten', () => {
+    const { spacingFor, SLOW_INTERVAL_MS, MIN_INTERVAL_MS } = __internals
+    expect(spacingFor('/cards/search?q=bear')).toBe(SLOW_INTERVAL_MS)
+    expect(spacingFor('/cards/named?exact=Bear')).toBe(SLOW_INTERVAL_MS)
+    expect(spacingFor('/cards/random')).toBe(SLOW_INTERVAL_MS)
+    expect(spacingFor('/cards/collection')).toBe(SLOW_INTERVAL_MS)
+    expect(spacingFor('/cards/autocomplete?q=be')).toBe(MIN_INTERVAL_MS)
+    expect(spacingFor('/cards/abc-123')).toBe(MIN_INTERVAL_MS)
+    expect(spacingFor('/cards/abc-123/rulings')).toBe(MIN_INTERVAL_MS)
+    expect(spacingFor('/sets')).toBe(MIN_INTERVAL_MS)
+  })
 })
 
 describe('offline behaviour', () => {

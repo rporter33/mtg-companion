@@ -182,11 +182,14 @@ console.log('\nTrying a change on a land-light list')
   check('with the odds before and after, and the assumptions written down',
     after >= now && /only lands count toward these odds/.test(text) && /99 cards the commander is not among/.test(text), `${now}% -> ${after}%`)
   await panel.getByRole('button', { name: 'Make this change' }).click()
-  await thin.waitForTimeout(600)
-  const counts = await thin.evaluate(() => {
+  // The change lands once the card lookup behind it answers, and the client
+  // holds those requests to Scryfall's spacing, so wait for the save itself.
+  const readCounts = () => thin.evaluate(() => {
     const deck = JSON.parse(localStorage.getItem('mtg-companion:v1:deck:d2'))
     return Object.fromEntries(deck.main.map((e) => [e.cardId, e.quantity]))
   })
+  let counts = await readCounts()
+  for (let i = 0; i < 40 && counts.forest !== 29; i++) { await thin.waitForTimeout(100); counts = await readCounts() }
   check('making it changes the list one for one', counts.forest === 29 && counts.elf === 70, JSON.stringify(counts))
   await thin.getByRole('tab', { name: 'History' }).click()
   await thin.waitForTimeout(500)

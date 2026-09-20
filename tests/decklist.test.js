@@ -47,6 +47,18 @@ describe('parseDecklist', () => {
     expect(parseDecklist('Commanders\n1 Sol Ring')[0].section).toBe('commander')
   })
 
+  it('reads the Cockatrice and MTGO "SB:" prefix on a single line', () => {
+    const lines = parseDecklist('3 Island\nSB: 2 Plains\nsb:1x Forest (m21) 274\n1 Mountain')
+    expect(lines.map((l) => [l.name, l.quantity, l.section])).toEqual([
+      ['Island', 3, 'main'],
+      ['Plains', 2, 'sideboard'],
+      ['Forest', 1, 'sideboard'],
+      ['Mountain', 1, 'main'],
+    ])
+    expect(lines[2].set).toBe('m21')
+    expect(lines[2].number).toBe('274')
+  })
+
   it('ignores comments, blanks and prose', () => {
     expect(parseDecklist('// notes\n\n# heading\nthis is not a card line')).toEqual([])
   })

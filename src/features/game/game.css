@@ -113,6 +113,7 @@
   padding-top: var(--space-3);
   border-top: 1px solid var(--border);
 }
+.lobby__credit { margin: var(--space-2) 0 0; text-align: right; }
 
 /* --- search beside the colours filter, facets dropping under both --------- */
 
@@ -158,6 +159,8 @@
 .game__field { grid-area: field; position: relative; display: flex; flex-direction: column; gap: var(--space-2); }
 .game__you { grid-area: you; }
 .game__side { grid-area: side; display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+/* Last in the column, and pushed to its foot when the column is taller than its panels. */
+.game__credit { margin: auto 0 0; }
 
 /* --- the seat opposite ---------------------------------------------------- */
 

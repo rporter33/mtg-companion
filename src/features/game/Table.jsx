@@ -799,6 +799,16 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
             onLeave={() => navigate({ tab: 'game', gameDeckId: null, gameRoom: null })}
           />
         )}
+        {/*
+          Every tile on this screen is a painting cropped out of its card, and
+          a cropped painting has lost the artist's name and the copyright line
+          that the printed card carries. So the screen carries them instead:
+          the artist beside each selected card, the rest here.
+        */}
+        <p className="faint tiny game__credit">
+          Card art and names are the property of Wizards of the Coast and the artists named on each card,
+          shown under the Fan Content Policy. Unofficial, and not endorsed by Wizards.
+        </p>
       </aside>
       <Peek peek={peek} />
 
@@ -985,6 +995,7 @@ function Actions({ inst, name, card, host, mine = true, permanent = true, onDo, 
           {whereIs(inst.zone)}
           {host ? ` · on ${host.id === inst.id ? 'itself' : 'another card'}` : ''}
           {mine ? '' : ' · not yours'}
+          {card?.artist && !inst.custom ? ` · art by ${card.artist}` : ''}
         </span>
         <span className="spacer" />
         <button className="btn btn--ghost btn--sm" onClick={onClose}>Close</button>

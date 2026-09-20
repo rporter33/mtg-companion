@@ -62,6 +62,18 @@ await page.reload({ waitUntil: 'networkidle' })
 await page.goto(`${TARGET}#/decks/d1/add`, { waitUntil: 'networkidle' })
 const body = () => page.locator('main').innerText()
 const last = () => requests.at(-1) ?? {}
+/**
+ * Does something that searches, and waits for the search to leave the page.
+ * The client holds searches half a second apart, the spacing Scryfall asks
+ * for, so a fixed wait after a click races the queue.
+ */
+const search = async (act) => {
+  const was = requests.length
+  await act()
+  const t0 = Date.now()
+  while (requests.length === was && Date.now() - t0 < 4000) await new Promise((r) => setTimeout(r, 50))
+  await new Promise((r) => setTimeout(r, 250))
+}
 
 console.log('\nWhat the deck needs')
 const needs = page.getByRole('group', { name: 'What this deck still needs' })
@@ -70,8 +82,7 @@ await page.getByRole('tab', { name: 'Add cards' }).waitFor({ timeout: 15000 })
 await needs.waitFor({ timeout: 15000 })
 await page.waitForTimeout(300)
 check('a strip says where the deck stands by role', /Lands 0\/36/.test(await needs.innerText()) && /Ramp 1\/10/.test(await needs.innerText()), await needs.innerText())
-await needs.getByRole('button', { name: /Ramp 1\/10/ }).click()
-await page.waitForTimeout(400)
+await search(() => needs.getByRole('button', { name: /Ramp 1\/10/ }).click())
 check('pressing a role searches for that role, in the coach\'s wording, scoped to the deck',
   /o:"add \{"/.test(last().q) && /legal:commander/.test(last().q) && /id<=g/.test(last().q), last().q)
 check('and the box shows the query it ran, so nothing is hidden', /add \{/.test(await page.getByLabel('Search cards to add').inputValue()))
@@ -79,11 +90,9 @@ check('and the box shows the query it ran, so nothing is hidden', /add \{/.test(
 console.log('\nSorting')
 check('results are sorted by how played they are unless asked otherwise', last().order === 'edhrec' && last().dir === 'asc', JSON.stringify(last()))
 check('and the results line says so', /sorted by most played/.test(await body()))
-await page.getByLabel('Sort results').selectOption('usd')
-await page.waitForTimeout(300)
+await search(() => page.getByLabel('Sort results').selectOption('usd'))
 check('choosing price re-runs the search sorted by price', last().order === 'usd' && last().dir === 'asc', JSON.stringify(last()))
-await page.getByRole('button', { name: /Sort direction/ }).click()
-await page.waitForTimeout(300)
+await search(() => page.getByRole('button', { name: /Sort direction/ }).click())
 check('the direction button flips it', last().order === 'usd' && last().dir === 'desc', JSON.stringify(last()))
 await page.reload({ waitUntil: 'networkidle' })
 await page.waitForTimeout(800)
@@ -91,8 +100,7 @@ check('the sort is remembered', (await page.getByLabel('Sort results').inputValu
 
 console.log('\nRows show value')
 await page.getByLabel('Search cards to add').fill('bear')
-await page.getByRole('button', { name: 'Search' }).click()
-await page.waitForTimeout(400)
+await search(() => page.getByRole('button', { name: 'Search' }).click())
 const wurm = page.locator('.search-row', { hasText: 'Pricey Wurm' })
 check('each row carries its price', /\$12\.00/.test(await wurm.innerText()), await wurm.innerText())
 check('and its type', /Creature — Wurm/.test(await wurm.innerText()))
@@ -101,11 +109,9 @@ check('a card you own says so', /own 2/.test(await page.locator('.search-row', {
 check('the results line totals what is shown', /4 shown/.test(await body()) && /\$13\.85 shown in total/.test(await body()), (await body()).match(/\d+ shown[^\n]*/)?.[0])
 
 console.log('\nQuick filters write into the query')
-await page.getByRole('button', { name: 'Creature', exact: true }).click()
-await page.waitForTimeout(300)
+await search(() => page.getByRole('button', { name: 'Creature', exact: true }).click())
 check('a type chip adds t:creature to the query and re-runs', /t:creature/.test(last().q) && /t:creature/.test(await page.getByLabel('Search cards to add').inputValue()), last().q)
-await page.getByRole('button', { name: '≤ $4' }).click()
-await page.waitForTimeout(300)
+await search(() => page.getByRole('button', { name: '≤ $4' }).click())
 check('a price chip adds the cap', /usd<=4/.test(last().q), last().q)
 await page.getByRole('button', { name: '≤ $4' }).click()
 await page.waitForTimeout(300)
