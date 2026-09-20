@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { artUrl, treatmentOf, treatmentName } from '../../lib/board/art.js'
-import { imageUrl } from '../../components/CardImage.jsx'
+import { imageUrl } from '../CardImage.jsx'
 import { typeLineOf } from '../../lib/formats.js'
 
 /**

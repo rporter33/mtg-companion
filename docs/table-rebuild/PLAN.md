@@ -47,8 +47,18 @@ from outside the Table.
 The isolation strategy:
 
 1. **New code goes in new folders.** `src/lib/engine/` for the rules core,
-   `src/features/play/` (or similar) for the new client. Do not edit
-   `src/lib/board/` or `src/features/table/` except to fix bugs.
+   `src/features/game/` for the new client. Do not edit `src/lib/board/` or
+   `src/features/table/` except to fix bugs.
+
+   **Done 2026-09-20, and one refinement.** The parts of the old table that
+   are not about the old table — the card, the field, the drag, the log, the
+   pool, the counters, the zone browser, the token maker, the turn tracker,
+   the coach, and their stylesheet — were lifted to `src/components/table/`
+   in a pure move: same files, import paths only, every spec green. Both
+   tables now render the same parts from the same place, so a fix lands in
+   both and the switchover is a deletion rather than a reconciliation. That
+   is the `art.js` pattern from above applied to the UI, and it is what
+   "carry over" in Phase 1 turned out to mean.
 2. **A new route**, e.g. `#/table2/<deckId>`, alongside the existing
    `#/table/<deckId>`. Both work. Nobody is migrated.
 3. **A new storage key and schema.** Never write the new engine's state

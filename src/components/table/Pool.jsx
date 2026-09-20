@@ -1,4 +1,4 @@
-import ManaCost from '../../components/ManaCost.jsx'
+import ManaCost from '../ManaCost.jsx'
 
 /**
  * What you have not tapped yet.
