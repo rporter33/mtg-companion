@@ -1396,10 +1396,14 @@ function More({ board, player, prefs, shared, held = false, onDo, onToken, onMul
             </button>
           )}
         </div>
-        <p className="faint tiny m0">
-          Nothing here checks whether a play is legal. With the playmat on, a card sits in the row its kind
-          belongs in and an instant may not be left on the battlefield; the rest is yours.
-        </p>
+        {/* True of the table played by hand and false of the engine's, where
+            every play is checked; the panel above says so there instead. */}
+        {!held && (
+          <p className="faint tiny m0">
+            Nothing here checks whether a play is legal. With the playmat on, a card sits in the row its kind
+            belongs in and an instant may not be left on the battlefield; the rest is yours.
+          </p>
+        )}
       </section>
     </div>
   )

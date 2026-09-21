@@ -215,6 +215,9 @@ check('the engine\'s table is not on the More panel\'s menu of things to do by h
   await page.getByRole('button', { name: 'More' }).click()
   return until(() => page.locator('.more').textContent().then((t) => /the engine's here/.test(t ?? '')))
 })())
+// Found by looking at a screenshot, not by a failing check: the by-hand
+// table's "nothing here checks a play" sat under the engine's own note.
+check('nor does the More panel say that nothing here checks a play', !/Nothing here checks whether a play is legal/.test(await page.locator('.more').textContent() ?? ''))
 check('undo is not offered', await page.getByRole('button', { name: '↶ Undo' }).isDisabled())
 
 check('no console errors throughout', errors.length === 0, errors.join('\n'))
