@@ -176,7 +176,11 @@ or the session's to fetch locally.
   reachable source, with what changed because of it, appended to
   `SOURCES.md`. A claim that cannot be verified is written as unverified,
   not adopted; a claim about Moxgate is compared with `TARGET.md` and
-  `CREATOR-POST.md`, which outrank it.
+  `CREATOR-POST.md`, which outrank it. **Update:** the owner then uploaded
+  Grok's handoff zip, filed at `inbox/grok-pack-2026-09-20/` and read in
+  `SOURCES.md` under "The Grok handoff pack"; it is most of what the second
+  link held. Ask the owner whether anything in that project post-dates the
+  zip (2026-09-20) before asking for more.
 - **The season's first suggestion.** From the Grok preview: while a set is
   the focus, the Cards tab's "Try one of these" leads with that set's cards
   (`e:fra`), through `src/lib/season.js` rather than a hard-coded query,
@@ -234,7 +238,12 @@ Build:
    `getCardsByNames` already does.
 5. **Sideboard** entries go through as `Deck.sideboard` (CR 100.4) so wish
    effects work; nothing else changes.
-6. **Pin the engine.** `scripts/engine-build.sh` takes `ENGINE_REV` and
+6. **Say what the engine lacks.** `hello.sets` says which sets are
+   registered; the deck gate names the cards the engine does not know. For
+   Reality Fracture in particular, check at the pinned commit whether FRA
+   and FRC are in the corpus and record it in `PLAN.md`; the season's own
+   cards missing from the engine would be the first thing a player notices.
+7. **Pin the engine.** `scripts/engine-build.sh` takes `ENGINE_REV` and
    checks that commit out (`git fetch --depth 1 origin <rev>` then
    `checkout FETCH_HEAD`), recorded in `engine/README.md`. Moving the pin is
    a deliberate commit with the compile time and the game measured again.
@@ -264,9 +273,19 @@ table does not yet do (`SOURCES.md`, "The Grok preview").*
   during declare-attackers: `validAttackers` glow, chosen ones stay lit.
 - **The preview never covers Pass.** `Peek.jsx` places the printed face
   above a hand card, which is the bottom of the battlefield, which is where
-  the prompt panel sits. Pass the prompt's rectangle in (a `avoid` rect from
+  the prompt panel sits. Pass the prompt's rectangle in (an `avoid` rect from
   `.prompt`, read at show time) and place the preview beside the card when
-  above would overlap it. Screenshot both cases.
+  above would overlap it. Weigh the pack's alternative for wide screens,
+  the preview parked at the top of the side column as an inspector
+  (`inbox/grok-pack-2026-09-20/shots/table-play.jpg`), against Moxgate's own
+  floating preview in `frames/`; pick one and screenshot both cases.
+- **Space passes.** When a pass is on offer and focus is not in a field,
+  Space acts it; Z stays the zoom. Say so once in the prompt's hint.
+- **The credit line names its sources.** The table's Fan Content line gains
+  "Card data and imagery from Scryfall", and at the engine's table
+  "Rules-enforced play is powered by Argentum, an independent open-source
+  rules engine, used under the MIT licence", the shape Moxgate's own footer
+  uses for Forge (`SOURCES.md`, "The Grok handoff pack").
 
 Tests: a section in `game-engine.spec.mjs` for each glow (class present on
 the right cards and on no others), and one that hovers a hand card with the

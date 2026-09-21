@@ -102,3 +102,33 @@ Two things the preview description does not change: the engine decision
 and the look of the table itself, which the owner chose (parchment playmat
 after the Moxgate frames, the app's dark and gold chrome, the season's cyan
 when the season is on).
+
+
+---
+
+## The Grok handoff pack — read 2026-09-21
+
+The owner uploaded the zip Grok made "for Claude": a README, a conversation
+log, the backend pack again, a description of Grok's own prototype, a
+"contract" of types, a Reality Fracture note, a Moxgate UX note, and
+screenshots. It is filed at `inbox/grok-pack-2026-09-20/` with eight of the
+screenshots re-encoded small. The pack's own rule stands: it is context,
+not a patch, and the repo's `CLAUDE.md` and `ARCHITECTURE.md` outrank it.
+Its Moxgate screenshots are new evidence beside `frames/`.
+
+| Claim in the pack | Checked against | Result | Change |
+| --- | --- | --- | --- |
+| **Reserved zones**: opponent rail, battlefield, action bar, hand dock, inspector column; "nothing overlays Pass" | `game.css` grid areas; the `.prompt` panel; `Peek.jsx` | The four bands are the table's grid already. The prompt with Pass is a floating panel at the foot of the battlefield, and the hover preview can cover it (found from the first paste). | M1b in `HANDOFF.md`. The preview keeps clear of the prompt; on a wide screen the option of parking the preview in the side column is weighed there, with a screenshot of each. |
+| "Space passes" (the prototype's table) | `Peek.jsx` handles Z only | No keyboard pass. Moxgate's own frames do not show one, but it costs nothing and Law 2 likes it. | **Adopted, M1b:** Space acts the pass offer when it is on offer and no field is focused; Z stays the zoom. |
+| Moxgate's home footer wording | `screenshots/moxgate-home-1440` (live page, 2026-09-20) | "…unofficial Fan Content permitted under the Fan Content Policy. Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC. Card data and imagery provided by Scryfall; all card artwork remains the property of its respective artists and Wizards of the Coast. Rules-enforced game modes are powered by Forge, an independent open-source rules engine, used under the GNU GPL-3.0." The app's credit lines say the first half; none names Scryfall or the engine. | **Adopted, M1b:** the table's credit line gains "Card data and imagery from Scryfall" and, at the engine's table, "Rules-enforced play is powered by Argentum, an independent open-source rules engine, used under the MIT licence." |
+| Moxgate's solo lobby: "Open seat · pick who you play against · **+ AI**"; "Solitaire: no opponent yet. Seat one to play Rules Enforced." | `Seats.jsx`, `TARGET.md` §2 | The same panel, built from the frames; "Play the engine" is the "+ AI" seat. The pods notice ("Four player pods are paused… server load") is a reminder that a hosted engine is a capacity problem, which M8 measures. | None. |
+| Moxgate's home: Play / Solo / Draft tiles, "New to Magic? Learn to play — five minutes of rules, then a starter deck", Conquest roguelike, "2369 playing today" | `Lobby.jsx`, the Learn tab | Learn and the lobby cover the first two; draft and a roguelike are not in scope and are not in the plan. | None. |
+| Moxgate's Learn page: five starter cards fanned, "Magic in five minutes" | The Learn tab's tracks and the tutorial | The app teaches in tracks with a scripted first game; the fanned starters are a presentation idea, not a gap. | None. |
+| The prototype's "contract" types (`DeckCard`, `SavedDeck`, `LifeSession`, an `Action` union) | `src/lib/storage.js`, `deck.js`, `game.js`, `board/reducer.js` | The pack itself says the repo's names win. The app's shapes are older, migrated, and tested; nothing is adopted. Its `Action` union is the shape of the unenforced table's actions already. | None. |
+| Formats: brawl at 25 life | `src/lib/formats.js` | Brawl is 25 there already. | None. |
+| Five colleges including Vigorbloom (GW) | `set-themes.js` `schools` | All five are present with emblems and disciplines. | None. |
+| "Default empty search / featured row = FRA until the next set" | `CardsView.jsx` | Not season-aware today. | M0, already in the plan. |
+| The prototype's own faults: an 80 ms Scryfall gate, no `User-Agent`, a mistyped life history | `src/lib/scryfall.js` | The app spaces search, named, random and collection at 500 ms and the rest at 100 ms; browsers cannot set `User-Agent`, which the file says. Nothing to inherit. | None. |
+| "AI seat: not 'watch my deck play itself' (Moxgate declined that ask)" | `engine/` | The engine could drive two AI seats; nobody asked, and the plan does not include it. | None. |
+| Prepare, Empower Jace, Heartwood: "do not approximate in rules-enforced mode" | `src/data/set-mechanics.js`, Argentum's corpus | The app's entries are provisional and sourced. Whether Argentum has FRA cards at the pinned commit is not known: *verify* at M1 with `hello.sets`, and say on the deck gate which cards the engine lacks. | M1, a line added. |
+| The look: "not gold-and-purple Moxgate, not green felt; midnight ink, fracture cyan, cool silver instead of gold" | `tokens.css` `--rf-*`, the season theme, the owner's decisions | The season already does this while the set is the focus. The owner chose the parchment playmat and the app's own chrome for the table; the pack's screenshot of its table is slate and cyan, which is the season's palette and not the table's. | None. |
