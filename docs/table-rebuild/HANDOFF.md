@@ -167,14 +167,20 @@ or the session's to fetch locally.
 
 - **The Grok material.** The owner shared two grok.com links
   (a conversation share and a project with a conversations tab). Neither
-  could be read. Ask the owner to export them as text into
-  `docs/table-rebuild/inbox/` (one file per conversation, dated). Read them
-  the way `SOURCES.md` read the backend pack: a table of claims, each
-  checked against the repo or a reachable source, with what changed because
-  of it. Append a section to `SOURCES.md` rather than a new document. A
-  claim that cannot be verified is written as unverified, not adopted; a
-  claim about Moxgate is compared with `TARGET.md` and `CREATOR-POST.md`,
-  which outrank it.
+  could be read from the cloud. The first was then pasted by the owner and
+  is filed at `inbox/grok-2026-09-21-reality-fracture-preview.md`, read in
+  `SOURCES.md` under "The Grok preview"; the paste ends mid-sentence, so
+  ask for the rest. The second link, the project's conversations, is still
+  to be exported into `inbox/` (one file per conversation, dated) and read
+  the same way: a table of claims, each checked against the repo or a
+  reachable source, with what changed because of it, appended to
+  `SOURCES.md`. A claim that cannot be verified is written as unverified,
+  not adopted; a claim about Moxgate is compared with `TARGET.md` and
+  `CREATOR-POST.md`, which outrank it.
+- **The season's first suggestion.** From the Grok preview: while a set is
+  the focus, the Cards tab's "Try one of these" leads with that set's cards
+  (`e:fra`), through `src/lib/season.js` rather than a hard-coded query,
+  dated and provisional as the rest of the season is.
 - **Scryfall's rate limits.** `src/lib/scryfall.js` now holds `/cards/search`,
   `/cards/named`, `/cards/random` and `/cards/collection` to 500 ms on the
   pack's word. Read https://scryfall.com/docs/api/rate-limits and correct
@@ -242,6 +248,30 @@ section in `game-engine.spec.mjs` for the gate and the fallback dialog.
 Done when: a deck built in the app's own editor plays against the engine,
 with the player's printings on the tiles, and a deck the engine cannot take
 says so and offers the other table.
+
+### M1b — The glows, and a preview that never covers Pass
+
+*Size: small. Two things Moxgate does that the Grok preview named and this
+table does not yet do (`SOURCES.md`, "The Grok preview").*
+
+- **Playable cards glow.** At the engine's table, a card in hand with an
+  affordable, meaningful offer (`offerFor(id)` in `Table.jsx`) gets a
+  `bcard--playable` edge glow; a permanent with a non-mana ability offered
+  gets the same. The glow is the accent, which the season turns cyan.
+  `TARGET.md` §11 is the reference.
+- **Targets glow.** While a `ChooseTargets` decision is asked, every legal
+  id gets `bcard--target`, and the aiming banner names the source. Also
+  during declare-attackers: `validAttackers` glow, chosen ones stay lit.
+- **The preview never covers Pass.** `Peek.jsx` places the printed face
+  above a hand card, which is the bottom of the battlefield, which is where
+  the prompt panel sits. Pass the prompt's rectangle in (a `avoid` rect from
+  `.prompt`, read at show time) and place the preview beside the card when
+  above would overlap it. Screenshot both cases.
+
+Tests: a section in `game-engine.spec.mjs` for each glow (class present on
+the right cards and on no others), and one that hovers a hand card with the
+prompt showing and asserts the preview's box does not intersect the
+prompt's. Under reduced motion the glows are static, not animated.
 
 ### M2 — Watching the engine's turn, and deltas on the wire
 

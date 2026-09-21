@@ -70,3 +70,35 @@ storage rules, the deck formats and the set content, corrected one parser
 gap, tightened one rate limit, and added a credit line that a legal reading
 of the Fan Content Policy would have asked for anyway. Multiplayer stays
 built and unadvertised until the client is robust; the engine stays Phase 3.
+
+
+---
+
+## The Grok preview — read 2026-09-21
+
+The owner pasted a Grok conversation (`inbox/grok-2026-09-21-reality-fracture-preview.md`)
+in which Grok describes a *preview* of this app it restyled for Reality
+Fracture, built "from Moxgate's UI, not from their source", and then
+repeats the backend pack checked above. The preview is not in the repo and
+was not seen; only Grok's description of it was. The paste ends
+mid-sentence, so anything after "I have not touched" is unknown.
+
+| What Grok's preview has | Checked against | Result | Change |
+| --- | --- | --- | --- |
+| "Midnight ink, cyan fracture light" as the whole app's look | `src/lib/season.js`, `src/data/set-themes.js`, `tests/browser/theme.spec.mjs` | Already built, as a **season**: while Reality Fracture is the focus the root wears the `fra` theme, the accent is the set's cyan app-wide, the shell is the indigo void, headings take the theory face, and the banner says its colours and lore are the app's reading, not official. The house rule makes it seasonal and provisional until release, not permanent. | None. The owner's standing preference is Moxgate's look for the table; the season colours the shell around it. |
+| "Jace's tower on the home screen" | `docs/ART_DIRECTION.md`, `set-themes.js` `art.wide/portrait`, `CLAUDE.md` IP boundaries | The app's hero is its own generated art (the Echoverse hero, the Sanctum portrait), by the art direction's prompts. A depiction of the Theorist's Tower would be Wizards' setting drawn on purpose, which the IP rule does not allow beyond Scryfall's own images under the Fan Content Policy. | None. |
+| "Tap a Hexhaven college" on Home | `set-themes.js` `schools` (five allied pairs, emblems, disciplines) | The five schools exist as data with the app's own emblems and are shown in Learn during the season. There is no Home tab; Learn's season banner is the equivalent surface. | Nothing new to build; noted for the season's Learn surface. |
+| Cards: "Live Scryfall, default `set:fra`" | `src/features/cards/CardsView.jsx` | The Cards tab starts empty with "Try one of these" suggestions; none is season-aware. | **Adopted, small:** while a set is the focus, the first suggestion is that set's cards (`e:fra`), dated and provisional like the rest of the season. In `HANDOFF.md` M0. |
+| "Preview never covers Pass" | `src/features/game/Peek.jsx`, `.prompt` in `game.css` | The hover preview of a card in hand is placed *above* the card, which is the bottom of the battlefield, which is where the prompt panel with Pass sits. **It can cover Pass.** | **Adopted:** the preview avoids the prompt's rectangle. In `HANDOFF.md` M1b, with a screenshot. |
+| "Playable cards glow; targets glow cyan" | `table.css` (only the arrived-this-turn glow exists), `Table.jsx` engine mode | At the engine's table the offers say which cards are playable (`meaningful && affordable`) and a targets decision says which are legal, and neither is shown on the cards themselves. `TARGET.md` §11 asked for the castability glow. | **Adopted:** a playable glow on hand cards with an affordable offer, a target glow on legal targets while a decision asks for one, in the set's cyan where the season is on and the accent otherwise. In `HANDOFF.md` M1b. |
+| "Three-step sit-down: seat, format, deck" | `Lobby.jsx`, `Seats.jsx` | The lobby is one screen: format tabs, the deck shelf, the seats panel; the seat (alone, together, the engine) is chosen first because the room is opened before the deck. The order is the same; the steps are not separate screens. | None; the deck gate in M1 keeps that order. |
+| "Reserved bands: opponent, board, inspector, hand" | `game.css` grid areas `them`, `field`, `you`, `side` | The same four bands, by other names. | None. |
+| Life pad: "1–6 players, commander damage, poison, dice, undo" | `src/features/play/PlayView.jsx` | Commander damage, poison, dice and undo are there; the board lays out by player count. *Verify* the count runs to six. | None unless the count is short. |
+| "Paper date on the hero is October 2. Prerelease is already this week." | `set-themes.js`, `docs/REALITY_FRACTURE_SET_REFERENCE.md` | Release 2026-10-02 and prerelease 2026-09-25 are recorded and the countdown is drawn from them. | None. |
+| The backend pack, repeated | This document, above | Same claims; same results. The rate-limit figures remain unverified from here. | None beyond M0's verification on the owner's machine. |
+
+Two things the preview description does not change: the engine decision
+(Grok names Forge and XMage; `ENGINE.md` chose Argentum after running it),
+and the look of the table itself, which the owner chose (parchment playmat
+after the Moxgate frames, the app's dark and gold chrome, the season's cyan
+when the season is on).
