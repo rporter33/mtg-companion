@@ -476,6 +476,38 @@ persistence of an enforced room across a relay restart; the whole card
 corpus (Portal alone is registered, a longer first build and a list of sets
 in `Server.kt`); and the hosted relay with a JVM beside it.
 
+### The engine on Windows, and the same game on every run — 2026-09-21
+
+**Built and played on the owner's Windows machine**, in Git Bash, at
+Argentum `70d525c`. The first compile took 280 s and an incremental one 7 to
+15 s. A whole game of Portal goblins against the heuristic AI took 1.65 s
+over 28 stops, with 112 windows passed for the human (Law 1), a full view of
+7.7 KB and a median delta of 2.9 KB. Beside the cloud's figures (31 stops,
+110 passed, 1.3 s, 7.8 KB and 2.8 KB) that is another deal, not another
+engine. What Windows took is in `HANDOFF.md`'s Windows section: LF line
+endings, the `.bat` launcher, and a JDK when `JAVA_HOME` names a runtime.
+
+**Any game can be played again.** `new` takes a `seed` and always answers
+with the one it used (`engine/README.md`). The same seed plays the same game,
+the heuristic AI's choices included, and `tests/engine-live.test.js` holds it
+to that. The engine's browser spec now plays seed 1. Left to shuffle, three
+deals in eight broke one of its claims (a stop after the first land, an
+attack within a few turns), which on a first Windows run looked like
+flakiness and was not.
+
+**Reality Fracture is not in the engine.** At the pinned commit the corpus
+has no FRA or FRC set; the newest is The Hobbit (HOB, 2026-08-14). Until
+upstream adds it, the engine will refuse a deck built from the season's own
+set, so M1's deck gate has to name those cards rather than refuse quietly,
+and a pin that carries the set is worth looking for once it releases on
+2026-10-02.
+
+**Found by looking, not by a check.** The More panel at the engine's table
+carried the by-hand table's "Nothing here checks whether a play is legal",
+directly beneath the engine's own note saying the opposite. It now shows only
+at a table played by hand, and the engine spec has a check for it that
+failed before the fix.
+
 ## Phase 3-alt — Writing the rules core ourselves
 
 Only if the owner wants the engine to be ours. `src/lib/engine/`, TypeScript,
