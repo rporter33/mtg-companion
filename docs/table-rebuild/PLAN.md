@@ -386,6 +386,55 @@ Integration, not authorship. The work, in order:
 **Do not fork the engine.** Contribute upstream if something is missing. A
 fork is a maintenance burden that outlives the enthusiasm that created it.
 
+### Where Phase 3 stands — 2026-09-20
+
+**Step 3 is built: the engine is on the wire.** `engine/` is a Gradle module
+dropped into a checkout of Argentum by `scripts/engine-build.sh` (JDK 21,
+about five minutes the first time, seconds after). It is one process, one
+game, JSON lines on stdin and stdout, and `scripts/engine-bridge.mjs` is the
+whole of what Node knows about it. The protocol is in `engine/README.md`.
+
+Three things are decided in that process, all from `FRICTION.md`:
+
+- **Law 1 is server-side and uses the engine's own test.** A seat with
+  `autoPass` is passed for at every priority window where nothing
+  *meaningful* is affordable — `MeaningfulActionFilter.isMeaningful`, which
+  already knows that tapping a land for mana is a cost and not a play, and
+  that a declare-attackers with nothing to declare is not a stop. The first
+  cut asked "any affordable non-pass action?" and stopped the player at
+  every upkeep to offer them a land to tap: the difference between the two
+  questions was 34 stops against 31 for the same game, but the wrong 34.
+  The reply says how many windows were passed (`autoPassed`).
+- **The seat opposite can be the engine's player** (`ai: "heuristic"` or
+  `"random"`), so solo-versus-AI needs no second client. That was the
+  owner's first mode.
+- **A decision the client cannot yet answer is answered and said.** Targets,
+  yes/no and option choices go to the client; ordering, damage assignment
+  and mana sources are answered by the engine's responder and listed under
+  `decided`, so the table can show what was done on the player's behalf.
+
+Measured, one game of Portal goblins against the heuristic AI, driven by the
+plainest possible player (`npm run engine:play`):
+
+| | |
+| --- | --- |
+| Game to a natural end | 14 turns, **31 stops** for the human, 1.3 s wall clock |
+| Windows passed for the human (Law 1) | **110** |
+| Full `ClientGameState` for one viewer | 7.8 KB |
+| `StateDelta` after an action, median | 2.8 KB |
+
+`tests/engine-live.test.js` drives a game over the wire — hidden hand
+arriving as a count with no ids, every stop meaningful, deltas smaller than
+the full state, a refused card named — and skips with a message where the
+engine is not built, since `npm test` may not demand a JVM.
+`tests/engine-bridge.test.js` covers the framing against a fake process.
+
+**Not yet:** the screen. Step 4, mapping `ClientGameState` onto the tiles
+and the log, is the next slice. Then the relay learns to spawn one process
+per enforced room, which is step 3's other half. The card corpus registered
+is one era (Portal, for the smoke test); the whole corpus is a longer first
+build and a list of sets in `Server.kt`.
+
 ## Phase 3-alt — Writing the rules core ourselves
 
 Only if the owner wants the engine to be ours. `src/lib/engine/`, TypeScript,

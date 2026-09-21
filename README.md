@@ -766,6 +766,24 @@ person opens a room from the lobby and copies the link, the other opens it,
 both sit down, and what one plays the other sees across the table. Until a
 relay is hosted, the seats panel takes the address of one you run yourself.
 
+**The judge is a separate process**, and it is not written here. The
+rules-enforced table runs on Argentum (`docs/table-rebuild/ENGINE.md`, chosen
+after running it: `docs/table-rebuild/SPIKE.md`), a Kotlin engine that knows
+the Comprehensive Rules and some thirteen thousand cards. `engine/` is the
+thin process the app puts around it — one game, JSON lines on stdin and
+stdout, and three decisions of our own: a human seat is never stopped at a
+priority window where nothing is affordable (the server passes and says how
+often it did), the seat opposite can be the engine's own player, and any
+decision the client cannot yet answer is answered by the engine's responder
+and reported rather than hidden. `scripts/engine-build.sh` builds it against
+a checkout of the engine beside this repo; `scripts/engine-bridge.mjs` is the
+whole of what the relay will know about it; `npm run engine:play` plays one
+game through it from the command line. `tests/engine-live.test.js` drives a
+game over the wire where the engine is built and says so where it is not,
+because a JVM and a five-minute compile are not something `npm test` may
+demand. What is not there yet is the screen: mapping the engine's per-viewer
+state onto the tiles is the next slice of Phase 3.
+
 ## Data
 
 Card data, images, rulings and prices come from [Scryfall](https://scryfall.com),

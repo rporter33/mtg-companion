@@ -20,6 +20,15 @@ what lets it work with a card printed tomorrow, and it is the reason the Table
 cannot today do the things Moxgate does. A new engine slots in beside these
 two, or replaces `table/` by growing it — see `ENGINE.md`.
 
+## `engine/` — the rules-enforced table's engine, on the wire
+
+Not a third engine: Argentum (`ENGINE.md`), wrapped. `engine/` is a Kotlin
+module built into a checkout of it by `scripts/engine-build.sh`; the process
+speaks JSON lines (`engine/README.md`) and `scripts/engine-bridge.mjs` talks
+to it from Node. It plays a whole game against the engine's own AI today
+(`npm run engine:play`); nothing on screen uses it yet — see `PLAN.md`,
+"Where Phase 3 stands".
+
 ## `src/lib/board/` — the rules-free table
 
 | File | Lines | What it holds |
