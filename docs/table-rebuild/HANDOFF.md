@@ -125,6 +125,15 @@ npm run relay                             # finds ../argentum/companion/build/in
 # then in the app: Table → seats panel → relay address http://localhost:8788 → Play the engine
 ```
 
+**On Windows.** The commands above and `scripts/engine-build.sh` are
+POSIX shell. Run the session inside **WSL2 (Ubuntu)**, where they work as
+written, or inside **Git Bash**; plain PowerShell will fail on the `&`
+backgrounding and on `sh`. Clone into a folder of your own (`~/code`, or
+`Documents`), never into `C:\WINDOWS\system32`, and not as administrator.
+If the session must run in PowerShell, its first task is to make
+`engine-build.sh` and the preview step work there (a `.ps1` beside the
+`.sh`, calling `gradlew.bat`), and to say so in this section.
+
 Two habits from the last stretch that save an hour each: run the browser
 suite in the background with its output in a file and poll the file, never
 concurrently with another browser job; and never `pkill -f` by a string
