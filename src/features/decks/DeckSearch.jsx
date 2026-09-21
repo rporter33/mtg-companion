@@ -2,8 +2,8 @@ import Chip from '../../components/Chip.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { searchCards } from '../../lib/scryfall.js'
 import { addCard, setCommanders } from '../../lib/deck.js'
-import { getFormat, canBeCommander, cardLegality, effectiveCopyLimit } from '../../lib/formats.js'
-import { combinedCounts, unionColorIdentity, deckSize } from '../../lib/deck.js'
+import { getFormat, canBeCommander, legalityStatus, poolQuery, effectiveCopyLimit } from '../../lib/formats.js'
+import { combinedCounts, unionColorIdentity, deckSize, gameCardCounts, gameCardKey } from '../../lib/deck.js'
 import { parseQuery, serialiseQuery, clearFilters, hasActiveFilters, SORT_OPTIONS, getSort } from '../../lib/query.js'
 import { getPrefs, setPref } from '../../lib/storage.js'
 import { priceLabel, priceFor } from '../../lib/prices.js'
@@ -16,6 +16,7 @@ import '../cards/filters.css'
 import { pinCards } from '../../lib/cache.js'
 import ManaCost from '../../components/ManaCost.jsx'
 import DeckArt from '../../components/DeckArt.jsx'
+import NotOutChip from '../../components/NotOutChip.jsx'
 import { identityAttr } from '../../components/CardFace.jsx'
 
 /**
@@ -42,6 +43,8 @@ const ROLE_QUERIES = {
   removal: '(o:"destroy target" or o:"exile target" or o:"destroy all" or o:"deals damage to any target") -t:land',
   theme: '-t:land',
 }
+/** A query that names a set or a date, which is how someone asks after the next set. */
+const ASKS_SET_OR_DATE = /(?:^|[\s(])(?:set|s|e|edition|date|year)[:=<>]/i
 
 export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards, seedQuery, onSeeded, market = 'usd', art = false }) {
   const [query, setQuery] = useState('')
@@ -49,6 +52,10 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
   const [identityScoped, setIdentityScoped] = useState(true)
   const [showFilters, setShowFilters] = useState(false)
   const [results, setResults] = useState(null)
+  // Whether the results on screen came from a format-scoped search, which
+  // can differ from the box while a toggle waits for a query to run.
+  const [ranScoped, setRanScoped] = useState(false)
+  const [ranQuery, setRanQuery] = useState('')
   const [status, setStatus] = useState('idle')
   const [error, setError] = useState(null)
   const [sortId, setSortId] = useState(() => getPrefs().deckSortId ?? 'edhrec')
@@ -59,7 +66,17 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
   const abortRef = useRef(null)
 
   const format = getFormat(deck.formatId)
-  const counts = combinedCounts(deck)
+  const pool = poolQuery(format)
+  const counts = useMemo(() => combinedCounts(deck), [deck])
+  // A copy limit counts the card, not the printing, so a result is "in deck"
+  // however many of it the deck holds in other printings, and the + stops
+  // where validateDeck would call it a problem. The printing's own count
+  // covers a deck card that has not loaded yet.
+  const byCard = useMemo(() => gameCardCounts(deck, cards), [deck, cards])
+  const inDeckOf = useCallback(
+    (card) => Math.max(counts.get(card.id) ?? 0, byCard.get(gameCardKey(card))?.quantity ?? 0),
+    [counts, byCard],
+  )
   const filters = useMemo(() => parseQuery(query), [query])
   const seededRef = useRef(null)
   const sort = getSort(sortId)
@@ -110,7 +127,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
     setError(null)
 
     const parts = [q]
-    if (useFormatScope) parts.push(`legal:${format.legalityKey}`)
+    if (useFormatScope) parts.push(pool)
     if (useIdentityScope && commanderIdentity) {
       // A colourless commander still restricts the deck to colourless cards.
       parts.push(commanderIdentity.letters.length
@@ -121,13 +138,15 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
     try {
       const result = await searchCards(parts.join(' '), { order: useSort.order, dir: useDir, signal: controller.signal })
       setResults(result)
+      setRanScoped(useFormatScope)
+      setRanQuery(q)
       setStatus('done')
     } catch (err) {
       if (err.name === 'AbortError') return
       setError(err)
       setStatus('error')
     }
-  }, [scoped, identityScoped, commanderIdentity, format.legalityKey, sortId, dir])
+  }, [scoped, identityScoped, commanderIdentity, pool, sortId, dir])
 
   const rewrite = (next) => {
     const rewritten = serialiseQuery(next)
@@ -172,10 +191,10 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
   }, [seedQuery])
 
   const shown = useMemo(() => (results?.cards ?? []).filter((card) => {
-    if (hideInDeck && (counts.get(card.id) ?? 0) > 0) return false
+    if (hideInDeck && inDeckOf(card) > 0) return false
     if (ownedOnly && ownedOf(collection, card) === 0) return false
     return true
-  }), [results, hideInDeck, ownedOnly, counts, collection])
+  }), [results, hideInDeck, ownedOnly, inDeckOf, collection])
   const hiddenCount = (results?.cards?.length ?? 0) - shown.length
   const shownValue = shown.reduce((n, c) => n + (priceFor(c, market).value ?? 0), 0)
 
@@ -218,7 +237,12 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
         >
           Filters{hasActiveFilters(filters) ? ' · on' : ''}
         </button>
-        <label className="row tiny muted row--fit">
+        <label
+          className="row tiny muted row--fit"
+          title={format.legalityKey === 'standard'
+            ? "Includes cards not out yet that Scryfall's Future Standard lists"
+            : undefined}
+        >
           <input
             type="checkbox"
             checked={scoped}
@@ -348,13 +372,28 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
             : `${shown.length} shown${hiddenCount ? ` (${hiddenCount} hidden by Not in deck or Owned)` : ''}${results.totalCards > results.cards.length ? ` of ${results.totalCards}` : ''} · sorted by ${sort.label.toLowerCase()}${direction === 'desc' ? ', descending' : ''} · ${priceLabel({ prices: { [market]: String(shownValue) } }, market)} shown in total`}
         </p>
       )}
+      {/* Outside Standard nothing says ahead of release which new cards a
+          format will take, so a scoped search finds none of them. Nothing
+          here knows that is why a search came back empty (a typo is likelier)
+          or thin (a set's reprints and none of its new cards), so it is asked
+          rather than told: after an empty search, or one naming a set or a
+          date, which is how someone looks for the next set. */}
+      {results && status === 'done' && ranScoped && format.legalityKey !== 'standard'
+        && (results.cards.length === 0 || ASKS_SET_OR_DATE.test(ranQuery)) && (
+        <p className="faint tiny m0 not-out-hint">
+          Looking for cards that are not out yet? Scryfall adds new cards to its {format.name} pool
+          only once they are released, so turn off &ldquo;Legal in {format.name}&rdquo; to see them.
+        </p>
+      )}
 
       <div className="stack stack--tight">
         {shown.map((card) => {
-          const inDeck = counts.get(card.id) ?? 0
+          const inDeck = inDeckOf(card)
           const owned = ownedOf(collection, card)
           const limit = effectiveCopyLimit(card, format)
-          const legality = cardLegality(card, format)
+          // A card that is not out yet adds like any other; the NotOutChip
+          // on its row says why it is not plainly legal.
+          const legality = legalityStatus(card, format)
           const blocked = legality === 'banned' || legality === 'not_legal'
           const atLimit = inDeck >= limit
           const commanderOk = format.commander?.required
@@ -388,6 +427,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
               <span className="deck-row__price faint tiny" title="Scryfall's daily price in the deck's market">{priceLabel(card, market)}</span>
               {inDeck > 0 && <span className="chip chip--sm chip--ok" title="Already in this deck">{inDeck} in deck</span>}
               {owned > 0 && <span className="chip chip--sm" title="In your collection">own {owned}</span>}
+              <NotOutChip card={card} />
               {blocked && (
                 <span className="chip chip--error tiny">{legality === 'banned' ? 'banned' : 'not legal'}</span>
               )}

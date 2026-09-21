@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   createDeck, addCard, setQuantity, removeCard, setCommanders,
-  validateDeck, deckSize, combinedCounts, unionColorIdentity,
+  validateDeck, deckSize, combinedCounts, unionColorIdentity, deckVerdict, gameCardKey,
 } from '../src/lib/deck.js'
 import { getFormat } from '../src/lib/formats.js'
 import {
@@ -146,6 +146,87 @@ describe('constructed validation', () => {
     const result = validateDeck(deck, lookup)
     expect(codes(result)).not.toContain('card_not_loaded')
     expect(result.violations.some((v) => v.code === 'card_not_loaded' && v.severity === 'warning')).toBe(true)
+  })
+})
+
+describe('copies are counted per card, across its printings', () => {
+  // Two printings of one card, as an import of "4 Grizzly Bears" and "1
+  // Grizzly Bears (XYZ) 7" lands them: two ids, one oracle id. The copy limit
+  // is a rule about the card, so they count together.
+  const BEAR_A = { ...BEAR, id: 'bear-a', oracle_id: 'o-bear', set: 'aaa' }
+  const BEAR_B = { ...BEAR, id: 'bear-b', oracle_id: 'o-bear', set: 'bbb' }
+  const FOREST_B = { ...FOREST, id: 'forest-b', set: 'bbb' }
+  const map = new Map([...lookup, ...[BEAR_A, BEAR_B, FOREST_B].map((c) => [c.id, c])])
+
+  it('fails five of a card split over two printings in Modern, as one problem', () => {
+    let deck = addCard(createDeck({ formatId: 'modern' }), FOREST.id, 55)
+    deck = addCard(deck, BEAR_A.id, 3)
+    deck = addCard(deck, BEAR_B.id, 2)
+    const result = validateDeck(deck, map)
+    const copies = errorsOf(result).filter((v) => v.code === 'too_many_copies')
+    expect(copies).toHaveLength(1)
+    expect(copies[0].message).toBe('At most 4 copies of Grizzly Bears are allowed, but this deck has 5.')
+    expect(copies[0].cardId).toBe(BEAR_A.id)
+    expect(copies[0].cardIds).toEqual([BEAR_A.id, BEAR_B.id])
+    expect(deckVerdict(deck, result, map)).toEqual({ tone: 'error', text: '1 problem' })
+  })
+
+  it('counts a printing in the sideboard with another in the main deck', () => {
+    let deck = addCard(createDeck({ formatId: 'modern' }), FOREST.id, 56)
+    deck = addCard(deck, BEAR_A.id, 4)
+    deck = addCard(deck, BEAR_B.id, 1, 'sideboard')
+    expect(codes(validateDeck(deck, map))).toEqual(['too_many_copies'])
+    // Four across both printings is within the limit.
+    expect(codes(validateDeck(setQuantity(deck, BEAR_A.id, 3), map))).not.toContain('too_many_copies')
+  })
+
+  it('fails one each of two printings in Commander as not singleton', () => {
+    let deck = setCommanders(createDeck({ formatId: 'commander' }), [COMMANDER_BEAR.id])
+    deck = addCard(deck, BEAR_A.id, 1)
+    deck = addCard(deck, BEAR_B.id, 1)
+    deck = addCard(deck, FOREST.id, 97)
+    const copies = errorsOf(validateDeck(deck, map)).filter((v) => v.code === 'too_many_copies')
+    expect(copies).toHaveLength(1)
+    expect(copies[0].message).toMatch(/singleton — only one Grizzly Bears, but this deck has 2/)
+  })
+
+  it('restricts a card, not a printing', () => {
+    const lotusA = legalEverywhere({ id: 'lotus-a', oracle_id: 'o-lotus', name: 'Power Card', legalities: { vintage: 'restricted' } })
+    const lotusB = { ...lotusA, id: 'lotus-b' }
+    let deck = addCard(createDeck({ formatId: 'vintage' }), FOREST.id, 58)
+    deck = addCard(deck, lotusA.id, 1)
+    deck = addCard(deck, lotusB.id, 1)
+    const result = validateDeck(deck, withCard(withCard(lookup, lotusA), lotusB))
+    expect(codes(result)).toEqual(['restricted'])
+    expect(errorsOf(result)[0].cardIds).toEqual(['lotus-a', 'lotus-b'])
+  })
+
+  it('leaves basic lands unlimited whatever their printings', () => {
+    let deck = addCard(createDeck({ formatId: 'modern' }), FOREST.id, 30)
+    deck = addCard(deck, FOREST_B.id, 30)
+    expect(codes(validateDeck(deck, map))).toEqual([])
+  })
+
+  it('counts a card that has not loaded on its own', () => {
+    // Nothing is known of it, so it is never added to another card's count.
+    let deck = addCard(createDeck({ formatId: 'modern' }), FOREST.id, 55)
+    deck = addCard(deck, BEAR_A.id, 4)
+    deck = addCard(deck, 'not-loaded', 1)
+    const result = validateDeck(deck, map)
+    expect(codes(result)).toEqual([])
+    expect(result.violations.map((v) => v.code)).toEqual(['card_not_loaded'])
+  })
+
+  it('knows a card by its oracle id, on a reversible card its face’s, else its name', () => {
+    expect(gameCardKey(BEAR_A)).toBe('oracle:o-bear')
+    expect(gameCardKey({ id: 'rev', name: 'Relic // Relic', card_faces: [{ oracle_id: 'o-rev' }, { oracle_id: 'o-rev' }] })).toBe('oracle:o-rev')
+    // An older record with no oracle id still counts with its namesakes.
+    expect(gameCardKey(BEAR)).toBe('name:Grizzly Bears')
+    expect(gameCardKey(undefined, 'some-id')).toBe('id:some-id')
+    let deck = addCard(createDeck({ formatId: 'modern' }), FOREST.id, 55)
+    deck = addCard(deck, BEAR.id, 4)
+    deck = addCard(deck, 'bear-old', 1)
+    expect(codes(validateDeck(deck, withCard(lookup, { ...BEAR, id: 'bear-old' })))).toEqual(['too_many_copies'])
   })
 })
 

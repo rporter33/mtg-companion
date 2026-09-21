@@ -7,6 +7,7 @@ import {
 } from '../../lib/query.js'
 import CardImage from '../../components/CardImage.jsx'
 import PriceRow from '../../components/PriceRow.jsx'
+import NotOutChip from '../../components/NotOutChip.jsx'
 import SearchFilters from './SearchFilters.jsx'
 import Term from '../../components/Term.jsx'
 import './cards.css'
@@ -257,6 +258,7 @@ export default function CardsView({ onOpenCard, offline, seedQuery }) {
                   onClick={() => onOpenCard(card)}
                 />
                 <PriceRow card={card} size="sm" />
+                <NotOutChip card={card} />
               </div>
             ))}
           </div>

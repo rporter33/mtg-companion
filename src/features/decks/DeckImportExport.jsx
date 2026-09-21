@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
-import { getCardByName, getCardsByNames, autocomplete } from '../../lib/scryfall.js'
+import { resolvePrintings, autocomplete } from '../../lib/scryfall.js'
 import {
   looksLikeUrl, planForUrl, fetchFromSource, toDecklistText,
 } from '../../lib/deck-sources.js'
 import { toExampleEntry } from '../../data/example-decks.js'
 import { addCard, setCommanders } from '../../lib/deck.js'
 import { getFormat, frontTypeLine } from '../../lib/formats.js'
-import { parseDecklist } from '../../lib/decklist.js'
+import { parseDecklist, deckToText } from '../../lib/decklist.js'
+import { describeChoice } from '../../lib/printing-choice.js'
+import NotOutChip from '../../components/NotOutChip.jsx'
 import { captureVersion } from '../../lib/versions.js'
 import { setCategory } from '../../lib/categories.js'
 import { pinCards } from '../../lib/cache.js'
@@ -25,7 +27,7 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
   const [preview, setPreview] = useState(null)
   const [urlPlan, setUrlPlan] = useState(null)
 
-  const decklist = toText(deck, lookup)
+  const decklist = deckToText(deck, lookup)
 
   // A deck handed over from the commanders browser arrives as text to import.
   useEffect(() => {
@@ -58,20 +60,24 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
     // bulk lookup could not place, and it says which name it is on: "checking
     // the last few" was the whole message while ninety-nine names went by one
     // at a time, and it read as a hang.
-    const cards = await getCardsByNames(lines, {
+    // Each line comes back on its own, with how its printing was chosen, so
+    // two printings of one card stay two lines and the review can say which
+    // printing each line gets.
+    const results = await resolvePrintings(lines, {
       onProgress: (done, total, stage) => setStatus({
         tone: 'info',
         text: stage === 'single'
           ? `${done} of ${total} unmatched name${total === 1 ? '' : 's'} checked one at a time…`
-          : `Looking up ${total} cards… ${done} found`,
+          : stage === 'released'
+            ? `Finding a printing that is out for ${total} card${total === 1 ? '' : 's'}…`
+            : `Looking up ${total} cards… ${done} found`,
       }),
     })
 
     const resolved = []
     const failed = []
-    for (const line of lines) {
-      const card = cards.get(line.name)
-      if (card) resolved.push({ ...line, card })
+    for (const { line, card, ...choice } of results) {
+      if (card) resolved.push({ ...line, card, ...choice })
       else failed.push(line)
     }
 
@@ -195,7 +201,9 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
           {' '}<code className="mono">Sideboard</code> or <code className="mono">Commander</code>
           {' '}switches which section the lines below it go into. An Archidekt or Moxfield
           export pastes as it is: the printing picks the exact card, and a section you named
-          there becomes a section here.
+          there becomes a section here. A name with no printing gets Scryfall&rsquo;s pick for it,
+          unless that is not out yet or is digital only; then the app takes the newest paper
+          printing that is out. The review names each one.
         </p>
         <textarea
           rows={8}
@@ -225,7 +233,8 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
         </div>
         <p className="faint tiny m0">
           Nothing is added until you have seen what will land. Names are looked up
-          in bulk, 75 at a time, so a whole Commander deck is two requests.
+          in bulk, 75 at a time, and one more search goes out for every fifteen names
+          whose pick from Scryfall is not out yet or not on paper.
         </p>
       </section>
 
@@ -264,12 +273,17 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
               ...current,
               failed: current.failed.filter((f) => f !== line),
             }))
-            // Re-run just this one line rather than the whole list.
-            getCardByName(name, { exact: true })
-              .then((card) => setPreview((current) => ({
-                ...current,
-                resolved: [...current.resolved, { ...line, card }],
-              })))
+            // Re-run just this one line rather than the whole list, by the same
+            // rule as the rest of it, so a name picked here lands on a printing
+            // that is out, and a printing the line typed is still tried first.
+            resolvePrintings([{ name, set: line.set, number: line.number }])
+              .then(([{ card, line: _asked, ...choice }]) => {
+                if (!card) return
+                setPreview((current) => ({
+                  ...current,
+                  resolved: [...current.resolved, { ...line, name, card, ...choice }],
+                }))
+              })
               .catch(() => { /* leave it out; the user saw the attempt */ })
           }}
         />
@@ -280,26 +294,6 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
   )
 }
 
-export function toText(deck, lookup) {
-  const lines = []
-  const name = (id) => lookup(id)?.name ?? `(unloaded ${id.slice(0, 8)})`
-
-  if (deck.commanders.length) {
-    lines.push('Commander')
-    for (const id of deck.commanders) lines.push(`1 ${name(id)}`)
-    if (deck.signatureSpell) lines.push(`1 ${name(deck.signatureSpell)}`)
-    lines.push('')
-  }
-  lines.push('Deck')
-  for (const { cardId, quantity } of deck.main) lines.push(`${quantity} ${name(cardId)}`)
-  if (deck.sideboard.length) {
-    lines.push('', 'Sideboard')
-    for (const { cardId, quantity } of deck.sideboard) lines.push(`${quantity} ${name(cardId)}`)
-  }
-  return lines.join('\n')
-}
-
-/** Shows exactly what an import will do before it does any of it. */
 /** Legendary creatures in a list, which is what a commander can be. */
 function commanderCandidates(resolved) {
   return resolved
@@ -307,11 +301,10 @@ function commanderCandidates(resolved) {
     .filter((card) => /Legendary/.test(frontTypeLine(card)) && /Creature/.test(frontTypeLine(card)))
 }
 
+/** Shows exactly what an import will do before it does any of it. */
 function ImportPreview({ preview, onApply, onCancel, onResolve, needsCommander, onPickCommander }) {
   const total = preview.resolved.reduce((n, line) => n + line.quantity, 0)
-  const printings = preview.resolved.filter(
-    (line) => line.set && line.number && line.card.set === line.set && line.card.collector_number === line.number,
-  ).length
+  const printings = preview.resolved.filter((line) => line.how === 'exact').length
   const sections = [...new Set(preview.resolved.map((line) => line.category).filter(Boolean))]
 
   if (preview.raw) {
@@ -398,6 +391,32 @@ function ImportPreview({ preview, onApply, onCancel, onResolve, needsCommander, 
             ))}
           </div>
         </div>
+      )}
+
+      {/*
+        Every line names the printing it will add. A name alone used to land on
+        whatever Scryfall picked for it, a set not yet out included, and
+        nothing here said which. When the app chose, the line says why;
+        when the person typed the printing, it only says which, with the chip
+        if it is not out. Nothing is held back either way.
+      */}
+      {preview.resolved.length > 0 && (
+        <ul className="import-lines" aria-label="The printing each line adds" tabIndex={0}>
+          {preview.resolved.map((line, i) => {
+            const { printing, note } = describeChoice(line)
+            return (
+              <li className="import-line" key={i}>
+                <span className="import-line__qty">{line.quantity}</span>
+                <span className="import-line__what">
+                  <span className="import-line__name">{line.card.name}</span>
+                  {printing && <span className="faint tiny">{printing}</span>}
+                  <NotOutChip card={line.card} />
+                  {note && <span className="faint tiny import-line__note">{note}</span>}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
       )}
 
       <div className="row">

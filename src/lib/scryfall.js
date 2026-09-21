@@ -15,6 +15,9 @@
 
 import { getCard, getCards, putCards, getQuery, putQuery } from './cache.js'
 import { LOCKOUT_MS, MIN_INTERVAL_MS, SLOW_INTERVAL_MS, spacingFor } from './scryfall-limits.js'
+import { isReleasedPaper } from './release.js'
+import { today } from './season.js'
+import { oracleIdOf } from './formats.js'
 
 const API = 'https://api.scryfall.com'
 
@@ -320,7 +323,8 @@ export async function getCardsByIds(ids, { signal } = {}) {
  * like the import had hung, because it effectively had.
  *
  * The collection endpoint takes 75 identifiers at a time, so a Commander deck
- * is two requests. It matches names exactly though, where the old path matched
+ * is two requests, plus a search for each fifteen picks that are not out (see
+ * below). It matches names exactly though, where the old path matched
  * fuzzily, so anything it does not find is retried one at a time — the slow
  * path still exists, it just runs over the handful of names that need it
  * instead of all of them.
@@ -328,90 +332,155 @@ export async function getCardsByIds(ids, { signal } = {}) {
  * An entry may be a name or { name, set, number }. With a printing, the
  * identifier is the set and collector number, which is exact: no spelling to
  * get wrong, and the card that comes back is the one the person actually owns,
- * which is what their prices should be quoted on. A printing that Scryfall
- * does not know (a set code from a site's own vocabulary, a promo it lists
- * differently) falls back to the name in a second bulk pass, never to the
- * slow path on its own account.
+ * which is what their prices should be quoted on. With a set and no number
+ * ("4 Lightning Bolt (2X2)", "1 Sol Ring [CMD]") it is the name within that
+ * set; the set used to be thrown away. A printing that Scryfall does not know
+ * (a set code from a site's own vocabulary, a promo it lists differently)
+ * falls back to the name in a second bulk pass, never to the slow path on
+ * its own account, and the line says so. So does a printing Scryfall could
+ * not be asked about, because the request for it failed: that line also
+ * falls back to the name, but it is marked `unasked`, since Scryfall never
+ * said it had no such printing.
+ *
+ * A name alone gets Scryfall's pick for it. That is Scryfall's own choice of
+ * printing, not always its newest, and it can be from a set Scryfall lists
+ * before it is out: on 2026-09-21 a bare "Island" came back as a Star Trek
+ * printing due on 13 November. So when the app is the one choosing, a pick
+ * that is not out, or exists only in a digital game, is swapped for the
+ * newest printing that is out on paper (see findReleasedPrintings); a pick
+ * that is out on paper stands. A printing the person typed is never swapped:
+ * that is their choice, released or not, and neither is one whose lookup
+ * failed, since nobody chose the name's pick over it.
  *
  * Progress is reported as (done, total, stage): stage "bulk" counts entries
  * through the collection passes, stage "single" counts the names on the slow
- * path, so the caller can say which of the two is running — the second is
- * the one that can take a while, and it used to be invisible.
+ * path, and stage "released" counts the picks being checked for a printing
+ * that is out, so the caller can say which is running — the slow path is the
+ * one that can take a while, and it used to be invisible.
  *
- * Returns a Map keyed by the name as it was asked for, not as Scryfall spells
- * it, so the caller can line results back up with the lines the user typed.
+ * Returns one result per entry, in the order given: { line, card, how }, with
+ * card null for a name nothing matched. `how` says how the printing was
+ * chosen, because the import review shows it:
+ *   exact            the set and collector number typed
+ *   set              the typed set, by name within it
+ *   newest           Scryfall's pick for the name, kept as it is (the name
+ *                    of the rule, not a claim about the printing)
+ *   released         Scryfall's pick was not out, or not on paper, so the
+ *                    newest released paper printing was taken; `newest` is
+ *                    the pick passed over
+ *   unreleased-only  no released paper printing exists, so the preview stays
+ *   fallback         the typed printing is not on Scryfall, or with
+ *                    `unasked` could not be asked for; the name chose, and
+ *                    `byName` is which of the three above it came to
+ * A pick that could not be checked (Scryfall unreachable, a 429) is kept as
+ * it is and marked `unchecked`, rather than claimed to be the only one.
+ *
+ * Each distinct line is its own lookup, so "2 Island (HOB) 195" and "2 Island
+ * (TRK) 319" in one list stay two printings; before, the second took the
+ * first's card and the deck merged them.
  */
-export async function getCardsByNames(names, { signal, onProgress } = {}) {
-  const wanted = new Map()
-  for (const item of names) {
-    const entry = typeof item === 'string' ? { name: item } : item
-    if (!entry?.name || wanted.has(entry.name)) continue
-    wanted.set(entry.name, entry)
-  }
-  const found = new Map()
-  const total = wanted.size
+export async function resolvePrintings(entries, { signal, onProgress, now = today() } = {}) {
+  const lines = [...(entries ?? [])].map((item) => (typeof item === 'string' ? { name: item } : item ?? {}))
+  const lookups = new Map()
+  const keys = lines.map((line) => {
+    if (typeof line.name !== 'string' || !line.name) return null
+    const set = line.set ? String(line.set).toLowerCase() : ''
+    const number = set && line.number ? String(line.number) : ''
+    const key = `${line.name}|${set}|${number}`
+    if (!lookups.has(key)) lookups.set(key, { name: line.name, set, number, card: null, how: null })
+    return key
+  })
+  const all = [...lookups.values()]
+  const total = all.length
+  const done = () => all.filter((l) => l.card).length
 
-  const byPrinting = (entry) => entry.set && entry.number
-    ? { set: String(entry.set).toLowerCase(), collector_number: String(entry.number) }
-    : null
-
-  const matches = (cards, entry, identifier) => {
-    if (identifier.collector_number) {
-      return cards.find((c) => c.set === identifier.set && c.collector_number === identifier.collector_number)
-    }
-    // Scryfall answers with its own spelling, and for a double-faced card
-    // that is "Front // Back" against a request for "Front".
-    const lower = entry.name.toLowerCase()
-    return cards.find((c) => c.name.toLowerCase() === lower)
-      ?? cards.find((c) => c.name.toLowerCase().split(' // ')[0] === lower)
+  // Scryfall answers with its own spelling, and for a double-faced card that
+  // is "Front // Back" against a request for "Front".
+  const byName = (cards, name) => {
+    const lower = name.toLowerCase()
+    return cards.find((c) => c.name?.toLowerCase() === lower)
+      ?? cards.find((c) => c.name?.toLowerCase().split(' // ')[0] === lower)
   }
 
-  /** One bulk pass; returns the entries it could not resolve. */
-  const collect = async (entries, identify) => {
+  /**
+   * One bulk pass. Returns the entries it could not resolve, `missed`, and
+   * among them `unasked`, those whose request failed: Scryfall answered the
+   * rest, and said it had nothing for them, but said nothing about these.
+   */
+  const collect = async (items, identify, match, settle) => {
     const missed = []
-    for (let i = 0; i < entries.length; i += 75) {
-      const chunk = entries.slice(i, i + 75)
-      const identifiers = chunk.map(identify)
+    const unasked = new Set()
+    for (let i = 0; i < items.length; i += 75) {
+      const chunk = items.slice(i, i + 75)
       try {
         const payload = await request('/cards/collection', {
           method: 'POST',
-          body: { identifiers },
+          body: { identifiers: chunk.map(identify) },
           signal,
         })
         const cards = payload.data ?? []
         await putCards(cards, { pinned: true })
-        chunk.forEach((entry, j) => {
-          const card = matches(cards, entry, identifiers[j])
-          if (card) found.set(entry.name, card)
-          else missed.push(entry)
-        })
+        for (const item of chunk) {
+          const card = match(cards, item)
+          if (card) settle(item, card)
+          else missed.push(item)
+        }
       } catch (error) {
         if (error.name === 'AbortError') throw error
         // Fall through to the next pass for this chunk rather than losing it.
+        // request() has already retried it, or waited out a lockout, so it is
+        // not asked for again here.
         missed.push(...chunk)
+        for (const item of chunk) unasked.add(item)
       }
-      onProgress?.(found.size, total, 'bulk')
+      onProgress?.(done(), total, 'bulk')
     }
-    return missed
+    return { missed, unasked }
   }
 
-  const entries = [...wanted.values()]
-  const withPrinting = entries.filter(byPrinting)
-  const byNameOnly = entries.filter((entry) => !byPrinting(entry))
+  // Pass one: the printings people typed, exact or by set, in one bulk call.
+  // A number typed in another case ("clb-187" for Scryfall's "CLB-187") is the
+  // same printing, not a missing one.
+  const sameNumber = (c, number) => String(c.collector_number ?? '').toLowerCase() === number.toLowerCase()
+  const isTyped = (c, l) => c?.set === l.set && (!l.number || sameNumber(c, l.number))
+  const pass1 = await collect(
+    all.filter((l) => l.set),
+    (l) => (l.number ? { set: l.set, collector_number: l.number } : { name: l.name, set: l.set }),
+    (cards, l) => (l.number
+      ? cards.find((c) => c.set === l.set && sameNumber(c, l.number))
+      : byName(cards.filter((c) => c.set === l.set), l.name)),
+    (l, card) => { l.card = card; l.how = l.number ? 'exact' : 'set' },
+  )
+  const unknownPrinting = pass1.missed
 
-  // Pass one: exact printings for the lines that named one, names for the rest.
-  // Pass two: whatever a printing did not find, by name.
-  const unknownPrinting = await collect(withPrinting, byPrinting)
-  const missedByName = await collect([...byNameOnly, ...unknownPrinting], (entry) => ({ name: entry.name }))
-  onProgress?.(found.size, total, 'bulk')
+  // Pass two: bare names, and whatever a typed printing did not find, by
+  // name. Each name is asked for once however many lines share it.
+  for (const l of unknownPrinting) {
+    l.missed = true
+    if (pass1.unasked.has(l)) l.unasked = true
+  }
+  const wantByName = [...all.filter((l) => !l.set), ...unknownPrinting]
+  const settleName = (name, card) => {
+    for (const l of wantByName) {
+      if (l.name !== name || l.card) continue
+      l.card = card
+      // The name's pick may be the very printing typed, found this way
+      // because the first request failed: then it is what was typed.
+      if (l.missed && isTyped(card, l)) l.how = l.number ? 'exact' : 'set'
+      else if (l.missed) { l.how = 'fallback'; l.byName = 'newest' } else l.how = 'newest'
+    }
+  }
+  const names = [...new Set(wantByName.map((l) => l.name))]
+  const { missed: missedByName } = await collect(names, (name) => ({ name }), byName, settleName)
+  onProgress?.(done(), total, 'bulk')
 
   // Only the leftovers pay the per-request cost, and fuzzy matching is what
   // rescues a name with a typo or the wrong punctuation.
   let checked = 0
-  for (const entry of missedByName) {
+  for (const name of missedByName) {
     onProgress?.(checked, missedByName.length, 'single')
     try {
-      found.set(entry.name, await getCardByName(entry.name, { exact: false, signal }))
+      settleName(name, await getCardByName(name, { exact: false, signal }))
     } catch (error) {
       if (error.name === 'AbortError') throw error
       /* genuinely not found; the caller reports it */
@@ -420,6 +489,132 @@ export async function getCardsByNames(names, { signal, onProgress } = {}) {
   }
   onProgress?.(checked, missedByName.length, 'single')
 
+  // Released first, for the cards the app chose and the person did not. A
+  // typed printing that could not be asked for is left as the name's pick:
+  // a failed request is no reason to choose against what was typed.
+  const chosen = all.filter((l) => l.card
+    && (l.how === 'newest' || (l.how === 'fallback' && !l.unasked)))
+  await findReleasedPrintings(chosen, { signal, onProgress, now })
+
+  return lines.map((line, i) => {
+    const l = keys[i] ? lookups.get(keys[i]) : null
+    if (!l?.card) return { line, card: null, how: null }
+    const result = { line, card: l.card, how: l.how }
+    if (l.byName) result.byName = l.byName
+    if (l.newest) result.newest = l.newest
+    if (l.unchecked) result.unchecked = true
+    if (l.unasked && l.how === 'fallback') result.unasked = true
+    return result
+  })
+}
+
+// Scryfall documents a search query's maximum as 1000 Unicode characters. An
+// oracle id is 36, so fifteen of them with their "oracleid:" and " or " come
+// to about 780 with the rest of the query, and every batch is measured too.
+const RELEASED_BATCH = 15
+const QUERY_MAX = 1000
+const RELEASED_TERMS = 'date<=now game:paper lang:en prefer:newest'
+const releasedQuery = (ids) => `(${ids.map((id) => `oracleid:${id}`).join(' or ')}) ${RELEASED_TERMS}`
+
+/**
+ * Swaps each pick that is not out, or not on paper, for the newest printing
+ * of the same card that is out on paper, and says which it did.
+ *
+ * Only these picks are looked at, so a released pick costs nothing, and
+ * nothing here depends on how Scryfall breaks ties between printings: the
+ * one promise is never a preview or a digital-only printing while a printing
+ * somebody can hold exists. There is no taste in it (no frame, no treatment,
+ * no Universes Beyond filter); the problem is release, not look, and the
+ * printings picker is a tap away. The query asks by oracle id rather than by
+ * name, because a name also matches the back face of a different card
+ * ("Emeritus of Conflict // Lightning Bolt"), and a result is taken only when
+ * its oracle id is the one asked for.
+ *
+ * `date<=now` is read by Scryfall's own clock, which may be ahead of the
+ * app's by some hours on a release day, so Scryfall can return a printing
+ * the app still counts as not out: the pick itself, or another from the same
+ * set. That is no printing that is out, as far as the labels on screen go,
+ * so the pick stays as it is, with no note, and its chip carries the date.
+ *
+ * A search that fails, or a device that is offline, leaves the pick as it
+ * was, and the searches after it are not sent: the one that failed has been
+ * through request()'s retries or a lockout already, and the next would meet
+ * the same. An import is held up by one failed search at most, and labelled.
+ */
+async function findReleasedPrintings(lookups, { signal, onProgress, now }) {
+  const byId = new Map()
+  for (const l of lookups) {
+    if (isReleasedPaper(l.card, now)) continue
+    const id = oracleIdOf(l.card)
+    // With no id there is nothing to search by, and the pick stays. An id
+    // that is not an id is not put into a query.
+    if (typeof id !== 'string' || !/^[\w-]+$/.test(id) || releasedQuery([id]).length > QUERY_MAX) continue
+    if (!byId.has(id)) byId.set(id, [])
+    byId.get(id).push(l)
+  }
+  if (!byId.size) return
+
+  const batches = []
+  for (const id of byId.keys()) {
+    const last = batches.at(-1)
+    if (last && last.length < RELEASED_BATCH && releasedQuery([...last, id]).length <= QUERY_MAX) last.push(id)
+    else batches.push([id])
+  }
+
+  const settle = (l, how) => { if (l.how === 'fallback') l.byName = how; else l.how = how }
+  let checked = 0
+  for (const [b, ids] of batches.entries()) {
+    onProgress?.(checked, byId.size, 'released')
+    let results = []
+    let answered = true
+    try {
+      const params = new URLSearchParams({ q: releasedQuery(ids), unique: 'cards' })
+      const payload = await request(`/cards/search?${params}`, { signal })
+      results = payload?.data ?? []
+    } catch (error) {
+      if (error.name === 'AbortError') throw error
+      // Nothing matching is a 404 from Scryfall, and that is an answer: no
+      // printing of these is out. Anything else is not an answer at all.
+      answered = error instanceof ScryfallError && error.status === 404
+    }
+    if (!answered) {
+      // This batch and every one after it stay as they were, unsent.
+      for (const rest of batches.slice(b)) {
+        for (const id of rest) for (const l of byId.get(id)) l.unchecked = true
+      }
+      checked = byId.size
+      break
+    }
+    const taken = []
+    for (const id of ids) {
+      const found = results.find((c) => oracleIdOf(c) === id)
+      for (const l of byId.get(id)) {
+        // Another printing, and out by the app's day as well as Scryfall's.
+        if (found && found.id !== l.card.id && isReleasedPaper(found, now)) {
+          l.newest = l.card
+          l.card = found
+          settle(l, 'released')
+          if (!taken.includes(found)) taken.push(found)
+        } else if (!found) settle(l, 'unreleased-only')
+      }
+    }
+    if (taken.length) await putCards(taken, { pinned: true })
+    checked += ids.length
+  }
+  onProgress?.(checked, byId.size, 'released')
+}
+
+/**
+ * The same lookup, as a Map keyed by the name as it was asked for, not as
+ * Scryfall spells it, for callers that want one card per name (the first
+ * deck's commanders and basics, a playtest's extra land, a card opened by
+ * name). The first line to resolve for a name is the one it keeps.
+ */
+export async function getCardsByNames(names, options = {}) {
+  const found = new Map()
+  for (const { line, card } of await resolvePrintings(names, options)) {
+    if (card && !found.has(line.name)) found.set(line.name, card)
+  }
   return found
 }
 

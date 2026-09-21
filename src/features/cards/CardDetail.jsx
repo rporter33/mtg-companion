@@ -7,10 +7,13 @@ import Term from '../../components/Term.jsx'
 import AddToDeck from '../decks/AddToDeck.jsx'
 import ExplainCard from './ExplainCard.jsx'
 import { getRulings, getPrintings } from '../../lib/scryfall.js'
-import { FORMATS, FORMAT_IDS, typeLineOf, oracleTextOf } from '../../lib/formats.js'
+import { FORMATS, FORMAT_IDS, typeLineOf, oracleTextOf, legalityStatus } from '../../lib/formats.js'
 import { describeColors } from '../../lib/mana.js'
 import PriceRow from '../../components/PriceRow.jsx'
+import NotOutChip from '../../components/NotOutChip.jsx'
 import { MARKETS, priceLabel } from '../../lib/prices.js'
+import { notOutUntil, notOutText, releaseLabel } from '../../lib/release.js'
+import { orderPrintings } from '../../lib/board/art.js'
 import { getPrefs } from '../../lib/storage.js'
 import { useCollection } from '../../lib/collection-store.js'
 import { ownedOf, setOwned } from '../../lib/collection.js'
@@ -18,6 +21,7 @@ import { ownedOf, setOwned } from '../../lib/collection.js'
 const STATUS_LABEL = {
   legal: 'Legal', banned: 'Banned', restricted: 'Restricted',
   not_legal: 'Not in pool', unknown: 'Unknown',
+  future_legal: 'Not out yet', pending: 'Not out yet',
 }
 
 export default function CardDetail({ card, onClose, onOpenCard }) {
@@ -123,7 +127,10 @@ function CardDetailBody({ card, onOpenCard }) {
                 ? `${card.set_name}${card.collector_number ? ` · #${card.collector_number}` : ''}`
                 : '—'}
             />
-            {card.released_at && <Fact label="Released" value={card.released_at} />}
+            {/* A date still to come is not a release that happened. */}
+            {card.released_at && (notOutUntil(card)
+              ? <Fact label="Releases" value={releaseLabel(card.released_at)} />
+              : <Fact label="Released" value={card.released_at} />)}
             {card.artist && <Fact label="Artist" value={card.artist} />}
             {card.keywords?.length > 0 && <Fact label="Keywords" value={card.keywords.join(', ')} />}
             {card.produced_mana?.length > 0 && (
@@ -182,20 +189,28 @@ function Fact({ label, value, term }) {
 }
 
 function Legality({ card }) {
+  const statuses = FORMAT_IDS.map((id) => [id, legalityStatus(card, FORMATS[id])])
+  const future = statuses.some(([, s]) => s === 'future_legal')
+  const pending = statuses.some(([, s]) => s === 'pending')
   return (
     <div className="stack">
       <div className="legality-grid">
-        {FORMAT_IDS.map((id) => {
-          const format = FORMATS[id]
-          const status = card.legalities?.[format.legalityKey] ?? 'unknown'
-          return (
-            <div className={`legality legality--${status}`} key={id}>
-              <span>{format.name}</span>
-              <span className="legality__status">{STATUS_LABEL[status] ?? status}</span>
-            </div>
-          )
-        })}
+        {statuses.map(([id, status]) => (
+          <div className={`legality legality--${status}`} key={id}>
+            <span>{FORMATS[id].name}</span>
+            <span className="legality__status">{STATUS_LABEL[status] ?? status}</span>
+          </div>
+        ))}
       </div>
+      {/* Only what Scryfall says: its Future Standard, and that it settles
+          every other format on release. Nothing here guesses the outcome. */}
+      {(future || pending) && (
+        <p className="muted tiny m0">
+          {notOutText(notOutUntil(card))}.
+          {future && " Scryfall's Future Standard lists it."}
+          {pending && ` Scryfall sets its legality in ${future ? 'the other formats' : 'the formats'} marked Not out yet when it is released.`}
+        </p>
+      )}
       <p className="faint tiny">
         Straight from Scryfall, so this reflects the current ban lists rather than a copy
         baked into this app. <Term id="singleton">Singleton</Term> and deck-size rules are
@@ -254,9 +269,13 @@ function Printings({ card, onOpenCard, market = 'usd' }) {
   if (error) return <p className="faint">Printings are unavailable offline.</p>
   if (!printings) return <p className="faint">Loading printings…</p>
 
+  // The same order as the printing picker (orderPrintings): this printing,
+  // then paper printings that are out, newest first, then any Scryfall lists
+  // ahead of release, each marked, then digital-only ones, then any with no
+  // art to show.
   return (
     <div className="printing-list">
-      {printings.map((print) => (
+      {orderPrintings(printings, card.id).map((print) => (
         <button
           key={print.id}
           className="printing"
@@ -273,6 +292,7 @@ function Printings({ card, onOpenCard, market = 'usd' }) {
               {print.finishes?.length && !print.finishes.includes('nonfoil') ? ' · foil only' : ''}
             </span>
             {print.id === card.id && <span className="faint"> · showing</span>}
+            <NotOutChip card={print} />
           </span>
           <span className="printing__price">{priceLabel(print, market)}</span>
         </button>

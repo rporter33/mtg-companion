@@ -228,6 +228,26 @@ select.chip { width: auto; max-width: 8rem; }
 .diff__row--out .diff__sign { color: var(--error); }
 .diff__row--change .diff__sign { color: var(--warn); }
 .diff__name { flex: 1 1 auto; min-width: 0; }
+
+/* The import review: one quiet line per card, the printing it adds beside the
+   name. A Commander list is a hundred lines, so the list scrolls inside itself
+   rather than pushing the Add button a page away; it takes focus so a keyboard
+   can scroll it too. A note, when the app chose the printing, wraps under the
+   name instead of stretching the row. */
+.import-lines {
+  list-style: none; margin: 0; padding: var(--space-1) 0;
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 22rem; overflow: auto;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.import-line { display: flex; align-items: baseline; gap: var(--space-2); font-size: 0.85rem; }
+.import-line__qty {
+  flex: none; min-width: 2ch; text-align: right;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-muted);
+}
+.import-line__what { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); }
+.import-line__name { overflow-wrap: anywhere; }
+.import-line__note { flex-basis: 100%; }
 .deck-row__category--closed { cursor: pointer; text-align: left; }
 .deck-row__category--closed:hover { border-color: var(--border-strong); color: var(--text); }
 
@@ -286,6 +306,10 @@ select.chip { width: auto; max-width: 8rem; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A card that is not out: the name keeps the width and the chip goes on a
+   line of its own under it, so neither is cut in a narrow column. */
+.text-row__what { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding-bottom: 2px; }
+.text-row__what .text-row__name { flex: none; }
 .text-row .mana-cost { font-size: 0.8rem; }
 /* Quiet until the row is pointed at or focused, and never removed from the
    tab order: a keyboard reaches the buttons by focusing them, which reveals

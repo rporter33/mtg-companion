@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getPrintings } from '../lib/scryfall.js'
 import { artUrl, describePrinting, orderPrintings, treatmentName, treatmentOf, finishFor } from '../lib/board/art.js'
+import NotOutChip from './NotOutChip.jsx'
 import './card.css'
 
 /**
@@ -68,6 +69,9 @@ export default function Printings({ card, finish = 'normal', note = null, onChoo
                   <span className="printings__what">
                     <strong>{print.set_name ?? print.set}</strong>
                     <span className="faint tiny">{describePrinting(print)}</span>
+                    {/* With the description, not the tags: that column
+                        gives way on a phone, and the tags do not. */}
+                    <NotOutChip card={print} />
                   </span>
                   <span className="printings__tags">
                     {treatment && <span className="chip tiny">{treatment}</span>}

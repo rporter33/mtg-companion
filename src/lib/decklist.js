@@ -16,7 +16,11 @@ const ARCHIDEKT_DEFAULTS = new Set([
 ])
 
 const SET_CODE = /^[a-z0-9]{2,6}$/i
-const COLLECTOR = /^(?:\d[\w★†]*|A-\d+)$/
+// A collector number starts with a digit ("263", "12a", "12★"), or is a code,
+// a hyphen and a number: an Alchemy "A-123", The List's "CLB-187" (the set
+// the card came from) and a lettered Secret Lair's "IFIYW-7". Those last two
+// used to stop the parser, leaving "(plst) CLB-187" stuck on the name.
+const COLLECTOR = /^(?:\d[\w★†]*|[a-z0-9]{1,6}-\d+[\w★†]*)$/i
 
 /**
  * Everything a site appends after a card name — printing, foil marker,
@@ -175,4 +179,60 @@ export function parseDecklist(text) {
   // and far below any real deck.
   if (out.length === 0 && bare.length >= 10) return bare
   return out
+}
+
+/**
+ * A printing as a decklist writes it: "(SET) NUM", the way Moxfield and
+ * Arena do. Only what parseDecklist reads back is written, so a list the app
+ * exports re-imports to the same printings: a number the parser would not
+ * take is left off and the set goes alone, and without a set there is
+ * nothing to write.
+ */
+export function printingText({ set, number } = {}) {
+  const code = typeof set === 'string' ? set.trim() : ''
+  if (!SET_CODE.test(code)) return ''
+  const num = typeof number === 'string' || typeof number === 'number' ? String(number).trim() : ''
+  return COLLECTOR.test(num) ? `(${code.toUpperCase()}) ${num}` : `(${code.toUpperCase()})`
+}
+
+/** One decklist line: "4 Lightning Bolt (2X2) 117". */
+export function decklistLine(quantity, name, printing) {
+  const suffix = printingText(printing)
+  return `${quantity} ${name}${suffix ? ` ${suffix}` : ''}`
+}
+
+/**
+ * A deck as the plain text the importer reads, with each card's printing.
+ *
+ * Names alone used to be written, so copying a deck and pasting it back, or
+ * into another site, lost every printing the player had chosen and took
+ * Scryfall's pick instead. `lookup` gives the card record for an id; a card
+ * that has not loaded has no name to write and says so, as it always has.
+ * The deck is read forgivingly, since it may have been saved by an older
+ * build.
+ */
+export function deckToText(deck, lookup) {
+  const lines = []
+  const line = (quantity, id) => {
+    const card = lookup(id)
+    return card?.name
+      ? decklistLine(quantity, card.name, { set: card.set, number: card.collector_number })
+      : `${quantity} (unloaded ${String(id).slice(0, 8)})`
+  }
+  const commanders = deck?.commanders ?? []
+  const sideboard = deck?.sideboard ?? []
+
+  if (commanders.length) {
+    lines.push('Commander')
+    for (const id of commanders) lines.push(line(1, id))
+    if (deck.signatureSpell) lines.push(line(1, deck.signatureSpell))
+    lines.push('')
+  }
+  lines.push('Deck')
+  for (const { cardId, quantity } of (deck?.main ?? []).filter(Boolean)) lines.push(line(quantity, cardId))
+  if (sideboard.length) {
+    lines.push('', 'Sideboard')
+    for (const { cardId, quantity } of sideboard.filter(Boolean)) lines.push(line(quantity, cardId))
+  }
+  return lines.join('\n')
 }

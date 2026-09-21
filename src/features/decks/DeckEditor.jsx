@@ -4,7 +4,7 @@ import DeckAnalysis from './DeckAnalysis.jsx'
 import DeckCoach from './DeckCoach.jsx'
 import DeckSearch from './DeckSearch.jsx'
 import DeckList from './editor/DeckList.jsx'
-import { validateDeck, deckSize } from '../../lib/deck.js'
+import { validateDeck, deckSize, deckVerdict } from '../../lib/deck.js'
 import { getFormat } from '../../lib/formats.js'
 import { captureSnapshot } from '../../lib/snapshot.js'
 import { deckSections } from '../../lib/categories.js'
@@ -122,15 +122,15 @@ export default function DeckEditor({
   )
   const errors = validation.violations.filter((v) => v.severity === 'error')
   const warnings = validation.violations.filter((v) => v.severity === 'warning')
+  // A deck whose only trouble is cards not out yet is not a plain "Legal".
+  const verdict = deckVerdict(deck, validation, cards)
 
   return (
     <div className="stack">
       <div className="row">
         <button className="btn btn--ghost btn--sm" onClick={onBack}>← Decks</button>
         <span className="spacer" />
-        <span className={`chip ${validation.legal ? 'chip--ok' : 'chip--error'}`}>
-          {validation.legal ? 'Legal' : `${errors.length} problem${errors.length === 1 ? '' : 's'}`}
-        </span>
+        <span className={`chip chip--${verdict.tone}`}>{verdict.text}</span>
       </div>
 
       <div className={`deck-head ${showImages && face ? 'deck-head--art' : ''}`}>

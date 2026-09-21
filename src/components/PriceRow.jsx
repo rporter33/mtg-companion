@@ -1,4 +1,5 @@
 import { MARKETS, priceFor, formatPrice, purchaseUri } from '../lib/prices.js'
+import { notOutUntil, releaseLabel } from '../lib/release.js'
 
 /**
  * The three market prices under a card.
@@ -12,8 +13,12 @@ import { MARKETS, priceFor, formatPrice, purchaseUri } from '../lib/prices.js'
  * Scryfall's own, referral tag intact — that is how Scryfall is paid for the
  * data this whole app runs on.
  */
-export default function PriceRow({ card, size = 'md', linked = true }) {
+export default function PriceRow({ card, size = 'md', linked = true, now }) {
   if (!card) return null
+  // A printing that is not out often has no price because nothing is on
+  // sale yet (pre-orders sometimes are, and then the price shows). The dashes
+  // are titled with the date, rather than blaming a market for the gap.
+  const notOut = notOutUntil(card, now)
 
   return (
     <div className={`prices prices--${size}`}>
@@ -24,7 +29,9 @@ export default function PriceRow({ card, size = 'md', linked = true }) {
         // A foil or etched price is a different card from the one they asked
         // about, so say which rather than passing it off as the normal price.
         const title = value === null
-          ? `${market.source} has no price for this printing`
+          ? (notOut
+            ? `No price yet: not out until ${releaseLabel(notOut)}`
+            : `${market.source} has no price for this printing`)
           : `${market.source}${basis === 'normal' ? '' : ` — ${basis} only`}`
 
         const body = (

@@ -1,3 +1,5 @@
+import { notOutUntil } from './release.js'
+import { today } from './season.js'
 // Format definitions and deck construction rules.
 //
 // DESIGN DECISION — ban lists are not stored here.
@@ -139,6 +141,15 @@ export function oracleTextOf(card) {
   return ''
 }
 
+/**
+ * A card's oracle id, which every printing of it shares, so it says which
+ * printings are one card. A reversible card carries it on each face and not
+ * on the card; an older cached record may carry none at all.
+ */
+export function oracleIdOf(card) {
+  return card?.oracle_id ?? card?.card_faces?.[0]?.oracle_id ?? null
+}
+
 export function typeLineOf(card) {
   if (!card) return ''
   if (card.type_line) return card.type_line
@@ -206,6 +217,56 @@ export function cardLegality(card, format) {
   const status = card?.legalities?.[format.legalityKey]
   if (!status) return 'unknown'
   return status
+}
+
+/**
+ * Scryfall's legality, read with the card's release date beside it.
+ *
+ * Before a set comes out Scryfall marks its new cards not_legal everywhere,
+ * and that one word covers two different things: not out yet, and never
+ * going to be legal here (a Commander product's cards in Standard, a rare in
+ * Pauper). So a not_legal card that is not out yet is never promised a
+ * legality the app has worked out for itself. It is 'pending' — Scryfall
+ * will say at release — except in Standard, where Scryfall's own Future
+ * Standard (`future`) already says which previewed cards will be legal:
+ * 'future_legal' when it lists the card, not_legal as it stands when it
+ * does not. Every other status, and every card that is out, is Scryfall's
+ * word unchanged; cardLegality stays the raw reading for anything that
+ * records what Scryfall said.
+ *
+ * A reprint is not a new card. Legality belongs to the card, so an upcoming
+ * printing of Lightning Bolt carries the not_legal in Pioneer that Bolt has
+ * today, and that is Scryfall's answer for a card that already exists, not a
+ * ruling it is waiting to make. Only in Standard, where Future Standard is
+ * Scryfall's own word on the new set, is a reprint read the same way as a
+ * new card. A record with no `reprint` field, as an older cache may be, is
+ * read as new, which is how it was read before this was checked.
+ *
+ * Returns cardLegality's statuses plus 'future_legal' | 'pending'.
+ */
+export function legalityStatus(card, format, now = today()) {
+  const base = cardLegality(card, format)
+  if (base !== 'not_legal' || !notOutUntil(card, now)) return base
+  if (format.legalityKey !== 'standard') return card?.reprint === true ? base : 'pending'
+  const future = card?.legalities?.future
+  if (future === 'legal') return 'future_legal'
+  if (future === 'not_legal') return 'not_legal'
+  return 'pending'
+}
+
+/**
+ * The Scryfall search term for a format's card pool.
+ *
+ * Scryfall keeps a new card out of every format's pool until it is released,
+ * so `legal:<format>` alone cannot find the next set. Standard is the one format
+ * where Scryfall already names the previewed cards that will be legal, in its
+ * Future Standard, so Standard's pool takes those in too, and they come back
+ * as 'future_legal' above rather than as legal.
+ */
+export function poolQuery(format) {
+  return format.legalityKey === 'standard'
+    ? '(legal:standard or legal:future)'
+    : `legal:${format.legalityKey}`
 }
 
 /** Can this card be the commander for this format? */

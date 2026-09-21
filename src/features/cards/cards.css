@@ -35,6 +35,9 @@
 .legality--restricted .legality__status { color: var(--warn); }
 .legality--not_legal  .legality__status,
 .legality--unknown    .legality__status { color: var(--text-faint); }
+/* Not out yet: the NotOutChip's tone, since it is the same news. */
+.legality--future_legal .legality__status,
+.legality--pending      .legality__status { color: var(--warn); }
 
 .ruling {
   padding: var(--space-3) 0;
@@ -85,6 +88,9 @@
    is the thing the grid sizes. */
 .card-tile { display: flex; flex-direction: column; min-width: 0; }
 .card-tile .cardimage { width: 100%; }
+/* Under the prices, never over the image: after them, so the price rows of
+   neighbouring tiles still line up across the grid. */
+.card-tile .not-out { margin-top: var(--space-1); }
 
 /* Set name on one line, the identifying detail under it — a printing is only
    distinguishable by its collector number and year, so those have to be shown. */

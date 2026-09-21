@@ -51,6 +51,42 @@ describe('faceCardFor', () => {
   })
 })
 
+describe('faceCardFor, with printings that are not out yet', () => {
+  // A fixed day in spoiler season, so the suite means the same after release.
+  const NOW = '2026-09-21'
+  const PREVIEWS = {
+    ...CARDS,
+    preorder: card('preorder', { prices: { usd: '60.00' }, released_at: '2026-10-02' }),
+    unpriced: card('unpriced', { prices: {}, released_at: '2026-11-13' }),
+    out: card('out', { prices: { usd: '2.00' }, released_at: '2026-08-14' }),
+    outUnpriced: card('outUnpriced', { prices: {}, released_at: '2026-08-14' }),
+  }
+  const look = (id) => PREVIEWS[id]
+  const main = (...ids) => ids.map((cardId) => ({ cardId, quantity: 1 }))
+
+  it('passes over a costlier card that is not out for the costliest one that is', () => {
+    expect(faceCardFor(deck({ main: main('preorder', 'out', 'cheap') }), look, 'usd', NOW).id).toBe('out')
+  })
+  it('takes the first card that is out when none of those is priced', () => {
+    expect(faceCardFor(deck({ main: main('unpriced', 'preorder', 'outUnpriced') }), look, 'usd', NOW).id).toBe('outUnpriced')
+  })
+  it('takes a card that is not out only when no card with art is', () => {
+    expect(faceCardFor(deck({ main: main('unpriced', 'preorder', 'noart') }), look, 'usd', NOW).id).toBe('preorder')
+    expect(faceCardFor(deck({ main: main('unpriced') }), look, 'usd', NOW).id).toBe('unpriced')
+  })
+  it('still honours a chosen card and the commander that are not out', () => {
+    const d = deck({ main: main('preorder', 'out') })
+    expect(faceCardFor({ ...d, artCardId: 'unpriced' }, look, 'usd', NOW).id).toBe('unpriced')
+    expect(faceCardFor({ ...d, commanders: ['preorder'] }, look, 'usd', NOW).id).toBe('preorder')
+  })
+  it('lets the costliest card lead again on its release day', () => {
+    expect(faceCardFor(deck({ main: main('preorder', 'out') }), look, 'usd', '2026-10-02').id).toBe('preorder')
+  })
+  it('stamps the same answer', () => {
+    expect(stampFace(deck({ main: main('preorder', 'out') }), look, 'usd', NOW).faceCardId).toBe('out')
+  })
+})
+
 describe('faceIdFor, with no cards loaded', () => {
   it('follows the same order using what the deck records', () => {
     expect(faceIdFor(deck({ artCardId: 'a', faceCardId: 'b', commanders: ['c'] }))).toBe('a')

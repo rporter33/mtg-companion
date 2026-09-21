@@ -2,6 +2,7 @@ import Stepper from '../../../components/Stepper.jsx'
 import { memo } from 'react'
 import ManaCost from '../../../components/ManaCost.jsx'
 import DeckArt from '../../../components/DeckArt.jsx'
+import NotOutChip from '../../../components/NotOutChip.jsx'
 import { identityAttr } from '../../../components/CardFace.jsx'
 import { priceLabel } from '../../../lib/prices.js'
 import CategoryPicker from './CategoryPicker.jsx'
@@ -35,6 +36,7 @@ const DeckRow = memo(function DeckRow({
         : <Stepper value={quantity} name={card.name} onChange={onSet} />}
 
       <button className="deck-row__name" onClick={onOpen}>{card.name}</button>
+      <NotOutChip card={card} />
       <ManaCost cost={card.mana_cost || card.card_faces?.[0]?.mana_cost || ''} />
       <span className="deck-row__price faint tiny">{priceLabel(card, market)}</span>
       {owned < quantity && (

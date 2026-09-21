@@ -5,9 +5,11 @@
 // function — which is what makes it straightforward to test.
 
 import {
-  getFormat, cardLegality, canBeCommander, effectiveCopyLimit,
-  typeLineOf, isBasicLand, isTrueLand, isModalLand, frontTypeLine,
+  getFormat, legalityStatus, canBeCommander, effectiveCopyLimit,
+  typeLineOf, isBasicLand, isTrueLand, isModalLand, frontTypeLine, oracleIdOf,
 } from './formats.js'
+import { notOutUntil, releaseLabel } from './release.js'
+import { today } from './season.js'
 
 export function createDeck({ name = 'Untitled deck', formatId = 'commander' } = {}) {
   const now = new Date().toISOString()
@@ -90,17 +92,56 @@ export function combinedCounts(deck) {
   return counts
 }
 
+/**
+ * Which game card a printing is, for copy limits: four of one printing and
+ * one of another are five Lightning Bolts. Scryfall's oracle id says which
+ * printings are one card; a record without one (an older cache, a
+ * hand-written fixture) falls back to its name, and a card that has not
+ * loaded to its own id, so it is only ever counted with itself.
+ */
+export function gameCardKey(card, cardId = card?.id) {
+  const oracle = oracleIdOf(card)
+  if (oracle) return `oracle:${oracle}`
+  if (card?.name) return `name:${card.name}`
+  return `id:${cardId}`
+}
+
+/**
+ * Copies per game card rather than per printing: the counts of combinedCounts
+ * gathered under gameCardKey, each with the printing ids that make it up, in
+ * the deck's order.
+ */
+export function gameCardCounts(deck, cardsById) {
+  const lookup = (id) => (cardsById instanceof Map ? cardsById.get(id) : cardsById?.[id])
+  const groups = new Map()
+  for (const [cardId, quantity] of combinedCounts(deck)) {
+    const key = gameCardKey(lookup(cardId), cardId)
+    const group = groups.get(key) ?? { ids: [], quantity: 0 }
+    group.ids.push(cardId)
+    group.quantity += quantity
+    groups.set(key, group)
+  }
+  return groups
+}
+
 const err = (code, message, cardId) => ({ code, severity: 'error', message, cardId })
 const warn = (code, message, cardId) => ({ code, severity: 'warning', message, cardId })
+
+/**
+ * The two warnings for a card held back only by not being out yet (see
+ * legalityStatus). Neither makes a deck illegal.
+ */
+export const NOT_OUT_CODES = new Set(['not_out_yet', 'legality_pending'])
 
 /**
  * Validates a deck against its format.
  *
  * @param deck       deck object
  * @param cardsById  Map or plain object of cardId -> Scryfall card
+ * @param options    { now }: the day to judge release against, 'YYYY-MM-DD'
  * @returns { legal, violations, counts, colorIdentity }
  */
-export function validateDeck(deck, cardsById) {
+export function validateDeck(deck, cardsById, { now = today() } = {}) {
   const format = getFormat(deck.formatId)
   const violations = []
   if (!format) {
@@ -178,34 +219,55 @@ export function validateDeck(deck, cardsById) {
   }
 
   // --- Per-card checks -----------------------------------------------------
+  // Legality and colour identity are read per printing, as each record
+  // carries them. The copy limit and a restriction count the game card, all
+  // its printings together, and are reported once, at its first printing,
+  // with every printing's id, so one breach is one problem however many
+  // printings make it up.
   const counts = combinedCounts(deck)
-  for (const [cardId, quantity] of counts) {
+  const groupOf = new Map()
+  for (const group of gameCardCounts(deck, cardsById).values()) {
+    for (const id of group.ids) groupOf.set(id, group)
+  }
+  for (const [cardId] of counts) {
     const card = lookup(cardId)
     if (!card) {
       violations.push(warn('card_not_loaded',
         'A card in this deck has not loaded yet, so it has not been checked.', cardId))
       continue
     }
+    const group = groupOf.get(cardId)
+    const first = group.ids[0] === cardId
+    const quantity = group.quantity
+    const onGroup = (violation) => ({ ...violation, cardIds: [...group.ids] })
 
-    const status = cardLegality(card, format)
+    // A card that is not out yet warns rather than fails: Scryfall has not
+    // ruled on it, and the player is never kept from building with it.
+    const status = legalityStatus(card, format, now)
     if (status === 'banned') {
       violations.push(err('banned', `${card.name} is banned in ${format.name}.`, cardId))
     } else if (status === 'not_legal') {
       violations.push(err('not_legal', `${card.name} is not in the ${format.name} card pool.`, cardId))
-    } else if (status === 'restricted' && quantity > 1) {
-      violations.push(err('restricted',
-        `${card.name} is restricted in ${format.name} — only one copy is allowed, but this deck has ${quantity}.`, cardId))
+    } else if (status === 'future_legal') {
+      violations.push(warn('not_out_yet',
+        `${card.name} is not out until ${releaseLabel(notOutUntil(card, now))}. Scryfall's Future Standard lists it, so it is expected to be Standard-legal once out.`, cardId))
+    } else if (status === 'pending') {
+      violations.push(warn('legality_pending',
+        `${card.name} is not out until ${releaseLabel(notOutUntil(card, now))}. Scryfall sets its ${format.name} legality when it is released.`, cardId))
+    } else if (status === 'restricted' && first && quantity > 1) {
+      violations.push(onGroup(err('restricted',
+        `${card.name} is restricted in ${format.name} — only one copy is allowed, but this deck has ${quantity}.`, cardId)))
     } else if (status === 'unknown') {
       violations.push(warn('legality_unknown',
         `Legality data for ${card.name} in ${format.name} is unavailable, so it has not been checked.`, cardId))
     }
 
     const limit = effectiveCopyLimit(card, format)
-    if (quantity > limit) {
-      violations.push(err('too_many_copies',
+    if (first && quantity > limit) {
+      violations.push(onGroup(err('too_many_copies',
         format.singleton && limit === 1
           ? `${format.name} is singleton — only one ${card.name}, but this deck has ${quantity}.`
-          : `At most ${limit} copies of ${card.name} are allowed, but this deck has ${quantity}.`, cardId))
+          : `At most ${limit} copies of ${card.name} are allowed, but this deck has ${quantity}.`, cardId)))
     }
 
     if (format.commander?.colorIdentity && commanderCards.length) {
@@ -223,6 +285,38 @@ export function validateDeck(deck, cardsById) {
     counts: { main: total - (format.commanderCountsTowardDeck ? deck.commanders.length : 0), sideboard: side, total },
     colorIdentity: identity,
   }
+}
+
+/**
+ * How many cards in the deck are printings not out yet, in copies, the way
+ * the deck's other counts are given: four of one card are four cards. Every
+ * copy is counted, main deck, sideboard and command zone, whatever its
+ * legality, so the number matches the "Not out until" labels on the rows
+ * beside it. A card that has not loaded has no date to read and is not one.
+ */
+export function notOutCount(deck, cardsById, { now = today() } = {}) {
+  const lookup = (id) => (cardsById instanceof Map ? cardsById.get(id) : cardsById?.[id])
+  let n = 0
+  for (const [cardId, quantity] of combinedCounts(deck)) {
+    if (notOutUntil(lookup(cardId), now)) n += quantity
+  }
+  return n
+}
+
+/**
+ * The deck's verdict in a few words, for the chip at the top of the editor:
+ * its problems when it has any, then how many cards are not out yet, and only
+ * then "Legal", since a deck with cards nobody can hold yet is not one the
+ * app can call legal to play today. `tone` is the chip's: error, warn or ok.
+ */
+export function deckVerdict(deck, validation, cardsById, { now = today() } = {}) {
+  if (!validation.legal) {
+    const errors = validation.violations.filter((v) => v.severity === 'error').length
+    return { tone: 'error', text: `${errors} problem${errors === 1 ? '' : 's'}` }
+  }
+  const notOut = notOutCount(deck, cardsById, { now })
+  if (notOut) return { tone: 'warn', text: `${notOut} card${notOut === 1 ? '' : 's'} not out yet` }
+  return { tone: 'ok', text: 'Legal' }
 }
 
 export function unionColorIdentity(cards) {

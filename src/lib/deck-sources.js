@@ -13,6 +13,8 @@
 // box already open. A URL field that explains itself beats one that silently
 // fails.
 
+import { decklistLine } from './decklist.js'
+
 export const SOURCES = [
   {
     id: 'moxfield',
@@ -214,19 +216,23 @@ export function parseMoxfield(payload) {
   }
 }
 
-/** Renders a parsed deck back into the plain text the importer already reads. */
+/**
+ * Renders a parsed deck back into the plain text the importer already reads.
+ * An entry that carries its printing ({ set, number }) keeps it, written the
+ * way the importer reads it back; one with a name alone is written as a name.
+ */
 export function toDecklistText({ commanders = [], main = [], sideboard = [] }) {
   const lines = []
   if (commanders.length) {
     lines.push('Commander')
-    for (const { name } of commanders) lines.push(`1 ${name}`)
+    for (const entry of commanders) lines.push(decklistLine(1, entry.name, entry))
     lines.push('')
   }
   lines.push('Deck')
-  for (const { name, quantity } of main) lines.push(`${quantity} ${name}`)
+  for (const entry of main) lines.push(decklistLine(entry.quantity, entry.name, entry))
   if (sideboard.length) {
     lines.push('', 'Sideboard')
-    for (const { name, quantity } of sideboard) lines.push(`${quantity} ${name}`)
+    for (const entry of sideboard) lines.push(decklistLine(entry.quantity, entry.name, entry))
   }
   return lines.join('\n')
 }

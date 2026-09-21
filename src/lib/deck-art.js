@@ -5,11 +5,14 @@
  * on Scryfall carries an "art crop": the painting alone, no frame or text,
  * about 40 KB. The order here is a decision, not a heuristic: a card the
  * person chose, else the commander, else the costliest card in the list,
- * else the first card. Only a card that actually has art qualifies at each
+ * else the first card, those last two looking at cards that are out before
+ * cards that are not. Only a card that actually has art qualifies at each
  * step, so a token or a card with no image never blanks the banner when a
  * later choice would do.
  */
 import { costliest } from './prices.js'
+import { notOutUntil } from './release.js'
+import { today } from './season.js'
 
 /** The painting alone, front face for a double-faced card; null when none. */
 export function artUrl(card) {
@@ -21,8 +24,15 @@ export function artUrl(card) {
  * The face card, given a way to resolve ids to cards. `lookup` is the
  * editor's function; it returns undefined for a card not yet loaded, which
  * counts as "no art" and falls through.
+ *
+ * A card the person chose and the commander stand whatever their release
+ * date, because those are the person's own choices. The two automatic steps
+ * look first at printings that are out: a preview card with a pre-order
+ * price would otherwise become the face of a deck nobody can yet hold in
+ * full. Only when no card with art is out do they take one that is not.
+ * `now` is only there so a test can fix the day.
  */
-export function faceCardFor(deck, lookup, marketId = 'usd') {
+export function faceCardFor(deck, lookup, marketId = 'usd', now = today()) {
   if (!deck) return null
   const withArt = (id) => {
     const card = id ? lookup?.(id) : null
@@ -37,9 +47,11 @@ export function faceCardFor(deck, lookup, marketId = 'usd') {
   const resolved = (deck.main ?? [])
     .map((entry) => ({ ...entry, card: withArt(entry.cardId) }))
     .filter((entry) => entry.card)
-  const [top] = costliest(resolved, marketId, 1)
+  const out = resolved.filter((entry) => !notOutUntil(entry.card, now))
+  const pool = out.length ? out : resolved
+  const [top] = costliest(pool, marketId, 1)
   if (top) return top.card
-  return resolved[0]?.card ?? null
+  return pool[0]?.card ?? null
 }
 
 /**
@@ -65,8 +77,8 @@ export function setDeckArt(deck, cardId) {
  * loaded can show the same art the editor does. Returns the very same object
  * when nothing changed, because storage writes a deck by identity.
  */
-export function stampFace(deck, lookup, marketId = 'usd') {
-  const face = faceCardFor(deck, lookup, marketId)
+export function stampFace(deck, lookup, marketId = 'usd', now = today()) {
+  const face = faceCardFor(deck, lookup, marketId, now)
   const id = face?.id ?? null
   if ((deck.faceCardId ?? null) === id) return deck
   if (id === null) {

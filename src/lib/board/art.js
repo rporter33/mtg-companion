@@ -12,6 +12,8 @@
  * differently and show the painting Scryfall serves inside it.
  */
 import { artUrl } from '../deck-art.js'
+import { notOutUntil } from '../release.js'
+import { today } from '../season.js'
 
 /** The finishes a player might own a copy in. The board keeps one per card. */
 export const FINISHES = ['normal', 'foil', 'etched']
@@ -72,18 +74,25 @@ export function describePrinting(card) {
 /**
  * Printings worth offering, best first.
  *
- * Three rules, in order. The copy already in the deck comes first, because
+ * Four rules, in order. The copy already in the deck comes first, because
  * that is the one the person is changing away from and it should be obvious
  * which it is. Then anything with a painting to show, because a printing
- * whose image never arrives is not an art choice. Digital-only printings go
- * last rather than being dropped: an Arena player may well want one.
+ * whose image never arrives is not an art choice. Among those, printings
+ * that are out come before ones Scryfall lists ahead of release: Scryfall
+ * sends the newest first, so a set still in previews would otherwise head
+ * the list with copies nobody can hold yet. Digital-only printings go after
+ * both rather than being dropped: an Arena player may well want one.
+ * Nothing is hidden, and within each group Scryfall's order stands.
+ *
+ * `now` is only there so a test can fix the day.
  */
-export function orderPrintings(printings, currentId = null) {
+export function orderPrintings(printings, currentId = null, now = today()) {
   const seen = new Set()
   const rank = (card) => {
     if (card.id === currentId) return 0
-    if (!artUrl(card)) return 3
-    if (card.digital) return 2
+    if (!artUrl(card)) return 4
+    if (card.digital) return 3
+    if (notOutUntil(card, now)) return 2
     return 1
   }
   return (printings ?? [])

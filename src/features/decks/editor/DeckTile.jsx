@@ -3,6 +3,7 @@ import { memo } from 'react'
 import CardImage from '../../../components/CardImage.jsx'
 import PriceRow from '../../../components/PriceRow.jsx'
 import DeckArt from '../../../components/DeckArt.jsx'
+import NotOutChip from '../../../components/NotOutChip.jsx'
 import { identityAttr } from '../../../components/CardFace.jsx'
 
 /**
@@ -66,6 +67,9 @@ const DeckTile = memo(function DeckTile({
         )}
         <button className="btn btn--sm btn--ghost btn--danger" onClick={onRemove} aria-label={`Remove ${card.name}`}>✕</button>
       </div>
+      {/* Last, off the image, so the prices and controls of neighbouring
+          tiles still line up across the grid. */}
+      <NotOutChip card={card} />
     </div>
   )
 })

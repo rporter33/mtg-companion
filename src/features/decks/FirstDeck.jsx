@@ -12,7 +12,7 @@ import { strategiesFor, strategyById } from '../../data/strategies.js'
 import { useCollection } from '../../lib/collection-store.js'
 import { ownedOf, missingFor, missingCost } from '../../lib/collection.js'
 import { formatPrice } from '../../lib/prices.js'
-import { searchCards, getCardsByNames, getCardByName } from '../../lib/scryfall.js'
+import { searchCards, getCardsByNames } from '../../lib/scryfall.js'
 import { createDeck, addCard, setCommanders } from '../../lib/deck.js'
 import { saveDeck, getDeck, getPrefs, setPref } from '../../lib/storage.js'
 import { pinCards } from '../../lib/cache.js'
@@ -398,7 +398,11 @@ function SignatureCard({ name, onOpenCard }) {
       title="Open this card"
       onClick={() => {
         setBusy(true)
-        getCardByName(name, { exact: true }).then((card) => onOpenCard?.(card)).catch(() => {}).finally(() => setBusy(false))
+        // By the importer's rule, so the card opens on a printing that is out.
+        getCardsByNames([name])
+          .then((found) => { const card = found.get(name); if (card) onOpenCard?.(card) })
+          .catch(() => {})
+          .finally(() => setBusy(false))
       }}
     >
       {name}

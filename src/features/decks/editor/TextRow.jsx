@@ -1,7 +1,9 @@
 import Stepper from '../../../components/Stepper.jsx'
 import { memo } from 'react'
 import ManaCost from '../../../components/ManaCost.jsx'
+import NotOutChip from '../../../components/NotOutChip.jsx'
 import { identityAttr } from '../../../components/CardFace.jsx'
+import { notOutUntil } from '../../../lib/release.js'
 
 /**
  * One line in the text view: quantity, name, cost. Nothing else, so a hundred
@@ -30,6 +32,7 @@ const TextRow = memo(function TextRow({
       </div>
     )
   }
+  const name = <button className="text-row__name" onClick={onOpen} onFocus={show}>{card.name}</button>
   return (
     <div
       className={`text-row ${flagged ? 'text-row--flagged' : ''} ${previewed ? 'text-row--previewed' : ''} ${marked ? 'text-row--arrived' : ''}`}
@@ -39,7 +42,14 @@ const TextRow = memo(function TextRow({
       <span className={`text-row__qty ${isCommander ? 'text-row__qty--commander' : ''}`} title={isCommander ? 'Commander' : undefined}>
         {isCommander ? '★' : quantity}
       </span>
-      <button className="text-row__name" onClick={onOpen} onFocus={show}>{card.name}</button>
+      {notOutUntil(card) ? (
+        // Under the name, not beside it: a column is narrow enough that the
+        // chip beside the name cut "Island" to "I…".
+        <span className="text-row__what">
+          {name}
+          <NotOutChip card={card} />
+        </span>
+      ) : name}
       <ManaCost cost={card.mana_cost || card.card_faces?.[0]?.mana_cost || ''} />
       {!isCommander && (
         <Stepper compact value={quantity} name={card.name} onChange={onSet} className="text-row__edit" />

@@ -33,8 +33,10 @@ export default function DeckList({
   deck, groups, format, market, lookup, collection, onChange, onOpenCard, validation,
   art = false, artSwitch = null, onFindElsewhere = null, needed = null, loading = false, arrived = NONE,
 }) {
+  // A copy limit is broken by a card across its printings, and every row
+  // that is one of them is marked, not only the first.
   const problemIds = new Set(
-    validation.violations.filter((v) => v.severity === 'error' && v.cardId).map((v) => v.cardId),
+    validation.violations.filter((v) => v.severity === 'error' && v.cardId).flatMap((v) => v.cardIds ?? [v.cardId]),
   )
 
   // Once per render. This used to be computed inside the row loop — a hundred

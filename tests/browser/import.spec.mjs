@@ -277,6 +277,72 @@ console.log('\nAn Archidekt export, pasted as it is')
     await commanderSection.innerText().catch(() => 'no commander section'))
 }
 
+console.log('\nEvery line names the printing it adds')
+{
+  // A bare name gets Scryfall's pick for it, and Scryfall lists a set's
+  // cards before the set is out. The dates are counted from today, so "not
+  // out" stays not out however long after this was written the suite runs.
+  const day = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10)
+  const upcoming = { set: 'trk', set_name: 'Star Trek', released_at: day(60), type_line: 'Basic Land — Island' }
+  const previews = {
+    'Preview Island': card('Preview Island', { ...upcoming, oracle_id: 'o-preview-island', collector_number: '319' }),
+    'Preview Only': card('Preview Only', { ...upcoming, oracle_id: 'o-preview-only', collector_number: '12' }),
+  }
+  const released = card('Preview Island', {
+    ...upcoming, id: 'released-island', oracle_id: 'o-preview-island',
+    set: 'hob', set_name: 'The Hobbit', collector_number: '195', released_at: day(-60),
+  })
+  const answer = (id) => (id.collector_number
+    ? (id.set === 'trk' && id.collector_number === '319' ? previews['Preview Island'] : null)
+    : previews[id.name])
+  // Later routes run first; anything these do not recognise goes on to the
+  // mocks above.
+  await page.route('**/api.scryfall.com/cards/collection', (route) => {
+    const { identifiers } = JSON.parse(route.request().postData() ?? '{"identifiers":[]}')
+    if (!identifiers.length || !identifiers.every(answer)) return route.fallback()
+    return route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ object: 'list', data: identifiers.map(answer), not_found: [] }) })
+  })
+  const searched = []
+  await page.route('**/api.scryfall.com/cards/search**', (route) => {
+    const q = new URL(route.request().url()).searchParams.get('q') ?? ''
+    if (!q.includes('oracleid:')) return route.fallback()
+    searched.push(q)
+    const data = q.includes('oracleid:o-preview-island') ? [released] : []
+    return route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ object: 'list', total_cards: data.length, has_more: false, data }) })
+  })
+
+  await page.getByRole('tab', { name: 'Import / export' }).click()
+  await page.waitForTimeout(300)
+  await page.locator('textarea').first().fill('4 Preview Island\n1 Preview Only\n2 Preview Island (TRK) 319')
+  await page.waitForTimeout(200)
+  await page.getByRole('button', { name: 'Review import' }).click()
+  await page.getByRole('button', { name: /Add \d+ cards/ }).waitFor({ timeout: 15000 })
+
+  const lines = await page.locator('.import-line').allInnerTexts()
+  const flat = lines.map((l) => l.replace(/\s+/g, ' '))
+  check('the review has one line per card', lines.length === 3, flat.join(' | '))
+  check('a bare name that Scryfall gave a preview for lands on the newest printing that is out, and says why',
+    /The Hobbit #195/.test(flat[0])
+      && /Scryfall's pick for the name, Star Trek, is not out until \d{1,2} \S+ \d{4}, so the app took the newest paper printing that is out/.test(flat[0])
+      && !/Not out until/.test(flat[0]), flat[0])
+  check('a card with no printing out yet keeps its preview, labelled, and says so',
+    /Star Trek #12/.test(flat[1]) && /Not out until/.test(flat[1])
+      && /Scryfall lists no paper printing of it that is out yet/.test(flat[1]), flat[1])
+  check('a printing the list named is kept as it is, with the label and no note',
+    /Star Trek #319/.test(flat[2]) && /Not out until/.test(flat[2]) && !/Scryfall/.test(flat[2]), flat[2])
+  check('the cards to pass over are asked about in one search', searched.length === 1, searched.join(' | '))
+
+  await page.getByRole('button', { name: /Add \d+ cards/ }).click()
+  await page.waitForTimeout(600)
+  const exported = await page.getByLabel('This deck as a plain text list').inputValue()
+  check('the two printings stay two entries, and the export names each one',
+    /^4 Preview Island \(HOB\) 195$/m.test(exported) && /^2 Preview Island \(TRK\) 319$/m.test(exported)
+      && /^1 Preview Only \(TRK\) 12$/m.test(exported),
+    exported.split('\n').filter((l) => /Preview/.test(l)).join(' | '))
+}
+
 console.log('\nExamples survive Scryfall being unreachable')
 {
   // They lived inside the commanders browser, which renders nothing without a

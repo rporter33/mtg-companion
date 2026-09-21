@@ -1,5 +1,6 @@
 import CardImage from '../../../components/CardImage.jsx'
 import PriceRow from '../../../components/PriceRow.jsx'
+import NotOutChip from '../../../components/NotOutChip.jsx'
 import { priceLabel } from '../../../lib/prices.js'
 
 /**
@@ -22,6 +23,7 @@ export default function DeckPreview({ card, market, owned, onOpenCard, live = 'p
             <div className="deck-preview__name">{card.name}</div>
             <div className="faint tiny">{card.type_line}</div>
           </div>
+          <NotOutChip card={card} />
           <PriceRow card={card} size="sm" />
           <div className="faint tiny">
             {owned > 0 ? `You own ${owned}` : 'Not in your collection'}

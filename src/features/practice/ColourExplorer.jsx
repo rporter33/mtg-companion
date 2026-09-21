@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { COLOR_PAGES, WHEEL, PAIRS } from '../../data/colors.js'
 import { pairKey } from '../../lib/first-deck.js'
-import { getCardByName } from '../../lib/scryfall.js'
+import { getCardsByNames } from '../../lib/scryfall.js'
 import { navigate } from '../../lib/router.js'
 import { setPref } from '../../lib/storage.js'
 
@@ -114,7 +114,11 @@ function ExampleCard({ name, onOpenCard }) {
   return (
     <button className="chip" disabled={busy} title="Open this card" onClick={() => {
       setBusy(true)
-      getCardByName(name, { exact: true }).then((card) => onOpenCard?.(card)).catch(() => {}).finally(() => setBusy(false))
+      // By the importer's rule, so the card opens on a printing that is out.
+      getCardsByNames([name])
+        .then((found) => { const card = found.get(name); if (card) onOpenCard?.(card) })
+        .catch(() => {})
+        .finally(() => setBusy(false))
     }}>
       {name}
     </button>

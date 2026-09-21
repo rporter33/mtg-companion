@@ -50,6 +50,38 @@ describe('what a printing is', () => {
     expect(orderPrintings(list, 'current').map((c) => c.id)).toEqual(['current', 'old', 'digital', 'no-art'])
   })
 
+  it('offers printings that are out before ones Scryfall lists ahead of release', () => {
+    // Scryfall's order: newest first, so the previews lead.
+    const list = [
+      print('trk', { released_at: '2026-11-13' }),
+      print('fra', { released_at: '2026-10-02' }),
+      print('arena', { released_at: '2026-09-02', digital: true }),
+      print('hob', { released_at: '2026-08-14' }),
+      print('bare', { released_at: '2026-07-01', image_uris: undefined }),
+      print('undated'),
+      print('lea', { released_at: '1993-08-05' }),
+    ]
+    expect(orderPrintings(list, null, '2026-09-21').map((c) => c.id))
+      .toEqual(['hob', 'undated', 'lea', 'trk', 'fra', 'arena', 'bare'])
+    // Between the two releases only Star Trek is still to come.
+    expect(orderPrintings(list, null, '2026-10-02').map((c) => c.id))
+      .toEqual(['fra', 'hob', 'undated', 'lea', 'trk', 'arena', 'bare'])
+    // On release day nothing needs changing: Scryfall's order comes back.
+    expect(orderPrintings(list, null, '2026-11-13').map((c) => c.id))
+      .toEqual(['trk', 'fra', 'hob', 'undated', 'lea', 'arena', 'bare'])
+  })
+
+  it('keeps the copy in the deck first even when it is not out, and digital-only after previews', () => {
+    const list = [
+      print('hob', { released_at: '2026-08-14' }),
+      print('digital-preview', { released_at: '2026-10-02', digital: true }),
+      print('trk', { released_at: '2026-11-13' }),
+      print('mine', { released_at: '2026-11-13' }),
+    ]
+    expect(orderPrintings(list, 'mine', '2026-09-21').map((c) => c.id))
+      .toEqual(['mine', 'hob', 'trk', 'digital-preview'])
+  })
+
   it('drops a printing listed twice, and copes with nothing at all', () => {
     const twice = [print('a'), print('a'), print('b')]
     expect(orderPrintings(twice).map((c) => c.id)).toEqual(['a', 'b'])
