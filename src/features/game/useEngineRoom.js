@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { relay } from '../../lib/board/relay.js'
 import { boardFromView, eventsBetween, standIn } from '../../lib/engine/board.js'
+import { seatDeck } from '../../lib/engine/deck.js'
 
 /**
  * A seat at a table the engine holds.
@@ -22,17 +23,6 @@ const memoryKey = (code) => `mtg-companion:engine:${code}`
 const remember = (code, value) => { try { localStorage.setItem(memoryKey(code), JSON.stringify(value)) } catch { /* private mode */ } }
 const recall = (code) => { try { return JSON.parse(localStorage.getItem(memoryKey(code)) ?? 'null') } catch { return null } }
 
-/** The deck as the engine takes it: card names and how many of each. */
-export function namesOf(deck, lookup) {
-  const out = {}
-  for (const entry of deck?.main ?? []) {
-    const name = lookup?.(entry.cardId)?.name
-    if (!name) continue
-    out[name] = (out[name] ?? 0) + (entry.quantity ?? 1)
-  }
-  return out
-}
-
 export default function useEngineRoom({ address, code, name, deck, deckLookup, cardsReady }) {
   const [wireStatus, setWireStatus] = useState('connecting')
   const [seat, setSeat] = useState(null)
@@ -51,7 +41,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   // The deck by name, as a string: the lookup function is new on every
   // render, and an effect keyed on an object rebuilt from it would open a
   // new socket each time. The names themselves change only with the deck.
-  const deckKey = cardsReady ? JSON.stringify(namesOf(deck, deckLookup)) : null
+  const deckKey = cardsReady ? JSON.stringify(seatDeck(deck, deckLookup).deck) : null
   const deckNames = useMemo(() => (deckKey ? JSON.parse(deckKey) : null), [deckKey])
   const sat = useRef(false)
   const seating = useRef([])
