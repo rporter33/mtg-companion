@@ -193,11 +193,19 @@ or the session's to fetch locally.
   the focus, the Cards tab's "Try one of these" leads with that set's cards
   (`e:fra`), through `src/lib/season.js` rather than a hard-coded query,
   dated and provisional as the rest of the season is.
-- **Scryfall's rate limits.** `src/lib/scryfall.js` now holds `/cards/search`,
-  `/cards/named`, `/cards/random` and `/cards/collection` to 500 ms on the
-  pack's word. Read https://scryfall.com/docs/api/rate-limits and correct
-  the constants and `SOURCES.md` if it says otherwise. Being slower than a
-  limit costs nothing; being wrong in a document does.
+- **Scryfall's rate limits. Done, 2026-09-20.** The page was read from the
+  owner's machine and the client's constants were right, digit for digit: 500 ms
+  for those four, 100 ms for the rest. They now live in
+  `src/lib/scryfall-limits.js`, with the `/cards/manifest` case (6,000 ms) the
+  pack had missed, because six Node scripts under `scripts/` were spacing those
+  same endpoints at 120 ms or 350 ms and had to be held to the published floor —
+  the only real overage in the repo, and never in the browser client. A 429 now
+  waits out Scryfall's thirty-second lockout instead of retrying inside it. In
+  `SOURCES.md` the rate-limit row is no longer "unverified, adopted", and two
+  verdicts that were wrong — the `User-Agent` row and the `jsonl.gz` row — are
+  corrected, as is the client's own header comment, which cited a "50–100ms"
+  that Scryfall's page does not say. Being slower than a limit costs nothing;
+  being wrong in a document does, and this was wrong in those three places.
 - **The common-card bundle.** `PLAN.md` ("A precomputed bundle of common
   cards") describes a static JSON of the cards most decks share, loaded at
   startup so a first table needs no network. It waited on Scryfall access.

@@ -31,10 +31,10 @@ mention Argentum at all, which says only that its author did not look.
 
 | Claim in the pack | Checked against | Result | Change |
 | --- | --- | --- | --- |
-| Scryfall holds `/cards/search`, `/cards/named`, `/cards/random` and `/cards/collection` to 2/sec (500 ms) and everything else to 10/sec (100 ms) | `src/lib/scryfall.js` spaced every request 100 ms. scryfall.com is unreachable from the build container, so the per-endpoint figures could not be read at source. | **Unverified, adopted.** Being slower than a limit costs a person nothing they can feel — a search is one request, a deck import two — and being faster costs everyone a 429. | The queue now spaces a request by its endpoint: 500 ms before those four, 100 ms before the rest. `tests/scryfall.test.js` covers the split. |
-| Set a descriptive `User-Agent` on every request | `src/lib/scryfall.js` lines 8–10 | Browsers forbid scripts from setting that header. The file already says so. | None possible from a client. A server-side proxy could, and the file notes that the parts the client *can* honour, it does. |
+| Scryfall holds `/cards/search`, `/cards/named`, `/cards/random` and `/cards/collection` to 2/sec (500 ms) and everything else to 10/sec (100 ms) | https://scryfall.com/docs/api/rate-limits, read 2026-09-20 from the owner's machine, HTTP 200. | **Verified, and the pack was right, digit for digit.** The page names one case the pack omits: `/cards/manifest` at 10/minute (6,000 ms). It also says a 429 shuts an application out for thirty seconds, and that ignoring one is not acceptable. | The browser client was already correct and its intervals are unchanged. They moved to `src/lib/scryfall-limits.js`, with the manifest case added, because six Node scripts under `scripts/` were spacing those same 500 ms endpoints at 120 ms or 350 ms and now share one source of truth. The 429 path waits out the lockout instead of retrying inside it. `tests/scryfall.test.js` covers the split and the lockout. |
+| Set a descriptive `User-Agent` on every request | https://scryfall.com/docs/api, "Required Headers", read 2026-09-20; `src/lib/scryfall.js` | **This row was wrong.** Scryfall requires a `User-Agent` and an `Accept` header, and for on-page browser JavaScript it says to "keep the browser's User-Agent intact". A browser client therefore complies by leaving the header alone, which is exactly what this one does. | The comment in `src/lib/scryfall.js` said we "cannot comply from the client" and now says what the docs ask for. Nothing to apologise for and nothing to proxy. The Node scripts are not browsers and already send a descriptive one. |
 | Cache at least 24 hours; use bulk for catalogues; do not crawl card by card | `src/lib/cache.js`: queries a day, cards a week; `docs/table-rebuild/PLAN.md`, "common-card bundle" | Already true. The bundle is written and blocked only on a machine that can reach Scryfall. | None. |
-| Scryfall bulk files are `jsonl.gz` | https://api.scryfall.com/bulk-data (unreachable here); the app's own earlier bulk work | **Wrong as written.** Scryfall's bulk files are JSON arrays (gzip is the transfer encoding, not the file), not JSON Lines. Anyone streaming them line by line gets one line. | None; noted so nobody builds on it. |
+| Scryfall bulk files are `jsonl.gz` | https://scryfall.com/docs/api/bulk-data, read 2026-09-20, HTTP 200 | **The pack was right and this row was wrong.** Scryfall: "Each bulk file is a gzipped JSONL (JSON Lines) archive", and "You will specifically download a jsonl.gz archive and need to decompress or stream it on disk." Streaming line by line is the documented way to read one. | Corrected here before the common-card bundle is built on it. The same page warns that prices "should be considered dangerously stale after 24 hours", which the bundle will have to say on screen. |
 | `/cards/collection` takes at most 75 identifiers | `src/lib/scryfall.js`, the collection lookups | Already batched at 75. | None. |
 | Reality Fracture: codes FRA and FRC, release 2026-10-02, prerelease 2026-09-25, mechanics Empower Jace, Heartwood tokens, Prepare | `docs/REALITY_FRACTURE_SET_REFERENCE.md`, `src/data/set-mechanics.js` | All three mechanics and the release date are already present and marked provisional until the official freeze. | None. |
 | Decklists: `3x Forest`, `SB: 1 Island`, `//` comments, a `Sideboard` header | `src/lib/decklist.js`, run on the pack's own sample | `3x`, `//`, blank lines and the header all worked. **`SB: 2 Plains` on its own line was dropped** — the parser knew `SB:` only as a header. | The prefix now places that one line in the sideboard and leaves the section alone. Test added. |
@@ -55,9 +55,12 @@ mention Argentum at all, which says only that its author did not look.
   app's own dark and gold rather than Moxgate's purple, which is a brand, not
   a table.
 - **Verifying Scryfall's limits.** `scryfall.com` and `api.scryfall.com`
-  return 403 from the build container. The per-endpoint figures above should
-  be read against https://scryfall.com/docs/api/rate-limits from a machine
-  that can reach it, and this table corrected if they differ.
+  returned 403 from the build container, so the per-endpoint figures above were
+  adopted unread. **Settled on 2026-09-20** from the owner's machine, where both
+  answer HTTP 200: the figures were right, `/cards/manifest` was missing, and
+  two verdicts in the table above were wrong and are now corrected. The reading
+  also found the only real overage in the repo, which was never in the browser
+  client but in six Node scripts.
 - **The engines it names.** `github.com` HTML and its API are also blocked;
   only `raw.githubusercontent.com` answers. Forge's README confirmed GPL-3.0
   and nothing more. XMage's and mage-bench's README paths returned 404.
@@ -95,7 +98,7 @@ mid-sentence, so anything after "I have not touched" is unknown.
 | "Reserved bands: opponent, board, inspector, hand" | `game.css` grid areas `them`, `field`, `you`, `side` | The same four bands, by other names. | None. |
 | Life pad: "1–6 players, commander damage, poison, dice, undo" | `src/features/play/PlayView.jsx` | Commander damage, poison, dice and undo are there; the board lays out by player count. *Verify* the count runs to six. | None unless the count is short. |
 | "Paper date on the hero is October 2. Prerelease is already this week." | `set-themes.js`, `docs/REALITY_FRACTURE_SET_REFERENCE.md` | Release 2026-10-02 and prerelease 2026-09-25 are recorded and the countdown is drawn from them. | None. |
-| The backend pack, repeated | This document, above | Same claims; same results. The rate-limit figures remain unverified from here. | None beyond M0's verification on the owner's machine. |
+| The backend pack, repeated | This document, above | Same claims; same results. The rate-limit figures are no longer unverified: they were read from Scryfall's own page on 2026-09-20 and were right. | None; M0's verification is done and the table above records what it changed. |
 
 Two things the preview description does not change: the engine decision
 (Grok names Forge and XMage; `ENGINE.md` chose Argentum after running it),
