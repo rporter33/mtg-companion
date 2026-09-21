@@ -55,6 +55,21 @@ export function setCommanders(deck, cardIds) {
   return { ...deck, commanders: [...cardIds], updatedAt: new Date().toISOString() }
 }
 
+/**
+ * The deck a hand-over from the Learn tab starts. An example arrives empty,
+ * named and formatted after the list, because its cards go through the
+ * importer for the person to review. A commander has nothing to review, so
+ * it is seated here, by id: the printing the guide showed is the one the
+ * deck holds, not whichever printing its name would look up.
+ */
+export function deckFromSeed({ example, card } = {}) {
+  const deck = createDeck({
+    name: example?.name ?? (card?.name ? `${card.name} deck` : 'Untitled deck'),
+    formatId: example?.formatId ?? 'commander',
+  })
+  return !example && card?.id ? setCommanders(deck, [card.id]) : deck
+}
+
 /** Total card count, including commanders where the format counts them. */
 export function deckSize(deck, format) {
   const main = deck.main.reduce((n, e) => n + e.quantity, 0)

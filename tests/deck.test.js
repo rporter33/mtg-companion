@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  createDeck, addCard, setQuantity, removeCard, setCommanders,
+  createDeck, addCard, setQuantity, removeCard, setCommanders, deckFromSeed,
   validateDeck, deckSize, combinedCounts, unionColorIdentity, deckVerdict, gameCardKey,
 } from '../src/lib/deck.js'
 import { getFormat } from '../src/lib/formats.js'
@@ -55,6 +55,35 @@ describe('deck mutation', () => {
     deck = addCard(deck, BEAR.id, 2, 'sideboard')
     expect(deck.main).toEqual([{ cardId: BEAR.id, quantity: 2 }])
     expect(deck.sideboard).toEqual([{ cardId: BEAR.id, quantity: 2 }])
+  })
+})
+
+describe('deckFromSeed', () => {
+  // A second printing of the same card: the deck must hold this one, not
+  // whichever printing the name would find.
+  const PROMO = { ...COMMANDER_BEAR, id: 'legend-promo', set: 'prm' }
+
+  it('seats a handed-over commander, by the printing that was shown', () => {
+    const deck = deckFromSeed({ example: null, card: PROMO })
+    expect(deck.commanders).toEqual(['legend-promo'])
+    expect(deck.main).toEqual([])
+    expect(deck.formatId).toBe('commander')
+    expect(deck.name).toBe('Legendary Bear deck')
+    expect(validateDeck(addCard(deck, FOREST.id, 99), new Map([[PROMO.id, PROMO], [FOREST.id, FOREST]])).legal).toBe(true)
+  })
+
+  it('leaves an example empty, for the importer to fill', () => {
+    const deck = deckFromSeed({ example: { name: 'Bears Galore', formatId: 'brawl' } })
+    expect(deck).toMatchObject({ name: 'Bears Galore', formatId: 'brawl', commanders: [], main: [] })
+  })
+
+  it('an example wins over a card handed over with it', () => {
+    expect(deckFromSeed({ example: { name: 'Bears Galore', formatId: 'commander' }, card: PROMO }).commanders).toEqual([])
+  })
+
+  it('makes an untitled Commander deck of nothing', () => {
+    expect(deckFromSeed()).toMatchObject({ name: 'Untitled deck', formatId: 'commander', commanders: [] })
+    expect(deckFromSeed({ card: { name: 'No Id' } })).toMatchObject({ name: 'No Id deck', commanders: [] })
   })
 })
 

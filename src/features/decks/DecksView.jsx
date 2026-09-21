@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useState } from 'react'
 import { listDecks, saveDeck, deleteDeck, loadState } from '../../lib/storage.js'
 import { backupStatus } from '../../lib/data-safety.js'
 import BackupNudge from './BackupNudge.jsx'
-import { createDeck } from '../../lib/deck.js'
+import { createDeck, deckFromSeed } from '../../lib/deck.js'
 import { FORMAT_GROUPS, formatsInGroup, getFormat } from '../../lib/formats.js'
 import DeckEditor from './DeckEditor.jsx'
 import LegalityChanges from './LegalityChanges.jsx'
@@ -12,7 +12,7 @@ import { navigate } from '../../lib/router.js'
 import DeckArt from '../../components/DeckArt.jsx'
 import Confirm from '../../components/Confirm.jsx'
 import { artUrl, faceIdFor } from '../../lib/deck-art.js'
-import { getCard } from '../../lib/cache.js'
+import { getCard, pinCards } from '../../lib/cache.js'
 import { getPrefs } from '../../lib/storage.js'
 import { decorFor, useThemeSet } from '../../lib/theme-set.js'
 import './decks.css'
@@ -79,17 +79,20 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
    * A commander or example deck handed over from the Learn tab. Creating the
    * deck here rather than there keeps deck creation in one place, so the format
    * defaults and naming stay consistent however you arrive.
+   *
+   * An example opens on Import / export with its list waiting to be reviewed.
+   * A commander is already seated by the time the deck is saved, so it opens
+   * on the list and leaves nothing pending: a hand-over that nothing consumed
+   * used to sit here and seat nobody.
    */
   useEffect(() => {
     if (!seed) return
-    const { example, card } = seed
-    const deck = createDeck({
-      name: example?.name ?? (card ? `${card.name} deck` : 'Untitled deck'),
-      formatId: example?.formatId ?? 'commander',
-    })
+    const { example } = seed
+    const deck = deckFromSeed(seed)
     saveDeck(deck)
+    if (deck.commanders.length) pinCards(deck.commanders)
     refresh()
-    setPending(example ? { kind: 'example', example } : { kind: 'commander', card })
+    setPending(example ? { kind: 'example', example } : null)
     openDeck(deck.id, example ? 'io' : null)
     onSeedConsumed?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
