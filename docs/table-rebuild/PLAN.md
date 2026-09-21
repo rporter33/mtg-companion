@@ -508,6 +508,85 @@ directly beneath the engine's own note saying the opposite. It now shows only
 at a table played by hand, and the engine spec has a check for it that
 failed before the fix.
 
+### M1: the whole corpus, and a deck the engine can enforce — 2026-09-21
+
+**What the engine knows.** Every set in Argentum's `MtgSetCatalog.all`: 179
+sets, 137 of them marked incomplete upstream, and 13,242 names a deck may
+hold (no tokens, back faces or meld results, which the engine knows but a
+deck cannot). The other eras compiled in 153 s on the owner's machine. The
+first answer takes 15.4 to 15.9 s while the corpus loads, and the process then
+holds 110 MB; the printing registry adds about 2.5 s and 6 MB of that. In the
+browser, the lobby's first answer about a deck came 14 s after pressing "Play
+the engine" (the checker loading), and sitting down reached the first prompt
+in 16 s (the room's own process loading). Until M8 keeps an engine warm, one
+process per room and one for checking decks is the cost of that.
+
+**What was built**, per the brief: the corpus; `check` on the wire and `POST
+/engine/check` on the relay; the lobby asking about each deck before anyone
+sits, and a deck the engine does not wholly know offering both ways on (the
+owner's answer, `HANDOFF.md` §3 item 10); printings sent by Scryfall's set and
+collector number and dealt as chosen; the sideboard as Argentum's
+`Deck.sideboard`; the engine pinned at `70d525c`. The wire is in
+`engine/README.md`.
+
+**An adversarial review found twelve things, all fixed:** an engine left
+running after a failed start; a UTF-8 character split across two chunks of a
+request body; shutdown flushing tables after closing engines, and `quit` not
+bounded by the grace period; an unreadable answer from the relay read as "the
+engine knows every card"; Sit hanging with no relay address; a deck's cards
+from another tab left stale; the 502 message prefixed twice; a Wildcard press
+not cancelled when another deck was chosen; meld results offered as cards a
+deck may hold; printings without tests; a comment that said more than the code
+did; and the wire appendix out of date.
+
+**The run in a browser.** A Standard deck typed into the app's own editor
+(Delver of Secrets, Monastery Swiftspear, Lightning Bolt, Heartfire Immolator,
+Déjà Vu, Islands and Mountains; 60 cards), against the real engine through
+the relay and the built app. The lobby said the engine knows all 60, the
+engine dealt, a land was played and the turn passed to the engine and back.
+Swiftspear and Déjà Vu wore exactly the printings the deck names. Lightning
+Bolt (Marvel Super Heroes Commander, MSC 806) and the basics (Star Trek, TRK
+319 and 323, a set not out until 2026-11-13) are printings the engine has not
+got, so they showed the engine's own art and the log said so once, as the
+owner chose. The importer took Scryfall's newest printing of each; whether a
+deck typed in by name should default to a released one is a question for the
+importer, not the engine.
+
+**Found by the run, and fixed**, each now held by a test that failed before:
+
+1. *The log was mute.* Argentum's log lines compute their words as a default,
+   and the process encoded with `encodeDefaults = false`, so almost none
+   reached the table: a land played, a spell cast, the engine's whole turn,
+   all unsaid since the engine first went on screen. Every line now carries
+   its `description` (`tests/engine-live.test.js`).
+2. *And once it spoke, it named the opponent's hand.* Argentum phrases every
+   zone change by the card's name whoever is looking, so the log read the
+   engine's opening hand out card by card. The names were on the wire before
+   this, just without words. The process now leaves a move between another
+   seat's hidden zones out of your log, says a draw or a discard once, and
+   leaves out taps, untaps and mana as Argentum's own game server does.
+3. *Lines were filed where the view stopped, not where they happened.* A view
+   arrives only at a stop, so the engine's turn read as the start of yours and
+   its draw sat in its upkeep. The process stamps each line with its step, and
+   the table turns the engine's own "--- Turn 2 ---" marks into its turn
+   headers. The engine's turn now reads as its own: its draw in its draw step,
+   its land in its main phase.
+
+The notes that name cards ("the engine does not have your printing of …")
+now end their lists with "and".
+
+**Not done, and where it goes.** The "passed N priority windows" note arrives
+with the status, before the view, so it sits above the land played before
+those windows; M2 reorders it (`HANDOFF.md`, M2 step 3). A warm engine, so
+nobody waits 16 s to sit, is M8; the engine in CI is M9; a wish's choice is
+M4. Reality Fracture is still not in the engine; when upstream adds FRA and
+FRC, moving the pin is a deliberate commit with the compile and the game
+measured again.
+
+The bar at the end: 1,313 unit tests; 29 browser specs, 910 checks, none
+failed, the engine's own spec 49 of them against the real engine; the live
+engine suite 12 of 12; no JVM left running after either.
+
 ## Phase 3-alt — Writing the rules core ourselves
 
 Only if the owner wants the engine to be ours. `src/lib/engine/`, TypeScript,

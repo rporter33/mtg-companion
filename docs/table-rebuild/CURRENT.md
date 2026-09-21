@@ -31,6 +31,14 @@ tab plays it through the same screens as the other two tables ("Play the
 engine" in the lobby, `#/game/engine/<code>`). See `PLAN.md`, "The engine on
 screen".
 
+Added at M1 (2026-09-21), the deck the engine is given:
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/engine/deck.js` | 134 | `seatDeck`: a deck as the engine takes it, one function for the lobby's check and the sit, with printings, the sideboard and a count of cards not yet loaded; `verdictOf`, `leaveOut`, `nameList`. Pure. |
+| `src/features/game/useEngineCheck.js` | 109 | What the relay's engine says about each deck on the shelf, asked one deck at a time before anyone sits. |
+| `tests/engine-deck.test.js` | 116 | The deck module's tests. |
+
 ## `src/lib/board/` — the rules-free table
 
 | File | Lines | What it holds |

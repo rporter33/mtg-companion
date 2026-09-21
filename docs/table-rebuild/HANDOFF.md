@@ -67,12 +67,12 @@ The engine path, top to bottom:
 | Layer | File | Lines | Does |
 | --- | --- | --- | --- |
 | The rules | Argentum, a separate checkout | — | Comprehensive Rules, 12,979 distinct cards, an AI. MIT. `ENGINE.md`. |
-| The process | `engine/src/main/kotlin/companion/Server.kt` | 404 | One game, JSON lines on stdin/stdout. Law 1 server-side. AI seats. Per-seat logs. |
-| The bridge | `scripts/engine-bridge.mjs` | — | Spawns the process, promises per request, timeouts, exit handling. |
-| The room | `scripts/relay-engine.mjs` | 148 | One process per enforced room on the relay. Seats, decks, `stop` numbers, views per seat. |
+| The process | `engine/src/main/kotlin/companion/Server.kt` | 686 | One game, JSON lines on stdin/stdout. The whole corpus, printings, the sideboard, `check`. Law 1 server-side. AI seats. Per-seat logs, masked for the seat and stamped with their step. |
+| The bridge | `scripts/engine-bridge.mjs` | 121 | Spawns the process, promises per request, timeouts, exit handling. |
+| The room | `scripts/relay-engine.mjs` | 198 | One process per enforced room on the relay. Seats, decks, `stop` numbers, views per seat. |
 | The wire | `src/lib/board/relay.js` | — | `rooms(base).open({ enforced: true })`, `health()`. |
-| The seat | `src/features/game/useEngineRoom.js` | 136 | Sits with the deck's names; status, views, refusals, `act`, `decide`, local moves. |
-| The board | `src/lib/engine/board.js` | 207 | `ClientGameState` → the board model. Positions kept. Backs for hidden zones. Scryfall ids from image links. Events for the log. |
+| The seat | `src/features/game/useEngineRoom.js` | 178 | Sits with the deck's names; status, views, refusals, `act`, `decide`, local moves. |
+| The board | `src/lib/engine/board.js` | 224 | `ClientGameState` → the board model. Positions kept. Backs for hidden zones. Scryfall ids from image links. Events for the log, filed by the engine's turn marks and each line's step. |
 | The screen | `Table.jsx`, `Seats.jsx`, `Lobby.jsx` | — | Play the engine; one-tap offers; attack by tapping; prompt panel; Pass on the rail. |
 
 Measured, on the cloud container (a modest box):
@@ -181,6 +181,19 @@ These are settled. Do not reopen them; build on them.
 8. **The plan lives here,** one document, per-milestone briefs a session can
    take one at a time.
 9. **Argentum stays upstream.** Contribute, do not fork (`PLAN.md`).
+10. **Decided at M1, 2026-09-21.** A deck with cards the engine does not
+    know offers both ways on: play the engine without them, the table then
+    saying which were left out, or play the whole deck alone by hand. A
+    sideboard card the engine does not know is left out and said, not a
+    reason to refuse the game. A printing the engine has not got shows the
+    engine's own art to every seat, with one line in the log saying so.
+11. **Taken as defaults at M1, and the owner's to overturn:** a card in
+    several printings is sent as a list of them; a wish's choice stays with
+    the engine's responder until M4; the Wildcard at the engine's table
+    draws from the decks it fully knows; a reversible card goes by its
+    single name; the engine's heap ceiling is 2 GB, with one process per
+    room and one for checking decks, until M8 sizes hosting from the
+    measured 110 MB.
 
 ---
 
@@ -238,6 +251,10 @@ own page, and the bundle ships or the document says why not.
 ### M1 — The whole corpus, and a deck the engine can enforce
 
 *Size: medium. The single biggest step toward playing a real deck.*
+
+**Done, 2026-09-21.** What was measured, what the review and the run in a
+browser found, and what is left are in `PLAN.md`, "M1: the whole corpus".
+The owner's answers are §3 item 10.
 
 Today only Portal is registered (`registry()` in `Server.kt`), so any real
 deck is refused with a list of names. The whole corpus compiled in **130 s**
@@ -354,8 +371,14 @@ Build:
    a full view request rather than a wrong board.
 3. **The log during their turn.** With views arriving mid-turn,
    `eventsBetween` already emits `turnBegan` and `stepped` for the engine's
-   turn. Add "The engine is thinking…" as the plate status while
-   `waiting: "engine"`, and the prompt panel says nothing, as Moxgate's does.
+   turn. Since M1 every log line carries its words and the step it happened
+   in, and the engine's turn marks become turn headers, so the engine's turn
+   is already said after the fact, in the right turn and step; what M2 adds
+   is watching it arrive. Add "The engine is thinking…" as the plate status
+   while `waiting: "engine"`, and the prompt panel says nothing, as Moxgate's
+   does. Put the "passed N priority windows" note after the view it belongs
+   to: today `status` arrives first, so the note lands above the land played
+   before those windows.
 4. **Capture new fixtures** (`tests/fixtures/engine-views.json`) from a game
    that includes the engine's turn mid-flight, blocks, and a decision, so the
    adapter tests cover them. The capture script that made the first fixture
@@ -660,9 +683,8 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 
 ## 6. Open questions for the owner, to ask when each is reached
 
-- M1: for a deck the engine cannot fully enforce, is the fallback to the
-  unenforced table enough, or should the table say which cards would be
-  unenforced and let the game run with them removed?
+- M1: answered on 2026-09-21. Both: the lobby offers the engine without
+  those cards, and the table alone (§3, item 10).
 - M3: which level is the default for a first game? The plan assumes
   intermediate.
 - M8: which provider, once `HOSTING.md` has verified notes for three.
@@ -676,7 +698,7 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 Between the browser and the relay, over the room's socket, all
 `{ t: "engine", op }`: `sit { name, deck, sideboard?, seat? }`, `act { stop, index,
 attackers?, blockers? }`, `decide { stop, … }`, `turn`; back: `seated { seat,
-engineSeat, sideboardLeftOut }`, `seats`, `status`, `view { you, state, log }`,
+engineSeat, sideboardLeftOut, unknownPrintings }`, `seats`, `status`, `view { you, state, log }`,
 `refused`, `gone`. Over HTTP, before any room: `POST /engine/check`.
 
 Between the relay and the process, JSON lines: `hello`, `cards`, `new`,
