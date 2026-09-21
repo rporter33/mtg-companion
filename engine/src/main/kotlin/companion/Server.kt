@@ -9,6 +9,8 @@ import com.wingedsheep.engine.core.DeclareBlockers
 import com.wingedsheep.engine.core.ChooseTargetsDecision
 import com.wingedsheep.engine.core.DecisionResponse
 import com.wingedsheep.engine.core.GameConfig
+import com.wingedsheep.engine.core.GameEvent
+import com.wingedsheep.engine.core.GameInitializer
 import com.wingedsheep.engine.core.OptionChosenResponse
 import com.wingedsheep.engine.core.PendingDecision
 import com.wingedsheep.engine.core.PlayLand
@@ -20,6 +22,7 @@ import com.wingedsheep.engine.core.YesNoResponse
 import com.wingedsheep.engine.legalactions.LegalAction
 import com.wingedsheep.engine.legalactions.MeaningfulActionFilter
 import com.wingedsheep.engine.registry.CardRegistry
+import com.wingedsheep.engine.registry.PrintingRegistry
 import com.wingedsheep.engine.view.ClientEvent
 import com.wingedsheep.engine.view.ClientEventTransformer
 import com.wingedsheep.engine.view.ClientGameState
@@ -35,6 +38,7 @@ import com.wingedsheep.sdk.model.MtgSet
 import com.wingedsheep.sdk.model.CardEntry
 import com.wingedsheep.sdk.model.Deck
 import com.wingedsheep.sdk.model.EntityId
+import com.wingedsheep.sdk.model.PrintingRef
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -83,18 +87,31 @@ import java.util.Random
  *    own responder for now and reported under `decided`, so the table can
  *    show what was done on the player's behalf rather than hide it.
  */
-const val PROTOCOL = 1
+// 2: a deck line may name its printing, {"count","set","number"} or a list of those, and
+// the deal honours it. An engine at 1 reads only counts, so the relay sends it only counts.
+const val PROTOCOL = 2
 
 private val json = Json { encodeDefaults = false; ignoreUnknownKeys = true }
 
-private class Seat(val id: EntityId, val name: String, val ai: String?, val autoPass: Boolean, val sideboardLeftOut: List<String> = emptyList())
+private class Seat(
+    val id: EntityId,
+    val name: String,
+    val ai: String?,
+    val autoPass: Boolean,
+    val sideboardLeftOut: List<String> = emptyList(),
+    /** Cards whose chosen printing the engine does not have, so they wear its own art. */
+    val unknownPrintings: List<String> = emptyList(),
+)
 
-private class Table(val registry: CardRegistry, val env: GameEnvironment, val seats: List<Seat>, val seed: Long) {
+private class Table(val registry: CardRegistry, val env: GameEnvironment, val seats: List<Seat>, val seed: Long, dealt: List<GameEvent> = emptyList()) {
     val transformer = ClientStateTransformer(registry)
     val lastView = HashMap<EntityId, ClientGameState>()
     /** What each seat has been told happened, in its own words: the game log. */
     val logs = HashMap<EntityId, MutableList<ClientEvent>>()
     private var logged = 0
+    // The deal's own events, which GameEnvironment.restore does not keep: without them
+    // the log would begin after the opening hands were drawn.
+    init { if (dealt.isNotEmpty()) for (seat in seats) logs.getOrPut(seat.id) { mutableListOf() } += ClientEventTransformer.transform(dealt, seat.id) }
 
     /** Carries the engine's events since the last call into every seat's log, masked for that seat. */
     fun record() {
@@ -336,6 +353,8 @@ private class Refused(message: String) : RuntimeException(message)
  */
 private class Corpus(
     val registry: CardRegistry,
+    /** Every printing the engine can put on a card: each definition's own, and each set's reprints. */
+    val printings: PrintingRegistry,
     val sets: List<MtgSet>,
     /** What a deck may hold: every set's cards and basic lands. Not a token, not a back face. */
     val deckable: Set<String>,
@@ -357,12 +376,19 @@ private fun corpus(): Corpus {
         }
     }
     val deckable = sets.flatMapTo(HashSet()) { set -> set.cards.map { it.name } + set.basicLands.map { it.name } }
+    // As game-server builds its own: a default printing made from every registered
+    // definition, which carries the set it was stamped with, then each set's reprint rows.
+    // Built from the definitions already stamped above rather than stamping them again.
+    val printings = PrintingRegistry().apply {
+        for (name in registry.allCardNames()) registry.getCardsByName(name).forEach(::registerSynthesizedDefault)
+        for (set in sets) register(set.printings)
+    }
     val loadMs = (System.nanoTime() - started) / 1_000_000
     // One collection first, so the figure is what the corpus holds rather than what
     // loading it threw away.
     System.gc()
     val rt = Runtime.getRuntime()
-    return Corpus(registry, sets, deckable, loadMs, (rt.totalMemory() - rt.freeMemory()) / MB)
+    return Corpus(registry, printings, sets, deckable, loadMs, (rt.totalMemory() - rt.freeMemory()) / MB)
 }
 
 private fun List<CardDefinition>.stamped(set: MtgSet): List<CardDefinition> = map { card ->
@@ -420,11 +446,25 @@ private fun resolveName(corpus: Corpus, name: String): String? {
     return front.takeIf { parts.drop(1).all { it != front && it in faces } }
 }
 
+/**
+ * The printing a deck line names, kept only when the engine has that printing and it is this
+ * card. Printing.name is a card's front, which is what the line resolved to, so a double-faced
+ * card's pin is compared with its front and not with Scryfall's "Front // Back". Set codes are
+ * upper case in Argentum and lower case in Scryfall; collector numbers are Scryfall's spelling
+ * in both, "208s" and "★" included.
+ */
+private fun pinOf(corpus: Corpus, line: Line, card: String): PrintingRef? {
+    val set = line.set ?: return null
+    val number = line.number ?: return null
+    return PrintingRef(set.uppercase(), number).takeIf { corpus.printings.getPrinting(it)?.name == card }
+}
+
 private fun newTable(corpus: Corpus, params: JsonObject): Table {
     val registry = corpus.registry
     val players = params["players"]?.jsonArray ?: throw Refused("\"players\" is required.")
     if (players.size < 2) throw Refused("A game needs at least two players.")
     val leftOutOfSideboards = mutableListOf<List<String>>()
+    val printingsMissed = mutableListOf<List<String>>()
     val configs = players.mapIndexed { i, p ->
         val o = p.jsonObject
         val name = o["name"]?.jsonPrimitive?.contentOrNull ?: "Player ${i + 1}"
@@ -434,7 +474,9 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
         if (missing.isNotEmpty()) throw Refused("The engine does not know ${missing.size} of $name's cards: ${missing.joinToString(", ")}")
         // One entry per copy, under the name the engine knows, in the order the deck gave them:
         // the same list Deck.of built, so a seed deals the same game it did before.
-        val entries = lines.flatMap { l -> List(l.count!!) { CardEntry(resolveName(corpus, l.name)!!) } }
+        // Each copy carries the printing the deck named, when the engine has it, so the deal
+        // stamps that printing's art on the card; otherwise the card wears the engine's own.
+        val entries = lines.flatMap { l -> resolveName(corpus, l.name)!!.let { card -> List(l.count!!) { CardEntry(card, pinOf(corpus, l, card)) } } }
         // The cards the player owns outside the game, which only a wish reaches (Argentum's
         // Deck.sideboard, citing CR 100.4). One the engine does not know is left out rather than
         // refused, as the owner chose on 2026-09-21: a whole game is too much to refuse over a
@@ -443,7 +485,12 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
         side.firstOrNull { it.count == null }?.let { throw Refused("$name's sideboard lists ${it.name} without a number of copies.") }
         val (sideKnown, sideUnknown) = side.partition { resolveName(corpus, it.name) != null }
         leftOutOfSideboards += sideUnknown.map { it.name }.distinct()
-        val sideboard = sideKnown.flatMap { l -> List(l.count!!) { CardEntry(resolveName(corpus, l.name)!!) } }
+        val sideboard = sideKnown.flatMap { l -> resolveName(corpus, l.name)!!.let { card -> List(l.count!!) { CardEntry(card, pinOf(corpus, l, card)) } } }
+        // A printing named but not held: said once per card, so the table can say whose art it wears.
+        printingsMissed += (lines + sideKnown)
+            .filter { it.set != null && it.number != null }
+            .mapNotNull { l -> resolveName(corpus, l.name)?.takeIf { pinOf(corpus, l, it) == null } }
+            .distinct()
         PlayerConfig(name = name, deck = Deck.fromEntries(entries, sideboard = sideboard), startingLife = o["life"]?.jsonPrimitive?.int ?: 20)
     }
     // The seed decides the shuffle, every coin flip and every other "at random",
@@ -453,17 +500,21 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
     // JavaScript number and a larger Long would come back as a different game.
     val seed = params["seed"]?.jsonPrimitive?.longOrNull ?: (Random().nextLong() ushr 11)
     val env = GameEnvironment.create(registry)
-    env.reset(GameConfig(
+    // Dealt here, not by env.reset: reset builds its GameInitializer without a printing
+    // registry, so every card would wear the default art whatever printing the deck named.
+    // restore installs the deal and drops its events, which the Table keeps for the log.
+    val dealt = GameInitializer(registry, corpus.printings).initializeGame(GameConfig(
         players = configs,
         skipMulligans = params["skipMulligans"]?.jsonPrimitive?.boolean ?: true,
         startingPlayerIndex = params["startingPlayer"]?.jsonPrimitive?.int ?: 0,
         seed = seed,
     ))
+    env.restore(dealt.state, dealt.playerIds)
     val seats = env.playerIds.mapIndexed { i, id ->
         val o = players[i].jsonObject
-        Seat(id, configs[i].name, o["ai"]?.jsonPrimitive?.contentOrNull, o["autoPass"]?.jsonPrimitive?.boolean ?: false, leftOutOfSideboards[i])
+        Seat(id, configs[i].name, o["ai"]?.jsonPrimitive?.contentOrNull, o["autoPass"]?.jsonPrimitive?.boolean ?: false, leftOutOfSideboards[i], printingsMissed[i])
     }
-    return Table(registry, env, seats, seed)
+    return Table(registry, env, seats, seed, dealt.events)
 }
 
 private fun seatsOf(table: Table): JsonArray = buildJsonArray {
@@ -471,6 +522,7 @@ private fun seatsOf(table: Table): JsonArray = buildJsonArray {
         add(buildJsonObject {
             put("id", s.id.value); put("name", s.name); put("ai", s.ai); put("autoPass", s.autoPass)
             putJsonArray("sideboardLeftOut") { s.sideboardLeftOut.forEach { add(JsonPrimitive(it)) } }
+            putJsonArray("unknownPrintings") { s.unknownPrintings.forEach { add(JsonPrimitive(it)) } }
         })
     }
 }
@@ -480,7 +532,7 @@ fun main() {
     var table: Table? = null
     val out = System.out.bufferedWriter()
     // UTF-8 both ways, whatever the machine's default: a deck arrives with names such as
-    // "Juzám Djinn", and a JAVA_TOOL_OPTIONS setting file.encoding must not garble them.
+    // "Déjà Vu", and a JAVA_TOOL_OPTIONS setting file.encoding must not garble them.
     val input = System.`in`.bufferedReader(Charsets.UTF_8)
 
     fun reply(id: JsonElement?, body: JsonObject) {

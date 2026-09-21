@@ -16,17 +16,44 @@ export function engineName(card) {
   return card?.name ?? null
 }
 
-/** Name to copies, and how many copies had no name to go by because their card has not loaded. */
+/** How many copies a deck line holds: a count, a printing with a count, or a list of those. */
+export function copiesOf(line) {
+  if (Array.isArray(line)) return line.reduce((sum, x) => sum + copiesOf(x), 0)
+  const n = typeof line === 'number' ? line : line?.count
+  return Number.isInteger(n) && n > 0 ? n : 0
+}
+
+/**
+ * Name to deck line, and how many copies had no name to go by because their
+ * card has not loaded. A line names the printing the player chose, by
+ * Scryfall's set and collector number, so the engine can deal that printing's
+ * art when it has it: `{count, set, number}`, or a list of those when one card
+ * is in the deck in several printings. A card with no printing to name goes
+ * as a plain count, the shape an engine before printings reads.
+ */
 function countNames(entries, lookup) {
-  const out = {}
+  const byName = new Map()
   let total = 0
   let unloaded = 0
   for (const entry of Array.isArray(entries) ? entries : []) {
     const copies = entry?.quantity ?? 1
     total += copies
-    const name = engineName(lookup?.(entry?.cardId))
+    const card = lookup?.(entry?.cardId)
+    const name = engineName(card)
     if (!name) { unloaded += copies; continue }
-    out[name] = (out[name] ?? 0) + copies
+    const set = card?.set || null
+    const number = card?.collector_number || null
+    const key = set && number ? `${set} ${number}` : ''
+    const lines = byName.get(name) ?? new Map()
+    const line = lines.get(key) ?? (key ? { count: 0, set, number } : { count: 0 })
+    line.count += copies
+    lines.set(key, line)
+    byName.set(name, lines)
+  }
+  const out = {}
+  for (const [name, lines] of byName) {
+    const list = [...lines.values()]
+    out[name] = list.length > 1 ? list : list[0].set ? list[0] : list[0].count
   }
   return { out, total, unloaded }
 }
@@ -64,8 +91,8 @@ export function leaveOut(seat, names) {
   const deck = { ...seat.deck }
   const left = []
   for (const name of Array.isArray(names) ? names : []) {
-    if (typeof name !== 'string' || !(deck[name] > 0)) continue
-    left.push({ name, count: deck[name] })
+    if (typeof name !== 'string' || !(copiesOf(deck[name]) > 0)) continue
+    left.push({ name, count: copiesOf(deck[name]) })
     delete deck[name]
   }
   const gone = left.reduce((sum, l) => sum + l.count, 0)
@@ -86,7 +113,7 @@ export function verdictOf(seat, reply) {
   if (!Array.isArray(reply?.unknown)) return { state: 'unreadable', ...base }
   const lines = (held, named) => {
     const asked = new Set(Array.isArray(named) ? named.filter((n) => typeof n === 'string') : [])
-    return Object.keys(held ?? {}).filter((name) => asked.has(name)).map((name) => ({ name, count: held[name] }))
+    return Object.keys(held ?? {}).filter((name) => asked.has(name)).map((name) => ({ name, count: copiesOf(held[name]) }))
   }
   const unknown = lines(seat.deck, reply.unknown)
   const missing = unknown.reduce((sum, u) => sum + u.count, 0)

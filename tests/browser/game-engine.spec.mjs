@@ -28,8 +28,8 @@ import { fileURLToPath } from 'node:url'
 const SHOT = (name) => join(tmpdir(), `engine-${name}.png`)
 const AXE = fileURLToPath(new URL('../../node_modules/axe-core/axe.min.js', import.meta.url))
 
-// An engine process loads the whole card corpus before its first answer: 13 s
-// on the owner's machine (engine/README.md). A room's engine starts when the
+// An engine process loads the whole card corpus before its first answer: about
+// 15 s on the owner's machine (engine/README.md). A room's engine starts when the
 // seat is taken and the lobby's checker when a deck is first asked about, so
 // the waits that include one starting cover that, with room for a slower
 // runner; every other wait is after it.
@@ -81,13 +81,16 @@ const c = (id, name, type_line, over = {}) => ({
   set_name: 'Portal', collector_number: '1', legalities: { standard: 'legal' }, prices: { usd: '1.00' },
   image_uris: { art_crop: PIXEL, small: PIXEL, normal: PIXEL }, ...over,
 })
+// Portal's own collector numbers, the same in Scryfall and in Argentum (both
+// checked 2026-09-21): the app sends a card's printing with it, and the engine
+// deals that printing when it has it.
 const CARDS = [
-  c('mountain', 'Mountain', 'Basic Land — Mountain', { mana_cost: '', cmc: 0, produced_mana: ['R'] }),
-  c('goblin', 'Raging Goblin', 'Creature — Goblin Berserker', { power: '1', toughness: '1', oracle_text: 'Haste' }),
-  c('bully', 'Goblin Bully', 'Creature — Goblin', { mana_cost: '{1}{R}', cmc: 2, power: '2', toughness: '1' }),
-  c('hulk', 'Hulking Goblin', 'Creature — Goblin', { mana_cost: '{2}{R}', cmc: 3, power: '2', toughness: '2' }),
-  c('hammer', 'Volcanic Hammer', 'Sorcery', { mana_cost: '{1}{R}', cmc: 2, oracle_text: 'Volcanic Hammer deals 3 damage to any target.' }),
-  c('axe', 'Lava Axe', 'Sorcery', { mana_cost: '{4}{R}', cmc: 5, oracle_text: 'Lava Axe deals 5 damage to target player.' }),
+  c('mountain', 'Mountain', 'Basic Land — Mountain', { mana_cost: '', cmc: 0, produced_mana: ['R'], collector_number: '208' }),
+  c('goblin', 'Raging Goblin', 'Creature — Goblin Berserker', { power: '1', toughness: '1', oracle_text: 'Haste', collector_number: '145' }),
+  c('bully', 'Goblin Bully', 'Creature — Goblin', { mana_cost: '{1}{R}', cmc: 2, power: '2', toughness: '1', collector_number: '131' }),
+  c('hulk', 'Hulking Goblin', 'Creature — Goblin', { mana_cost: '{2}{R}', cmc: 3, power: '2', toughness: '2', collector_number: '135' }),
+  c('hammer', 'Volcanic Hammer', 'Sorcery', { mana_cost: '{1}{R}', cmc: 2, oracle_text: 'Volcanic Hammer deals 3 damage to any target.', collector_number: '154' }),
+  c('axe', 'Lava Axe', 'Sorcery', { mana_cost: '{4}{R}', cmc: 5, oracle_text: 'Lava Axe deals 5 damage to target player.', collector_number: '137' }),
   // No such cards exist, so the engine cannot know them: the deck gate's cases.
   c('madeup', 'Made-Up Goblin', 'Creature — Goblin', { power: '1', toughness: '1' }),
   c('madewish', 'Made-Up Wish', 'Sorcery'),
@@ -212,6 +215,7 @@ check('the tile is in the lands row', await until(() => page.locator('.game__fie
 // its turn, and the log says what was passed for us on the way.
 const passBtn = page.getByRole('button', { name: '→ Pass' })
 const logText = () => page.locator('.gamelog').textContent().then((t) => t ?? '')
+check('every printing the deck names is one the engine has, so the log does not say otherwise', !/does not have your printing/.test(await logText()))
 await passBtn.click()
 check('after a pass the engine comes back to the next stop', await until(() => prompt.count().then((n) => n === 1), 20000))
 check('the log says how many windows the engine passed for you', await until(() => logText().then((t) => /passed \d+ priority window/.test(t)), 20000))

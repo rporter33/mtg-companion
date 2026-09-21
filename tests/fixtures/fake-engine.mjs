@@ -37,7 +37,8 @@ lines.on('line', (line) => {
   switch (req.op) {
     // The real engine's shape: every set it knows, in release order, and what
     // loading them cost. Portal's details are Argentum's own (PortalSet.kt).
-    case 'hello': say({ id, ok: true, engine: 'fake', protocol: 1, cards: 3, sets: [{ code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false }], load: { ms: 0, heapMb: 0, maxHeapMb: 0 } }); break
+    // FAKE_PROTOCOL plays an older engine, to test what the relay sends one.
+    case 'hello': say({ id, ok: true, engine: 'fake', protocol: Number(process.env.FAKE_PROTOCOL) || 2, cards: 3, sets: [{ code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false }], load: { ms: 0, heapMb: 0, maxHeapMb: 0 } }); break
     case 'cards': say({ id, ok: true, names: [...new Set(shots.flatMap((s) => Object.values(s.view.cards).map((c) => c.name)))].sort() }); break
     case 'check': {
       if (!req.deck || typeof req.deck !== 'object') { say({ id, ok: false, error: '"deck" is required.' }); break }
@@ -57,7 +58,7 @@ lines.on('line', (line) => {
       at = 0; acted = 0
       lastNew = req
       // A sideboard card it does not know is left out and named, as the real engine does.
-      say({ id, ...status(), seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName) })) })
+      say({ id, ...status(), seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: [] })) })
       break
     }
     case 'turn': say({ id, ...status() }); break

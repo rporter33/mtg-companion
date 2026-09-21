@@ -364,6 +364,29 @@ describe('an enforced room', () => {
     you.leave()
   })
 
+  it('passes printings through to an engine that reads them, and only counts to one that does not', async () => {
+    const deck = { Mountain: { count: 14, set: 'por', number: '208' }, 'Raging Goblin': [{ count: 4, set: 'por', number: '145' }, { count: 2 }] }
+    const current = await roomsApi(base).open({ seats: 2, enforced: true })
+    const a = await join(current.code, 'Robin', { deck })
+    await until(() => a.last('view'), 5000)
+    expect((await relayServer.rooms.get(current.code).engine.engine.call('lastNew')).request.players[0].deck).toEqual(deck)
+    a.leave()
+    // An engine built before printings reads a deck line only as a count. The
+    // environment is read when the relay starts that room's engine, at the sit.
+    process.env.FAKE_PROTOCOL = '1'
+    try {
+      const older = await roomsApi(base).open({ seats: 2, enforced: true })
+      const b = await join(older.code, 'Robin', { deck })
+      await until(() => b.last('view'), 5000)
+      const sent = (await relayServer.rooms.get(older.code).engine.engine.call('lastNew')).request
+      expect(sent.players[0].deck).toEqual({ Mountain: 14, 'Raging Goblin': 6 })
+      expect(sent.players[1].deck).toEqual({ Mountain: 14, 'Raging Goblin': 6 })
+      b.leave()
+    } finally {
+      delete process.env.FAKE_PROTOCOL
+    }
+  })
+
   it('sends no sideboard for a deck that has none', async () => {
     const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
     const you = await join(code, 'Robin')

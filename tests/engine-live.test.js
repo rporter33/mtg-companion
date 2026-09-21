@@ -27,7 +27,7 @@ describe.skipIf(!command)('the engine on the wire', () => {
 
   it('says who it is, and knows the whole corpus rather than one set', async () => {
     expect(hello.engine).toBe('argentum')
-    expect(hello.protocol).toBe(1)
+    expect(hello.protocol).toBe(2)
     expect(hello.cards).toBeGreaterThan(12_000)
     expect(hello.sets.length).toBeGreaterThan(100)
     expect(hello.sets.find((s) => s.code === 'POR')).toEqual({ code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false })
@@ -117,6 +117,31 @@ describe.skipIf(!command)('the engine on the wire', () => {
     const view = (await engine.call('view', { viewer: a })).state
     const side = view.zones.find((z) => /sideboard/i.test(z.zoneId.zoneType) && z.zoneId.ownerId === a)
     expect(side?.size).toBe(2)
+  }, 60_000)
+
+  it('deals the printing a deck names, and says which it does not have', async () => {
+    const status = await engine.call('new', {
+      players: [{
+        name: 'A',
+        deck: {
+          // Portal's Mountain 208, whose Scryfall id is 17cf7ce4-… (checked 2026-09-21);
+          // unpinned, a Mountain wears The Hobbit's.
+          Mountain: { count: 20, set: 'por', number: '208' },
+          // A number Portal never printed: named, not held, so the engine's own art.
+          'Raging Goblin': { count: 20, set: 'por', number: '9999' },
+        },
+      }, { name: 'B', deck }],
+      seed: 3,
+    })
+    expect(status.seats[0].unknownPrintings).toEqual(['Raging Goblin'])
+    expect(status.seats[1].unknownPrintings).toEqual([])
+    const a = status.seats[0].id
+    const view = (await engine.call('view', { viewer: a })).state
+    const mine = view.zones.find((z) => z.zoneId.zoneType === 'Hand' && z.zoneId.ownerId === a).cardIds.map((id) => view.cards[id])
+    const mountain = mine.find((c) => c.name === 'Mountain')
+    expect(mountain?.imageUri).toMatch(/17cf7ce4-d5d7-49f2-a7e4-021d1a2d58c5/)
+    // The deal's own events survive being dealt outside env.reset: the log opens with the draw.
+    expect((await engine.call('view', { viewer: a })).log.length).toBeGreaterThan(0)
   }, 60_000)
 
   it('plays a game with cards from sets other than Portal', async () => {

@@ -41,6 +41,23 @@ describe('a deck made ready for the engine', () => {
     expect(seatDeck(null, lookup)).toEqual({ deck: {}, sideboard: {}, total: 0, unloaded: 0, sideboardUnloaded: 0 })
   })
 
+  it('names the printing the player chose, and lists them when a card is in several', () => {
+    const printed = {
+      m1: { name: 'Mountain', set: 'por', collector_number: '208' },
+      m2: { name: 'Mountain', set: 'por', collector_number: '209' },
+      g: { name: 'Raging Goblin', set: 'por', collector_number: '145' },
+    }
+    const seat = seatDeck({ main: [{ cardId: 'm1', quantity: 10 }, { cardId: 'm2', quantity: 4 }, { cardId: 'g', quantity: 6 }] }, (id) => printed[id])
+    expect(seat.deck).toEqual({
+      Mountain: [{ count: 10, set: 'por', number: '208' }, { count: 4, set: 'por', number: '209' }],
+      'Raging Goblin': { count: 6, set: 'por', number: '145' },
+    })
+    expect(seat.total).toBe(20)
+    // What the gate reads from those lines is still how many copies.
+    expect(verdictOf(seat, { unknown: ['Mountain'] })).toMatchObject({ known: 6, unknown: [{ name: 'Mountain', count: 14 }] })
+    expect(leaveOut(seat, ['Mountain']).left).toEqual([{ name: 'Mountain', count: 14 }])
+  })
+
   it('sends the sideboard of a format that has one, and not one that holds a maybeboard', () => {
     const deck = { main: [{ cardId: 'a', quantity: 20 }], sideboard: [{ cardId: 'c', quantity: 2 }, { cardId: 'gone', quantity: 1 }] }
     const constructed = seatDeck({ ...deck, formatId: 'standard' }, lookup)

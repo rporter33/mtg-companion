@@ -20,8 +20,10 @@ after that, seconds.
 
 **The whole corpus, loaded.** Every set Argentum has: 179 of them, 137 marked
 incomplete by Argentum itself, and 13,246 card names a deck may hold. Loading
-them is most of the engine's first answer, 12.8 s of 13.1 s on the owner's
-machine, and they then hold 104 MB. The launcher's heap ceiling is 2 GB
+them, and building the printing registry from them, is most of the engine's
+first answer: 15.2 s of 15.4 s on the owner's machine (15.9 s on a second run),
+after which they hold 110 MB. The printings cost about 2.5 s and 6 MB of that;
+the cards alone took 12.8 s and 104 MB. The launcher's heap ceiling is 2 GB
 (`-Xmx2g`, the ceiling Argentum gives its own whole-corpus tests; set
 `COMPANION_OPTS` to change it), and `hello` reports what was actually used. The
 relay gives an engine's first answer two minutes (`STARTUP_MS` in
@@ -54,10 +56,10 @@ One request per line, one reply per line, correlated by `id`:
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"engine":"argentum","protocol":1,"cards":13246,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"load":{"ms":12842,"heapMb":104,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order |
+| `{"op":"hello"}` | `{"engine":"argentum","protocol":2,"cards":13246,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"load":{"ms":15207,"heapMb":110,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order |
 | `{"op":"cards"}` | `{"names":[…]}` — every name a deck may hold: no tokens and no back faces, though the engine knows both |
 | `{"op":"check","deck":{"Delver of Secrets // Insectile Aberration":4,"Made-Up Card":2},"sideboard":{…}}` | `{"known":4,"total":6,"unknown":["Made-Up Card"],"unknownSideboard":[]}` — which of a deck's cards the engine knows, before any game; unknown names come back exactly as sent |
-| `{"op":"new","players":[{"name":"You","deck":{"Mountain":14,"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic"}],"seed":20260921}` | the table's status (below) plus `seats` and the `seed` it was dealt from; each seat says `sideboardLeftOut`, the sideboard cards it did not know |
+| `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic"}],"seed":20260921}` | the table's status (below) plus `seats` and the `seed` it was dealt from; each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got |
 | `{"op":"turn"}` | the table's status |
 | `{"op":"act","index":3}` | the status after that action and everything that followed it |
 | `{"op":"act","index":0,"attackers":{"e16":"e1"}}` / `{"blockers":{"e20":["e16"]}}` | a declare-attackers or declare-blockers offer, filled in: which creatures, at whom |
@@ -101,6 +103,21 @@ come back as a different game. The relay passes a seed only when told to
 (`createRelay({ engineSeed })`), which the engine's browser spec does so as
 to play one known game.
 
+**Printings.** A deck line may name the printing the player chose, by
+Scryfall's set and collector number, and the deal puts that printing's art on
+the card. `env.reset` cannot do that: it builds its GameInitializer without a
+printing registry. So the process deals the game itself, with Argentum's
+`GameInitializer(registry, printings)`, installs it with `env.restore`, and
+keeps the deal's events for the log, which `restore` would drop. The printing
+registry is built the way game-server builds its own: a default printing from
+every definition, then each set's reprint rows. A pin is kept only when the
+engine has that printing and it is the same card, compared by the card's front,
+so a double-faced card's pin survives. One it has not got is dealt with the
+engine's own art, and the seat's `unknownPrintings` says which, so the table
+can say so once in the log: the owner's choice on 2026-09-21, the engine's art
+for every seat rather than a different face for each. Protocol 2 is this shape;
+the relay sends an engine at protocol 1 plain counts.
+
 **The sideboard.** `sideboard` sits beside `deck`, in the same shape, and is
 left out when empty, so an older engine never sees it. It becomes Argentum's
 `Deck.sideboard`: the cards a player owns outside the game, which only a wish
@@ -136,6 +153,6 @@ room around this process.
 - **Several games in one process.** One process per room keeps a crash to
   one table and the code to a page.
 - **Persistence.** A room's engine state lives only in the process for now.
-- **A warm engine.** Each room starts its own process and waits out the 13 s
+- **A warm engine.** Each room starts its own process and waits out the 15 s
   load. Keeping one loaded and ready is a question for hosting (M8), once the
   cost of an idle JVM is measured against the wait.
