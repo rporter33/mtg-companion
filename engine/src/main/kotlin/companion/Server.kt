@@ -46,6 +46,7 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import java.util.Random
@@ -82,7 +83,7 @@ private val json = Json { encodeDefaults = false; ignoreUnknownKeys = true }
 
 private class Seat(val id: EntityId, val name: String, val ai: String?, val autoPass: Boolean)
 
-private class Table(val registry: CardRegistry, val env: GameEnvironment, val seats: List<Seat>) {
+private class Table(val registry: CardRegistry, val env: GameEnvironment, val seats: List<Seat>, val seed: Long) {
     val transformer = ClientStateTransformer(registry)
     val lastView = HashMap<EntityId, ClientGameState>()
     /** What each seat has been told happened, in its own words: the game log. */
@@ -327,17 +328,24 @@ private fun newTable(registry: CardRegistry, params: JsonObject): Table {
         val entries = deck.entries.map { (card, n) -> card to n.jsonPrimitive.int }
         PlayerConfig(name = name, deck = Deck.of(*entries.toTypedArray()), startingLife = o["life"]?.jsonPrimitive?.int ?: 20)
     }
+    // The seed decides the shuffle, every coin flip and every other "at random",
+    // so the same seed plays the same game. One is always chosen here and sent
+    // back, which means any game, a failing test's included, can be played again
+    // exactly. A chosen one stays below 2^53, because the relay reads it as a
+    // JavaScript number and a larger Long would come back as a different game.
+    val seed = params["seed"]?.jsonPrimitive?.longOrNull ?: (Random().nextLong() ushr 11)
     val env = GameEnvironment.create(registry)
     env.reset(GameConfig(
         players = configs,
         skipMulligans = params["skipMulligans"]?.jsonPrimitive?.boolean ?: true,
         startingPlayerIndex = params["startingPlayer"]?.jsonPrimitive?.int ?: 0,
+        seed = seed,
     ))
     val seats = env.playerIds.mapIndexed { i, id ->
         val o = players[i].jsonObject
         Seat(id, configs[i].name, o["ai"]?.jsonPrimitive?.contentOrNull, o["autoPass"]?.jsonPrimitive?.boolean ?: false)
     }
-    return Table(registry, env, seats)
+    return Table(registry, env, seats, seed)
 }
 
 private fun seatsOf(table: Table): JsonArray = buildJsonArray {
@@ -378,7 +386,7 @@ fun main() {
                     val t = newTable(registry, req)
                     table = t
                     t.drive()
-                    JsonObject(t.status() + mapOf("seats" to seatsOf(t)))
+                    JsonObject(t.status() + mapOf("seats" to seatsOf(t), "seed" to JsonPrimitive(t.seed)))
                 }
                 "turn" -> (table ?: throw Refused("No game yet. Send \"new\" first.")).status()
                 "act" -> (table ?: throw Refused("No game yet.")).act(req["index"]?.jsonPrimitive?.int ?: throw Refused("\"index\" is required."), req)

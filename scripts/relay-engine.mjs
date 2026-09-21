@@ -27,7 +27,7 @@ export const OP = {
   seated: 'seated', seats: 'seats', status: 'status', view: 'view', refused: 'refused', gone: 'gone',
 }
 
-export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', engineCommand, deliver, onStderr = null }) {
+export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', engineCommand, seed = null, deliver, onStderr = null }) {
   const humanSeats = Math.max(1, ai ? seatCount - 1 : seatCount)
   const seats = Array.from({ length: seatCount }, (_, i) => ({
     seat: `p${i + 1}`, name: null, here: false, ready: false, socket: null, deck: null,
@@ -67,6 +67,8 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
       const mirror = seats.find((s) => !s.ai && s.deck)?.deck ?? {}
       const reply = await engine.call('new', {
         players: seats.map((s) => ({ name: s.name ?? (s.ai ? 'The engine' : s.seat), deck: s.ai ? mirror : (s.deck ?? {}), ai: s.ai, autoPass: !s.ai })),
+        // Absent, the engine picks one and says which in its reply.
+        ...(seed == null ? {} : { seed }),
       })
       reply.seats.forEach((es, i) => { seats[i].engineSeat = es.id; if (seats[i].ai) seats[i].name = es.name })
       status = reply

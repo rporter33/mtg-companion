@@ -89,6 +89,43 @@ describe.skipIf(!command)('the engine on the wire', () => {
   it('refuses an action that was not offered', async () => {
     await expect(engine.call('act', { index: 999 })).rejects.toThrow(/No action 999|No actions are on offer|not waiting on anyone/)
   }, 60_000)
+
+  it('plays the same game again from the same seed, and says which seed a game was', async () => {
+    // A game's whole course as a person would see it: the opening hand, then
+    // each stop's turn and step and what was done there, then who won.
+    const playOut = async (seed) => {
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck, autoPass: true }, { name: 'Bot', deck, ai: 'heuristic' }],
+        ...(seed == null ? {} : { seed }),
+      })
+      const chosen = status.seed
+      const you = status.seats[0].id
+      const opening = (await engine.call('view', { viewer: you })).state
+      const hand = opening.zones.find((z) => z.zoneId.zoneType === 'Hand' && z.zoneId.ownerId === you)
+      const course = [hand.cardIds.map((id) => opening.cards[id].name).join(', ')]
+      for (let stops = 0; !status.over && stops < 300; stops++) {
+        if (status.waiting === 'decision') status = await engine.call('decide', { auto: true })
+        else if (status.waiting === 'action') {
+          const pick = status.actions.find((a) => a.meaningful && a.affordable && !a.requiresTargets)
+            ?? status.actions.find((a) => a.type === 'PassPriority')
+          course.push(`${status.turn} ${status.step}: ${pick.description}`)
+          status = await engine.call('act', { index: pick.index })
+        } else status = await engine.call('turn')
+      }
+      course.push(`won by ${status.winner}`)
+      return { seed: chosen, course }
+    }
+
+    const a = await playOut(20260921)
+    const b = await playOut(20260921)
+    expect(a.seed).toBe(20260921)
+    expect(b.course).toEqual(a.course)
+    // Left to choose, the engine says which seed it chose, and the seed comes
+    // through JavaScript whole: playing it again gives the same game.
+    const c = await playOut()
+    expect(Number.isSafeInteger(c.seed)).toBe(true)
+    expect((await playOut(c.seed)).course).toEqual(c.course)
+  }, 300_000)
 })
 
 if (!command) {

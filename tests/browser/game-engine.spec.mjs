@@ -50,7 +50,18 @@ if (!engineCommand) {
   process.exit(0)
 }
 
-const relayServer = createRelay({ engineCommand, pingMs: 300 })
+// One game, the same every run. Left to shuffle, the engine deals a different
+// game each time, and this spec's claims (a land to play and a stop after it,
+// an attack within a few turns, a hand card that can be reached) hold for some
+// deals and not others. That looked like flakiness on a first Windows run and
+// was not. Seeds 1 to 5 give it everything it looks for; 6, 7 and 8 do not.
+// In 6 the hand is not one lighter after the land and no attack comes (most
+// likely no one-drop, so play runs on to the next turn and a card is drawn);
+// in 7 the first goblin tapped is not offered as an attacker; in 8 no attack
+// comes in time. Those are the deals for making the spec sturdier.
+// ENGINE_SEED plays another.
+const SEED = Number(process.env.ENGINE_SEED) || 1
+const relayServer = createRelay({ engineCommand, pingMs: 300, engineSeed: SEED })
 await new Promise((resolve) => relayServer.server.listen(0, resolve))
 const RELAY = `http://127.0.0.1:${relayServer.server.address().port}`
 

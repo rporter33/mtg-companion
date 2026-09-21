@@ -72,7 +72,7 @@ const TYPES = {
  * with a fast ping and a temporary rooms directory; `main` below runs it
  * from the environment.
  */
-export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = null, idleMs = IDLE_MS, now = Date.now, engineCommand = findEngine() } = {}) {
+export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = null, idleMs = IDLE_MS, now = Date.now, engineCommand = findEngine(), engineSeed = null } = {}) {
   const rooms = new Map()
   let nextSocketId = 1
 
@@ -144,7 +144,7 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
       const room = {
         code, mode: 'enforced', sockets: new Map(), touchedAt: now(), flushTimer: null,
         engine: createEngineRoom({
-          code, seats: n, ai: ai || null, engineCommand,
+          code, seats: n, ai: ai || null, engineCommand, seed: engineSeed,
           deliver, onStderr: (line) => console.error(`[${code}] ${line}`),
         }),
       }

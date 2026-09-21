@@ -42,7 +42,7 @@ One request per line, one reply per line, correlated by `id`:
 | --- | --- |
 | `{"op":"hello"}` | `{"engine":"argentum","protocol":1,"cards":178,"sets":["por"]}` |
 | `{"op":"cards"}` | `{"names":[…]}` — every card the engine knows, for checking a deck before sitting |
-| `{"op":"new","players":[{"name":"You","deck":{"Mountain":14,"Raging Goblin":12},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic"}]}` | the table's status (below) plus `seats` |
+| `{"op":"new","players":[{"name":"You","deck":{"Mountain":14,"Raging Goblin":12},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic"}],"seed":20260921}` | the table's status (below) plus `seats` and the `seed` it was dealt from |
 | `{"op":"turn"}` | the table's status |
 | `{"op":"act","index":3}` | the status after that action and everything that followed it |
 | `{"op":"act","index":0,"attackers":{"e16":"e1"}}` / `{"blockers":{"e20":["e16"]}}` | a declare-attackers or declare-blockers offer, filled in: which creatures, at whom |
@@ -75,6 +75,16 @@ engine's own `MeaningfulActionFilter`). `decided` lists the
 decisions the engine's responder answered for a human seat because this
 protocol cannot yet ask them (ordering, damage assignment, mana sources), so
 the table can say so.
+
+`seed` decides the shuffle and every other "at random" (Argentum's
+`GameConfig.seed`), so the same seed with the same decks plays the same game,
+the AI's choices included; `tests/engine-live.test.js` holds it to that. Sent
+without one, the process picks a seed and returns it in the reply to `new`,
+so any game can be played again exactly. A seed it picks stays below 2^53,
+because the relay reads it as a JavaScript number and a larger one would
+come back as a different game. The relay passes a seed only when told to
+(`createRelay({ engineSeed })`), which the engine's browser spec does so as
+to play one known game.
 
 `ClientGameState` and `StateDelta` are the engine's own client DTOs
 (`rules-engine/…/view/`), passed through untouched: per-viewer, with the
