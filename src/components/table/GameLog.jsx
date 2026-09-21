@@ -101,11 +101,15 @@ export default function GameLog({ board, events, lookup, restored = false, open 
                     <li className={`gamelog__item${item.hidden ? ' gamelog__item--hidden' : ''}`} key={item.seq ?? `e${i}`}>
                       {item.hidden
                         ? <span className="gamelog__thumb gamelog__thumb--hidden" aria-hidden="true" />
-                        : <Thumb card={item.cardId ? lookup?.(item.cardId) : null} />}
+                        : item.who === null
+                          ? <span className="gamelog__thumb gamelog__thumb--said" aria-hidden="true" />
+                          : <Thumb card={item.cardId ? lookup?.(item.cardId) : null} />}
                       <p className="gamelog__said">
-                        <span className={`gamelog__actor${item.who === 'You' ? ' gamelog__actor--you' : ''}`}>
-                          {item.who}
-                        </span>{' '}
+                        {item.who && (
+                          <span className={`gamelog__actor${item.who === 'You' ? ' gamelog__actor--you' : ''}`}>
+                            {item.who}{' '}
+                          </span>
+                        )}
                         {item.text}
                       </p>
                     </li>

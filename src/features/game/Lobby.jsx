@@ -33,7 +33,7 @@ import Seats from './Seats.jsx'
 const FRONT = ['commander', 'standard', 'pauper']
 const COLOURS = ['W', 'U', 'B', 'R', 'G']
 
-export default function Lobby({ decks, room = null }) {
+export default function Lobby({ decks, room = null, engine = null }) {
   const counts = useMemo(() => countBy(decks, (d) => d.formatId), [decks])
   const [format, setFormat] = useState(() => firstWithDecks(counts))
   const [query, setQuery] = useState('')
@@ -83,14 +83,14 @@ export default function Lobby({ decks, room = null }) {
   const rest = Object.keys(FORMATS).filter((id) => !FRONT.includes(id))
   const guide = useMemo(() => pickGuide(format), [format])
 
-  const start = (deck) => navigate({ tab: 'game', gameDeckId: deck.id, gameRoom: room })
+  const start = (deck) => navigate({ tab: 'game', gameDeckId: deck.id, gameRoom: room, gameEngine: engine })
   const pickFormat = (id) => { setFormat(id); setChosen(null); setWanted(new Set()) }
 
   return (
     <div className="lobby">
       <header className="lobby__head">
         <h1 className="lobby__title">
-          <span className="lobby__mode">{room ? 'Together:' : 'Solo:'}</span> {FORMATS[format]?.name ?? format}
+          <span className="lobby__mode">{engine ? 'Rules enforced:' : room ? 'Together:' : 'Solo:'}</span> {FORMATS[format]?.name ?? format}
         </h1>
         <p className="muted m0">{blurb(format)}</p>
       </header>
@@ -185,7 +185,7 @@ export default function Lobby({ decks, room = null }) {
           )}
         </section>
 
-        <Seats room={room} />
+        <Seats room={room} engine={engine} />
       </div>
 
       <footer className="lobby__foot">
@@ -203,7 +203,7 @@ export default function Lobby({ decks, room = null }) {
           disabled={!chosenDeck}
           onClick={() => chosenDeck && start(chosenDeck)}
         >
-          {room
+          {room || engine
             ? (chosenDeck ? `Sit down with ${chosenDeck.name} →` : 'Sit down →')
             : (chosenDeck ? `Start game with ${chosenDeck.name} →` : 'Start game →')}
         </button>

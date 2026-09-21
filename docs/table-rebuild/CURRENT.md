@@ -25,9 +25,11 @@ two, or replaces `table/` by growing it — see `ENGINE.md`.
 Not a third engine: Argentum (`ENGINE.md`), wrapped. `engine/` is a Kotlin
 module built into a checkout of it by `scripts/engine-build.sh`; the process
 speaks JSON lines (`engine/README.md`) and `scripts/engine-bridge.mjs` talks
-to it from Node. It plays a whole game against the engine's own AI today
-(`npm run engine:play`); nothing on screen uses it yet — see `PLAN.md`,
-"Where Phase 3 stands".
+to it from Node. `scripts/relay-engine.mjs` puts a room around it and
+`src/lib/engine/board.js` lays its state onto the board model, so the Table
+tab plays it through the same screens as the other two tables ("Play the
+engine" in the lobby, `#/game/engine/<code>`). See `PLAN.md`, "The engine on
+screen".
 
 ## `src/lib/board/` — the rules-free table
 

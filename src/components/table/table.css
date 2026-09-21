@@ -731,6 +731,8 @@
 /* Hidden information is visibly hidden: greyed, and no thumbnail. */
 .gamelog__item--hidden .gamelog__said, .gamelog__item--hidden .gamelog__actor { color: var(--text-faint); }
 .gamelog__thumb--hidden { background: transparent; border-style: dashed; }
+/* A line the engine wrote is about no one card: the slot stays, empty, so the text lines up. */
+.gamelog__thumb--said { background: transparent; border-color: transparent; }
 
 @media (prefers-reduced-motion: no-preference) {
   .gamelog__item { animation: gamelog-in 160ms ease-out; }

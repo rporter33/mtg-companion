@@ -29,6 +29,7 @@ export default function GameView({ route, onOpenCard }) {
   const decks = useMemo(() => listDecks(), [])
   const deck = route.gameDeckId ? decks.find((d) => d.id === route.gameDeckId) ?? null : null
   const room = route.gameRoom ?? null
+  const engine = route.gameEngine ?? null
 
   if (route.gameDeckId && !deck) {
     return (
@@ -36,7 +37,7 @@ export default function GameView({ route, onOpenCard }) {
         <div className="banner banner--warn" role="alert">
           That deck is not on this device any more.
           <div className="row" style={{ marginTop: 'var(--space-2)' }}>
-            <button className="btn btn--primary btn--sm" onClick={() => navigate({ tab: 'game', gameDeckId: null, gameRoom: null })}>Back to the lobby</button>
+            <button className="btn btn--primary btn--sm" onClick={() => navigate({ tab: 'game', gameDeckId: null, gameRoom: null, gameEngine: null })}>Back to the lobby</button>
           </div>
         </div>
       </div>
@@ -45,7 +46,7 @@ export default function GameView({ route, onOpenCard }) {
 
   // Keyed by deck, so leaving one game for another is a new table rather than
   // the old one's state with a different deck underneath it.
-  if (deck) return <Table key={`${room ?? 'solo'}:${deck.id}`} deck={deck} onOpenCard={onOpenCard} room={room} />
-  return <Lobby decks={decks} room={room} />
+  if (deck) return <Table key={`${engine ?? room ?? 'solo'}:${deck.id}`} deck={deck} onOpenCard={onOpenCard} room={room} engine={engine} />
+  return <Lobby decks={decks} room={room} engine={engine} />
 }
 

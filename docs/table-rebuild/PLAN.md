@@ -429,11 +429,52 @@ the full state, a refused card named — and skips with a message where the
 engine is not built, since `npm test` may not demand a JVM.
 `tests/engine-bridge.test.js` covers the framing against a fake process.
 
-**Not yet:** the screen. Step 4, mapping `ClientGameState` onto the tiles
-and the log, is the next slice. Then the relay learns to spawn one process
-per enforced room, which is step 3's other half. The card corpus registered
-is one era (Portal, for the smoke test); the whole corpus is a longer first
-build and a list of sets in `Server.kt`.
+### The engine on screen — 2026-09-21
+
+**Steps 3 and 4 are built, through the existing board model** — the owner's
+call, and the right one: the tiles, the fan, the plates, the log and the
+drag are one component with three authorities behind it (`Table.jsx`:
+alone, the relay, the engine).
+
+- `src/lib/engine/board.js` lays a `ClientGameState` onto the board model.
+  Positions are the table's, not the engine's: a card keeps the spot it had
+  and a new arrival takes the first free spot along its lane. What the seat
+  may not see is drawn as a back. A card is its Scryfall printing, read off
+  the engine's image link, so art crops, printings and rulings arrive the
+  ordinary way. Tested on views captured from a real game.
+- `scripts/relay-engine.mjs` is the relay's other authority: one engine
+  process per enforced room, started when every human seat has sat down
+  with a deck, the same socket and the same room codes as an unenforced
+  room. A stale offer is refused by `stop` number rather than landing on a
+  different action with the same index. The engine's own seat plays a copy
+  of the human's deck until the lobby lets a deck be chosen for it. An
+  enforced room is not written to disk: a relay restart ends it, and says so.
+- On screen: from the lobby, **Play the engine** opens the room and the deck
+  is chosen as for any table. One tap plays a card through the offer the
+  engine made for it; a creature tapped in the declare-attackers window is
+  gathered into the attack and drawn as the arrow it will become; the
+  prompt panel of TARGET.md §8 asks what the engine asks (targets by tapping,
+  yes/no, options) and offers **Pass**. The log carries the engine's lines
+  in its own words, and says how many windows were passed for you and what
+  was decided on your behalf. Undo, the step buttons, life, tokens and dice
+  are the engine's, and the panels say so.
+
+`tests/browser/game-engine.spec.mjs` drives it all through the built app
+against the real engine, and skips with a message where none is built;
+`tests/relay-server.test.js` drives the room against a scripted stand-in
+engine that answers from the captured views, so CI covers the relay's part.
+
+**What the first real game on screen taught:** the engine's seat had no
+deck and lost at its first draw — a mirror of the human's deck is the
+interim answer. The engine's AI blocks, so an attack is not a promise of
+damage. And a table the engine holds skips whole turns in the log when
+nothing happened for the viewer on them, which is honest but terse.
+
+**Not yet:** a deck of the engine's own; the opponent's turn shown as it
+happens rather than when it hands back; deltas instead of full views;
+persistence of an enforced room across a relay restart; the whole card
+corpus (Portal alone is registered, a longer first build and a list of sets
+in `Server.kt`); and the hosted relay with a JVM beside it.
 
 ## Phase 3-alt — Writing the rules core ourselves
 

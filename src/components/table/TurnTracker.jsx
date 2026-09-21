@@ -33,7 +33,7 @@ export default function TurnTracker({ board, hasFirstStrike = false, onStep, onJ
       </h2>
 
       <div className="row row--wrap">
-        <button className="btn btn--sm" onClick={() => onStep({ hasFirstStrike })}>Next step</button>
+        {onStep && <button className="btn btn--sm" onClick={() => onStep({ hasFirstStrike })}>Next step</button>}
         <span className="chip tiny">{current.rule}</span>
         {current.sorcerySpeed && <span className="chip tiny turns__can">A land and sorceries may be played here</span>}
         {!current.priority && <span className="chip tiny turns__quiet">Nobody gets priority in this step</span>}
@@ -62,7 +62,8 @@ export default function TurnTracker({ board, hasFirstStrike = false, onStep, onJ
                   <li key={step.id}>
                     <button
                       className={`turns__step${step.id === current.id ? ' turns__step--here' : ''}`}
-                      onClick={() => onJump(step.id)}
+                      onClick={onJump ? () => onJump(step.id) : undefined}
+                      disabled={!onJump}
                       aria-current={step.id === current.id ? 'step' : undefined}
                     >
                       {step.name}

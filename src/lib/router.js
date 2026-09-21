@@ -14,6 +14,7 @@
  *   #/practice | #/practice/<scenario>   (the practice table; reached by address only until it is linked)
  *   #/game | #/game/<deckId>             (the table, with one of your own decks on it; the Table tab)
  *   #/game/room/<code> | #/game/room/<code>/<deckId>   (the same, at a shared table on the relay)
+ *   #/game/engine/<code> | #/game/engine/<code>/<deckId> (the same, at a table the engine holds)
  *   #/table | #/table/<deckId>           (the table's old address; still opens it, as #/game)
  *
  * plus "?card=<id>" on any of them for the card sheet, which is an overlay
@@ -37,7 +38,7 @@ export const GUIDE_PLACES = ['game', 'glossary', 'track', 'lesson']
 
 const EMPTY = Object.freeze({
   tab: null, deckId: null, deckTab: null, data: false, starting: false, step: null, q: null, cardId: null,
-  guide: null, trackId: null, lessonId: null, scenarioId: null, gameDeckId: null, gameRoom: null,
+  guide: null, trackId: null, lessonId: null, scenarioId: null, gameDeckId: null, gameRoom: null, gameEngine: null,
 })
 
 /** "#/decks/abc/analysis?card=xyz" -> { tab, deckId, deckTab, data, q, cardId }. */
@@ -58,9 +59,12 @@ export function parseRoute(hash) {
   route.tab = tab
   if (tab === 'cards') route.q = params.get('q') || null
   if (tab === 'practice' && second) route.scenarioId = second
-  if (tab === 'game' && second === 'room') {
+  if (tab === 'game' && (second === 'room' || second === 'engine')) {
     // A room code is five letters read out loud; anything else is not one.
-    if (/^[A-Z0-9]{5}$/.test(third ?? '')) { route.gameRoom = third; if (fourth) route.gameDeckId = fourth }
+    if (/^[A-Z0-9]{5}$/.test(third ?? '')) {
+      route[second === 'room' ? 'gameRoom' : 'gameEngine'] = third
+      if (fourth) route.gameDeckId = fourth
+    }
   } else if (tab === 'game' && second) route.gameDeckId = second
   if (tab === 'guide' && GUIDE_PLACES.includes(second)) {
     if (second === 'track' && third) {
@@ -98,6 +102,7 @@ export function buildHash(route) {
   }
   if (tab === 'practice' && route.scenarioId) segments.push(encodeURIComponent(route.scenarioId))
   if (tab === 'game' && route.gameRoom) segments.push('room', route.gameRoom)
+  else if (tab === 'game' && route.gameEngine) segments.push('engine', route.gameEngine)
   if (tab === 'game' && route.gameDeckId) segments.push(encodeURIComponent(route.gameDeckId))
   if (tab === 'decks') {
     if (route.data) segments.push('data')

@@ -35,7 +35,12 @@ export function findEngine(env = process.env) {
  */
 export function startEngine({ command, args = [], cwd, timeoutMs = 30_000, onStderr } = {}) {
   if (!command) throw new Error('startEngine needs a command')
-  const child = spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+  // A JavaScript file as the engine — the scripted stand-in the tests use —
+  // is run by this same Node rather than executed as a program.
+  const viaNode = /\.(mjs|cjs|js)$/.test(command)
+  const child = viaNode
+    ? spawn(process.execPath, [command, ...args], { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    : spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
   const waiting = new Map()
   let nextId = 1
   let exited = null

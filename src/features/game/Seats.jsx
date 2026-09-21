@@ -17,8 +17,9 @@ import { relayAddress, setRelayAddress, inviteLink } from './relayAddress.js'
 const MIN_SEATS = 2
 const MAX_SEATS = 6
 
-export default function Seats({ room }) {
+export default function Seats({ room, engine = null }) {
   const [address, setAddress] = useState(() => relayAddress())
+  const [hasEngine, setHasEngine] = useState(false)
   const [draft, setDraft] = useState(address ?? '')
   const [name, setName] = useState(() => getPrefs().playerName ?? '')
   const [seats, setSeats] = useState(MIN_SEATS)
@@ -28,17 +29,27 @@ export default function Seats({ room }) {
   const [error, setError] = useState(null)
   const [copied, setCopied] = useState(false)
 
+  // Whether the relay has an engine behind it decides whether the table can
+  // be rules-enforced at all, so it is asked once, when the panel opens.
   useEffect(() => {
-    if (!room || !address) return undefined
+    if (!address) { setHasEngine(false); return undefined }
+    let cancelled = false
+    rooms(address).health().then((h) => { if (!cancelled) setHasEngine(Boolean(h?.engine)) }).catch(() => { if (!cancelled) setHasEngine(false) })
+    return () => { cancelled = true }
+  }, [address])
+
+  useEffect(() => {
+    const code = room ?? engine
+    if (!code || !address) return undefined
     let cancelled = false
     const api = rooms(address)
-    const look = () => api.peek(room)
+    const look = () => api.peek(code)
       .then((found) => { if (cancelled) return; if (found) setPeek(found); else setGone(true) })
       .catch(() => { /* the relay is away; the last look stands */ })
     look()
     const timer = setInterval(look, 3000)
     return () => { cancelled = true; clearInterval(timer) }
-  }, [room, address])
+  }, [room, engine, address])
 
   const invite = async () => {
     setBusy(true); setError(null)
@@ -52,11 +63,59 @@ export default function Seats({ room }) {
     }
   }
 
+  /*
+   * A table the engine holds: two seats, the second the engine's own
+   * player. The room is opened on the relay like any other and the deck is
+   * chosen in the lobby as for any other; what differs is who decides.
+   */
+  const challenge = async () => {
+    setBusy(true); setError(null)
+    try {
+      const made = await rooms(address).open({ seats: 2, enforced: true, ai: 'heuristic' })
+      navigate({ tab: 'game', gameEngine: made.code, gameRoom: null })
+    } catch (e) {
+      setError(e.message === 'This relay has no engine.' ? 'That relay has no engine to enforce a game with.' : 'The relay did not answer. Is it running at that address?')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const copy = async () => {
     try { await navigator.clipboard.writeText(inviteLink(room)); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* shown as text anyway */ }
   }
 
   const saveName = (value) => { setName(value); setPref('playerName', value.trim()) }
+
+  if (engine) {
+    const seated = peek?.seats ?? []
+    return (
+      <aside className="lobby__seats" aria-label="Table">
+        <h2 className="lobby__label">Table · {seated.filter((s) => s.here || s.ai).length} / {seated.length || 2} <span className="chip tiny">{engine}</span></h2>
+        {gone ? (
+          <p className="lobby__notice tiny"><strong>That table has gone.</strong> A table the engine holds ends when the relay restarts.</p>
+        ) : (
+          <>
+            <ul className="lobby__seatlist" role="list">
+              {(seated.length ? seated : [{ seat: 'p1' }, { seat: 'p2', ai: 'heuristic' }]).map((s, i) => (
+                <li key={s.seat} className={`lobby__seat${s.here || s.ai ? '' : ' lobby__seat--open'}`}>
+                  <span className="lobby__avatar" aria-hidden="true">{s.ai ? '⚙' : s.name ? s.name.slice(0, 1).toUpperCase() : i + 1}</span>
+                  <span className={s.here || s.ai ? '' : 'faint'}>{s.ai ? 'The engine, with your deck' : s.here ? s.name : 'You, once you sit'}</span>
+                </li>
+              ))}
+            </ul>
+            <label className="lobby__field">
+              <span className="lobby__label">Your name at the table</span>
+              <input className="input" value={name} onChange={(e) => saveName(e.target.value)} placeholder="Player" maxLength={24} />
+            </label>
+            <p className="lobby__notice tiny">
+              <strong>Rules enforced:</strong> the engine runs the game and plays the seat opposite with a copy of your deck. Only what the rules allow is offered, and the engine never stops you where you have nothing to do.
+            </p>
+          </>
+        )}
+        <button type="button" className="btn btn--ghost btn--sm" onClick={() => navigate({ tab: 'game', gameEngine: null })}>← Play alone instead</button>
+      </aside>
+    )
+  }
 
   if (room) {
     const players = peek?.players ?? []
@@ -133,6 +192,9 @@ export default function Seats({ room }) {
             </select>
           </label>
           <button type="button" className="btn btn--sm" onClick={invite} disabled={busy}>{busy ? 'Opening a room…' : 'Invite a friend'}</button>
+          {hasEngine && (
+            <button type="button" className="btn btn--sm" onClick={challenge} disabled={busy}>Play the engine</button>
+          )}
           {error && <p className="faint tiny m0" role="alert">{error}</p>}
         </div>
       ) : (

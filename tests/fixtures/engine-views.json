@@ -1,0 +1,1624 @@
+{
+ "seats": [
+  {
+   "id": "e0",
+   "name": "You",
+   "ai": null,
+   "autoPass": true
+  },
+  {
+   "id": "e1",
+   "name": "Bot",
+   "ai": "heuristic",
+   "autoPass": false
+  }
+ ],
+ "shots": [
+  {
+   "at": 2,
+   "status": {
+    "over": false,
+    "winner": null,
+    "turn": 1,
+    "phase": "COMBAT",
+    "step": "DECLARE_ATTACKERS",
+    "actor": "e0",
+    "waiting": "action",
+    "actions": [
+     {
+      "index": 0,
+      "type": "DeclareAttackers",
+      "description": "Declare attackers",
+      "affordable": true,
+      "meaningful": true,
+      "manaCost": null,
+      "requiresTargets": false,
+      "validAttackers": [
+       "e16"
+      ],
+      "validAttackTargets": [
+       "e1"
+      ]
+     }
+    ],
+    "autoPassed": 2,
+    "decided": []
+   },
+   "view": {
+    "viewingPlayerId": "e0",
+    "cards": {
+     "e27": {
+      "id": "e27",
+      "name": "Hulking Goblin",
+      "manaCost": "{1}{R}",
+      "manaValue": 2,
+      "typeLine": "Creature — Goblin",
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "subtypes": [
+       "Goblin"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "This creature can't block.",
+      "power": 2,
+      "toughness": 2,
+      "basePower": 2,
+      "baseToughness": 2,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Hand"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/8/e/8e3eead8-7e07-4463-9e67-c396d2d7931e.jpg"
+     },
+     "e30": {
+      "id": "e30",
+      "name": "Volcanic Hammer",
+      "manaCost": "{1}{R}",
+      "manaValue": 2,
+      "typeLine": "Sorcery",
+      "cardTypes": [
+       "SORCERY"
+      ],
+      "subtypes": [],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "Volcanic Hammer deals 3 damage to any target.",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Hand"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/9/5/9563d7c1-4ed1-4919-b0b8-ea1ec9d4bbf6.jpg"
+     },
+     "e9": {
+      "id": "e9",
+      "name": "Mountain",
+      "manaCost": "",
+      "manaValue": 0,
+      "typeLine": "Basic Land — Mountain",
+      "cardTypes": [
+       "LAND"
+      ],
+      "subtypes": [
+       "Mountain"
+      ],
+      "colors": [],
+      "oracleText": "({T}: Add {R}.)",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Hand"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     "e19": {
+      "id": "e19",
+      "name": "Raging Goblin",
+      "manaCost": "{R}",
+      "manaValue": 1,
+      "typeLine": "Creature — Goblin Berserker",
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "subtypes": [
+       "Goblin",
+       "Berserker"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "Haste (This creature can attack and {T} as soon as it comes under your control.)",
+      "power": 1,
+      "toughness": 1,
+      "basePower": 1,
+      "baseToughness": 1,
+      "damage": null,
+      "keywords": [
+       "HASTE"
+      ],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Hand"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/f/e/fed57a17-7847-4e60-bc40-4452880f12a3.jpg"
+     },
+     "e14": {
+      "id": "e14",
+      "name": "Mountain",
+      "manaCost": "",
+      "manaValue": 0,
+      "typeLine": "Basic Land — Mountain",
+      "cardTypes": [
+       "LAND"
+      ],
+      "subtypes": [
+       "Mountain"
+      ],
+      "colors": [],
+      "oracleText": "({T}: Add {R}.)",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Hand"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     "e13": {
+      "id": "e13",
+      "name": "Mountain",
+      "manaCost": "",
+      "manaValue": 0,
+      "typeLine": "Basic Land — Mountain",
+      "cardTypes": [
+       "LAND"
+      ],
+      "subtypes": [
+       "Mountain"
+      ],
+      "colors": [],
+      "oracleText": "({T}: Add {R}.)",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": true,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     "e16": {
+      "id": "e16",
+      "name": "Raging Goblin",
+      "manaCost": "{R}",
+      "manaValue": 1,
+      "typeLine": "Creature — Goblin Berserker",
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "subtypes": [
+       "Goblin",
+       "Berserker"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "Haste (This creature can attack and {T} as soon as it comes under your control.)",
+      "power": 1,
+      "toughness": 1,
+      "basePower": 1,
+      "baseToughness": 1,
+      "damage": null,
+      "keywords": [
+       "HASTE"
+      ],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/f/e/fed57a17-7847-4e60-bc40-4452880f12a3.jpg"
+     }
+    },
+    "zones": [
+     {
+      "zoneId": {
+       "ownerId": "e0",
+       "zoneType": "Library"
+      },
+      "cardIds": [
+       "e12",
+       "e5",
+       "e28",
+       "e21",
+       "e7",
+       "e18",
+       "e6",
+       "e10",
+       "e31",
+       "e11",
+       "e8",
+       "e20",
+       "e26",
+       "e34",
+       "e35",
+       "e3",
+       "e23",
+       "e33",
+       "e32",
+       "e24",
+       "e15",
+       "e22",
+       "e4",
+       "e25",
+       "e17",
+       "e29",
+       "e2"
+      ],
+      "size": 27,
+      "isVisible": true
+     },
+     {
+      "zoneId": {
+       "ownerId": "e1",
+       "zoneType": "Library"
+      },
+      "cardIds": [
+       "e52",
+       "e51",
+       "e44",
+       "e50",
+       "e43",
+       "e48",
+       "e58",
+       "e64",
+       "e39",
+       "e56",
+       "e63",
+       "e62",
+       "e67",
+       "e47",
+       "e49",
+       "e36",
+       "e40",
+       "e53",
+       "e41",
+       "e59",
+       "e46",
+       "e42",
+       "e68",
+       "e61",
+       "e69",
+       "e37",
+       "e55"
+      ],
+      "size": 27,
+      "isVisible": true
+     },
+     {
+      "zoneId": {
+       "ownerId": "e0",
+       "zoneType": "Hand"
+      },
+      "cardIds": [
+       "e27",
+       "e30",
+       "e9",
+       "e19",
+       "e14"
+      ],
+      "size": 5,
+      "isVisible": true
+     },
+     {
+      "zoneId": {
+       "ownerId": "e1",
+       "zoneType": "Hand"
+      },
+      "cardIds": [],
+      "size": 7,
+      "isVisible": false
+     },
+     {
+      "zoneId": {
+       "ownerId": "e0",
+       "zoneType": "Battlefield"
+      },
+      "cardIds": [
+       "e13",
+       "e16"
+      ],
+      "size": 2,
+      "isVisible": true
+     },
+     {
+      "zoneId": {
+       "ownerId": "e0",
+       "zoneType": "Stack"
+      },
+      "cardIds": [],
+      "size": 0,
+      "isVisible": true
+     }
+    ],
+    "players": [
+     {
+      "playerId": "e0",
+      "name": "You",
+      "life": 20,
+      "poisonCounters": 0,
+      "handSize": 5,
+      "librarySize": 27,
+      "graveyardSize": 0,
+      "exileSize": 0,
+      "landsPlayedThisTurn": 1,
+      "hasLost": false,
+      "manaPool": {
+       "white": 0,
+       "blue": 0,
+       "black": 0,
+       "red": 0,
+       "green": 0,
+       "colorless": 0
+      }
+     },
+     {
+      "playerId": "e1",
+      "name": "Bot",
+      "life": 20,
+      "poisonCounters": 0,
+      "handSize": 7,
+      "librarySize": 27,
+      "graveyardSize": 0,
+      "exileSize": 0,
+      "landsPlayedThisTurn": 0,
+      "hasLost": false,
+      "manaPool": {
+       "white": 0,
+       "blue": 0,
+       "black": 0,
+       "red": 0,
+       "green": 0,
+       "colorless": 0
+      }
+     }
+    ],
+    "currentPhase": "COMBAT",
+    "currentStep": "DECLARE_ATTACKERS",
+    "activePlayerId": "e0",
+    "priorityPlayerId": "e0",
+    "turnNumber": 1,
+    "isGameOver": false,
+    "winnerId": null,
+    "combat": null,
+    "deck": [
+     {
+      "cardName": "Mountain",
+      "copies": 14,
+      "remaining": 11,
+      "cmc": 0,
+      "cardTypes": [
+       "LAND"
+      ],
+      "colors": [],
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     {
+      "cardName": "Raging Goblin",
+      "copies": 6,
+      "remaining": 4,
+      "cmc": 1,
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "imageUri": "https://cards.scryfall.io/normal/front/f/e/fed57a17-7847-4e60-bc40-4452880f12a3.jpg"
+     },
+     {
+      "cardName": "Goblin Bully",
+      "copies": 4,
+      "remaining": 4,
+      "cmc": 2,
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "imageUri": "https://cards.scryfall.io/normal/front/2/0/2094f2f6-8b38-47d6-973d-271986b5d982.jpg"
+     },
+     {
+      "cardName": "Hulking Goblin",
+      "copies": 4,
+      "remaining": 3,
+      "cmc": 2,
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "imageUri": "https://cards.scryfall.io/normal/front/8/e/8e3eead8-7e07-4463-9e67-c396d2d7931e.jpg"
+     },
+     {
+      "cardName": "Volcanic Hammer",
+      "copies": 4,
+      "remaining": 3,
+      "cmc": 2,
+      "cardTypes": [
+       "SORCERY"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "imageUri": "https://cards.scryfall.io/normal/front/9/5/9563d7c1-4ed1-4919-b0b8-ea1ec9d4bbf6.jpg"
+     },
+     {
+      "cardName": "Lava Axe",
+      "copies": 2,
+      "remaining": 2,
+      "cmc": 5,
+      "cardTypes": [
+       "SORCERY"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "imageUri": "https://cards.scryfall.io/normal/front/f/2/f2bebbad-76aa-4388-891a-583e8af9509d.jpg"
+     }
+    ]
+   }
+  },
+  {
+   "at": 14,
+   "status": {
+    "over": false,
+    "winner": null,
+    "turn": 7,
+    "phase": "COMBAT",
+    "step": "DECLARE_ATTACKERS",
+    "actor": "e0",
+    "waiting": "action",
+    "actions": [
+     {
+      "index": 0,
+      "type": "DeclareAttackers",
+      "description": "Declare attackers",
+      "affordable": true,
+      "meaningful": true,
+      "manaCost": null,
+      "requiresTargets": false,
+      "validAttackers": [
+       "e16",
+       "e19"
+      ],
+      "validAttackTargets": [
+       "e1"
+      ]
+     }
+    ],
+    "autoPassed": 1,
+    "decided": []
+   },
+   "view": {
+    "viewingPlayerId": "e0",
+    "cards": {
+     "e30": {
+      "id": "e30",
+      "name": "Volcanic Hammer",
+      "manaCost": "{1}{R}",
+      "manaValue": 2,
+      "typeLine": "Sorcery",
+      "cardTypes": [
+       "SORCERY"
+      ],
+      "subtypes": [],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "Volcanic Hammer deals 3 damage to any target.",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Hand"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/9/5/9563d7c1-4ed1-4919-b0b8-ea1ec9d4bbf6.jpg"
+     },
+     "e5": {
+      "id": "e5",
+      "name": "Mountain",
+      "manaCost": "",
+      "manaValue": 0,
+      "typeLine": "Basic Land — Mountain",
+      "cardTypes": [
+       "LAND"
+      ],
+      "subtypes": [
+       "Mountain"
+      ],
+      "colors": [],
+      "oracleText": "({T}: Add {R}.)",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Hand"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     "e13": {
+      "id": "e13",
+      "name": "Mountain",
+      "manaCost": "",
+      "manaValue": 0,
+      "typeLine": "Basic Land — Mountain",
+      "cardTypes": [
+       "LAND"
+      ],
+      "subtypes": [
+       "Mountain"
+      ],
+      "colors": [],
+      "oracleText": "({T}: Add {R}.)",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": true,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     "e16": {
+      "id": "e16",
+      "name": "Raging Goblin",
+      "manaCost": "{R}",
+      "manaValue": 1,
+      "typeLine": "Creature — Goblin Berserker",
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "subtypes": [
+       "Goblin",
+       "Berserker"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "Haste (This creature can attack and {T} as soon as it comes under your control.)",
+      "power": 1,
+      "toughness": 1,
+      "basePower": 1,
+      "baseToughness": 1,
+      "damage": null,
+      "keywords": [
+       "HASTE"
+      ],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/f/e/fed57a17-7847-4e60-bc40-4452880f12a3.jpg"
+     },
+     "e9": {
+      "id": "e9",
+      "name": "Mountain",
+      "manaCost": "",
+      "manaValue": 0,
+      "typeLine": "Basic Land — Mountain",
+      "cardTypes": [
+       "LAND"
+      ],
+      "subtypes": [
+       "Mountain"
+      ],
+      "colors": [],
+      "oracleText": "({T}: Add {R}.)",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": true,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     "e14": {
+      "id": "e14",
+      "name": "Mountain",
+      "manaCost": "",
+      "manaValue": 0,
+      "typeLine": "Basic Land — Mountain",
+      "cardTypes": [
+       "LAND"
+      ],
+      "subtypes": [
+       "Mountain"
+      ],
+      "colors": [],
+      "oracleText": "({T}: Add {R}.)",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     "e19": {
+      "id": "e19",
+      "name": "Raging Goblin",
+      "manaCost": "{R}",
+      "manaValue": 1,
+      "typeLine": "Creature — Goblin Berserker",
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "subtypes": [
+       "Goblin",
+       "Berserker"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "Haste (This creature can attack and {T} as soon as it comes under your control.)",
+      "power": 1,
+      "toughness": 1,
+      "basePower": 1,
+      "baseToughness": 1,
+      "damage": null,
+      "keywords": [
+       "HASTE"
+      ],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/f/e/fed57a17-7847-4e60-bc40-4452880f12a3.jpg"
+     },
+     "e12": {
+      "id": "e12",
+      "name": "Mountain",
+      "manaCost": "",
+      "manaValue": 0,
+      "typeLine": "Basic Land — Mountain",
+      "cardTypes": [
+       "LAND"
+      ],
+      "subtypes": [
+       "Mountain"
+      ],
+      "colors": [],
+      "oracleText": "({T}: Add {R}.)",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     "e28": {
+      "id": "e28",
+      "name": "Hulking Goblin",
+      "manaCost": "{1}{R}",
+      "manaValue": 2,
+      "typeLine": "Creature — Goblin",
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "subtypes": [
+       "Goblin"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "This creature can't block.",
+      "power": 2,
+      "toughness": 2,
+      "basePower": 2,
+      "baseToughness": 2,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": true,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/8/e/8e3eead8-7e07-4463-9e67-c396d2d7931e.jpg"
+     },
+     "e45": {
+      "id": "e45",
+      "name": "Mountain",
+      "manaCost": "",
+      "manaValue": 0,
+      "typeLine": "Basic Land — Mountain",
+      "cardTypes": [
+       "LAND"
+      ],
+      "subtypes": [
+       "Mountain"
+      ],
+      "colors": [],
+      "oracleText": "({T}: Add {R}.)",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": true,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e1",
+      "ownerId": "e1",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e1",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     "e54": {
+      "id": "e54",
+      "name": "Raging Goblin",
+      "manaCost": "{R}",
+      "manaValue": 1,
+      "typeLine": "Creature — Goblin Berserker",
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "subtypes": [
+       "Goblin",
+       "Berserker"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "Haste (This creature can attack and {T} as soon as it comes under your control.)",
+      "power": 1,
+      "toughness": 1,
+      "basePower": 1,
+      "baseToughness": 1,
+      "damage": null,
+      "keywords": [
+       "HASTE"
+      ],
+      "counters": {},
+      "isTapped": true,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e1",
+      "ownerId": "e1",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e1",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/f/e/fed57a17-7847-4e60-bc40-4452880f12a3.jpg"
+     },
+     "e52": {
+      "id": "e52",
+      "name": "Raging Goblin",
+      "manaCost": "{R}",
+      "manaValue": 1,
+      "typeLine": "Creature — Goblin Berserker",
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "subtypes": [
+       "Goblin",
+       "Berserker"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "Haste (This creature can attack and {T} as soon as it comes under your control.)",
+      "power": 1,
+      "toughness": 1,
+      "basePower": 1,
+      "baseToughness": 1,
+      "damage": null,
+      "keywords": [
+       "HASTE"
+      ],
+      "counters": {},
+      "isTapped": true,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e1",
+      "ownerId": "e1",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e1",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/f/e/fed57a17-7847-4e60-bc40-4452880f12a3.jpg"
+     },
+     "e38": {
+      "id": "e38",
+      "name": "Mountain",
+      "manaCost": "",
+      "manaValue": 0,
+      "typeLine": "Basic Land — Mountain",
+      "cardTypes": [
+       "LAND"
+      ],
+      "subtypes": [
+       "Mountain"
+      ],
+      "colors": [],
+      "oracleText": "({T}: Add {R}.)",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": true,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e1",
+      "ownerId": "e1",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e1",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     "e51": {
+      "id": "e51",
+      "name": "Raging Goblin",
+      "manaCost": "{R}",
+      "manaValue": 1,
+      "typeLine": "Creature — Goblin Berserker",
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "subtypes": [
+       "Goblin",
+       "Berserker"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "Haste (This creature can attack and {T} as soon as it comes under your control.)",
+      "power": 1,
+      "toughness": 1,
+      "basePower": 1,
+      "baseToughness": 1,
+      "damage": null,
+      "keywords": [
+       "HASTE"
+      ],
+      "counters": {},
+      "isTapped": true,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e1",
+      "ownerId": "e1",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e1",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/f/e/fed57a17-7847-4e60-bc40-4452880f12a3.jpg"
+     },
+     "e44": {
+      "id": "e44",
+      "name": "Mountain",
+      "manaCost": "",
+      "manaValue": 0,
+      "typeLine": "Basic Land — Mountain",
+      "cardTypes": [
+       "LAND"
+      ],
+      "subtypes": [
+       "Mountain"
+      ],
+      "colors": [],
+      "oracleText": "({T}: Add {R}.)",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e1",
+      "ownerId": "e1",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e1",
+       "zoneType": "Battlefield"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     "e65": {
+      "id": "e65",
+      "name": "Volcanic Hammer",
+      "manaCost": "{1}{R}",
+      "manaValue": 2,
+      "typeLine": "Sorcery",
+      "cardTypes": [
+       "SORCERY"
+      ],
+      "subtypes": [],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "Volcanic Hammer deals 3 damage to any target.",
+      "power": null,
+      "toughness": null,
+      "basePower": null,
+      "baseToughness": null,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e1",
+      "ownerId": "e1",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e1",
+       "zoneType": "Graveyard"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/9/5/9563d7c1-4ed1-4919-b0b8-ea1ec9d4bbf6.jpg"
+     },
+     "e27": {
+      "id": "e27",
+      "name": "Hulking Goblin",
+      "manaCost": "{1}{R}",
+      "manaValue": 2,
+      "typeLine": "Creature — Goblin",
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "subtypes": [
+       "Goblin"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "oracleText": "This creature can't block.",
+      "power": 2,
+      "toughness": 2,
+      "basePower": 2,
+      "baseToughness": 2,
+      "damage": null,
+      "keywords": [],
+      "counters": {},
+      "isTapped": false,
+      "hasSummoningSickness": false,
+      "isTransformed": false,
+      "isAttacking": false,
+      "isBlocking": false,
+      "attackingTarget": null,
+      "blockingTarget": null,
+      "controllerId": "e0",
+      "ownerId": "e0",
+      "isToken": false,
+      "zone": {
+       "ownerId": "e0",
+       "zoneType": "Graveyard"
+      },
+      "attachedTo": null,
+      "attachments": [],
+      "isFaceDown": false,
+      "imageUri": "https://cards.scryfall.io/normal/front/8/e/8e3eead8-7e07-4463-9e67-c396d2d7931e.jpg"
+     }
+    },
+    "zones": [
+     {
+      "zoneId": {
+       "ownerId": "e0",
+       "zoneType": "Library"
+      },
+      "cardIds": [
+       "e21",
+       "e7",
+       "e18",
+       "e6",
+       "e10",
+       "e31",
+       "e11",
+       "e8",
+       "e20",
+       "e26",
+       "e34",
+       "e35",
+       "e3",
+       "e23",
+       "e33",
+       "e32",
+       "e24",
+       "e15",
+       "e22",
+       "e4",
+       "e25",
+       "e17",
+       "e29",
+       "e2"
+      ],
+      "size": 24,
+      "isVisible": true
+     },
+     {
+      "zoneId": {
+       "ownerId": "e1",
+       "zoneType": "Library"
+      },
+      "cardIds": [
+       "e50",
+       "e43",
+       "e48",
+       "e58",
+       "e64",
+       "e39",
+       "e56",
+       "e63",
+       "e62",
+       "e67",
+       "e47",
+       "e49",
+       "e36",
+       "e40",
+       "e53",
+       "e41",
+       "e59",
+       "e46",
+       "e42",
+       "e68",
+       "e61",
+       "e69",
+       "e37",
+       "e55"
+      ],
+      "size": 24,
+      "isVisible": true
+     },
+     {
+      "zoneId": {
+       "ownerId": "e0",
+       "zoneType": "Hand"
+      },
+      "cardIds": [
+       "e30",
+       "e5"
+      ],
+      "size": 2,
+      "isVisible": true
+     },
+     {
+      "zoneId": {
+       "ownerId": "e1",
+       "zoneType": "Hand"
+      },
+      "cardIds": [],
+      "size": 3,
+      "isVisible": false
+     },
+     {
+      "zoneId": {
+       "ownerId": "e0",
+       "zoneType": "Battlefield"
+      },
+      "cardIds": [
+       "e13",
+       "e16",
+       "e9",
+       "e14",
+       "e19",
+       "e12",
+       "e28"
+      ],
+      "size": 7,
+      "isVisible": true
+     },
+     {
+      "zoneId": {
+       "ownerId": "e1",
+       "zoneType": "Battlefield"
+      },
+      "cardIds": [
+       "e45",
+       "e54",
+       "e52",
+       "e38",
+       "e51",
+       "e44"
+      ],
+      "size": 6,
+      "isVisible": true
+     },
+     {
+      "zoneId": {
+       "ownerId": "e1",
+       "zoneType": "Graveyard"
+      },
+      "cardIds": [
+       "e65"
+      ],
+      "size": 1,
+      "isVisible": true
+     },
+     {
+      "zoneId": {
+       "ownerId": "e0",
+       "zoneType": "Graveyard"
+      },
+      "cardIds": [
+       "e27"
+      ],
+      "size": 1,
+      "isVisible": true
+     },
+     {
+      "zoneId": {
+       "ownerId": "e0",
+       "zoneType": "Stack"
+      },
+      "cardIds": [],
+      "size": 0,
+      "isVisible": true
+     }
+    ],
+    "players": [
+     {
+      "playerId": "e0",
+      "name": "You",
+      "life": 13,
+      "poisonCounters": 0,
+      "handSize": 2,
+      "librarySize": 24,
+      "graveyardSize": 1,
+      "exileSize": 0,
+      "landsPlayedThisTurn": 1,
+      "hasLost": false,
+      "manaPool": {
+       "white": 0,
+       "blue": 0,
+       "black": 0,
+       "red": 0,
+       "green": 0,
+       "colorless": 0
+      }
+     },
+     {
+      "playerId": "e1",
+      "name": "Bot",
+      "life": 14,
+      "poisonCounters": 0,
+      "handSize": 3,
+      "librarySize": 24,
+      "graveyardSize": 1,
+      "exileSize": 0,
+      "landsPlayedThisTurn": 0,
+      "hasLost": false,
+      "manaPool": {
+       "white": 0,
+       "blue": 0,
+       "black": 0,
+       "red": 0,
+       "green": 0,
+       "colorless": 0
+      }
+     }
+    ],
+    "currentPhase": "COMBAT",
+    "currentStep": "DECLARE_ATTACKERS",
+    "activePlayerId": "e0",
+    "priorityPlayerId": "e0",
+    "turnNumber": 7,
+    "isGameOver": false,
+    "winnerId": null,
+    "combat": null,
+    "deck": [
+     {
+      "cardName": "Mountain",
+      "copies": 14,
+      "remaining": 9,
+      "cmc": 0,
+      "cardTypes": [
+       "LAND"
+      ],
+      "colors": [],
+      "imageUri": "https://cards.scryfall.io/normal/front/2/6/26c5f3d2-6728-47b9-8178-a640e23ba30a.jpg"
+     },
+     {
+      "cardName": "Raging Goblin",
+      "copies": 6,
+      "remaining": 4,
+      "cmc": 1,
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "imageUri": "https://cards.scryfall.io/normal/front/f/e/fed57a17-7847-4e60-bc40-4452880f12a3.jpg"
+     },
+     {
+      "cardName": "Goblin Bully",
+      "copies": 4,
+      "remaining": 4,
+      "cmc": 2,
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "imageUri": "https://cards.scryfall.io/normal/front/2/0/2094f2f6-8b38-47d6-973d-271986b5d982.jpg"
+     },
+     {
+      "cardName": "Hulking Goblin",
+      "copies": 4,
+      "remaining": 2,
+      "cmc": 2,
+      "cardTypes": [
+       "CREATURE"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "imageUri": "https://cards.scryfall.io/normal/front/8/e/8e3eead8-7e07-4463-9e67-c396d2d7931e.jpg"
+     },
+     {
+      "cardName": "Volcanic Hammer",
+      "copies": 4,
+      "remaining": 3,
+      "cmc": 2,
+      "cardTypes": [
+       "SORCERY"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "imageUri": "https://cards.scryfall.io/normal/front/9/5/9563d7c1-4ed1-4919-b0b8-ea1ec9d4bbf6.jpg"
+     },
+     {
+      "cardName": "Lava Axe",
+      "copies": 2,
+      "remaining": 2,
+      "cmc": 5,
+      "cardTypes": [
+       "SORCERY"
+      ],
+      "colors": [
+       "RED"
+      ],
+      "imageUri": "https://cards.scryfall.io/normal/front/f/2/f2bebbad-76aa-4388-891a-583e8af9509d.jpg"
+     }
+    ]
+   }
+  }
+ ]
+}

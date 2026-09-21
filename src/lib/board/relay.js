@@ -114,10 +114,20 @@ export function relay({ url, WebSocket: Socket = globalThis.WebSocket, onStatus 
 export function rooms(base) {
   const origin = String(base).replace(/\/$/, '')
   return {
-    async open({ seats = 2 } = {}) {
+    async open({ seats = 2, enforced = false, ai = 'heuristic' } = {}) {
       const res = await fetch(`${origin}/rooms`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seats }),
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(enforced ? { seats, enforced: true, ai } : { seats }),
       })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? 'The relay did not answer.')
+      }
+      return res.json()
+    },
+    /** Whether the relay is up, and whether it has an engine to enforce a game with. */
+    async health() {
+      const res = await fetch(`${origin}/health`)
       if (!res.ok) throw new Error('The relay did not answer.')
       return res.json()
     },

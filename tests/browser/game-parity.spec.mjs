@@ -88,8 +88,33 @@ const onField = () => page.locator('.field .bcard--tile').count()
 const inHand = () => page.locator('.tabletop__handcard .bcard').count()
 const handCard = (name) => page.locator('.tabletop__handcard').filter({ has: page.getByLabel(new RegExp(`^${name}`)) }).locator('.bcard').first()
 const tileOf = (name) => page.locator('.field .bcard--tile').filter({ hasText: new RegExp(name, 'i') }).first()
-/** Picks a card up the long way: nothing happens to it, its actions open. */
-const hold = async (locator) => { await locator.click({ button: 'right' }); await page.waitForTimeout(200) }
+/**
+ * Picks a card up the long way: nothing happens to it, its actions open. A
+ * fanned hand card is right-clicked where it is uncovered — its centre may
+ * be under the next card once the hand has grown past the opening seven.
+ */
+const hold = async (locator) => {
+  const slot = locator.locator('xpath=ancestor-or-self::*[contains(@class, "tabletop__handcard")]')
+  if (await slot.count()) {
+    await locator.scrollIntoViewIfNeeded()
+    const point = await locator.evaluate((el) => {
+      const holder = el.closest('.tabletop__handcard')
+      const box = holder.getBoundingClientRect()
+      const y = box.top + box.height / 2
+      let from = null
+      for (let x = box.left + 1; x < box.right; x += 1) {
+        const hit = document.elementFromPoint(x, y)
+        if (hit && holder.contains(hit)) { if (from === null) from = x } else if (from !== null) return { x: (from + x) / 2, y }
+      }
+      return from === null ? null : { x: (from + box.right) / 2, y }
+    })
+    if (!point) throw new Error('no part of that hand card is reachable — it is fully covered')
+    await page.mouse.click(point.x, point.y, { button: 'right' })
+  } else {
+    await locator.click({ button: 'right' })
+  }
+  await page.waitForTimeout(200)
+}
 const more = async () => {
   if ((await page.locator('.more').count()) === 0) { await page.getByRole('button', { name: 'More' }).click(); await page.waitForTimeout(200) }
 }

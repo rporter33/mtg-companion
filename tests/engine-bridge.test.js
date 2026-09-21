@@ -16,7 +16,7 @@ describe('the engine bridge', () => {
   it('correlates replies to requests by id and strips the envelope', async () => {
     const e = fake()
     const [a, b] = await Promise.all([e.call('hello'), e.call('echo', { x: 1 })])
-    expect(a).toEqual({ engine: 'fake', protocol: 1, cards: 3 })
+    expect(a).toMatchObject({ engine: 'fake', protocol: 1, cards: 3 })
     expect(b.got).toMatchObject({ op: 'echo', x: 1 })
     expect(b.got.id).toBeTypeOf('number')
   })

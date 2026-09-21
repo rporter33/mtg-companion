@@ -57,7 +57,7 @@ export default function Field({
       style={{ '--card-w': `${(tile ? TILE_W : CARD_W) * 100}%`, '--card-h': `${CARD_H * 100}%` }}
     >
       {board.guided && <Playmat board={board} drag={drag} yOf={yOf} />}
-      <Arrows board={board} yOf={yOf} />
+      <Arrows board={board} player={player} yOf={yOf} />
       {!cards.length && (
         <p className="field__empty">
           {mirror
@@ -124,12 +124,13 @@ function livePosition(drag, rect) {
  * Coordinates are in the same fractions the cards use, scaled to 100, with a
  * stroke that does not stretch with the box.
  */
-function Arrows({ board, yOf = (y) => y }) {
+function Arrows({ board, player, yOf = (y) => y }) {
   if (!board.arrows.length) return null
   const end = (id) => {
     const inst = board.cards[id]
     if (inst) return { x: inst.x * 100, y: yOf(inst.y) * 100 }
-    if (board.players.includes(id)) return { x: 50, y: 99 } // a player sits at the near edge
+    // This seat sits at the near edge; anyone else, across the table.
+    if (board.players.includes(id)) return { x: 50, y: id === player ? 99 : 1 }
     return null
   }
   return (

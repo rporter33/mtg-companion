@@ -1,12 +1,17 @@
 package companion
 
 import com.wingedsheep.ai.engine.AIPlayer
+import com.wingedsheep.engine.core.ActivateAbility
+import com.wingedsheep.engine.core.CastSpell
 import com.wingedsheep.engine.core.ChooseOptionDecision
+import com.wingedsheep.engine.core.DeclareAttackers
+import com.wingedsheep.engine.core.DeclareBlockers
 import com.wingedsheep.engine.core.ChooseTargetsDecision
 import com.wingedsheep.engine.core.DecisionResponse
 import com.wingedsheep.engine.core.GameConfig
 import com.wingedsheep.engine.core.OptionChosenResponse
 import com.wingedsheep.engine.core.PendingDecision
+import com.wingedsheep.engine.core.PlayLand
 import com.wingedsheep.engine.core.PlayerConfig
 import com.wingedsheep.engine.core.SubmitDecision
 import com.wingedsheep.engine.core.TargetsResponse
@@ -15,6 +20,8 @@ import com.wingedsheep.engine.core.YesNoResponse
 import com.wingedsheep.engine.legalactions.LegalAction
 import com.wingedsheep.engine.legalactions.MeaningfulActionFilter
 import com.wingedsheep.engine.registry.CardRegistry
+import com.wingedsheep.engine.view.ClientEvent
+import com.wingedsheep.engine.view.ClientEventTransformer
 import com.wingedsheep.engine.view.ClientGameState
 import com.wingedsheep.engine.view.ClientStateTransformer
 import com.wingedsheep.engine.view.StateDelta
@@ -24,6 +31,7 @@ import com.wingedsheep.gym.RandomActionSelector
 import com.wingedsheep.mtg.sets.definitions.por.PortalSet
 import com.wingedsheep.sdk.model.Deck
 import com.wingedsheep.sdk.model.EntityId
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -77,6 +85,17 @@ private class Seat(val id: EntityId, val name: String, val ai: String?, val auto
 private class Table(val registry: CardRegistry, val env: GameEnvironment, val seats: List<Seat>) {
     val transformer = ClientStateTransformer(registry)
     val lastView = HashMap<EntityId, ClientGameState>()
+    /** What each seat has been told happened, in its own words: the game log. */
+    val logs = HashMap<EntityId, MutableList<ClientEvent>>()
+    private var logged = 0
+
+    /** Carries the engine's events since the last call into every seat's log, masked for that seat. */
+    fun record() {
+        val fresh = env.events.drop(logged)
+        logged = env.events.size
+        if (fresh.isEmpty()) return
+        for (seat in seats) logs.getOrPut(seat.id) { mutableListOf() } += ClientEventTransformer.transform(fresh, seat.id)
+    }
     val players = HashMap<EntityId, AIPlayer>()
     val randoms = HashMap<EntityId, RandomActionSelector>()
 
@@ -130,9 +149,14 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
             // is not either. MeaningfulActionFilter is the list of what is.
             val canAct = actions.any { MeaningfulActionFilter.isMeaningful(it) && it.affordable }
             val pass = actions.firstOrNull { it.actionType == "PassPriority" }
-            if (seat.autoPass && !canAct && pass != null) {
+            // A declare-attackers or declare-blockers window with nothing to
+            // declare has no pass action: the empty declaration is the pass.
+            val emptyDeclaration = actions.firstOrNull {
+                (it.actionType == "DeclareAttackers" || it.actionType == "DeclareBlockers") && !MeaningfulActionFilter.isMeaningful(it)
+            }
+            if (seat.autoPass && !canAct && (pass ?: emptyDeclaration) != null) {
                 autoPassed++
-                env.step(pass.action)
+                env.step((pass ?: emptyDeclaration)!!.action)
                 continue
             }
             offered = actions; offeredTo = actor
@@ -142,6 +166,7 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
 
     /** Where the table stands, in the shape every driving reply shares. */
     fun status(): JsonObject = buildJsonObject {
+        record()
         put("ok", true)
         put("over", env.isTerminal)
         put("winner", env.winnerId?.value)
@@ -169,11 +194,15 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
     }
 
     fun view(viewer: EntityId, delta: Boolean): JsonObject {
+        record()
         val next = transformer.transform(env.state, viewer)
         val prev = lastView[viewer]
         lastView[viewer] = next
         return buildJsonObject {
             put("ok", true)
+            // The whole log so far, phrased for this seat. A view is asked for
+            // once per stop, and a stop is worth a few hundred bytes of history.
+            put("log", json.encodeToJsonElement(ListSerializer(ClientEvent.serializer()), logs[viewer] ?: emptyList()))
             if (delta && prev != null) {
                 put("delta", json.encodeToJsonElement(StateDelta.serializer(), StateDiffCalculator.computeDelta(prev, next)))
             } else {
@@ -182,11 +211,20 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
         }
     }
 
-    fun act(index: Int): JsonObject {
+    fun act(index: Int, params: JsonObject): JsonObject {
         val actor = env.agentToAct ?: throw Refused("The game is not waiting on anyone.")
         if (offeredTo != actor || offered.isEmpty()) throw Refused("No actions are on offer. Ask for the turn first.")
-        val action = offered.getOrNull(index) ?: throw Refused("No action $index; ${offered.size} were offered.")
-        env.step(action.action)
+        val offer = offered.getOrNull(index) ?: throw Refused("No action $index; ${offered.size} were offered.")
+        // Combat declarations are the one offer the client fills in itself:
+        // which creatures, at whom. Left out, it declares nothing.
+        val action = when (val a = offer.action) {
+            is DeclareAttackers -> DeclareAttackers(actor, params["attackers"]?.jsonObject?.entries
+                ?.associate { (k, v) -> EntityId(k) to EntityId(v.jsonPrimitive.content) } ?: emptyMap())
+            is DeclareBlockers -> DeclareBlockers(actor, params["blockers"]?.jsonObject?.entries
+                ?.associate { (k, v) -> EntityId(k) to v.jsonArray.map { EntityId(it.jsonPrimitive.content) } } ?: emptyMap())
+            else -> a
+        }
+        env.step(action)
         env.lastRejection?.let { throw Refused("The engine refused that: $it") }
         drive()
         return status()
@@ -215,6 +253,14 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
         put("index", i)
         put("type", a.actionType)
         put("description", a.description)
+        // The card the action is about, so a tap on that card can find it.
+        when (val act = a.action) {
+            is PlayLand -> put("card", act.cardId.value)
+            is CastSpell -> put("card", act.cardId.value)
+            is ActivateAbility -> put("card", act.sourceId.value)
+            else -> {}
+        }
+        if (a.isManaAbility) put("mana", true)
         put("affordable", a.affordable)
         put("meaningful", MeaningfulActionFilter.isMeaningful(a))
         put("manaCost", a.manaCostString)
@@ -226,6 +272,8 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
             putJsonArray("validTargets") { a.validTargets?.forEach { add(JsonPrimitive(it.value)) } }
         }
         a.validAttackers?.let { list -> putJsonArray("validAttackers") { list.forEach { add(JsonPrimitive(it.value)) } } }
+        a.validAttackTargets?.let { list -> putJsonArray("validAttackTargets") { list.forEach { add(JsonPrimitive(it.value)) } } }
+        a.mandatoryAttackers?.takeIf { it.isNotEmpty() }?.let { list -> putJsonArray("mandatoryAttackers") { list.forEach { add(JsonPrimitive(it.value)) } } }
         a.validBlockers?.let { list -> putJsonArray("validBlockers") { list.forEach { add(JsonPrimitive(it.value)) } } }
     }
 
@@ -333,7 +381,7 @@ fun main() {
                     JsonObject(t.status() + mapOf("seats" to seatsOf(t)))
                 }
                 "turn" -> (table ?: throw Refused("No game yet. Send \"new\" first.")).status()
-                "act" -> (table ?: throw Refused("No game yet.")).act(req["index"]?.jsonPrimitive?.int ?: throw Refused("\"index\" is required."))
+                "act" -> (table ?: throw Refused("No game yet.")).act(req["index"]?.jsonPrimitive?.int ?: throw Refused("\"index\" is required."), req)
                 "decide" -> (table ?: throw Refused("No game yet.")).decide(req)
                 "view" -> {
                     val t = table ?: throw Refused("No game yet.")

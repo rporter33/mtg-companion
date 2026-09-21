@@ -48,6 +48,8 @@ function movement(from, to) {
 function phrase(event, name) {
   const card = name ?? 'a card'
   switch (event.type) {
+    // A line the engine wrote, already phrased for the viewer: it is said as it came.
+    case 'said': return event.text
     case 'seated': return `sat down with ${event.count} cards`
     case 'drew': return `drew ${card}`
     case 'moved': return movement(event.from, event.to).replace('{card}', card)
@@ -160,7 +162,7 @@ export function readLog(events = [], board = null, { you = 'you', who = null } =
     }
     group.items.push({
       kind: 'entry',
-      who: speaker(player, you, who),
+      who: event.type === 'said' ? null : speaker(player, you, who),
       text: said,
       cardId: inst?.cardId ?? null,
       instanceId: event.instanceId ?? null,

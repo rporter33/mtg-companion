@@ -781,8 +781,14 @@ whole of what the relay will know about it; `npm run engine:play` plays one
 game through it from the command line. `tests/engine-live.test.js` drives a
 game over the wire where the engine is built and says so where it is not,
 because a JVM and a five-minute compile are not something `npm test` may
-demand. What is not there yet is the screen: mapping the engine's per-viewer
-state onto the tiles is the next slice of Phase 3.
+demand. On screen it is the same table: `src/lib/engine/board.js` lays the
+engine's per-viewer state onto the board model the other two tables draw,
+`scripts/relay-engine.mjs` gives it a room on the relay, and **Play the
+engine** in the lobby opens one. One tap plays a card through the offer the
+engine made for it, a creature tapped in the attack step joins the attack,
+the prompt panel asks what the engine asks, and the log says in the engine's
+own words what happened and what was done on your behalf.
+`tests/browser/game-engine.spec.mjs` plays it through the built app.
 
 ## Data
 

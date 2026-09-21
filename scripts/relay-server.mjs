@@ -29,7 +29,8 @@
  *   PORT=9000 ROOMS_DIR=/data/rooms STATIC_DIR=dist node scripts/relay-server.mjs
  *
  * The API, in full:
- *   POST /rooms            body: { seats?: 2..6 }   -> { code, seats }
+ *   POST /rooms            body: { seats?: 2..6, enforced?: true, ai?: 'heuristic' | 'random' | null }
+ *                                                  -> { code, seats, mode }
  *   GET  /rooms/<code>                              -> { code, seats, seq, players }
  *   WS   /rooms/<code>/ws                           the protocol in src/lib/board/net.js
  *   GET  /*                 the built app, when STATIC_DIR is set
@@ -44,6 +45,8 @@ import { join, extname, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { host, KIND, PROTOCOL, restore } from '../src/lib/board/net.js'
+import { findEngine } from './engine-bridge.mjs'
+import { createEngineRoom } from './relay-engine.mjs'
 import { newRun } from '../src/lib/board/runner.js'
 import { createBoard } from '../src/lib/board/model.js'
 
@@ -69,7 +72,7 @@ const TYPES = {
  * with a fast ping and a temporary rooms directory; `main` below runs it
  * from the environment.
  */
-export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = null, idleMs = IDLE_MS, now = Date.now } = {}) {
+export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = null, idleMs = IDLE_MS, now = Date.now, engineCommand = findEngine() } = {}) {
   const rooms = new Map()
   let nextSocketId = 1
 
@@ -89,7 +92,7 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
 
   const flush = (room) => {
     const file = roomFile(room.code)
-    if (!file) return
+    if (!file || room.mode === 'enforced') return
     clearTimeout(room.flushTimer)
     room.flushTimer = null
     try { writeFileSync(file, JSON.stringify(record(room))) } catch { /* a full disk loses a save, not the game */ }
@@ -126,10 +129,28 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     return room
   }
 
-  const makeRoom = ({ seats = MIN_SEATS } = {}) => {
+  const makeRoom = ({ seats = MIN_SEATS, enforced = false, ai = 'heuristic' } = {}) => {
     const n = Math.min(MAX_SEATS, Math.max(MIN_SEATS, Math.floor(Number(seats)) || MIN_SEATS))
     let code = makeCode()
     while (rooms.has(code)) code = makeCode()
+    /*
+     * The other authority. An enforced room is held by an engine process
+     * of its own rather than by the board model here, so it is neither
+     * saved to disk nor swept while its game runs: a relay restart ends it,
+     * and says so to whoever is at it. That is the honest limit for now.
+     */
+    if (enforced) {
+      if (!engineCommand) throw Object.assign(new Error('This relay has no engine.'), { status: 503 })
+      const room = {
+        code, mode: 'enforced', sockets: new Map(), touchedAt: now(), flushTimer: null,
+        engine: createEngineRoom({
+          code, seats: n, ai: ai || null, engineCommand,
+          deliver, onStderr: (line) => console.error(`[${code}] ${line}`),
+        }),
+      }
+      rooms.set(code, room)
+      return room
+    }
     const players = Array.from({ length: n }, (_, i) => `p${i + 1}`)
     const room = wire({
       code, sockets: new Map(), touchedAt: now(), flushTimer: null,
@@ -168,6 +189,7 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     for (const [code, room] of rooms) {
       if (room.sockets.size || now() - room.touchedAt <= idleMs) continue
       rooms.delete(code)
+      if (room.mode === 'enforced') { room.engine.close(); continue }
       const file = roomFile(code)
       if (file) try { unlinkSync(file) } catch { /* already gone */ }
     }
@@ -182,6 +204,7 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
 
   const leave = (room, socket) => {
     room.sockets.delete(socket.id)
+    if (room.mode === 'enforced') { room.engine.leave(socket); socket.seat = null; return }
     if (socket.seat) room.table.receive({ t: KIND.bye, protocol: PROTOCOL, seat: socket.seat })
     socket.seat = null
   }
@@ -193,10 +216,12 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     socket.isAlive = true
     room.sockets.set(socket.id, socket)
     socket.on('pong', () => { socket.isAlive = true })
+    if (room.mode === 'enforced') room.engine.join(socket)
     socket.on('message', (data) => {
       let message
       try { message = JSON.parse(String(data)) } catch { return }
       if (!message || typeof message !== 'object') return
+      if (room.mode === 'enforced') { room.touchedAt = now(); room.engine.receive(message, socket); return }
       /*
        * Somebody coming back for their seat before the server noticed they
        * had gone: the old socket is dead weight and the seat is theirs.
@@ -241,12 +266,9 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     req.on('error', () => resolve({}))
   })
 
-  const describe = (room) => ({
-    code: room.code,
-    seq: room.table.seq,
-    players: room.table.run.board.players,
-    seats: room.table.seats,
-  })
+  const describe = (room) => (room.mode === 'enforced'
+    ? { code: room.code, ...room.engine.describe() }
+    : { code: room.code, mode: 'table', seq: room.table.seq, players: room.table.run.board.players, seats: room.table.seats })
 
   /** The built app, when asked to serve it. Anything not a file is the app. */
   const serveStatic = (req, res) => {
@@ -274,8 +296,11 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
       return
     }
     if (req.method === 'POST' && url.pathname === '/rooms') {
-      const room = makeRoom(await readBody(req))
-      json(res, 201, { code: room.code, seats: room.table.run.board.players.length })
+      let room
+      try { room = makeRoom(await readBody(req)) } catch (e) { json(res, e.status ?? 500, { error: e.message }); return }
+      json(res, 201, room.mode === 'enforced'
+        ? { code: room.code, seats: room.engine.describe().seats.length, mode: 'enforced' }
+        : { code: room.code, seats: room.table.run.board.players.length, mode: 'table' })
       return
     }
     const m = url.pathname.match(/^\/rooms\/([A-Z0-9]{5})$/)
@@ -285,7 +310,7 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
       json(res, 200, describe(room))
       return
     }
-    if (url.pathname === '/health') { json(res, 200, { ok: true, rooms: rooms.size }); return }
+    if (url.pathname === '/health') { json(res, 200, { ok: true, rooms: rooms.size, engine: Boolean(engineCommand) }); return }
     if (req.method === 'GET') { serveStatic(req, res); return }
     json(res, 404, { error: 'not found' })
   })
@@ -310,6 +335,7 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     clearInterval(heartbeat)
     clearInterval(sweeper)
     for (const room of rooms.values()) flush(room)
+    await Promise.all([...rooms.values()].filter((r) => r.mode === 'enforced').map((r) => r.engine.close()))
     // The close frame has to reach the client before the connection under
     // it is torn down, or the client sees a dropped socket rather than a
     // 1012 and waits the long way. So: say goodbye, wait briefly for the

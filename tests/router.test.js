@@ -115,3 +115,12 @@ describe('withPatch', () => {
     expect(buildHash(withPatch(inLesson, { tab: 'cards' }))).toBe('#/cards')
   })
 })
+
+describe('a table the engine holds', () => {
+  it('reads and writes #/game/engine/<code>[/<deckId>]', () => {
+    expect(parseRoute('#/game/engine/ABC34')).toMatchObject({ tab: 'game', gameEngine: 'ABC34', gameRoom: null, gameDeckId: null })
+    expect(parseRoute('#/game/engine/ABC34/deck-1')).toMatchObject({ tab: 'game', gameEngine: 'ABC34', gameDeckId: 'deck-1' })
+    expect(parseRoute('#/game/engine/nope')).toMatchObject({ tab: 'game', gameEngine: null })
+    expect(buildHash({ tab: 'game', gameEngine: 'ABC34', gameDeckId: 'deck-1' })).toBe('#/game/engine/ABC34/deck-1')
+  })
+})

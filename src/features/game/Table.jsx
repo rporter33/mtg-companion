@@ -30,6 +30,7 @@ import Printings from '../../components/Printings.jsx'
 import Confirm from '../../components/Confirm.jsx'
 import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
+import useEngineRoom from './useEngineRoom.js'
 import useTravel from './useTravel.js'
 import Peek, { usePeek } from './Peek.jsx'
 import { relayAddress } from './relayAddress.js'
@@ -72,7 +73,7 @@ const TILE_LABELS = { library: 'Lib', command: 'Cmd', graveyard: 'GY', exile: 'E
 const PUBLIC_PILES = ['graveyard', 'exile']
 const COMBAT_STEPS = ['beginCombat', 'attackers', 'blockers', 'firstStrike', 'damage', 'endCombat']
 
-export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
+export default function Table({ deck: initialDeck, onOpenCard, room = null, engine = null }) {
   // The deck is kept here because choosing a printing rewrites it, and the
   // table should show the copy just chosen without a reload.
   const [deck, setDeck] = useState(initialDeck)
@@ -81,7 +82,6 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   // swapped in, or — at a shared table — everything the other seat plays.
   // Pinned, so they are still themselves after a reload.
   const [extra, setExtra] = useState(() => new Map())
-  const lookup = useCallback((id) => deckLookup(id) ?? extra.get(id) ?? null, [deckLookup, extra])
   const remember = useCallback((card) => {
     if (!card?.id) return
     setExtra((was) => new Map(was).set(card.id, card))
@@ -126,6 +126,25 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
     deckLookup,
     cardsReady: ready,
   })
+  /*
+   * The third authority. At a table the engine holds, the board on screen is
+   * the engine's state laid onto this same model (src/lib/engine/board.js),
+   * and the only thing a press can do is choose among what the engine
+   * offers. Where a card sits is still the table's, so a drag is local.
+   */
+  const held = useEngineRoom({
+    address: engine ? relayAddress() : null,
+    code: engine,
+    name: prefs.playerName || 'Player',
+    deck,
+    deckLookup,
+    cardsReady: ready,
+  })
+  const away = Boolean(room || engine)
+  // A card the deck knows, else one fetched for the table, else what the
+  // engine said about it — enough to draw a printed face until the record
+  // arrives.
+  const lookup = useCallback((id) => deckLookup(id) ?? extra.get(id) ?? held.cardFor(id) ?? null, [deckLookup, extra, held.cardFor])
 
   /*
    * A fresh deal, alone. The lanes go in with the seat action rather than
@@ -143,14 +162,14 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
     return applyAll(newRun(createBoard({ seed, guided: prefs.tablePlaymat !== false })), actions).run
   }, [deck, deckLookup, prefs.tablePlaymat])
 
-  const run = room ? shared.run : localRun
+  const run = engine ? held.run : room ? shared.run : localRun
 
   // Anything on the table the deck cannot name comes back with its painting.
   const unknownIds = useMemo(() => {
     if (!run?.board) return ''
     return [...new Set(Object.values(run.board.cards)
       .map((inst) => inst.cardId)
-      .filter((id) => id && !cards.has(id) && !extra.has(id)))].sort().join(',')
+      .filter((id) => id && !id.startsWith('engine:') && !cards.has(id) && !extra.has(id)))].sort().join(',')
   }, [run?.board, cards, extra])
 
   useEffect(() => {
@@ -176,7 +195,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
    */
   const dealt = useRef(false)
   useEffect(() => {
-    if (room || dealt.current) return
+    if (away || dealt.current) return
     const saved = getGameTable()
     if (saved?.deckId === deck.id) {
       const restored = restore(saved)
@@ -206,7 +225,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
     setMulligans(0)
     setLocalKept(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, deck.id, ready, asking])
+  }, [away, deck.id, ready, asking])
   const carryOn = () => {
     const c = carried.current
     dealt.current = true
@@ -232,16 +251,16 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
    */
   const lastSaveAt = useRef(0)
   const latest = useRef(null)
-  latest.current = !room && localRun ? snapshot(localRun, { deckId: deck.id, deckName: deck.name, mulligans, kept: localKept }) : null
+  latest.current = !away && localRun ? snapshot(localRun, { deckId: deck.id, deckName: deck.name, mulligans, kept: localKept }) : null
   useEffect(() => {
-    if (room || !localRun) return undefined
+    if (away || !localRun) return undefined
     const overdue = Date.now() - lastSaveAt.current > 2000
     const timer = setTimeout(() => {
       lastSaveAt.current = Date.now()
       saveGameTable(latest.current)
     }, overdue ? 0 : 400)
     return () => clearTimeout(timer)
-  }, [room, localRun, deck.id, deck.name, mulligans, localKept])
+  }, [away, localRun, deck.id, deck.name, mulligans, localKept])
   useEffect(() => {
     const flush = () => { if (latest.current) saveGameTable(latest.current) }
     window.addEventListener('pagehide', flush)
@@ -262,15 +281,52 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
     playFor(next.lastEvents, soundOn)
     return next
   }), [soundOn])
-  const doAction = room ? shared.doAction : localDo
-  const doAll = room ? shared.doAll : localDoAll
-  const kept = room ? shared.kept : localKept
+  // At the engine's table the board is not the table's to change: a move
+  // across the battlefield is the one thing that stays here, because where
+  // a permanent sits is a matter of layout and not of rules.
+  const heldDo = useCallback((action) => {
+    if ((action.type === 'move' && action.zone === 'battlefield' && action.x !== undefined) || action.type === 'slide') {
+      held.moveCard(action.id, action.x, action.y)
+      return
+    }
+    held.refuse('The engine decides that at this table.')
+  }, [held])
+  const heldDoAll = useCallback((actions) => { for (const action of actions) heldDo(action) }, [heldDo])
+  const doAction = engine ? heldDo : room ? shared.doAction : localDo
+  const doAll = engine ? heldDoAll : room ? shared.doAll : localDoAll
+  const kept = engine ? true : room ? shared.kept : localKept
   const setKept = room ? shared.setKept : setLocalKept
   const togglePref = useCallback((key) => { setPrefs(setPref(key, !prefs[key]).prefs) }, [prefs])
 
   // Which seat is yours. Alone it is the board's one seat; at a shared table
   // it is whatever chair the relay gave you.
-  const me = room ? shared.seat : 'you'
+  const me = engine ? held.seat : room ? shared.seat : 'you'
+
+  // What the engine offers this seat right now, if it is this seat's stop.
+  const status = engine ? held.status : null
+  const myStop = Boolean(status && status.actor === me && !status.over)
+  const offers = myStop && status.waiting === 'action' ? status.actions : []
+  const offerFor = (id) => offers.find((a) => a.card === id && a.meaningful && a.affordable) ?? offers.find((a) => a.card === id && a.affordable) ?? null
+  // Combat is declared by tapping: attackers gathered until "Attack", a
+  // blocker then the attacker it blocks. Both are cleared at the next stop.
+  const [chosen, setChosen] = useState(() => new Set())
+  const [blocks, setBlocks] = useState({})
+  const [blocker, setBlocker] = useState(null)
+  useEffect(() => { setChosen(new Set()); setBlocks({}); setBlocker(null) }, [status?.stop])
+  // Combat being declared, drawn as the arrows it will become. Hooks come
+  // before the table's early return for the loading state, so this one is
+  // here rather than with the rest of the render.
+  const declaring = offers.find((a) => a.type === 'DeclareAttackers' && a.meaningful) ?? null
+  const blocking = offers.find((a) => a.type === 'DeclareBlockers' && a.meaningful) ?? null
+  const shownBoard = useMemo(() => {
+    if (!engine || !board || (!chosen.size && !Object.keys(blocks).length)) return board
+    const arrows = [...board.arrows]
+    const target = declaring?.validAttackTargets?.[0] ?? board.players.find((p) => p !== me)
+    for (const id of chosen) arrows.push({ id: `chosen:${id}`, from: id, to: target, kind: 'attack' })
+    for (const [b, attackers] of Object.entries(blocks)) for (const a of attackers) arrows.push({ id: `block:${b}:${a}`, from: b, to: a, kind: 'target' })
+    return { ...board, arrows }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board, chosen, blocks, engine, declaring, me])
 
   /*
    * Playing a card from hand. A permanent goes to the battlefield, into its
@@ -280,12 +336,19 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   const play = useCallback((id, point = {}) => {
     const inst = board?.cards[id]
     if (!inst) return
+    if (engine) {
+      const offer = offerFor(id)
+      if (offer) held.act(offer.index)
+      else held.refuse(myStop ? 'The engine does not offer that card now.' : 'It is not your stop.')
+      return
+    }
     const card = inst.custom ? null : deckLookup(inst.cardId) ?? null
     const zone = board.guided && card ? zoneWhenPlayed(card, inst) : 'battlefield'
     doAction(zone === 'stack'
       ? { type: 'move', id, zone: 'stack' }
       : { type: 'move', id, zone: 'battlefield', ...point })
-  }, [board, deckLookup, doAction])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board, deckLookup, doAction, engine, offers, myStop, held])
 
   /*
    * A released card goes where the most specific thing under the pointer
@@ -318,7 +381,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   const { drag, begin, justDragged } = useDrag({ fieldRef, onDrop, onHold })
 
   // Cards travel between places, unless motion is reduced.
-  useTravel(rootRef, { board, reduced, me: room ? shared.seat : 'you' })
+  useTravel(rootRef, { board, reduced, me })
   // Resting the pointer on a card shows its printed face; Z shows it at once.
   const { peek, enter: peekAt, leave: peekOff } = usePeek({ enabled: showImages })
 
@@ -332,7 +395,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
     // The table's own shape, empty, rather than a spinner: what is about to
     // appear is already where it will be, and the line says what is being
     // waited for.
-    const why = asking === 'carry' ? 'A game with this deck is waiting at the old table.' : room
+    const why = asking === 'carry' ? 'A game with this deck is waiting at the old table.' : engine
+      ? (held.gone ? `The engine has gone: ${held.gone}` : !ready ? 'Fetching the cards, then sitting down…' : held.wireStatus === 'open' ? 'Sitting down; the engine is dealing…' : held.wireStatus === 'connecting' ? 'Joining the table…' : 'The relay is not answering yet. Trying again…')
+      : room
       ? (shared.status === 'open' ? 'Taking a seat…' : shared.status === 'connecting' ? 'Joining the table…' : 'The relay is not answering yet. Trying again…')
       : (missing.length ? 'Some cards could not be loaded; dealing anyway…' : 'Fetching the cards, then dealing…')
     return (
@@ -370,13 +435,19 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   const myTurn = board.active === me
   const inCombat = COMBAT_STEPS.includes(board.step)
   const commander = deck.commanders?.length ? lookup(deck.commanders[0]) : null
-  const refusal = room ? shared.refusal : run.refusal
+  const refusal = engine ? held.refusal : room ? shared.refusal : run.refusal
   // Whether the first-strike damage step happens at all this turn (510.4),
   // read off the creatures on the table rather than asked for.
   const hasFirstStrike = zoneOf(board, me, 'battlefield').some((inst) => /\b(first strike|double strike)\b/i.test(cardFor(inst)?.oracle_text ?? ''))
-  const others = room ? board.players.filter((p) => p !== me) : []
-  const seatOf = (p) => shared.seats.find((s) => s.seat === p) ?? null
-  const nameOfSeat = (p) => seatOf(p)?.name ?? `Seat ${p.replace(/^p/, '')}`
+  const others = away ? board.players.filter((p) => p !== me) : []
+  const seatOf = (p) => {
+    if (engine) {
+      const s = held.seats.find((x) => x.engineSeat === p) ?? null
+      return s ? { ...s, here: s.here || Boolean(s.ai) } : null
+    }
+    return shared.seats.find((s) => s.seat === p) ?? null
+  }
+  const nameOfSeat = (p) => seatOf(p)?.name ?? (engine ? 'The engine' : `Seat ${p.replace(/^p/, '')}`)
 
   /*
    * One tap. In hand it plays the card; on the battlefield it taps it; in a
@@ -397,9 +468,41 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
     const inst = board.cards[id]
     if (!inst) return
     setSelected(id)
+    if (engine) { touchHeld(id, inst); return }
     if (inst.zone === 'hand') play(id)
     else if (inst.zone === 'battlefield') doAction({ type: 'tap', id })
     else setPanel('actions')
+  }
+  /*
+   * One tap, at the engine's table. A target being asked for is answered
+   * by it; a card in hand is played through the offer the engine made for
+   * it; a creature is gathered into the attack or the block being
+   * declared; a permanent with an ability the engine offers activates it.
+   * Anything else picks the card up, as a hold does.
+   */
+  const touchHeld = (id, inst) => {
+    if (status?.waiting === 'decision' && status.actor === me && status.decision?.type === 'ChooseTargets') {
+      const req = status.decision.requirements?.find((r) => r.legal?.includes(id))
+      if (req) { held.decide({ targets: { [req.index]: [id] } }); return }
+    }
+    if (inst.zone === 'hand') { play(id); return }
+    if (inst.zone === 'battlefield') {
+      if (declaring?.validAttackers?.includes(id)) {
+        setChosen((was) => { const next = new Set(was); if (next.has(id)) next.delete(id); else next.add(id); return next })
+        return
+      }
+      if (blocking) {
+        if (blocking.validBlockers?.includes(id)) { setBlocker(blocker === id ? null : id); return }
+        if (blocker && board.arrows.some((a) => a.kind === 'attack' && a.from === id)) {
+          setBlocks((was) => ({ ...was, [blocker]: [id] }))
+          setBlocker(null)
+          return
+        }
+      }
+      const ability = offers.find((a) => a.card === id && a.type === 'ActivateAbility' && !a.mana && a.affordable)
+      if (ability) { held.act(ability.index); return }
+    }
+    setPanel('actions')
   }
   // The long way in: pick the card up without doing anything to it.
   const hold = (id) => { setSelected(id); setAiming(null); setPanel('actions') }
@@ -427,7 +530,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
   const [zoneOpen, zoneWho] = panel?.startsWith('zone:') ? panel.slice(5).split('@') : [null, null]
 
   return (
-    <div className={`game${drag ? ' game--carrying' : ''}${room ? ' game--shared' : ''}`} ref={rootRef}>
+    <div className={`game${drag ? ' game--carrying' : ''}${away ? ' game--shared' : ''}${engine ? ' game--held' : ''}`} ref={rootRef}>
       {drag && drag.moved && drag.from !== 'battlefield' && board.cards[drag.id] && (
         <div className="carried" style={{ left: `${drag.x}px`, top: `${drag.y}px` }} aria-hidden="true">
           <BoardCard card={cardFor(board.cards[drag.id])} name={nameFor(board.cards[drag.id])} inst={board.cards[drag.id]} size="hand" dragging />
@@ -496,7 +599,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
             <div className="game__theirfield">
               <Field
                 fieldRef={{ current: null }}
-                board={board}
+                board={shownBoard}
                 lookup={lookup}
                 player={them}
                 selectedId={selected}
@@ -518,11 +621,14 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
 
       {/* --- the battlefield ---------------------------------------------- */}
       <div className={`game__field${kept ? '' : ' game__field--prompt'}`}>
-        {room && shared.status !== 'open' && (
+        {((room && shared.status !== 'open') || (engine && held.wireStatus !== 'open')) && (
           <div className="banner banner--warn" role="status">
-            {shared.status === 'reconnecting' ? 'Lost the table for a moment. Reconnecting…' : 'Connecting to the table…'}
+            {(room ? shared.status : held.wireStatus) === 'reconnecting' ? 'Lost the table for a moment. Reconnecting…' : 'Connecting to the table…'}
             {' '}Nothing you press will happen until it is back.
           </div>
+        )}
+        {engine && held.gone && (
+          <div className="banner banner--warn" role="alert">The engine has gone: {held.gone}</div>
         )}
         {missing.length > 0 && (
           <div className="banner banner--warn">
@@ -534,7 +640,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
         {refusal && <div className="banner banner--info" role="status">{refusal.message}</div>}
         <Field
           fieldRef={fieldRef}
-          board={board}
+          board={shownBoard}
           lookup={lookup}
           player={me}
           selectedId={selected}
@@ -562,6 +668,21 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
         {!kept && hand.length > 0 && (
           <OpeningHand count={hand.length} mulligans={mulligans} onMulligan={mulligan} onKeep={() => setKept(true)} />
         )}
+        {engine && status && (
+          <EnginePrompt
+            status={status}
+            me={me}
+            step={step}
+            chosen={chosen}
+            blocks={blocks}
+            blocker={blocker}
+            declaring={declaring}
+            blocking={blocking}
+            nameOf={(id) => nameOf(board, id, lookup)}
+            onAct={(index, extra) => held.act(index, extra)}
+            onDecide={(params) => held.decide(params)}
+          />
+        )}
       </div>
 
       {/* --- your seat ---------------------------------------------------- */}
@@ -571,9 +692,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
             who="you"
             status={myTurn ? step.name : 'Waiting'}
             active={myTurn}
-            name={room ? (prefs.playerName || 'You') : 'You'}
+            name={away ? (prefs.playerName || 'You') : 'You'}
             life={board.life[me]}
-            onLife={(delta) => doAction({ type: 'life', delta })}
+            onLife={engine ? undefined : (delta) => doAction({ type: 'life', delta })}
           >
             <div className="plate__mana">
               <span className="plate__label">Untapped sources</span>
@@ -584,22 +705,35 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
             <button className={`rail__btn${panel === 'actions' ? ' rail__btn--on' : ''}`} onClick={() => setPanel(panel === 'actions' ? null : 'actions')} aria-expanded={panel === 'actions'}>
               Actions
             </button>
-            <button className="rail__btn" onClick={() => doAction(inCombat ? { type: 'step' } : { type: 'step', to: 'beginCombat' })}>
-              {inCombat ? '⚔ Next step' : '⚔ Combat'}
-            </button>
-            <button
-              className="rail__btn rail__btn--go"
-              onClick={() => (room ? doAction({ type: 'nextTurn' }) : doAll([{ type: 'nextTurn' }, { type: 'untapAll' }]))}
-              disabled={room && !myTurn}
-              title={room && !myTurn ? 'Only the player whose turn it is can end it.' : undefined}
-            >
-              → End turn
-            </button>
+            {!engine && (
+              <button className="rail__btn" onClick={() => doAction(inCombat ? { type: 'step' } : { type: 'step', to: 'beginCombat' })}>
+                {inCombat ? '⚔ Next step' : '⚔ Combat'}
+              </button>
+            )}
+            {engine ? (
+              <button
+                className="rail__btn rail__btn--go"
+                onClick={() => { const pass = offers.find((a) => a.type === 'PassPriority'); if (pass) held.act(pass.index) }}
+                disabled={!offers.some((a) => a.type === 'PassPriority')}
+                title={myStop ? undefined : 'The engine is not waiting on you.'}
+              >
+                → Pass
+              </button>
+            ) : (
+              <button
+                className="rail__btn rail__btn--go"
+                onClick={() => (room ? doAction({ type: 'nextTurn' }) : doAll([{ type: 'nextTurn' }, { type: 'untapAll' }]))}
+                disabled={room && !myTurn}
+                title={room && !myTurn ? 'Only the player whose turn it is can end it.' : undefined}
+              >
+                → End turn
+              </button>
+            )}
             <button
               className="rail__btn"
               onClick={() => setLocalRun((r) => undo(r))}
-              disabled={room ? true : !run.past.length}
-              title={room ? 'A shared table is not only yours to wind back. Ask, and move it back by hand.' : undefined}
+              disabled={away ? true : !run.past.length}
+              title={engine ? 'The engine keeps the rules; there is nothing to wind back by hand.' : room ? 'A shared table is not only yours to wind back. Ask, and move it back by hand.' : undefined}
             >
               ↶ Undo
             </button>
@@ -673,9 +807,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
 
       {/* --- the side column: the log, and whatever is open --------------- */}
       <aside className="game__side">
-        {room && (
+        {away && (
           <section className="pile game__seats" aria-label="Who is at the table">
-            <h2 className="pile__title">Table <span className="chip tiny">{room}</span></h2>
+            <h2 className="pile__title">Table <span className="chip tiny">{room ?? engine}</span></h2>
             <ul className="game__seatlist" role="list">
               {board.players.map((p) => {
                 const s = seatOf(p)
@@ -690,7 +824,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
             </ul>
           </section>
         )}
-        <GameLog board={board} events={run.events} lookup={lookup} restored={run.restored} you={me} who={room ? nameOfSeat : null} />
+        <GameLog board={board} events={run.events} lookup={lookup} restored={run.restored} you={me} who={away ? nameOfSeat : null} />
         {/*
           Where you are in the turn, taught from the rules by number. Moxgate's
           prompt panel says "Your upkeep" and a teaching line at every stop;
@@ -702,8 +836,8 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
           hasFirstStrike={hasFirstStrike}
           open={turnsOpen}
           onToggle={() => setTurnsOpen(!turnsOpen)}
-          onStep={(options) => doAction({ type: 'step', ...options })}
-          onJump={(to) => doAction({ type: 'step', to })}
+          onStep={engine ? undefined : (options) => doAction({ type: 'step', ...options })}
+          onJump={engine ? undefined : (to) => doAction({ type: 'step', to })}
         />
         {prefs.tableCoach && <Coach board={board} events={run.events} lookup={lookup} player={me} onSilence={() => togglePref('tableCoach')} />}
 
@@ -721,7 +855,19 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
           onCounter={(inst) => doAction({ type: 'move', id: inst.id, zone: 'graveyard' })}
         />
 
-        {panel === 'actions' && (
+        {panel === 'actions' && engine && (
+          <EngineActions
+            offers={offers}
+            selected={selectedInst}
+            name={selectedInst ? nameFor(selectedInst) : null}
+            card={selectedInst ? cardFor(selectedInst) : null}
+            myStop={myStop}
+            onAct={(index) => held.act(index)}
+            onInspect={() => { const card = selectedInst ? cardFor(selectedInst) : null; if (card) onOpenCard(card) }}
+            onClose={() => setPanel(null)}
+          />
+        )}
+        {panel === 'actions' && !engine && (
           selectedInst ? (
             <Actions
               inst={selectedInst}
@@ -790,13 +936,14 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null }) {
             board={board}
             player={me}
             prefs={prefs}
-            shared={Boolean(room)}
+            shared={away}
+            held={Boolean(engine)}
             onDo={doAction}
             onToken={() => setPanel('token')}
             onMulligan={() => setAsking('mulligan')}
             onDealAgain={() => setAsking('deal')}
             onTogglePref={togglePref}
-            onLeave={() => navigate({ tab: 'game', gameDeckId: null, gameRoom: null })}
+            onLeave={() => navigate({ tab: 'game', gameDeckId: null, gameRoom: null, gameEngine: null })}
           />
         )}
         {/*
@@ -869,6 +1016,129 @@ function Plate({ who, status, active = false, name, life, onLife, children }) {
  * time. Putting them there is the player's own job afterwards, as in paper;
  * the prompt says how many so it is not forgotten.
  */
+/**
+ * The prompt panel at the engine's table, after Moxgate's (TARGET.md §8):
+ * where the game stands and what is asked, with every button saying what
+ * pressing it does. It appears only when there is something to answer or
+ * a pass to make; the engine never stops the player where there is
+ * nothing to do, so a quiet table is one where it is not their stop.
+ */
+function EnginePrompt({ status, me, step, chosen, blocks, blocker, declaring, blocking, nameOf, onAct, onDecide }) {
+  if (status.over) {
+    return (
+      <div className="prompt" role="status" aria-label="Game over">
+        <div className="prompt__lead">
+          <strong className="prompt__title">Game over</strong>
+          <span className="prompt__sub">{status.winner === me ? 'You won.' : status.winner ? 'The engine won.' : 'A draw.'}</span>
+        </div>
+      </div>
+    )
+  }
+  if (status.actor !== me) return null
+  if (status.waiting === 'decision' && status.decision) {
+    const d = status.decision
+    return (
+      <div className="prompt" role="group" aria-label="The engine asks">
+        <div className="prompt__lead">
+          <strong className="prompt__title">{d.prompt}</strong>
+          <span className="prompt__sub">
+            {d.type === 'ChooseTargets' ? 'Tap the card it is aimed at.' : d.source ? `From ${d.source}.` : 'The engine is asking.'}
+          </span>
+        </div>
+        {d.type === 'YesNo' && (
+          <>
+            <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onDecide({ yes: true })}>{d.yesText ?? 'Yes'}</button>
+            <button className="btn btn--sm prompt__btn" onClick={() => onDecide({ yes: false })}>{d.noText ?? 'No'}</button>
+          </>
+        )}
+        {d.type === 'ChooseOption' && (d.options ?? []).map((option, i) => (
+          <button key={option} className="btn btn--sm prompt__btn" onClick={() => onDecide({ option: i })}>{option}</button>
+        ))}
+        {d.type !== 'YesNo' && d.type !== 'ChooseOption' && (
+          <button className="btn btn--ghost btn--sm prompt__btn" onClick={() => onDecide({ auto: true })}>
+            Let the engine choose
+            <span className="prompt__hint">It will say what it chose</span>
+          </button>
+        )}
+      </div>
+    )
+  }
+  if (status.waiting !== 'action') return null
+  if (declaring) {
+    const target = declaring.validAttackTargets?.[0]
+    const attackers = Object.fromEntries([...chosen].map((id) => [id, target]))
+    return (
+      <div className="prompt" role="group" aria-label="Your attack">
+        <div className="prompt__lead">
+          <strong className="prompt__title">Your attack</strong>
+          <span className="prompt__sub">{chosen.size ? [...chosen].map(nameOf).join(', ') : 'Tap the creatures that attack.'}</span>
+        </div>
+        <button className="btn btn--primary btn--sm prompt__btn" disabled={!chosen.size} onClick={() => onAct(declaring.index, { attackers })}>
+          Attack with {chosen.size} →
+        </button>
+        <button className="btn btn--sm prompt__btn" onClick={() => onAct(declaring.index, { attackers: {} })}>No attack</button>
+      </div>
+    )
+  }
+  if (blocking) {
+    const n = Object.keys(blocks).length
+    return (
+      <div className="prompt" role="group" aria-label="Their attack">
+        <div className="prompt__lead">
+          <strong className="prompt__title">Their attack</strong>
+          <span className="prompt__sub">{blocker ? `${nameOf(blocker)} blocks — tap the attacker.` : n ? `${n} block${n === 1 ? '' : 's'} declared.` : 'Tap a blocker, then the attacker it blocks.'}</span>
+        </div>
+        <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onAct(blocking.index, { blockers: blocks })}>
+          {n ? `Block with ${n} →` : 'No blocks →'}
+        </button>
+      </div>
+    )
+  }
+  const pass = status.actions.find((a) => a.type === 'PassPriority')
+  const plays = status.actions.filter((a) => a.meaningful && a.affordable).length
+  return (
+    <div className="prompt" role="group" aria-label="Your stop">
+      <div className="prompt__lead">
+        <strong className="prompt__title">{step.name}</strong>
+        <span className="prompt__sub">{plays ? `${plays} thing${plays === 1 ? '' : 's'} you could do. Tap a card, or pass.` : 'Nothing to do here but pass.'}</span>
+      </div>
+      {pass && <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onAct(pass.index)}>Pass →</button>}
+    </div>
+  )
+}
+
+/**
+ * What the engine offers, as a list: the actions panel at its table. The
+ * card last touched comes first; mana abilities are counted rather than
+ * listed, because the engine pays for spells itself.
+ */
+function EngineActions({ offers, selected, name, card, myStop, onAct, onInspect, onClose }) {
+  const listed = offers.filter((a) => !a.mana && a.type !== 'PassPriority')
+  const mine = selected ? listed.filter((a) => a.card === selected.id) : []
+  const rest = listed.filter((a) => !mine.includes(a))
+  const mana = offers.filter((a) => a.mana).length
+  const row = (a) => (
+    <button key={a.index} className={`btn btn--sm ${a.meaningful && a.affordable ? '' : 'btn--ghost'}`} disabled={!a.affordable} onClick={() => onAct(a.index)} title={a.affordable ? undefined : 'Not affordable now'}>
+      {a.description}{a.manaCost ? ` · ${a.manaCost}` : ''}
+    </button>
+  )
+  return (
+    <section className="actions" aria-label={name ? `Actions for ${name}` : 'Actions'}>
+      <div className="row row--wrap">
+        <strong className="actions__name">{name ?? 'What the engine offers'}</strong>
+        <span className="faint tiny">{myStop ? 'your stop' : 'not your stop'}</span>
+        <span className="spacer" />
+        <button className="btn btn--ghost btn--sm" onClick={onClose}>Close</button>
+      </div>
+      {card && <div className="row row--wrap"><button className="btn btn--ghost btn--sm" onClick={onInspect}>Read it</button></div>}
+      {mine.length > 0 && <div className="row row--wrap">{mine.map(row)}</div>}
+      {rest.length > 0 && <div className="row row--wrap">{rest.map(row)}</div>}
+      {!listed.length && <p className="faint tiny m0">{myStop ? 'Nothing but passing is offered here.' : 'The engine is not waiting on you.'}</p>}
+      {mana > 0 && <p className="faint tiny m0">{mana} mana abilit{mana === 1 ? 'y' : 'ies'} the engine pays with itself.</p>}
+    </section>
+  )
+}
+
 function OpeningHand({ count, mulligans, onMulligan, onKeep }) {
   const owed = Math.min(mulligans + 1, OPENING_HAND)
   return (
@@ -1054,10 +1324,18 @@ function Actions({ inst, name, card, host, mine = true, permanent = true, onDo, 
  * Behind the dots on the rail: everything a game needs now and then and a
  * screen should not spend space on all the time.
  */
-function More({ board, player, prefs, shared, onDo, onToken, onMulligan, onDealAgain, onTogglePref, onLeave }) {
+function More({ board, player, prefs, shared, held = false, onDo, onToken, onMulligan, onDealAgain, onTogglePref, onLeave }) {
   return (
     <div className="more">
-      <section className="pile">
+      {held && (
+        <section className="pile">
+          <h2 className="pile__title">The engine's table</h2>
+          <p className="faint tiny m0">
+            Drawing, untapping, life, tokens and dice are the engine's here: they happen when the rules say so, and are written in the log.
+          </p>
+        </section>
+      )}
+      {!held && <section className="pile">
         <h2 className="pile__title">The turn <span className="chip tiny">Turn {board.turn}</span></h2>
         <div className="row row--wrap">
           <button className="btn btn--sm" onClick={() => onDo({ type: 'draw' })}>Draw</button>
@@ -1065,8 +1343,8 @@ function More({ board, player, prefs, shared, onDo, onToken, onMulligan, onDealA
           <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'untapAll' })}>Untap all</button>
           {board.arrows.length > 0 && <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'clearArrows' })}>Clear the arrows</button>}
         </div>
-      </section>
-      <section className="pile">
+      </section>}
+      {!held && <section className="pile">
         <h2 className="pile__title">Life <span className="chip tiny">{board.life[player]}</span></h2>
         <div className="row row--wrap">
           <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'life', delta: -5 })}>−5</button>
@@ -1074,8 +1352,8 @@ function More({ board, player, prefs, shared, onDo, onToken, onMulligan, onDealA
           <button className="btn btn--ghost btn--sm" onClick={() => onDo({ type: 'life', value: board.life[player] === 40 ? 20 : 40 })}>Set to {board.life[player] === 40 ? '20' : '40'}</button>
         </div>
         <PlayerCounters board={board} player={player} onChange={(name, delta) => onDo({ type: 'playerCounter', name, delta })} />
-      </section>
-      <section className="pile">
+      </section>}
+      {!held && <section className="pile">
         <h2 className="pile__title">Tokens and dice</h2>
         <div className="row row--wrap">
           <button className="btn btn--ghost btn--sm" onClick={onToken}>Make a token</button>
@@ -1093,11 +1371,11 @@ function More({ board, player, prefs, shared, onDo, onToken, onMulligan, onDealA
             ))}
           </ul>
         )}
-      </section>
+      </section>}
       <section className="pile">
         <h2 className="pile__title">This game</h2>
         <div className="row row--wrap">
-          <button className="btn btn--ghost btn--sm" onClick={onMulligan}>Mulligan</button>
+          {!held && <button className="btn btn--ghost btn--sm" onClick={onMulligan}>Mulligan</button>}
           {!shared && <button className="btn btn--ghost btn--sm" onClick={onDealAgain}>Deal again</button>}
           <button className="btn btn--ghost btn--sm" onClick={onLeave}>← Lobby</button>
         </div>

@@ -7,6 +7,10 @@ import { createRelay } from '../scripts/relay-server.mjs'
 import { guest, KIND, PROTOCOL } from '../src/lib/board/net.js'
 import { relay, rooms as roomsApi } from '../src/lib/board/relay.js'
 import { handOf, invariants } from '../src/lib/board/model.js'
+import { resolve } from 'node:path'
+
+// This suite runs under jsdom, where import.meta.url is not a file URL, so the path is taken from the repo root.
+const FAKE_ENGINE = resolve(process.cwd(), 'tests/fixtures/fake-engine.mjs')
 
 /**
  * The relay, driven over real sockets.
@@ -35,7 +39,7 @@ let relayServer
 let base
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'relay-'))
-  relayServer = createRelay({ roomsDir: dir, pingMs: 60 })
+  relayServer = createRelay({ roomsDir: dir, pingMs: 60, engineCommand: FAKE_ENGINE })
   await new Promise((resolve) => relayServer.server.listen(0, resolve))
   base = `http://127.0.0.1:${relayServer.server.address().port}`
 })
@@ -214,7 +218,7 @@ describe('the wire', () => {
     expect(codes).toEqual([1012])
     await until(() => ada.statuses.includes('reconnecting'))
     // Back on the same port, from the same directory: the room is there.
-    relayServer = createRelay({ roomsDir: dir, pingMs: 60 })
+    relayServer = createRelay({ roomsDir: dir, pingMs: 60, engineCommand: FAKE_ENGINE })
     await new Promise((resolve) => relayServer.server.listen(port, resolve))
     await until(() => ada.wire.status === 'open' && ada.player.ready, 4000)
     expect(ada.player.seat).toBe('p1')
@@ -240,7 +244,7 @@ describe('the disk', () => {
     expect(Object.keys(saved).sort()).toEqual(['code', 'seats', 'seq', 'snapshot', 'touchedAt', 'version'])
 
     await relayServer.shutdown()
-    relayServer = createRelay({ roomsDir: dir, pingMs: 60 })
+    relayServer = createRelay({ roomsDir: dir, pingMs: 60, engineCommand: FAKE_ENGINE })
     await new Promise((resolve) => relayServer.server.listen(0, resolve))
     base = `http://127.0.0.1:${relayServer.server.address().port}`
     const back = await roomsApi(base).peek(code)
@@ -275,9 +279,124 @@ describe('the disk', () => {
     const { writeFileSync } = await import('node:fs')
     writeFileSync(join(dir, 'ABCDE.json'), '{ not json')
     writeFileSync(join(dir, 'FUTUR.json'), JSON.stringify({ version: 99, code: 'FUTUR' }))
-    relayServer = createRelay({ roomsDir: dir, pingMs: 60 })
+    relayServer = createRelay({ roomsDir: dir, pingMs: 60, engineCommand: FAKE_ENGINE })
     await new Promise((resolve) => relayServer.server.listen(0, resolve))
     expect(relayServer.rooms.size).toBe(0)
     expect(readdirSync(dir).sort()).toEqual(['ABCDE.json', 'FUTUR.json'])
+  })
+})
+
+/**
+ * The relay's other authority: a room the engine holds. Driven against the
+ * scripted stand-in engine (tests/fixtures/fake-engine.mjs), which answers
+ * from views captured off the real one, so what is tested here is the
+ * relay's part — seating, starting, who may act, stale offers, and what
+ * each seat is told — and not the rules.
+ */
+describe('an enforced room', () => {
+  const DECK = { Mountain: 14, 'Raging Goblin': 6 }
+
+  /** A client at an enforced room: the raw messages, kept. */
+  async function join(code, name, { deck = DECK, seat = null } = {}) {
+    const api = roomsApi(base)
+    const got = []
+    const wire = relay({ url: api.socketUrl(code), WebSocket })
+    wire.onMessage((m) => got.push(m))
+    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat }))
+    const last = (op) => [...got].reverse().find((m) => m.t === 'engine' && m.op === op) ?? null
+    await until(() => last('seated'))
+    return { got, wire, last, send: (m) => wire.send({ t: 'engine', ...m }), leave: () => wire.close() }
+  }
+
+  it('is opened on request, and says so', async () => {
+    const api = roomsApi(base)
+    const made = await api.open({ seats: 2, enforced: true })
+    expect(made).toMatchObject({ mode: 'enforced', seats: 2 })
+    const seen = await api.peek(made.code)
+    expect(seen).toMatchObject({ mode: 'enforced', ai: 'heuristic', started: false })
+    expect(seen.seats.map((s) => s.ai)).toEqual([null, 'heuristic'])
+    expect((await api.health()).engine).toBe(true)
+  })
+
+  it('cannot be opened on a relay with no engine', async () => {
+    const bare = createRelay({ engineCommand: null })
+    await new Promise((resolve) => bare.server.listen(0, resolve))
+    const api = roomsApi(`http://127.0.0.1:${bare.server.address().port}`)
+    await expect(api.open({ seats: 2, enforced: true })).rejects.toThrow(/no engine/)
+    expect((await api.health()).engine).toBe(false)
+    await bare.shutdown()
+  })
+
+  it('starts the game once the human seat has sat down with a deck, and tells each seat its view', async () => {
+    const api = roomsApi(base)
+    const { code } = await api.open({ seats: 2, enforced: true })
+    const you = await join(code, 'Robin')
+    await until(() => you.last('view'), 5000)
+    expect(you.last('seated')).toMatchObject({ seat: 'p1', engineSeat: 'e0' })
+    const status = you.last('status').status
+    expect(status).toMatchObject({ waiting: 'action', actor: 'e0', stop: 1 })
+    expect(status.actions.length).toBeGreaterThan(0)
+    const view = you.last('view')
+    expect(view.you).toBe('e0')
+    expect(view.state.viewingPlayerId).toBe('e0')
+    const seats = you.last('seats').seats
+    expect(seats[1]).toMatchObject({ ai: 'heuristic', ready: true })
+    expect((await api.peek(code)).started).toBe(true)
+    you.leave()
+  })
+
+  it('lets the seat the engine is waiting on act, refuses the rest, and refuses a stale offer', async () => {
+    const api = roomsApi(base)
+    const { code } = await api.open({ seats: 3, enforced: true })
+    const you = await join(code, 'Robin')
+    const them = await join(code, 'Sam')
+    await until(() => you.last('view') && them.last('view'), 5000)
+    const { stop } = you.last('status').status
+    them.send({ op: 'act', stop, index: 0 })
+    await until(() => them.last('refused'))
+    expect(them.last('refused').error).toMatch(/not you/)
+
+    you.send({ op: 'act', stop, index: 0 })
+    await until(() => you.last('status').status.stop === stop + 1, 5000)
+    await until(() => them.last('status').status.stop === stop + 1, 5000)
+    expect(you.got.filter((m) => m.op === 'view').length).toBeGreaterThanOrEqual(2)
+    // Their view is theirs: the engine was asked for it by their seat.
+    expect(them.last('view').you).toBe('e1')
+
+    you.send({ op: 'act', stop, index: 0 })
+    await until(() => you.last('refused'))
+    expect(you.last('refused')).toMatchObject({ stale: true })
+    you.leave(); them.leave()
+  })
+
+  it('gives a seat back to someone who comes back for it, with the table as it stands', async () => {
+    const api = roomsApi(base)
+    const { code } = await api.open({ seats: 2, enforced: true })
+    const first = await join(code, 'Robin')
+    await until(() => first.last('view'), 5000)
+    first.leave()
+    const again = await join(code, 'Robin', { seat: 'p1', deck: null })
+    await until(() => again.last('view'), 5000)
+    expect(again.last('seated')).toMatchObject({ seat: 'p1', engineSeat: 'e0' })
+    expect(again.last('status').status.waiting).toBe('action')
+    again.leave()
+  })
+
+  it('is not written to disk, and its engine goes when the relay does', async () => {
+    const api = roomsApi(base)
+    const { code } = await api.open({ seats: 2, enforced: true })
+    const you = await join(code, 'Robin')
+    await until(() => you.last('view'), 5000)
+    relayServer.flush()
+    expect(readdirSync(dir).some((f) => f.startsWith(code))).toBe(false)
+    const room = relayServer.rooms.get(code)
+    const pid = room.engine.engine.pid
+    expect(pid).toBeGreaterThan(0)
+    you.leave()
+    await relayServer.shutdown()
+    await until(() => room.engine.engine.exited, 3000)
+    relayServer = createRelay({ roomsDir: dir, pingMs: 60, engineCommand: FAKE_ENGINE })
+    await new Promise((resolve) => relayServer.server.listen(0, resolve))
+    base = `http://127.0.0.1:${relayServer.server.address().port}`
   })
 })
