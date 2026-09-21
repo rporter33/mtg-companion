@@ -13,6 +13,16 @@ let acted = 0
 // Told to be stubborn, it acknowledges quit and stays up, the way a hung JVM
 // would, so a test can make the bridge fall back to force.
 let stubborn = false
+// The one rule the fake has for which cards it knows, used by check and new
+// alike: a name the real engine would resolve is not its business. The real
+// resolution is tested against the real engine, in engine-live.test.js.
+const unknownName = (name) => /^Made-Up/.test(name)
+// A deck line is a count, or a printing with a count, or a list of those.
+const copiesOf = (v) => {
+  if (Array.isArray(v)) return v.reduce((sum, x) => sum + copiesOf(x), 0)
+  const n = typeof v === 'number' ? v : v?.count
+  return Number.isInteger(n) && n > 0 ? n : 0
+}
 
 const lines = createInterface({ input: process.stdin })
 const say = (o) => process.stdout.write(`${JSON.stringify(o)}\n`)
@@ -27,8 +37,20 @@ lines.on('line', (line) => {
     // loading them cost. Portal's details are Argentum's own (PortalSet.kt).
     case 'hello': say({ id, ok: true, engine: 'fake', protocol: 1, cards: 3, sets: [{ code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false }], load: { ms: 0, heapMb: 0, maxHeapMb: 0 } }); break
     case 'cards': say({ id, ok: true, names: [...new Set(shots.flatMap((s) => Object.values(s.view.cards).map((c) => c.name)))].sort() }); break
+    case 'check': {
+      if (!req.deck || typeof req.deck !== 'object') { say({ id, ok: false, error: '"deck" is required.' }); break }
+      const lines = Object.entries(req.deck)
+      const total = lines.reduce((sum, [, v]) => sum + copiesOf(v), 0)
+      const known = lines.filter(([n]) => !unknownName(n)).reduce((sum, [, v]) => sum + copiesOf(v), 0)
+      say({
+        id, ok: true, known, total,
+        unknown: lines.map(([n]) => n).filter(unknownName).sort(),
+        unknownSideboard: Object.keys(req.sideboard ?? {}).filter(unknownName).sort(),
+      })
+      break
+    }
     case 'new': {
-      const missing = (req.players ?? []).flatMap((p) => Object.keys(p.deck ?? {}).filter((n) => /^Made-Up/.test(n)))
+      const missing = (req.players ?? []).flatMap((p) => Object.keys(p.deck ?? {}).filter(unknownName))
       if (missing.length) { say({ id, ok: false, error: `The engine does not know ${missing.length} cards: ${missing.join(', ')}` }); break }
       at = 0; acted = 0
       say({ id, ...status(), seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null })) })

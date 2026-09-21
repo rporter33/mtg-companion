@@ -108,8 +108,9 @@ export function relay({ url, WebSocket: Socket = globalThis.WebSocket, onStatus 
 }
 
 /**
- * The relay's two HTTP calls: make a room, and ask what is in one. `base` is
- * the relay's origin; the socket for a room is derived from it.
+ * The relay's HTTP calls: make a room, ask what is in one, ask whether the
+ * relay is up and has an engine, and ask which of a deck's cards that engine
+ * knows. `base` is the relay's origin; the socket for a room is derived from it.
  */
 export function rooms(base) {
   const origin = String(base).replace(/\/$/, '')
@@ -130,6 +131,24 @@ export function rooms(base) {
       const res = await fetch(`${origin}/health`)
       if (!res.ok) throw new Error('The relay did not answer.')
       return res.json()
+    },
+    /**
+     * Which of a deck's cards the relay's engine knows, asked before any room
+     * exists. `deck` is the map a sit sends (`seatDeck`), so the answer is
+     * about exactly what would be dealt. Null when this relay cannot check:
+     * one from before the endpoint, or one whose engine predates the op. The
+     * lobby says so rather than guessing either way.
+     */
+    async check(deck, { sideboard = null, signal } = {}) {
+      const res = await fetch(`${origin}/engine/check`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(sideboard ? { deck, sideboard } : { deck }), signal,
+      })
+      if (res.status === 404 || res.status === 501) return null
+      const body = await res.json().catch(() => null)
+      if (!res.ok) throw Object.assign(new Error(body?.error ?? 'The relay did not answer.'), { status: res.status })
+      const names = (a) => (Array.isArray(a) ? a.filter((n) => typeof n === 'string') : [])
+      return { known: Number(body?.known) || 0, total: Number(body?.total) || 0, unknown: names(body?.unknown), unknownSideboard: names(body?.unknownSideboard) }
     },
     async peek(code) {
       const res = await fetch(`${origin}/rooms/${encodeURIComponent(code)}`)

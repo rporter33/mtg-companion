@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
+import { createServer } from 'node:http'
 import { createRelay } from '../scripts/relay-server.mjs'
 import { guest, KIND, PROTOCOL } from '../src/lib/board/net.js'
 import { relay, rooms as roomsApi } from '../src/lib/board/relay.js'
@@ -402,6 +403,113 @@ describe('an enforced room', () => {
     you.leave()
     await relayServer.shutdown()
     await until(() => room.engine.engine.exited, 3000)
+    relayServer = createRelay({ roomsDir: dir, pingMs: 60, engineCommand: FAKE_ENGINE })
+    await new Promise((resolve) => relayServer.server.listen(0, resolve))
+    base = `http://127.0.0.1:${relayServer.server.address().port}`
+  })
+})
+
+describe('a deck checked before any room exists', () => {
+  const DECK = { Mountain: 14, 'Raging Goblin': 6 }
+  const post = (body, init = {}) => fetch(`${base}/engine/check`, { method: 'POST', headers: { 'content-type': 'application/json' }, body, ...init })
+
+  it('answers which cards the engine knows, naming the rest, and opens no room to do it', async () => {
+    const answer = await roomsApi(base).check({ ...DECK, 'Made-Up Card': 2 })
+    expect(answer).toEqual({ known: 20, total: 22, unknown: ['Made-Up Card'], unknownSideboard: [] })
+    expect(relayServer.rooms.size).toBe(0)
+  })
+
+  it('reads a deck pinned to printings as well as a plain one, and its sideboard', async () => {
+    const answer = await roomsApi(base).check(
+      { Mountain: { count: 14, set: 'por', number: '1' }, 'Raging Goblin': [{ count: 4, set: 'por', number: '2' }, { count: 2 }] },
+      { sideboard: { 'Made-Up Wish': 1 } },
+    )
+    expect(answer).toEqual({ known: 20, total: 20, unknown: [], unknownSideboard: ['Made-Up Wish'] })
+  })
+
+  it('starts one engine only when asked, and keeps it for every check after', async () => {
+    expect(relayServer.checker).toBeNull()
+    const answers = await Promise.all(Array.from({ length: 5 }, () => roomsApi(base).check(DECK)))
+    expect(answers.every((a) => a.known === 20)).toBe(true)
+    expect(relayServer.checkersStarted).toBe(1)
+    const pid = relayServer.checker.pid
+    await roomsApi(base).check(DECK)
+    expect(relayServer.checker.pid).toBe(pid)
+  })
+
+  it('replaces an engine that died, rather than asking a dead one', async () => {
+    await roomsApi(base).check(DECK)
+    const first = relayServer.checker
+    await first.call('die').catch(() => {})
+    expect((await roomsApi(base).check(DECK)).known).toBe(20)
+    expect(relayServer.checkersStarted).toBe(2)
+    expect(relayServer.checker.pid).not.toBe(first.pid)
+  })
+
+  it('lets an idle engine go', async () => {
+    const quick = createRelay({ engineCommand: FAKE_ENGINE, checkIdleMs: 50 })
+    await new Promise((resolve) => quick.server.listen(0, resolve))
+    await roomsApi(`http://127.0.0.1:${quick.server.address().port}`).check(DECK)
+    const held = quick.checker
+    await until(() => quick.checker === null)
+    await until(() => held.exited)
+    await quick.shutdown()
+  })
+
+  it('refuses what is not a deck, and a body too large to be one', async () => {
+    for (const body of ['not json', '{}', JSON.stringify({ deck: [] })]) {
+      const res = await post(body)
+      expect(res.status).toBe(400)
+      expect(typeof (await res.json()).error).toBe('string')
+    }
+    const big = await post(JSON.stringify({ deck: { ['x'.repeat(70 * 1024)]: 1 } }))
+    expect(big.status).toBe(413)
+  })
+
+  it('says so when the relay has no engine, and starts nothing', async () => {
+    const bare = createRelay({ engineCommand: null })
+    await new Promise((resolve) => bare.server.listen(0, resolve))
+    const asking = roomsApi(`http://127.0.0.1:${bare.server.address().port}`).check(DECK)
+    await expect(asking).rejects.toThrow(/no engine/)
+    await expect(asking).rejects.toMatchObject({ status: 503 })
+    expect(bare.checkersStarted).toBe(0)
+    await bare.shutdown()
+  })
+
+  it('answers a page served from another origin', async () => {
+    const pre = await fetch(`${base}/engine/check`, { method: 'OPTIONS' })
+    expect(pre.status).toBe(204)
+    expect(pre.headers.get('access-control-allow-methods')).toMatch(/POST/)
+    expect(pre.headers.get('access-control-allow-headers')).toMatch(/content-type/)
+    expect((await post(JSON.stringify({ deck: DECK }))).headers.get('access-control-allow-origin')).toBe('*')
+  })
+
+  it('an older relay cannot check, and the client says so rather than throwing', async () => {
+    const old = createServer((req, res) => { res.writeHead(404, { 'content-type': 'application/json' }); res.end('{"error":"not found"}') })
+    await new Promise((resolve) => old.listen(0, resolve))
+    expect(await roomsApi(`http://127.0.0.1:${old.address().port}`).check(DECK)).toBeNull()
+    await new Promise((resolve) => old.close(resolve))
+  })
+
+  it('agrees with the deal: what the check names, starting the game refuses', async () => {
+    const api = roomsApi(base)
+    const deck = { Mountain: 14, 'Made-Up Card': 2 }
+    expect((await api.check(deck)).unknown).toEqual(['Made-Up Card'])
+    const { code } = await api.open({ seats: 2, enforced: true })
+    const got = []
+    const wire = relay({ url: api.socketUrl(code), WebSocket })
+    wire.onMessage((m) => got.push(m))
+    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name: 'Robin', deck }))
+    await until(() => got.some((m) => m.op === 'gone'), 5000)
+    expect(got.find((m) => m.op === 'gone').reason).toMatch(/Made-Up Card/)
+    wire.close()
+  })
+
+  it('closes its engine with the relay', async () => {
+    await roomsApi(base).check(DECK)
+    const held = relayServer.checker
+    await relayServer.shutdown()
+    expect(held.exited).toBeTruthy()
     relayServer = createRelay({ roomsDir: dir, pingMs: 60, engineCommand: FAKE_ENGINE })
     await new Promise((resolve) => relayServer.server.listen(0, resolve))
     base = `http://127.0.0.1:${relayServer.server.address().port}`

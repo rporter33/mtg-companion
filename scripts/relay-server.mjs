@@ -33,6 +33,9 @@
  *                                                  -> { code, seats, mode }
  *   GET  /rooms/<code>                              -> { code, seats, seq, players }
  *   WS   /rooms/<code>/ws                           the protocol in src/lib/board/net.js
+ *   POST /engine/check     body: { deck: { name: count, … }, sideboard? }
+ *                                                  -> { known, total, unknown, unknownSideboard }
+ *   GET  /health                                    -> { ok, rooms, engine }
  *   GET  /*                 the built app, when STATIC_DIR is set
  *
  * One process serves all three, the way Moxgate's does, because the relay is
@@ -45,8 +48,8 @@ import { join, extname, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { host, KIND, PROTOCOL, restore } from '../src/lib/board/net.js'
-import { findEngine } from './engine-bridge.mjs'
-import { createEngineRoom } from './relay-engine.mjs'
+import { findEngine, startEngine } from './engine-bridge.mjs'
+import { createEngineRoom, STARTUP_MS } from './relay-engine.mjs'
 import { newRun } from '../src/lib/board/runner.js'
 import { createBoard } from '../src/lib/board/model.js'
 
@@ -60,6 +63,12 @@ export const MIN_SEATS = 2
 export const MAX_SEATS = 6
 /** How long a room lives with nobody doing anything in it. */
 export const IDLE_MS = 7 * 24 * 60 * 60 * 1000
+/**
+ * How long the engine kept for checking decks stays up with nothing to check.
+ * It holds the whole card corpus in memory, so it is let go rather than kept
+ * for a lobby nobody is looking at; starting it again costs one slow answer.
+ */
+export const CHECK_IDLE_MS = 10 * 60 * 1000
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -72,7 +81,7 @@ const TYPES = {
  * with a fast ping and a temporary rooms directory; `main` below runs it
  * from the environment.
  */
-export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = null, idleMs = IDLE_MS, now = Date.now, engineCommand = findEngine(), engineSeed = null } = {}) {
+export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = null, idleMs = IDLE_MS, now = Date.now, engineCommand = findEngine(), engineSeed = null, checkIdleMs = CHECK_IDLE_MS } = {}) {
   const rooms = new Map()
   let nextSocketId = 1
 
@@ -254,17 +263,100 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
 
   // --- http ----------------------------------------------------------------
 
-  const json = (res, status, body) => {
-    res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
+  const json = (res, status, body, headers = {}) => {
+    res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*', ...headers })
     res.end(JSON.stringify(body))
   }
 
-  const readBody = (req) => new Promise((resolve) => {
+  // A body past its limit stops being kept but is still read to the end, so
+  // the caller hears a 413 rather than a connection torn down under it. Far
+  // past the limit the connection is dropped after all. `value` is null for
+  // text that is not JSON, and an empty object for no body.
+  const readBody = (req, { limit = 4096 } = {}) => new Promise((resolve) => {
     let text = ''
-    req.on('data', (chunk) => { text += chunk; if (text.length > 4096) req.destroy() })
-    req.on('end', () => { try { resolve(text ? JSON.parse(text) : {}) } catch { resolve({}) } })
-    req.on('error', () => resolve({}))
+    let size = 0
+    req.on('data', (chunk) => {
+      size += chunk.length
+      if (size <= limit) text += chunk
+      else if (size > limit * 16) { req.destroy(); resolve({ tooLarge: true }) }
+    })
+    req.on('end', () => {
+      if (size > limit) { resolve({ tooLarge: true }); return }
+      try { resolve({ value: text ? JSON.parse(text) : {} }) } catch { resolve({ value: null }) }
+    })
+    req.on('error', () => resolve({ value: null }))
   })
+
+  // --- checking a deck --------------------------------------------------------
+
+  // The lobby asks whether the engine knows a deck before any room exists, so
+  // checking has an engine process of its own: started by the first check,
+  // shared by every check after it, and let go after a quiet spell. Its first
+  // answer is hello with the long allowance, as a room's engine is asked, so
+  // the corpus loading is waited for once; every check keeps the usual wait.
+  let checker = null
+  let checkersStarted = 0
+  let checksInFlight = 0
+  let checkerIdle = null
+  const checkerFor = () => {
+    if (checker && !checker.engine.exited) return checker
+    const engine = startEngine({ command: engineCommand, onStderr: (line) => console.error(`[check] ${line}`) })
+    checkersStarted++
+    checker = { engine, ready: engine.call('hello', {}, { timeoutMs: STARTUP_MS }) }
+    return checker
+  }
+  const letCheckerGo = () => {
+    const gone = checker
+    checker = null
+    return gone?.engine.close()
+  }
+  const check = async (body) => {
+    const held = checkerFor()
+    checksInFlight++
+    clearTimeout(checkerIdle)
+    try {
+      await held.ready
+      return await held.engine.call('check', body)
+    } catch (e) {
+      // A refusal is an answer. Anything else means this process is no use,
+      // and the next check starts another rather than asking a dead one.
+      if (!e.refused && checker === held) letCheckerGo()
+      throw e
+    } finally {
+      if (--checksInFlight === 0) {
+        checkerIdle = setTimeout(letCheckerGo, checkIdleMs)
+        checkerIdle.unref?.()
+      }
+    }
+  }
+
+  const plainObject = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null)
+  const answerCheck = async (req, res) => {
+    if (!engineCommand) { json(res, 503, { error: 'This relay has no engine.' }); return }
+    const read = await readBody(req, { limit: 64 * 1024 })
+    if (read.tooLarge) { json(res, 413, { error: 'That deck is too large to check.' }, { connection: 'close' }); return }
+    const deck = plainObject(read.value?.deck)
+    if (!deck) { json(res, 400, { error: 'A deck to check is required.' }); return }
+    const sideboard = plainObject(read.value?.sideboard)
+    let reply
+    try {
+      reply = await check(sideboard ? { deck, sideboard } : { deck })
+    } catch (e) {
+      if (e.refused && /Unknown op/.test(e.message)) {
+        json(res, 501, { error: 'The engine on this relay is too old to check a deck; rebuild it.' })
+      } else if (e.refused) {
+        json(res, 400, { error: e.message })
+      } else {
+        json(res, 502, { error: `The engine could not check that deck: ${e.message}` })
+      }
+      return
+    }
+    // Read forgivingly: the engine is another program, and the lobby should
+    // never meet a shape it has to guard against.
+    const count = (n) => (Number.isFinite(n) ? n : 0)
+    const names = (a) => (Array.isArray(a) ? a.filter((n) => typeof n === 'string') : [])
+    json(res, 200, { known: count(reply?.known), total: count(reply?.total), unknown: names(reply?.unknown), unknownSideboard: names(reply?.unknownSideboard) })
+  }
 
   const describe = (room) => (room.mode === 'enforced'
     ? { code: room.code, ...room.engine.describe() }
@@ -296,8 +388,10 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
       return
     }
     if (req.method === 'POST' && url.pathname === '/rooms') {
+      const read = await readBody(req)
+      if (read.tooLarge) { json(res, 413, { error: 'That request is too large.' }, { connection: 'close' }); return }
       let room
-      try { room = makeRoom(await readBody(req)) } catch (e) { json(res, e.status ?? 500, { error: e.message }); return }
+      try { room = makeRoom(read.value ?? {}) } catch (e) { json(res, e.status ?? 500, { error: e.message }); return }
       json(res, 201, room.mode === 'enforced'
         ? { code: room.code, seats: room.engine.describe().seats.length, mode: 'enforced' }
         : { code: room.code, seats: room.table.run.board.players.length, mode: 'table' })
@@ -310,6 +404,7 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
       json(res, 200, describe(room))
       return
     }
+    if (req.method === 'POST' && url.pathname === '/engine/check') { await answerCheck(req, res); return }
     if (url.pathname === '/health') { json(res, 200, { ok: true, rooms: rooms.size, engine: Boolean(engineCommand) }); return }
     if (req.method === 'GET') { serveStatic(req, res); return }
     json(res, 404, { error: 'not found' })
@@ -334,6 +429,8 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
   const shutdown = async () => {
     clearInterval(heartbeat)
     clearInterval(sweeper)
+    clearTimeout(checkerIdle)
+    await letCheckerGo()
     for (const room of rooms.values()) flush(room)
     await Promise.all([...rooms.values()].filter((r) => r.mode === 'enforced').map((r) => r.engine.close()))
     // The close frame has to reach the client before the connection under
@@ -354,6 +451,9 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
 
   return {
     server, rooms, wss, makeRoom, flush: () => { for (const room of rooms.values()) flush(room) }, shutdown, sweep,
+    /** The engine process kept for checking decks, or null when none is up. */
+    get checker() { return checker?.engine ?? null },
+    get checkersStarted() { return checkersStarted },
   }
 }
 
