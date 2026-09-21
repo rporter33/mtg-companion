@@ -103,6 +103,19 @@ come back as a different game. The relay passes a seed only when told to
 (`createRelay({ engineSeed })`), which the engine's browser spec does so as
 to play one known game.
 
+**The log.** Each seat's log is Argentum's `ClientEvent`s for that seat, with
+three changes, all found in M1's run in a browser. Every line carries its
+`description`: most events work it out as a default, which `encodeDefaults =
+false` left off the wire, so the table had nothing to say for a land played or
+for the engine's whole turn. A card moving between another seat's hidden zones
+(library, hand) is left out of your log, because Argentum names every zone
+change whoever is looking, and the opponent's opening hand arrived card by card;
+it was on the wire before the words were. A card drawn or discarded is said
+once, by its own event, not again as a move into hand or graveyard. Taps,
+untaps and mana are left out, as Argentum's own game server leaves them out
+(`GameSession`). The engine marks each turn with a `turnChanged` line; the
+table draws it as its own turn header and files what follows under that turn.
+
 **Printings.** A deck line may name the printing the player chose, by
 Scryfall's set and collector number, and the deal puts that printing's art on
 the card. `env.reset` cannot do that: it builds its GameInitializer without a

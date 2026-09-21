@@ -112,5 +112,7 @@ describe('what the engine says about a deck', () => {
     expect(nameList(['A', 'B'])).toBe('A and B')
     expect(nameList(['A', 'B', 'C'])).toBe('A, B and C')
     expect(nameList(['A', 'B', 'C', 'D', 'E'])).toBe('A, B, C and 2 more')
+    // The log's notes are the only record, so they name every card.
+    expect(nameList(['Lightning Bolt', 'Island', 'Mountain', 'Delver of Secrets'], Infinity)).toBe('Lightning Bolt, Island, Mountain and Delver of Secrets')
   })
 })

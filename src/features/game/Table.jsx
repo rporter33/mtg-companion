@@ -28,6 +28,7 @@ import ZoneBrowser from '../../components/table/ZoneBrowser.jsx'
 import TokenMaker from '../../components/table/TokenMaker.jsx'
 import Printings from '../../components/Printings.jsx'
 import Confirm from '../../components/Confirm.jsx'
+import { nameList } from '../../lib/engine/deck.js'
 import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
 import useEngineRoom from './useEngineRoom.js'
@@ -1341,12 +1342,12 @@ function More({ board, player, prefs, shared, held = false, leftOut = [], sidebo
           </p>
           {leftOut.length > 0 && (
             <p className="faint tiny m0">
-              Played without {leftOut.map((l) => `${l.count} ${l.name}`).join(', ')}, as chosen in the lobby: the engine does not know {leftOut.reduce((sum, l) => sum + l.count, 0) === 1 ? 'it' : 'them'}.
+              Played without {nameList(leftOut.map((l) => `${l.count} ${l.name}`), Infinity)}, as chosen in the lobby: the engine does not know {leftOut.reduce((sum, l) => sum + l.count, 0) === 1 ? 'it' : 'them'}.
             </p>
           )}
           {sideboardLeftOut.length > 0 && (
             <p className="faint tiny m0">
-              Your sideboard is played without {sideboardLeftOut.join(', ')}: the engine does not know {sideboardLeftOut.length === 1 ? 'it' : 'them'}.
+              Your sideboard is played without {nameList(sideboardLeftOut, Infinity)}: the engine does not know {sideboardLeftOut.length === 1 ? 'it' : 'them'}.
             </p>
           )}
         </section>

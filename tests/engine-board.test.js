@@ -113,14 +113,76 @@ describe('events between views', () => {
     expect(events[1]).toMatchObject({ to: 'attackers' })
   })
 
-  it('says what the engine said, once, phrased for the viewer', () => {
+  it('says what the engine said, once, phrased for the viewer, under the turn it happened in', () => {
     const before = { ...early, log: [{ type: 'lifeChanged', description: 'You lost 3 life', playerId: YOU }] }
-    const after = { ...later, log: [...before.log, { type: 'lifeChanged', description: 'Opponent lost 2 life', playerId: BOT }] }
+    const after = {
+      ...later,
+      log: [
+        ...before.log,
+        { type: 'turnChanged', turnNumber: 7, activePlayerId: later.activePlayerId, description: '--- Turn 7 ---' },
+        { type: 'lifeChanged', description: 'Opponent lost 2 life', playerId: BOT },
+      ],
+    }
     const events = eventsBetween(before, after, { seq: 5 })
     const noted = events.filter((e) => e.type === 'said')
     expect(noted).toHaveLength(1)
-    expect(noted[0]).toMatchObject({ text: 'Opponent lost 2 life', turn: 7, seq: 8 })
-    expect(events.map((e) => e.type)).toEqual(['turnBegan', 'stepped', 'said'])
+    expect(noted[0]).toMatchObject({ text: 'Opponent lost 2 life', turn: 7, seq: 7 })
+    expect(events.map((e) => e.type)).toEqual(['turnBegan', 'said', 'stepped'])
+  })
+
+  it('files a turn the engine played between two views under that turn, its mark a header and not a line', () => {
+    // As seen in M1's run in a browser: a land played, then the engine's
+    // whole turn, then yours, all arriving with one view.
+    const before = { ...early, turnNumber: 1, activePlayerId: YOU, log: [] }
+    const after = {
+      ...early,
+      turnNumber: 3,
+      activePlayerId: YOU,
+      log: [
+        { type: 'permanentEntered', description: 'Your Mountain entered the battlefield', controllerId: YOU },
+        { type: 'turnChanged', turnNumber: 2, activePlayerId: BOT, isYourTurn: false, description: "--- Turn 2 (Opponent's turn) ---" },
+        { type: 'cardDrawn', description: 'Opponent drew a card', playerId: BOT },
+        { type: 'turnChanged', turnNumber: 3, activePlayerId: YOU, isYourTurn: true, description: '--- Turn 3 (Your turn) ---' },
+      ],
+    }
+    const events = eventsBetween(before, after)
+    expect(events.map((e) => [e.type, e.turn])).toEqual([['said', 1], ['turnBegan', 2], ['said', 2], ['turnBegan', 3], ['stepped', 3]])
+    expect(events.filter((e) => e.type === 'turnBegan').map((e) => e.active)).toEqual([BOT, YOU])
+    expect(events.some((e) => /---/.test(e.text ?? ''))).toBe(false)
+
+    const turns = readLog(events, boardFromView(after), { you: YOU })
+    expect(turns.map((t) => t.turn)).toEqual([3, 2, 1])
+    const theirs = turns.find((t) => t.turn === 2)
+    expect(theirs.active).toBe(BOT)
+    expect(theirs.items.filter((i) => i.kind === 'entry').map((i) => i.text)).toEqual(['Opponent drew a card'])
+  })
+
+  it('files each line under the step it says it happened in, not where the view stopped', () => {
+    // Their upkeep, where you had priority; the next view stops in their
+    // main phase, and the draw between the two was in their draw step.
+    const before = { ...early, turnNumber: 2, activePlayerId: BOT, currentStep: 'UPKEEP', log: [] }
+    const after = {
+      ...before,
+      currentStep: 'PRECOMBAT_MAIN',
+      log: [
+        { type: 'cardDrawn', description: 'Opponent drew a card', playerId: BOT, step: 'DRAW' },
+        { type: 'permanentEntered', description: "Opponent's Mountain entered the battlefield", controllerId: BOT, step: 'PRECOMBAT_MAIN' },
+      ],
+    }
+    const events = eventsBetween(before, after)
+    expect(events.map((e) => e.type === 'stepped' ? e.to : e.type)).toEqual([stepIdOf('DRAW'), 'said', stepIdOf('PRECOMBAT_MAIN'), 'said'])
+
+    const turns = readLog(events, boardFromView(after), { you: YOU })
+    const items = turns.find((t) => t.turn === 2).items.filter((i) => i.kind !== 'passed')
+    expect(items.map((i) => i.kind === 'step' ? i.step : i.text)).toEqual([
+      stepIdOf('DRAW'), 'Opponent drew a card', stepIdOf('PRECOMBAT_MAIN'), "Opponent's Mountain entered the battlefield",
+    ])
+  })
+
+  it('files the deal under the first turn, before the step the first view stands at', () => {
+    const events = eventsBetween(null, { ...early, log: [{ type: 'cardDrawn', description: 'You drew 7 cards', playerId: YOU }] })
+    expect(events.map((e) => e.type)).toEqual(['turnBegan', 'said', 'stepped'])
+    expect(events[1]).toMatchObject({ turn: early.turnNumber ?? 1 })
   })
 
   it('reads into the game log as lines with no speaker of their own', () => {

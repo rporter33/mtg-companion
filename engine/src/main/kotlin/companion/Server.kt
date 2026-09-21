@@ -2,6 +2,8 @@ package companion
 
 import com.wingedsheep.ai.engine.AIPlayer
 import com.wingedsheep.engine.core.ActivateAbility
+import com.wingedsheep.engine.core.CardsDiscardedEvent
+import com.wingedsheep.engine.core.CardsDrawnEvent
 import com.wingedsheep.engine.core.CastSpell
 import com.wingedsheep.engine.core.ChooseOptionDecision
 import com.wingedsheep.engine.core.DeclareAttackers
@@ -15,10 +17,13 @@ import com.wingedsheep.engine.core.OptionChosenResponse
 import com.wingedsheep.engine.core.PendingDecision
 import com.wingedsheep.engine.core.PlayLand
 import com.wingedsheep.engine.core.PlayerConfig
+import com.wingedsheep.engine.core.StepChangedEvent
 import com.wingedsheep.engine.core.SubmitDecision
 import com.wingedsheep.engine.core.TargetsResponse
+import com.wingedsheep.engine.core.TurnChangedEvent
 import com.wingedsheep.engine.core.YesNoDecision
 import com.wingedsheep.engine.core.YesNoResponse
+import com.wingedsheep.engine.core.ZoneChangeEvent
 import com.wingedsheep.engine.legalactions.LegalAction
 import com.wingedsheep.engine.legalactions.MeaningfulActionFilter
 import com.wingedsheep.engine.registry.CardRegistry
@@ -33,13 +38,14 @@ import com.wingedsheep.gym.GameEnvironment
 import com.wingedsheep.gym.RandomActionSelector
 import com.wingedsheep.mtg.sets.MtgSetCatalog
 import com.wingedsheep.mtg.sets.tokens.PredefinedTokens
+import com.wingedsheep.sdk.core.Step
+import com.wingedsheep.sdk.core.Zone
 import com.wingedsheep.sdk.model.CardDefinition
 import com.wingedsheep.sdk.model.MtgSet
 import com.wingedsheep.sdk.model.CardEntry
 import com.wingedsheep.sdk.model.Deck
 import com.wingedsheep.sdk.model.EntityId
 import com.wingedsheep.sdk.model.PrintingRef
-import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -103,22 +109,72 @@ private class Seat(
     val unknownPrintings: List<String> = emptyList(),
 )
 
+/** Zones whose contents only their owner may know. */
+private val HIDDEN = setOf(Zone.HAND, Zone.LIBRARY)
+
+/**
+ * The engine's events as one seat's log.
+ *
+ * Argentum phrases every zone change by the card's name, whoever is looking,
+ * so on its own a card drawn is said twice (the draw, then the move into hand)
+ * and a card moving between another seat's library and hand is named to a seat
+ * that must not know it: the opponent's opening hand, card by card, as found in
+ * M1's run in a browser. A move between hidden zones is left out of every log
+ * but its owner's, and a draw or discard is said once, by its own event. Taps,
+ * untaps and mana are left out as Argentum's own game server leaves them out
+ * (`GameSession`, "filter noisy events").
+ *
+ * Each line also says the step it happened in, which Argentum's lines do not:
+ * a view arrives only where somebody stops, so without it the table filed the
+ * engine's draw under its upkeep. `from` is the step the game stood in before
+ * these events; a new turn has none until its first step begins.
+ */
+private fun logLines(events: List<GameEvent>, viewer: EntityId, from: Step?): List<LogLine> {
+    val drawn = events.filterIsInstance<CardsDrawnEvent>().flatMapTo(HashSet()) { it.cardIds }
+    val discarded = events.filterIsInstance<CardsDiscardedEvent>().flatMapTo(HashSet()) { it.cardIds }
+    var step = from
+    val out = mutableListOf<LogLine>()
+    for (e in events) {
+        when (e) {
+            is StepChangedEvent -> { step = e.newStep; continue }
+            is TurnChangedEvent -> step = null
+            is ZoneChangeEvent -> if (
+                (e.fromZone == Zone.LIBRARY && e.toZone == Zone.HAND && e.entityId in drawn) ||
+                (e.fromZone == Zone.HAND && e.toZone == Zone.GRAVEYARD && e.entityId in discarded) ||
+                (e.ownerId != viewer && e.toZone in HIDDEN && (e.fromZone == null || e.fromZone in HIDDEN))
+            ) continue
+            else -> {}
+        }
+        for (line in ClientEventTransformer.transform(listOf(e), viewer)) {
+            if (line is ClientEvent.PermanentTapped || line is ClientEvent.PermanentUntapped || line is ClientEvent.ManaAdded) continue
+            out += LogLine(line, step)
+        }
+    }
+    return out
+}
+
+/** A line of one seat's log, and the step it happened in, if the game had begun one. */
+private class LogLine(val event: ClientEvent, val step: Step?)
+
 private class Table(val registry: CardRegistry, val env: GameEnvironment, val seats: List<Seat>, val seed: Long, dealt: List<GameEvent> = emptyList()) {
     val transformer = ClientStateTransformer(registry)
     val lastView = HashMap<EntityId, ClientGameState>()
     /** What each seat has been told happened, in its own words: the game log. */
-    val logs = HashMap<EntityId, MutableList<ClientEvent>>()
+    val logs = HashMap<EntityId, MutableList<LogLine>>()
     private var logged = 0
+    /** The step the game stood in at the last event recorded, carried from one batch to the next. */
+    private var step: Step? = null
     // The deal's own events, which GameEnvironment.restore does not keep: without them
     // the log would begin after the opening hands were drawn.
-    init { if (dealt.isNotEmpty()) for (seat in seats) logs.getOrPut(seat.id) { mutableListOf() } += ClientEventTransformer.transform(dealt, seat.id) }
+    init { if (dealt.isNotEmpty()) for (seat in seats) logs.getOrPut(seat.id) { mutableListOf() } += logLines(dealt, seat.id, null) }
 
     /** Carries the engine's events since the last call into every seat's log, masked for that seat. */
     fun record() {
         val fresh = env.events.drop(logged)
         logged = env.events.size
         if (fresh.isEmpty()) return
-        for (seat in seats) logs.getOrPut(seat.id) { mutableListOf() } += ClientEventTransformer.transform(fresh, seat.id)
+        for (seat in seats) logs.getOrPut(seat.id) { mutableListOf() } += logLines(fresh, seat.id, step)
+        for (e in fresh) if (e is StepChangedEvent) step = e.newStep else if (e is TurnChangedEvent) step = null
     }
     val players = HashMap<EntityId, AIPlayer>()
     val randoms = HashMap<EntityId, RandomActionSelector>()
@@ -226,7 +282,19 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
             put("ok", true)
             // The whole log so far, phrased for this seat. A view is asked for
             // once per stop, and a stop is worth a few hundred bytes of history.
-            put("log", json.encodeToJsonElement(ListSerializer(ClientEvent.serializer()), logs[viewer] ?: emptyList()))
+            // Most events work out their `description` as a default, which
+            // encodeDefaults = false leaves off the wire, and a line without one
+            // is a line the table cannot say: a land played and the engine's
+            // whole turn went by in silence until M1's run in a browser. So
+            // every line carries its words explicitly, and the step it happened in.
+            putJsonArray("log") {
+                for (line in logs[viewer] ?: emptyList()) {
+                    val fields = json.encodeToJsonElement(ClientEvent.serializer(), line.event).jsonObject.toMutableMap()
+                    fields["description"] = JsonPrimitive(line.event.description)
+                    line.step?.let { fields["step"] = JsonPrimitive(it.name) }
+                    add(JsonObject(fields))
+                }
+            }
             if (delta && prev != null) {
                 put("delta", json.encodeToJsonElement(StateDelta.serializer(), StateDiffCalculator.computeDelta(prev, next)))
             } else {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { relay } from '../../lib/board/relay.js'
 import { boardFromView, eventsBetween, standIn } from '../../lib/engine/board.js'
-import { leaveOut, seatDeck } from '../../lib/engine/deck.js'
+import { leaveOut, nameList, seatDeck } from '../../lib/engine/deck.js'
 
 /**
  * A seat at a table the engine holds.
@@ -93,19 +93,19 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
           // deal, not the one that answers the sit at once, before there is a deal.
           if (sideOut.length && !sideNoted.current) {
             sideNoted.current = true
-            note(`Your sideboard is played without ${sideOut.join(', ')}: the engine does not know ${sideOut.length === 1 ? 'it' : 'them'}.`)
+            note(`Your sideboard is played without ${nameList(sideOut, Infinity)}: the engine does not know ${sideOut.length === 1 ? 'it' : 'them'}.`)
           }
           // The owner's choice (2026-09-21): a printing the engine has not got is
           // shown as the engine's own art to every seat, and the log says so once.
           const missed = Array.isArray(m.unknownPrintings) ? m.unknownPrintings.filter((n) => typeof n === 'string') : []
           if (missed.length && !printingsNoted.current) {
             printingsNoted.current = true
-            note(`The engine does not have your printing of ${missed.join(', ')}, so ${missed.length === 1 ? 'it shows' : 'they show'} the engine's own art.`)
+            note(`The engine does not have your printing of ${nameList(missed, Infinity)}, so ${missed.length === 1 ? 'it shows' : 'they show'} the engine's own art.`)
           }
           if (!sat.current) {
             if (leftOut.length) {
               const copies = leftOut.reduce((sum, l) => sum + l.count, 0)
-              note(`Played without ${leftOut.map((l) => `${l.count} ${l.name}`).join(', ')}: the engine does not know ${copies === 1 ? 'it' : 'them'}.`)
+              note(`Played without ${nameList(leftOut.map((l) => `${l.count} ${l.name}`), Infinity)}: the engine does not know ${copies === 1 ? 'it' : 'them'}.`)
             }
             if (sideboardUnloaded) note(`${sideboardUnloaded === 1 ? 'One sideboard card' : `${sideboardUnloaded} sideboard cards`} did not load, so ${sideboardUnloaded === 1 ? 'it is' : 'they are'} left out.`)
           }

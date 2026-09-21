@@ -230,6 +230,27 @@ describe.skipIf(!command)('the engine on the wire', () => {
     expect(acted).toBeGreaterThan(5)
     expect(passed).toBeGreaterThan(0)
     expect(status.turn).toBeGreaterThan(1)
+    // Every line of the log has its words, including the ones the engine
+    // computes as a default: without them a land played went unsaid.
+    const { log } = await engine.call('view', { viewer: you })
+    expect(log.length).toBeGreaterThan(10)
+    expect(log.filter((l) => typeof l.description !== 'string' || !l.description)).toEqual([])
+    expect(log.some((l) => l.type === 'permanentEntered' && /entered the battlefield/.test(l.description))).toBe(true)
+    // And none names a card in the other seat's hand or library. This deck
+    // bounces and tutors nothing, so a line of a card going to a hand or a
+    // library is one drawn, dealt or put back after a mulligan: theirs is
+    // hidden, and yours going to hand is already said by the draw.
+    const moved = log.filter((l) => l.type === 'permanentLeft' && ['hand', 'library'].includes(l.destination))
+    expect(moved.filter((l) => l.ownerId === bot)).toEqual([])
+    expect(moved.filter((l) => l.destination === 'hand')).toEqual([])
+    expect(log.filter((l) => l.type === 'cardDrawn' && l.playerId === bot && l.cardName)).toEqual([])
+    expect(log.some((l) => l.type === 'cardDrawn' && l.playerId === bot)).toBe(true)
+    // Each line after the deal names the step it happened in: the engine's
+    // draws on its own turns are in its draw step, not where you next stopped.
+    expect(log.some((l) => l.type === 'cardDrawn' && l.playerId === bot && l.step === 'DRAW')).toBe(true)
+    expect(log.filter((l) => l.type === 'permanentEntered' && typeof l.step !== 'string')).toEqual([])
+    // Taps, untaps and mana are left out, as Argentum's own server leaves them out.
+    expect(log.filter((l) => ['permanentTapped', 'permanentUntapped', 'manaAdded'].includes(l.type))).toEqual([])
     const full = JSON.stringify(first.state).length
     const median = deltaBytes.sort((a, b) => a - b)[Math.floor(deltaBytes.length / 2)]
     expect(median).toBeLessThan(full)

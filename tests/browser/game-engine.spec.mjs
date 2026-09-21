@@ -227,6 +227,13 @@ for (let i = 0; i < 6 && !/Turn [23]/i.test(await logText()); i++) {
   else break
 }
 check('passing through the turn hands it to the engine, which plays and hands it back', await until(() => logText().then((t) => /Your turn\s*·\s*Turn 3/i.test(t)), 20000), (await logText()).slice(0, 200))
+// Until M1's run in a browser the engine's lines reached the table without
+// their words, and its whole turn went by unsaid.
+check('the land you played is said', /Your Mountain entered the battlefield/.test(await logText()), (await logText()).slice(0, 400))
+check('the engine\'s turn has a place of its own in the log', /The engine\s*·\s*Turn 2/i.test(await logText()), (await logText()).slice(0, 400))
+check('its draw is said in its draw step, without the card', /The engine's draw\s*Opponent drew a card/i.test(await logText()), (await logText()).slice(0, 400))
+check('and nothing in its hand or library is named', !/Opponent's [^.]*? went to (hand|library)/.test(await logText()))
+check('the engine\'s own turn marks become headers, not lines', !/--- Turn/.test(await logText()))
 
 console.log('\nAn attack')
 // Play what can be played and pass until the engine asks who attacks, then

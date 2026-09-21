@@ -186,22 +186,39 @@ export function boardFromView(view, { prev = null, seats = null } = {}) {
  * What changed between two views, as events the game log already reads:
  * a turn beginning, a step passed, and whatever the engine said happened.
  * `you` is the viewing seat, because the engine phrases its lines for it.
+ *
+ * A view arrives only where somebody stops, so it says little about when
+ * its lines happened; the lines say it themselves. The engine marks each turn
+ * in its log, and that mark becomes this table's own turn header rather than
+ * a line, with what follows filed under the turn it names. Each line also
+ * names the step it happened in (the process adds it), and a line in a new
+ * step brings that step's divider with it. So a turn the engine played
+ * between two views reads as that turn, its draw in its draw step.
  */
 export function eventsBetween(prevView, view, { seq = 0 } = {}) {
   const out = []
   let n = seq
   const turn = view.turnNumber ?? 1
-  if (!prevView || prevView.turnNumber !== turn) {
-    out.push({ type: 'turnBegan', seq: ++n, turn, active: view.activePlayerId, player: view.activePlayerId })
-  }
-  const step = stepIdOf(view.currentStep)
-  if (!prevView || stepIdOf(prevView.currentStep) !== step || prevView.turnNumber !== turn) {
-    out.push({ type: 'stepped', seq: ++n, turn, to: step, player: view.activePlayerId })
-  }
+  // The deal's lines carry no mark, so the first view's turn is theirs.
+  let at = prevView ? (prevView.turnNumber ?? 1) : turn
+  let active = prevView?.activePlayerId ?? view.activePlayerId
+  let stepAt = prevView ? stepIdOf(prevView.currentStep) : null
+  const began = (t, who) => { at = t; active = who; stepAt = null; out.push({ type: 'turnBegan', seq: ++n, turn: t, active: who, player: who }) }
+  const stepped = (to) => { stepAt = to; out.push({ type: 'stepped', seq: ++n, turn: at, to, player: active }) }
+
+  if (!prevView) began(turn, view.activePlayerId)
   const before = prevView?.log?.length ?? 0
   for (const line of (view.log ?? []).slice(before)) {
+    if (line?.type === 'turnChanged' && Number.isInteger(line.turnNumber)) {
+      if (line.turnNumber !== at) began(line.turnNumber, line.activePlayerId ?? null)
+      continue
+    }
     if (!line?.description) continue
-    out.push({ type: 'said', seq: ++n, turn, text: line.description, player: line.playerId ?? view.activePlayerId, engine: line.type ?? null })
+    if (typeof line.step === 'string' && stepIdOf(line.step) !== stepAt) stepped(stepIdOf(line.step))
+    out.push({ type: 'said', seq: ++n, turn: at, text: line.description, player: line.playerId ?? view.activePlayerId, engine: line.type ?? null })
   }
+  if (at !== turn) began(turn, view.activePlayerId)
+  const step = stepIdOf(view.currentStep)
+  if (step !== stepAt) stepped(step)
   return out
 }
