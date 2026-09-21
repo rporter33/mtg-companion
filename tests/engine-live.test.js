@@ -10,28 +10,130 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { startEngine, findEngine } from '../scripts/engine-bridge.mjs'
 
 const command = findEngine()
-// Portal, the one set the first build registers: creatures to attack with and a burn spell that needs a target.
+// Portal goblins: creatures to attack with and a burn spell that needs a target,
+// the deck the first measurements were taken with.
 const deck = { Mountain: 14, 'Raging Goblin': 6, 'Goblin Bully': 4, 'Hulking Goblin': 4, 'Volcanic Hammer': 4, 'Lava Axe': 2 }
 
 describe.skipIf(!command)('the engine on the wire', () => {
   let engine
-  beforeAll(() => { engine = startEngine({ command, timeoutMs: 120_000 }) })
+  let hello
+  // The first answer waits on the whole corpus loading, so the hook is given
+  // the allowance the relay gives it, and every test after asks a ready engine.
+  beforeAll(async () => {
+    engine = startEngine({ command, timeoutMs: 120_000 })
+    hello = await engine.call('hello')
+  }, 150_000)
   afterAll(async () => { await engine?.close() })
 
-  it('says who it is and what it knows', async () => {
-    const hello = await engine.call('hello')
+  it('says who it is, and knows the whole corpus rather than one set', async () => {
     expect(hello.engine).toBe('argentum')
     expect(hello.protocol).toBe(1)
+    expect(hello.cards).toBeGreaterThan(12_000)
+    expect(hello.sets.length).toBeGreaterThan(100)
+    expect(hello.sets.find((s) => s.code === 'POR')).toEqual({ code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false })
+    expect(hello.load.ms).toBeGreaterThan(0)
+    expect(hello.load.heapMb).toBeGreaterThan(0)
     const { names } = await engine.call('cards')
     expect(names).toContain('Raging Goblin')
+    expect(names).toContain('Monastery Swiftspear')
+    // A deck may hold a card; a token is not one, though the engine knows it.
+    expect(names).not.toContain('Treasure')
     expect(names.length).toBe(hello.cards)
   }, 60_000)
 
-  it('refuses a deck it cannot enforce, naming the cards', async () => {
+  it('refuses a deck it cannot enforce, naming the cards, and will not deal a token as a card', async () => {
     await expect(engine.call('new', {
       players: [{ name: 'A', deck: { Mountain: 10, 'Made-Up Card': 2 } }, { name: 'B', deck }],
     })).rejects.toThrow(/Made-Up Card/)
+    await expect(engine.call('new', {
+      players: [{ name: 'A', deck: { Mountain: 10, Treasure: 2 } }, { name: 'B', deck }],
+    })).rejects.toThrow(/Treasure/)
   }, 60_000)
+
+  it('reads a name that is not plain ASCII as the name it is', async () => {
+    // Were the accents garbled on the way in, Déjà Vu would be refused as unknown.
+    const status = await engine.call('new', {
+      players: [{ name: 'A', deck: { Island: 16, 'Déjà Vu': 4 } }, { name: 'B', deck }],
+    })
+    expect(status.seats).toHaveLength(2)
+  }, 60_000)
+
+  // Names exactly as Scryfall spells them (checked against Scryfall on
+  // 2026-09-21), because those are what the app sends. The first four are
+  // Scryfall's transform, modal_dfc, adventure and prepare layouts, which the
+  // engine knows by their fronts; the split card and the Room it knows whole.
+  const scryfallNames = {
+    'Delver of Secrets // Insectile Aberration': 4,
+    'Barkchannel Pathway // Tidechannel Pathway': 4,
+    'Dirgur Island Dragon // Skimming Strike': 4,
+    'Abigale, Poet Laureate // Heroic Stanza': 4,
+    'Assault // Battery': 4,
+    'Bottomless Pool // Locker Room': 4,
+    'Déjà Vu': 2,
+  }
+
+  it('knows a deck by the names Scryfall gives it, and not by names that are not a card', async () => {
+    const reply = await engine.call('check', {
+      deck: {
+        ...scryfallNames,
+        'Insectile Aberration': 1, // a back face alone is not a card a deck may hold
+        'Delver of Secrets // Tidechannel Pathway': 1, // two cards glued together
+        'Delver of Secrets // Delver of Secrets': 1, // the shape of an art-series card
+        Treasure: 1, // a token
+        'Made-Up Card': 1,
+      },
+      sideboard: { 'Made-Up Wish': 1, Island: 2 },
+    })
+    expect(reply.known).toBe(26)
+    expect(reply.total).toBe(31)
+    expect(reply.unknown).toEqual(['Delver of Secrets // Delver of Secrets', 'Delver of Secrets // Tidechannel Pathway', 'Insectile Aberration', 'Made-Up Card', 'Treasure'])
+    expect(reply.unknownSideboard).toEqual(['Made-Up Wish'])
+  }, 60_000)
+
+  it('deals a deck sent under Scryfall\'s names, as the cards the engine knows', async () => {
+    const status = await engine.call('new', {
+      players: [
+        { name: 'A', deck: { 'Delver of Secrets // Insectile Aberration': 4, 'Barkchannel Pathway // Tidechannel Pathway': 4, Island: 12 } },
+        { name: 'B', deck },
+      ],
+      seed: 11,
+    })
+    const a = status.seats[0].id
+    const opening = (await engine.call('view', { viewer: a })).state
+    const hand = opening.zones.find((z) => z.zoneId.zoneType === 'Hand' && z.zoneId.ownerId === a)
+    const names = hand.cardIds.map((id) => opening.cards[id].name)
+    expect(names).toHaveLength(7)
+    expect(names.every((n) => ['Delver of Secrets', 'Barkchannel Pathway', 'Island'].includes(n))).toBe(true)
+  }, 60_000)
+
+  it('plays a game with cards from sets other than Portal', async () => {
+    const modern = { Mountain: 20, 'Monastery Swiftspear': 4, 'Heartfire Immolator': 4, 'Lightning Bolt': 4 }
+    let status = await engine.call('new', {
+      players: [{ name: 'You', deck: modern, autoPass: true }, { name: 'Bot', deck: modern, ai: 'heuristic' }],
+      seed: 7,
+    })
+    const you = status.seats[0].id
+    const opening = (await engine.call('view', { viewer: you })).state
+    const hand = opening.zones.find((z) => z.zoneId.zoneType === 'Hand' && z.zoneId.ownerId === you)
+    expect(hand.cardIds.map((id) => opening.cards[id].name).every((n) => n in modern)).toBe(true)
+    // What is done, not whether it ends: this player never casts a spell that
+    // needs a target, so it sits on its Lightning Bolts and the game can stall
+    // for dozens of turns. It is stopped at every window while it holds one,
+    // which is Law 1 working, not a hang.
+    const done = []
+    for (let stops = 0; !status.over && stops < 120; stops++) {
+      if (status.waiting === 'decision') status = await engine.call('decide', { auto: true })
+      else if (status.waiting === 'action') {
+        const pick = status.actions.find((a) => a.meaningful && a.affordable && !a.requiresTargets)
+          ?? status.actions.find((a) => a.type === 'PassPriority')
+        done.push(pick.description)
+        status = await engine.call('act', { index: pick.index })
+      } else status = await engine.call('turn')
+    }
+    // Seed 7 deals Swiftspear early; a card from outside Portal, cast, is the claim.
+    expect(done).toContain('Cast Monastery Swiftspear')
+    expect(status.turn).toBeGreaterThan(3)
+  }, 300_000)
 
   it('plays a game against the engine, passing for the human only where nothing is affordable', async () => {
     let status = await engine.call('new', {

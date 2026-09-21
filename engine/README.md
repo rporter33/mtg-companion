@@ -13,9 +13,23 @@ scripts/engine-build.sh            # fetches ../argentum at the pinned commit, c
 scripts/engine-build.sh --play     # then plays one game through it as a smoke test
 ```
 
-JDK 21 and Maven Central. The first build compiles `rules-engine`, `gym`,
-`ai` and one era of the card corpus, about five minutes (280 s on the owner's
-Windows machine on 2026-09-21); after that, seconds.
+JDK 21 and Maven Central. The build compiles `rules-engine`, `gym`, `ai` and
+the whole card corpus. Measured on the owner's Windows machine on 2026-09-21:
+280 s for the base modules with one era, then 153 s more for every other era;
+after that, seconds.
+
+**The whole corpus, loaded.** Every set Argentum has: 179 of them, 137 marked
+incomplete by Argentum itself, and 13,246 card names a deck may hold. Loading
+them is most of the engine's first answer, 12.8 s of 13.1 s on the owner's
+machine, and they then hold 104 MB. The launcher's heap ceiling is 2 GB
+(`-Xmx2g`, the ceiling Argentum gives its own whole-corpus tests; set
+`COMPANION_OPTS` to change it), and `hello` reports what was actually used. The
+relay gives an engine's first answer two minutes (`STARTUP_MS` in
+`relay-engine.mjs`) and every later one 30 s, so a hung engine is still noticed.
+
+A bare basic land wears the newest art that registered its name, which at the
+pinned commit is The Hobbit's: the registry keeps the last definition under a
+name, and basic lands are the one card upstream defines in many sets.
 
 **The pin.** Argentum is fetched at one commit, `70d525c` (2026-09-20), and
 not at upstream `main`, which moves daily. `ENGINE_REV` overrides it for an
@@ -40,8 +54,9 @@ One request per line, one reply per line, correlated by `id`:
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"engine":"argentum","protocol":1,"cards":178,"sets":["por"]}` |
-| `{"op":"cards"}` | `{"names":[…]}` — every card the engine knows, for checking a deck before sitting |
+| `{"op":"hello"}` | `{"engine":"argentum","protocol":1,"cards":13246,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"load":{"ms":12842,"heapMb":104,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order |
+| `{"op":"cards"}` | `{"names":[…]}` — every name a deck may hold: no tokens and no back faces, though the engine knows both |
+| `{"op":"check","deck":{"Delver of Secrets // Insectile Aberration":4,"Made-Up Card":2},"sideboard":{…}}` | `{"known":4,"total":6,"unknown":["Made-Up Card"],"unknownSideboard":[]}` — which of a deck's cards the engine knows, before any game; unknown names come back exactly as sent |
 | `{"op":"new","players":[{"name":"You","deck":{"Mountain":14,"Raging Goblin":12},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic"}],"seed":20260921}` | the table's status (below) plus `seats` and the `seed` it was dealt from |
 | `{"op":"turn"}` | the table's status |
 | `{"op":"act","index":3}` | the status after that action and everything that followed it |
@@ -86,6 +101,19 @@ come back as a different game. The relay passes a seed only when told to
 (`createRelay({ engineSeed })`), which the engine's browser spec does so as
 to play one known game.
 
+**Names.** A deck is sent in Scryfall's spelling, because that is what the app
+holds, and `new` and `check` resolve it the same way. A name the engine knows
+exactly is taken as it is; split cards and Rooms are known whole ("Assault //
+Battery"). A card with two faces is "Front // Back" to Scryfall and known by its
+front here, which is taken only when every later part really is one of that
+card's faces: a transforming or modal card's back, an adventure's, an Omen's or
+a prepare card's other half. Refused: a back face on its own, two unrelated
+cards glued together, a token, and "X // X", which is how Scryfall names an
+art-series card; the app sends a reversible card, which Scryfall names the same
+way, by its single name. A deck line may be a count, `{"count":4,"set":"mid",
+"number":"50"}`, or a list of those, and one card sent in two spellings or two
+printings is one line of the deck.
+
 `ClientGameState` and `StateDelta` are the engine's own client DTOs
 (`rules-engine/…/view/`), passed through untouched: per-viewer, with the
 opponent's hand as a count and no ids. `src/lib/engine/board.js` lays them
@@ -97,6 +125,6 @@ room around this process.
 - **Several games in one process.** One process per room keeps a crash to
   one table and the code to a page.
 - **Persistence.** A room's engine state lives only in the process for now.
-- **The whole card corpus.** One era is registered (Portal, for the smoke
-  test). Widening it is `build.gradle.kts` and `registry()` in `Server.kt`,
-  and a longer first build.
+- **A warm engine.** Each room starts its own process and waits out the 13 s
+  load. Keeping one loaded and ready is a question for hosting (M8), once the
+  cost of an idle JVM is measured against the wait.

@@ -123,9 +123,13 @@ await page.getByRole('button', { name: /^Goblins/ }).first().click()
 await page.getByRole('button', { name: /Sit down with Goblins/ }).click()
 
 console.log('\nAt the table')
-check('the table opens for that deck', await until(() => page.locator('.game:not(.game--loading)').count().then((n) => n === 1), 20000))
+// The engine starts when the seat is taken and loads the whole card corpus
+// before it deals: 13 s on the owner's machine (engine/README.md). These two
+// waits cover that, with room for a slower runner; every later one is after it.
+const ENGINE_START_MS = 60_000
+check('the table opens for that deck', await until(() => page.locator('.game:not(.game--loading)').count().then((n) => n === 1), ENGINE_START_MS))
 const prompt = page.locator('.prompt')
-check('the engine deals and stops at the first thing worth stopping for', await until(() => prompt.count().then((n) => n === 1), 20000))
+check('the engine deals and stops at the first thing worth stopping for', await until(() => prompt.count().then((n) => n === 1), ENGINE_START_MS))
 const hand = () => page.locator('.tabletop__handcard .bcard').count()
 check('seven cards in hand', (await hand()) === 7, String(await hand()))
 check('the seat opposite is the engine', /The engine/.test(await page.locator('.game__them').textContent()))

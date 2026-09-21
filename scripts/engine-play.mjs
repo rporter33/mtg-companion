@@ -12,12 +12,18 @@ if (!command) {
   process.exit(2)
 }
 
+const spawned = Date.now()
 const engine = startEngine({ command, onStderr: (line) => console.error(`  [engine] ${line}`) })
-// Portal, the one set the first build registers: creatures to attack with and a burn spell that needs a target.
+// Portal goblins: creatures to attack with and a burn spell that needs a target,
+// the same deck the first measurements were taken with, so the figures compare.
 const deck = { Mountain: 14, 'Raging Goblin': 6, 'Goblin Bully': 4, 'Hulking Goblin': 4, 'Volcanic Hammer': 4, 'Lava Axe': 2 }
 
-const hello = await engine.call('hello')
-console.log(`engine ${hello.engine}, protocol ${hello.protocol}, ${hello.cards} cards`)
+// The first answer waits on the whole corpus loading, so it gets the long allowance.
+const hello = await engine.call('hello', {}, { timeoutMs: 120_000 })
+const firstAnswer = Date.now() - spawned
+const sets = Array.isArray(hello.sets) ? hello.sets : []
+console.log(`engine ${hello.engine}, protocol ${hello.protocol}, ${hello.cards} cards a deck may hold, ${sets.length} sets (${sets.filter((s) => s.incomplete).length} marked incomplete)`)
+if (hello.load) console.log(`first answer ${firstAnswer} ms after starting; the corpus loaded in ${hello.load.ms} ms and holds ${hello.load.heapMb} MB of a ${hello.load.maxHeapMb} MB ceiling`)
 
 let status = await engine.call('new', {
   players: [

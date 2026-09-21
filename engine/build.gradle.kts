@@ -10,12 +10,18 @@ dependencies {
     implementation(project(":mtg-sdk"))
     implementation(project(":gym"))
     implementation(project(":ai"))
-    // One era of the card corpus, the same one the spike compiled, so a first
-    // build is minutes rather than the better part of an hour. Widening it is
-    // a matter of adding eras here and registering their sets in Server.kt.
-    implementation(project(":mtg-sets:1993-1999"))
+    // The whole card corpus. The :mtg-sets aggregator re-exports core and every
+    // era, and it is what Argentum's own game-server and gym-server depend on;
+    // Server.kt registers every set MtgSetCatalog finds on the classpath.
+    implementation(project(":mtg-sets"))
     implementation(libs.bundles.kotlinxEcosystem)
     runtimeOnly(libs.slf4jApi)
 }
 
-application { mainClass.set("companion.ServerKt") }
+application {
+    mainClass.set("companion.ServerKt")
+    // A ceiling, not a measurement: the one Argentum gives its own whole-corpus
+    // test JVMs (buildSrc kotlin-jvm.gradle.kts, maxHeapSize "2g"). What the
+    // corpus actually holds is in hello's load.heapMb. COMPANION_OPTS overrides it.
+    applicationDefaultJvmArgs = listOf("-Xmx2g")
+}

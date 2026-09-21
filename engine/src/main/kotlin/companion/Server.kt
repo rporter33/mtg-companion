@@ -28,7 +28,10 @@ import com.wingedsheep.engine.view.StateDelta
 import com.wingedsheep.engine.view.StateDiffCalculator
 import com.wingedsheep.gym.GameEnvironment
 import com.wingedsheep.gym.RandomActionSelector
-import com.wingedsheep.mtg.sets.definitions.por.PortalSet
+import com.wingedsheep.mtg.sets.MtgSetCatalog
+import com.wingedsheep.mtg.sets.tokens.PredefinedTokens
+import com.wingedsheep.sdk.model.CardDefinition
+import com.wingedsheep.sdk.model.MtgSet
 import com.wingedsheep.sdk.model.Deck
 import com.wingedsheep.sdk.model.EntityId
 import kotlinx.serialization.builtins.ListSerializer
@@ -43,12 +46,14 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import java.util.Random
 
 /**
@@ -311,21 +316,123 @@ private fun PendingDecision.isAskable() =
 
 private class Refused(message: String) : RuntimeException(message)
 
-private fun registry(): CardRegistry = CardRegistry().apply {
-    register(PortalSet.cards)
-    register(PortalSet.basicLands)
+/**
+ * Everything the engine knows, loaded once, before the first request is read.
+ *
+ * Built the way Argentum's own servers build theirs (game-server's GameBeansConfig,
+ * gym-server's GymBeansConfig): the predefined tokens first, then every set in
+ * MtgSetCatalog.all, oldest first. Tokens first because a card that makes a Treasure or
+ * a Food finds the token by name, and an unregistered one mints nothing; a real card
+ * that shares a token's name comes after it and wins.
+ *
+ * The registry keeps the last definition registered under a name, and upstream allows
+ * one definition per name for everything but basic lands (MtgSetCatalogTest), so the
+ * order decides nothing about the rules. It decides the art: a bare "Plains" wears the
+ * newest set's until a deck can name its printing, and a reprint that makes tokens
+ * makes its own set's. Set code and release date are stamped as game-server stamps
+ * them, because MtgSet's documentation says sets stamp their own cards and they do not
+ * (CardDiscovery returns them unstamped).
+ */
+private class Corpus(
+    val registry: CardRegistry,
+    val sets: List<MtgSet>,
+    /** What a deck may hold: every set's cards and basic lands. Not a token, not a back face. */
+    val deckable: Set<String>,
+    val loadMs: Long,
+    val heapMb: Long,
+)
+
+private const val MB = 1024L * 1024L
+
+private fun corpus(): Corpus {
+    val started = System.nanoTime()
+    val sets = MtgSetCatalog.all
+    val registry = CardRegistry().apply {
+        register(PredefinedTokens.allTokens)
+        for (set in sets) {
+            register(set.cards.stamped(set))
+            register(set.basicLands)
+            set.basicLandsFallback?.let { register(it.basicLands) }
+        }
+    }
+    val deckable = sets.flatMapTo(HashSet()) { set -> set.cards.map { it.name } + set.basicLands.map { it.name } }
+    val loadMs = (System.nanoTime() - started) / 1_000_000
+    // One collection first, so the figure is what the corpus holds rather than what
+    // loading it threw away.
+    System.gc()
+    val rt = Runtime.getRuntime()
+    return Corpus(registry, sets, deckable, loadMs, (rt.totalMemory() - rt.freeMemory()) / MB)
 }
 
-private fun newTable(registry: CardRegistry, params: JsonObject): Table {
+private fun List<CardDefinition>.stamped(set: MtgSet): List<CardDefinition> = map { card ->
+    val withSet = if (card.setCode == null) card.copy(setCode = set.code) else card
+    if (withSet.metadata.releaseDate == null && set.releaseDate != null) {
+        withSet.copy(metadata = withSet.metadata.copy(releaseDate = set.releaseDate))
+    } else {
+        withSet
+    }
+}
+
+/** One line of a deck as the wire sends it: a name, how many, and the printing if one was named. */
+private class Line(val name: String, val count: Int?, val set: String?, val number: String?)
+
+/**
+ * A deck's lines, from any shape the wire allows: `{"Mountain": 14}`, `{"Mountain":
+ * {"count": 14, "set": "hob", "number": "192"}}`, or a list of those when one name comes in
+ * several printings. A count that is not a positive whole number is read as null, which a
+ * caller refuses rather than guesses at.
+ */
+private fun readLines(o: JsonObject?): List<Line> = o?.entries?.flatMap { (name, v) ->
+    if (v is JsonArray) v.map { lineOf(name, it) } else listOf(lineOf(name, v))
+} ?: emptyList()
+
+private fun lineOf(name: String, v: JsonElement): Line = when (v) {
+    is JsonPrimitive -> Line(name, v.intOrNull?.takeIf { it > 0 }, null, null)
+    is JsonObject -> Line(
+        name,
+        v["count"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 },
+        v["set"]?.jsonPrimitive?.contentOrNull,
+        v["number"]?.jsonPrimitive?.contentOrNull,
+    )
+    else -> Line(name, null, null, null)
+}
+
+/**
+ * The name the engine knows a deck line by, or null when it knows no such card.
+ *
+ * The app sends names as Scryfall spells them, and most are the engine's exactly. A card with
+ * two faces is "Front // Back" to Scryfall, and the engine knows it by its front; that is taken
+ * only when every later part really is one of that card's faces, so a name glued together from
+ * two unrelated cards is refused rather than dealt as the first of them. "X // X", the shape of
+ * an art-series card, stays unknown: it is not a card a deck may hold, and the app sends a
+ * reversible card by its single name. A token or a lone back face is not in `deckable`, so it
+ * falls out here too, though the engine knows both.
+ */
+private fun resolveName(corpus: Corpus, name: String): String? {
+    if (name in corpus.deckable) return name
+    val parts = name.split(" // ")
+    if (parts.size < 2) return null
+    val front = parts.first()
+    if (front !in corpus.deckable) return null
+    val def = corpus.registry.getCard(front) ?: return null
+    val faces = buildSet { def.backFace?.name?.let(::add); def.cardFaces.forEach { add(it.name) } }
+    return front.takeIf { parts.drop(1).all { it != front && it in faces } }
+}
+
+private fun newTable(corpus: Corpus, params: JsonObject): Table {
+    val registry = corpus.registry
     val players = params["players"]?.jsonArray ?: throw Refused("\"players\" is required.")
     if (players.size < 2) throw Refused("A game needs at least two players.")
     val configs = players.mapIndexed { i, p ->
         val o = p.jsonObject
         val name = o["name"]?.jsonPrimitive?.contentOrNull ?: "Player ${i + 1}"
-        val deck = o["deck"]?.jsonObject ?: throw Refused("$name has no deck.")
-        val missing = deck.keys.filter { !registry.hasCard(it) }
+        val lines = readLines(o["deck"] as? JsonObject ?: throw Refused("$name has no deck."))
+        lines.firstOrNull { it.count == null }?.let { throw Refused("$name's deck lists ${it.name} without a number of copies.") }
+        val missing = lines.map { it.name }.distinct().filter { resolveName(corpus, it) == null }
         if (missing.isNotEmpty()) throw Refused("The engine does not know ${missing.size} of $name's cards: ${missing.joinToString(", ")}")
-        val entries = deck.entries.map { (card, n) -> card to n.jsonPrimitive.int }
+        // Summed by the name the engine knows, so a card sent under two spellings, or in two
+        // printings, is one line of the deck.
+        val entries = lines.groupBy { resolveName(corpus, it.name)!! }.map { (card, ls) -> card to ls.sumOf { it.count!! } }
         PlayerConfig(name = name, deck = Deck.of(*entries.toTypedArray()), startingLife = o["life"]?.jsonPrimitive?.int ?: 20)
     }
     // The seed decides the shuffle, every coin flip and every other "at random",
@@ -355,9 +462,12 @@ private fun seatsOf(table: Table): JsonArray = buildJsonArray {
 }
 
 fun main() {
-    val registry = registry()
+    val corpus = corpus()
     var table: Table? = null
     val out = System.out.bufferedWriter()
+    // UTF-8 both ways, whatever the machine's default: a deck arrives with names such as
+    // "Juzám Djinn", and a JAVA_TOOL_OPTIONS setting file.encoding must not garble them.
+    val input = System.`in`.bufferedReader(Charsets.UTF_8)
 
     fun reply(id: JsonElement?, body: JsonObject) {
         val line = JsonObject(mapOf("id" to (id ?: JsonNull)) + body)
@@ -365,7 +475,7 @@ fun main() {
     }
 
     while (true) {
-        val line = readLine() ?: break
+        val line = input.readLine() ?: break
         if (line.isBlank()) continue
         val req = try { json.parseToJsonElement(line).jsonObject } catch (e: Exception) {
             reply(null, buildJsonObject { put("ok", false); put("error", "Not a JSON object: ${e.message}") }); continue
@@ -375,15 +485,42 @@ fun main() {
             when (val op = req["op"]?.jsonPrimitive?.contentOrNull) {
                 "hello" -> buildJsonObject {
                     put("ok", true); put("engine", "argentum"); put("protocol", PROTOCOL)
-                    put("cards", registry.size)
-                    putJsonArray("sets") { add(JsonPrimitive("por")) }
+                    // The names a deck may hold, which is what a player means by "cards".
+                    put("cards", corpus.deckable.size)
+                    // In release order, with whether Argentum marks a set incomplete, so the
+                    // app can say what the engine lacks rather than only which card.
+                    putJsonArray("sets") {
+                        corpus.sets.forEach { s ->
+                            add(buildJsonObject {
+                                put("code", s.code); put("name", s.displayName); put("released", s.releaseDate); put("incomplete", s.incomplete)
+                            })
+                        }
+                    }
+                    // Measured, not assumed: what loading the corpus took and holds.
+                    putJsonObject("load") {
+                        put("ms", corpus.loadMs); put("heapMb", corpus.heapMb); put("maxHeapMb", Runtime.getRuntime().maxMemory() / MB)
+                    }
                 }
                 "cards" -> buildJsonObject {
                     put("ok", true)
-                    putJsonArray("names") { registry.allCardNames().sorted().forEach { add(JsonPrimitive(it)) } }
+                    putJsonArray("names") { corpus.deckable.sorted().forEach { add(JsonPrimitive(it)) } }
+                }
+                // Which of a deck's cards the engine knows, asked before a game exists. The unknown
+                // names come back exactly as they were sent, so the app can point at its own lines.
+                "check" -> {
+                    val lines = readLines(req["deck"] as? JsonObject ?: throw Refused("\"deck\" is required."))
+                    val side = readLines(req["sideboard"] as? JsonObject)
+                    val unknown = { ls: List<Line> -> ls.map { it.name }.distinct().filter { resolveName(corpus, it) == null }.sorted() }
+                    buildJsonObject {
+                        put("ok", true)
+                        put("known", lines.filter { resolveName(corpus, it.name) != null }.sumOf { it.count ?: 0 })
+                        put("total", lines.sumOf { it.count ?: 0 })
+                        putJsonArray("unknown") { unknown(lines).forEach { add(JsonPrimitive(it)) } }
+                        putJsonArray("unknownSideboard") { unknown(side).forEach { add(JsonPrimitive(it)) } }
+                    }
                 }
                 "new" -> {
-                    val t = newTable(registry, req)
+                    val t = newTable(corpus, req)
                     table = t
                     t.drive()
                     JsonObject(t.status() + mapOf("seats" to seatsOf(t), "seed" to JsonPrimitive(t.seed)))
