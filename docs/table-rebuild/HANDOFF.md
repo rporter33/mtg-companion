@@ -194,6 +194,14 @@ These are settled. Do not reopen them; build on them.
     single name; the engine's heap ceiling is 2 GB, with one process per
     room and one for checking decks, until M8 sizes hosting from the
     measured 110 MB.
+12. **Decided 2026-09-21, with released-first printings** (`PROJECT_BRIEF.md`
+    §10): the engine moves to newer sets by a pull request the owner
+    merges. Until M9 that is a deliberate commit moving `ENGINE_REV`; after
+    M9, a scheduled workflow builds upstream Argentum, runs the live suite
+    and the engine's browser spec, and opens the pull request with the new
+    sets, the load time and the heap measured. The printing choice is never
+    steered towards the sets the engine has; a printing it lacks keeps the
+    settled fallback (item 10).
 
 ---
 

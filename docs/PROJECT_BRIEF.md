@@ -173,6 +173,17 @@ src/
 - Errors are typed: `ScryfallError`, `OfflineError`. Partial results are
   returned rather than thrown — a deck with two unresolved cards still opens
   and says which two.
+- **Released first** (2026-09-21). `resolvePrintings` is the one way a card
+  named in text becomes a printing, and `getCardsByNames` is its name-keyed
+  form. A printing someone typed (set and number, or set alone) is kept,
+  released or not. For a bare name, Scryfall's pick stands if it is out on
+  paper; if it is not out yet or digital-only, the newest released paper
+  printing of the same card is taken instead (`oracleid:` batches of fifteen,
+  `date<=now game:paper lang:en prefer:newest`), and the import review says
+  so. Whether a printing is out is worked out from Scryfall's `released_at`
+  and today's date each time it is shown (`src/lib/release.js`), never
+  stored; the "Not out until …" chip (`NotOutChip`) and the legality wording
+  (`legalityStatus` in `formats.js`) clear themselves on release day.
 
 ### Storage (`src/lib/storage.js`)
 
@@ -473,6 +484,51 @@ printing picker is in the deck editor too.
 
 ## 10. What is next
 
+### Released-first printings (slice 1 built, 2026-09-21)
+
+The problem: a card added by name alone took Scryfall's pick, which during
+every preview season can be a set that is not out (on 2026-09-21 a bare
+"Island" became Star Trek's, due 13 November), and nothing checked release
+dates. The owner chose, on 2026-09-21: when the app must pick, the newest
+released paper printing, with no style filters; copied decklists carry set
+and collector number; nothing in a deck is rewritten behind the player's
+back; a card that is not out is labelled, never hidden or blocked; a newly
+released set stays the season's focus until the next one is nearer in days;
+the rules engine moves to new sets by a pull request the owner merges, once
+CI builds the engine.
+
+**Built (slice 1):** the rule in `resolvePrintings` (typed printings kept,
+`{name, set}` for a set without a number, two printings of one card kept as
+two lines, a released-first pass for the app's own picks, failures that
+never block an import and never swap a typed printing); the import review
+saying how each printing was chosen; the "Not out until …" chip on search
+tiles, card detail, the printings picker, deck rows, Add cards and missing
+prices; printings ordered released first; deck face art preferring cards
+that are out; legality that never promises what Scryfall has not said
+(`pending`, and `future_legal` from Scryfall's Future Standard; Standard's
+search takes `legal:future` in); a verdict that says "N cards not out yet"
+rather than "Legal"; copy limits counted per card across printings;
+exported decklists carrying `(SET) NUM`, with The List and lettered Secret
+Lair numbers now parsed. Checked by `tests/release.test.js`,
+`tests/scryfall-names.test.js`, `tests/printing-choice.test.js`,
+`tests/not-out-legality.test.js`, `tests/decklist-export.test.js` and the
+browser spec `unreleased.spec.mjs`, which fixes the page's clock on
+2026-09-21 and 2026-11-13.
+
+**Next (slice 2), before 2 October if it can be:** refresh cached deck cards
+around a release (today a saved card is never re-fetched, so a Reality
+Fracture card saved now stays Scryfall's pre-release `not_legal` after 2
+October), with a grace note while Scryfall catches up and no "became more
+playable" noise; the season focus rule above; curated set content saying
+when it was written and whether it has been checked since release, and the
+Hexhaven schools (`LORE_SET = 'fra'`) following the focus; an optional
+"Find released printings" for decks imported before this; stamping names on
+deck entries so a preview id Scryfall later merges or deletes stays
+readable, with `/cards/migrations` followed on a 404; the engine lobby's
+reasons from the engine's own set list; the coach's and first deck's
+queries using the Standard pool term; the Archidekt URL fetch keeping
+printings; printings past the first 175.
+
 ### T4b-1 — the replication protocol and transport (built)
 
 `src/lib/board/net.js` is host-authoritative replication over the board's
@@ -587,6 +643,14 @@ anything in the same area.
 - **A commander is not one of the ninety-nine.** Shuffling 100 instead of 99
   is off by one in every number the app produces, and it is the mistake every
   hand-rolled playtester makes first.
+- **A name alone is Scryfall's pick, and Scryfall lists sets before they are
+  out.** Its collection endpoint answers a name with its own choice of
+  printing, which is not always the newest and can be a preview: a bare
+  "Island" became a Star Trek printing two months before release. Go through
+  `resolvePrintings`, never `getCardByName` or a raw `{name}` identifier, when
+  a card enters a deck. And a test must never lean on today's date: every
+  release check takes `now`, and a browser spec fixes the page's clock, or
+  the suite changes its answer the day a set comes out.
 
 ---
 
