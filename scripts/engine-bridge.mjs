@@ -93,13 +93,16 @@ export function startEngine({ command, args = [], cwd, timeoutMs = 30_000, onStd
   })
   child.on('error', (err) => { exited = { error: err }; fail(`The engine could not start: ${err.message}`); settleExit() })
 
-  const call = (op, params = {}) => new Promise((resolve, reject) => {
+  // One call may be given longer than the rest: the first answer waits on the
+  // whole card corpus loading, and no later one should wait that long before
+  // a hung engine is noticed.
+  const call = (op, params = {}, { timeoutMs: wait = timeoutMs } = {}) => new Promise((resolve, reject) => {
     if (exited || !child.stdin.writable) { reject(new Error('The engine is not running.')); return }
     const id = nextId++
     const timer = setTimeout(() => {
       waiting.delete(id)
-      reject(new Error(`The engine did not answer "${op}" within ${timeoutMs}ms.`))
-    }, timeoutMs)
+      reject(new Error(`The engine did not answer "${op}" within ${wait}ms.`))
+    }, wait)
     waiting.set(id, { resolve, reject, timer })
     child.stdin.write(`${JSON.stringify({ id, op, ...params })}\n`)
   })

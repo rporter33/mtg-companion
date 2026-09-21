@@ -27,6 +27,12 @@ export const OP = {
   seated: 'seated', seats: 'seats', status: 'status', view: 'view', refused: 'refused', gone: 'gone',
 }
 
+// How long an engine's first answer may take. It loads the whole card corpus
+// before it reads a line, which is far slower than any answer after it. An
+// allowance rather than a measurement: engine/README.md has the measured load,
+// and this is revisited against it.
+export const STARTUP_MS = 120_000
+
 export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', engineCommand, seed = null, deliver, onStderr = null }) {
   const humanSeats = Math.max(1, ai ? seatCount - 1 : seatCount)
   const seats = Array.from({ length: seatCount }, (_, i) => ({
@@ -62,6 +68,9 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     starting = true
     try {
       engine = startEngine({ command: engineCommand, onStderr })
+      // Asked first and given the long allowance, so that the corpus loading
+      // is waited for once, here, and every later call keeps the usual wait.
+      await engine.call('hello', {}, { timeoutMs: STARTUP_MS })
       // The engine's own seat plays the first human's deck: a mirror match,
       // until the lobby lets a deck be chosen for it. It is said so on screen.
       const mirror = seats.find((s) => !s.ai && s.deck)?.deck ?? {}

@@ -23,7 +23,9 @@ lines.on('line', (line) => {
   try { req = JSON.parse(line) } catch { say({ id: null, ok: false, error: 'not json' }); return }
   const { id } = req
   switch (req.op) {
-    case 'hello': say({ id, ok: true, engine: 'fake', protocol: 1, cards: 3, sets: ['por'] }); break
+    // The real engine's shape: every set it knows, in release order, and what
+    // loading them cost. Portal's details are Argentum's own (PortalSet.kt).
+    case 'hello': say({ id, ok: true, engine: 'fake', protocol: 1, cards: 3, sets: [{ code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false }], load: { ms: 0, heapMb: 0, maxHeapMb: 0 } }); break
     case 'cards': say({ id, ok: true, names: [...new Set(shots.flatMap((s) => Object.values(s.view.cards).map((c) => c.name)))].sort() }); break
     case 'new': {
       const missing = (req.players ?? []).flatMap((p) => Object.keys(p.deck ?? {}).filter((n) => /^Made-Up/.test(n)))

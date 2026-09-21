@@ -60,6 +60,12 @@ describe('the engine bridge', () => {
     await expect(e.call('slow', { ms: 2000 })).rejects.toThrow(/did not answer "slow"/)
   })
 
+  it('waits longer for one call when told to, and no longer for the rest', async () => {
+    const e = fake({ timeoutMs: 60 })
+    expect((await e.call('slow', { ms: 150 }, { timeoutMs: 2000 })).slept).toBe(150)
+    await expect(e.call('slow', { ms: 150 })).rejects.toThrow(/within 60ms/)
+  })
+
   it('closes politely, then not', async () => {
     const e = fake()
     await e.close()
