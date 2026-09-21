@@ -943,6 +943,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             shared={away}
             held={Boolean(engine)}
             leftOut={engine ? held.leftOut : []}
+            sideboardLeftOut={engine ? held.sideboardLeftOut : []}
             onDo={doAction}
             onToken={() => setPanel('token')}
             onMulligan={() => setAsking('mulligan')}
@@ -1329,7 +1330,7 @@ function Actions({ inst, name, card, host, mine = true, permanent = true, onDo, 
  * Behind the dots on the rail: everything a game needs now and then and a
  * screen should not spend space on all the time.
  */
-function More({ board, player, prefs, shared, held = false, leftOut = [], onDo, onToken, onMulligan, onDealAgain, onTogglePref, onLeave }) {
+function More({ board, player, prefs, shared, held = false, leftOut = [], sideboardLeftOut = [], onDo, onToken, onMulligan, onDealAgain, onTogglePref, onLeave }) {
   return (
     <div className="more">
       {held && (
@@ -1341,6 +1342,11 @@ function More({ board, player, prefs, shared, held = false, leftOut = [], onDo, 
           {leftOut.length > 0 && (
             <p className="faint tiny m0">
               Played without {leftOut.map((l) => `${l.count} ${l.name}`).join(', ')}, as chosen in the lobby: the engine does not know {leftOut.reduce((sum, l) => sum + l.count, 0) === 1 ? 'it' : 'them'}.
+            </p>
+          )}
+          {sideboardLeftOut.length > 0 && (
+            <p className="faint tiny m0">
+              Your sideboard is played without {sideboardLeftOut.join(', ')}: the engine does not know {sideboardLeftOut.length === 1 ? 'it' : 'them'}.
             </p>
           )}
         </section>

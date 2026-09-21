@@ -302,12 +302,12 @@ describe('an enforced room', () => {
   const DECK = { Mountain: 14, 'Raging Goblin': 6 }
 
   /** A client at an enforced room: the raw messages, kept. */
-  async function join(code, name, { deck = DECK, seat = null } = {}) {
+  async function join(code, name, { deck = DECK, seat = null, sideboard = null } = {}) {
     const api = roomsApi(base)
     const got = []
     const wire = relay({ url: api.socketUrl(code), WebSocket })
     wire.onMessage((m) => got.push(m))
-    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat }))
+    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat, ...(sideboard ? { sideboard } : {}) }))
     const last = (op) => [...got].reverse().find((m) => m.t === 'engine' && m.op === op) ?? null
     await until(() => last('seated'))
     return { got, wire, last, send: (m) => wire.send({ t: 'engine', ...m }), leave: () => wire.close() }
@@ -347,6 +347,29 @@ describe('an enforced room', () => {
     const seats = you.last('seats').seats
     expect(seats[1]).toMatchObject({ ai: 'heuristic', ready: true })
     expect((await api.peek(code)).started).toBe(true)
+    you.leave()
+  })
+
+  it('deals the sideboard too, mirrors it to the engine\'s seat, and says which card was left out of it', async () => {
+    const api = roomsApi(base)
+    const { code } = await api.open({ seats: 2, enforced: true })
+    const sideboard = { 'Lava Axe': 2, 'Made-Up Wish': 1 }
+    const you = await join(code, 'Robin', { sideboard })
+    // The first seated comes at once; the one after the deal carries what the engine left out.
+    await until(() => you.got.some((m) => m.op === 'seated' && m.sideboardLeftOut?.includes('Made-Up Wish')), 5000)
+    const sent = (await relayServer.rooms.get(code).engine.engine.call('lastNew')).request
+    expect(sent.players[0].sideboard).toEqual(sideboard)
+    // The engine's seat plays a mirror of the deck, and a mirror is the whole of it.
+    expect(sent.players[1]).toMatchObject({ ai: 'heuristic', deck: DECK, sideboard })
+    you.leave()
+  })
+
+  it('sends no sideboard for a deck that has none', async () => {
+    const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+    const you = await join(code, 'Robin')
+    await until(() => you.last('view'), 5000)
+    const sent = (await relayServer.rooms.get(code).engine.engine.call('lastNew')).request
+    expect(sent.players.every((p) => !('sideboard' in p))).toBe(true)
     you.leave()
   })
 

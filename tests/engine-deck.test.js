@@ -38,7 +38,18 @@ describe('a deck made ready for the engine', () => {
 
   it('reads an entry with no quantity as one copy, and no deck as an empty one', () => {
     expect(seatDeck({ main: [{ cardId: 'c' }] }, lookup)).toMatchObject({ deck: { 'Raging Goblin': 1 }, total: 1 })
-    expect(seatDeck(null, lookup)).toEqual({ deck: {}, sideboard: {}, total: 0, unloaded: 0 })
+    expect(seatDeck(null, lookup)).toEqual({ deck: {}, sideboard: {}, total: 0, unloaded: 0, sideboardUnloaded: 0 })
+  })
+
+  it('sends the sideboard of a format that has one, and not one that holds a maybeboard', () => {
+    const deck = { main: [{ cardId: 'a', quantity: 20 }], sideboard: [{ cardId: 'c', quantity: 2 }, { cardId: 'gone', quantity: 1 }] }
+    const constructed = seatDeck({ ...deck, formatId: 'standard' }, lookup)
+    expect(constructed.sideboard).toEqual({ 'Raging Goblin': 2 })
+    expect(constructed.sideboardUnloaded).toBe(1)
+    // A sideboard card that did not load does not stop the sit; the main deck's would.
+    expect(constructed.unloaded).toBe(0)
+    expect(seatDeck({ ...deck, formatId: 'commander' }, lookup).sideboard).toEqual({})
+    expect(seatDeck({ ...deck, formatId: 'no-such-format' }, lookup).sideboard).toEqual({})
   })
 })
 

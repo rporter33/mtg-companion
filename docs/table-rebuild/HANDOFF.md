@@ -674,9 +674,10 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 ## 7. Appendix — the wire, in one place
 
 Between the browser and the relay, over the room's socket, all
-`{ t: "engine", op }`: `sit { name, deck, seat? }`, `act { stop, index,
-attackers?, blockers? }`, `decide { stop, … }`, `turn`; back: `seated`,
-`seats`, `status`, `view { you, state, log }`, `refused`, `gone`.
+`{ t: "engine", op }`: `sit { name, deck, sideboard?, seat? }`, `act { stop, index,
+attackers?, blockers? }`, `decide { stop, … }`, `turn`; back: `seated { seat,
+engineSeat, sideboardLeftOut }`, `seats`, `status`, `view { you, state, log }`,
+`refused`, `gone`. Over HTTP, before any room: `POST /engine/check`.
 
 Between the relay and the process, JSON lines: `hello`, `cards`, `new`,
 `turn`, `act`, `decide`, `view`, `quit`; M1 adds `check`, M2 `continue`, M7

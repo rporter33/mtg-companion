@@ -60,11 +60,16 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   // The deck by name, as a string: the lookup function is new on every
   // render, and an effect keyed on an object rebuilt from it would open a
   // new socket each time. The names themselves change only with the deck.
-  const deckKey = prepared && !unloaded ? JSON.stringify(prepared.seat.deck) : null
+  const deckKey = prepared && !unloaded ? JSON.stringify({ deck: prepared.seat.deck, sideboard: prepared.seat.sideboard }) : null
   const deckNames = useMemo(() => (deckKey ? JSON.parse(deckKey) : null), [deckKey])
   const leftKey = JSON.stringify(prepared?.left ?? [])
   const leftOut = useMemo(() => JSON.parse(leftKey), [leftKey])
+  const sideboardUnloaded = prepared?.seat.sideboardUnloaded ?? 0
+  // Named by the engine when it deals: sideboard cards it does not know, left
+  // out rather than refused, which the table then says.
+  const [sideboardLeftOut, setSideboardLeftOut] = useState([])
   const sat = useRef(false)
+  const sideNoted = useRef(false)
   const seating = useRef([])
 
   const note = useCallback((text) => {
@@ -74,19 +79,33 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   useEffect(() => {
     if (!address || !code || !deckNames) return undefined
     const line = relay({ url: `${address.replace(/\/$/, '').replace(/^http/, 'ws')}/rooms/${encodeURIComponent(code)}/ws`, onStatus: (s) => setWireStatus(s) })
-    line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames }))
+    const side = Object.keys(deckNames.sideboard ?? {}).length ? { sideboard: deckNames.sideboard } : {}
+    line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, ...side }))
     line.onMessage((m) => {
       if (m?.t !== 'engine') return
       switch (m.op) {
-        case 'seated':
-          if (!sat.current && leftOut.length) {
-            const copies = leftOut.reduce((sum, l) => sum + l.count, 0)
-            note(`Played without ${leftOut.map((l) => `${l.count} ${l.name}`).join(', ')}: the engine does not know ${copies === 1 ? 'it' : 'them'}.`)
+        case 'seated': {
+          // Read forgivingly: a relay from before the sideboard sends none.
+          const sideOut = Array.isArray(m.sideboardLeftOut) ? m.sideboardLeftOut.filter((n) => typeof n === 'string') : []
+          setSideboardLeftOut(sideOut)
+          // Said when the engine first names them, which is the seated after the
+          // deal, not the one that answers the sit at once, before there is a deal.
+          if (sideOut.length && !sideNoted.current) {
+            sideNoted.current = true
+            note(`Your sideboard is played without ${sideOut.join(', ')}: the engine does not know ${sideOut.length === 1 ? 'it' : 'them'}.`)
+          }
+          if (!sat.current) {
+            if (leftOut.length) {
+              const copies = leftOut.reduce((sum, l) => sum + l.count, 0)
+              note(`Played without ${leftOut.map((l) => `${l.count} ${l.name}`).join(', ')}: the engine does not know ${copies === 1 ? 'it' : 'them'}.`)
+            }
+            if (sideboardUnloaded) note(`${sideboardUnloaded === 1 ? 'One sideboard card' : `${sideboardUnloaded} sideboard cards`} did not load, so ${sideboardUnloaded === 1 ? 'it is' : 'they are'} left out.`)
           }
           sat.current = true
           if (m.engineSeat) setSeat(m.engineSeat)
           if (m.seat && memory.seat !== m.seat) { memory.seat = m.seat; remember(code, memory) }
           break
+        }
         case 'seats': seating.current = m.seats ?? []; setSeats(seating.current); break
         case 'status': {
           const s = m.status
@@ -143,7 +162,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   }, [])
 
   return {
-    run, seat, seats, status, refusal, gone, wireStatus, unloaded, leftOut,
+    run, seat, seats, status, refusal, gone, wireStatus, unloaded, leftOut, sideboardLeftOut,
     act, decide, cardFor, moveCard,
     refuse: (message) => setRefusal({ message }),
     clearRefusal: () => setRefusal(null),

@@ -106,6 +106,19 @@ describe.skipIf(!command)('the engine on the wire', () => {
     expect(names.every((n) => ['Delver of Secrets', 'Barkchannel Pathway', 'Island'].includes(n))).toBe(true)
   }, 60_000)
 
+  it('deals a sideboard, and leaves out a sideboard card it does not know rather than refuse the game', async () => {
+    const status = await engine.call('new', {
+      players: [{ name: 'A', deck, sideboard: { 'Lava Axe': 2, 'Made-Up Wish': 1 } }, { name: 'B', deck }],
+      seed: 5,
+    })
+    expect(status.seats[0].sideboardLeftOut).toEqual(['Made-Up Wish'])
+    expect(status.seats[1].sideboardLeftOut).toEqual([])
+    const a = status.seats[0].id
+    const view = (await engine.call('view', { viewer: a })).state
+    const side = view.zones.find((z) => /sideboard/i.test(z.zoneId.zoneType) && z.zoneId.ownerId === a)
+    expect(side?.size).toBe(2)
+  }, 60_000)
+
   it('plays a game with cards from sets other than Portal', async () => {
     const modern = { Mountain: 20, 'Monastery Swiftspear': 4, 'Heartfire Immolator': 4, 'Lightning Bolt': 4 }
     let status = await engine.call('new', {

@@ -88,8 +88,9 @@ const CARDS = [
   c('hulk', 'Hulking Goblin', 'Creature — Goblin', { mana_cost: '{2}{R}', cmc: 3, power: '2', toughness: '2' }),
   c('hammer', 'Volcanic Hammer', 'Sorcery', { mana_cost: '{1}{R}', cmc: 2, oracle_text: 'Volcanic Hammer deals 3 damage to any target.' }),
   c('axe', 'Lava Axe', 'Sorcery', { mana_cost: '{4}{R}', cmc: 5, oracle_text: 'Lava Axe deals 5 damage to target player.' }),
-  // No such card exists, so the engine cannot know it: the deck gate's case.
+  // No such cards exist, so the engine cannot know them: the deck gate's cases.
   c('madeup', 'Made-Up Goblin', 'Creature — Goblin', { power: '1', toughness: '1' }),
+  c('madewish', 'Made-Up Wish', 'Sorcery'),
 ]
 const GOBLINS = [
   { cardId: 'mountain', quantity: 14 }, { cardId: 'goblin', quantity: 6 }, { cardId: 'bully', quantity: 4 },
@@ -105,7 +106,8 @@ const STATE = {
     // Its name does not start with "Goblins", so selectors for d1 still find d1 alone.
     id: 'd2', name: 'Mixed Goblins', formatId: 'standard', commanders: [], signatureSpell: null, categoryOrder: [], versions: [],
     main: [...GOBLINS, { cardId: 'madeup', quantity: 2 }],
-    sideboard: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    // A sideboard card the engine does not know is left out and said, not a reason to stop.
+    sideboard: [{ cardId: 'axe', quantity: 2 }, { cardId: 'madewish', quantity: 1 }], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
   }],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
   prefs: { relayUrl: RELAY, playerName: 'Robin', reduceMotion: true },
@@ -152,6 +154,7 @@ const tile = (name) => page.getByRole('button', { name: new RegExp(`^${name}`) }
 // The first check starts the relay's checking engine, which loads the corpus first.
 check('a deck the engine fully knows says so on its tile', await until(() => tile('Goblins').textContent().then((t) => /The engine knows all 34 cards\./.test(t ?? '')), ENGINE_START_MS))
 check('a deck it does not says how much it knows, and names what it does not', await until(() => tile('Mixed Goblins').textContent().then((t) => /The engine knows 34 of 36 cards\./.test(t ?? '') && /Not known: Made-Up Goblin\./.test(t ?? '')), ENGINE_START_MS))
+check('and says a sideboard card it does not know will be left out', /Left out of the sideboard, as the engine does not know it: Made-Up Wish\./.test(await tile('Mixed Goblins').textContent() ?? ''))
 check('the lobby at the engine\'s table has no accessibility violations', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
 await tile('Mixed Goblins').click()
 await page.getByRole('button', { name: /Sit down with Mixed Goblins/ }).click()
@@ -286,6 +289,7 @@ check('playing without them sits down, and the engine deals', await until(() => 
 check('the log says what was left out and why', await until(() => logText().then((t) => /Played without 2 Made-Up Goblin: the engine does not know them\./.test(t))))
 await page.getByRole('button', { name: 'More' }).click()
 check('and so does the table, where the engine\'s rules are described', await until(() => page.locator('.more').textContent().then((t) => /Played without 2 Made-Up Goblin, as chosen in the lobby/.test(t ?? ''))))
+check('the sideboard card it does not know is left out, and the table says so', /Your sideboard is played without Made-Up Wish: the engine does not know it\./.test(await page.locator('.more').textContent() ?? '') && /Your sideboard is played without Made-Up Wish/.test(await logText()))
 check('no Made-Up Goblin reaches the hand', !/Made-Up Goblin/.test(await page.locator('.tabletop__handcard').allTextContents().then((ts) => ts.join(' '))))
 
 check('no console errors throughout', errors.length === 0, errors.join('\n'))

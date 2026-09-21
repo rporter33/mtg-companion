@@ -32,6 +32,7 @@ import com.wingedsheep.mtg.sets.MtgSetCatalog
 import com.wingedsheep.mtg.sets.tokens.PredefinedTokens
 import com.wingedsheep.sdk.model.CardDefinition
 import com.wingedsheep.sdk.model.MtgSet
+import com.wingedsheep.sdk.model.CardEntry
 import com.wingedsheep.sdk.model.Deck
 import com.wingedsheep.sdk.model.EntityId
 import kotlinx.serialization.builtins.ListSerializer
@@ -86,7 +87,7 @@ const val PROTOCOL = 1
 
 private val json = Json { encodeDefaults = false; ignoreUnknownKeys = true }
 
-private class Seat(val id: EntityId, val name: String, val ai: String?, val autoPass: Boolean)
+private class Seat(val id: EntityId, val name: String, val ai: String?, val autoPass: Boolean, val sideboardLeftOut: List<String> = emptyList())
 
 private class Table(val registry: CardRegistry, val env: GameEnvironment, val seats: List<Seat>, val seed: Long) {
     val transformer = ClientStateTransformer(registry)
@@ -423,6 +424,7 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
     val registry = corpus.registry
     val players = params["players"]?.jsonArray ?: throw Refused("\"players\" is required.")
     if (players.size < 2) throw Refused("A game needs at least two players.")
+    val leftOutOfSideboards = mutableListOf<List<String>>()
     val configs = players.mapIndexed { i, p ->
         val o = p.jsonObject
         val name = o["name"]?.jsonPrimitive?.contentOrNull ?: "Player ${i + 1}"
@@ -430,10 +432,19 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
         lines.firstOrNull { it.count == null }?.let { throw Refused("$name's deck lists ${it.name} without a number of copies.") }
         val missing = lines.map { it.name }.distinct().filter { resolveName(corpus, it) == null }
         if (missing.isNotEmpty()) throw Refused("The engine does not know ${missing.size} of $name's cards: ${missing.joinToString(", ")}")
-        // Summed by the name the engine knows, so a card sent under two spellings, or in two
-        // printings, is one line of the deck.
-        val entries = lines.groupBy { resolveName(corpus, it.name)!! }.map { (card, ls) -> card to ls.sumOf { it.count!! } }
-        PlayerConfig(name = name, deck = Deck.of(*entries.toTypedArray()), startingLife = o["life"]?.jsonPrimitive?.int ?: 20)
+        // One entry per copy, under the name the engine knows, in the order the deck gave them:
+        // the same list Deck.of built, so a seed deals the same game it did before.
+        val entries = lines.flatMap { l -> List(l.count!!) { CardEntry(resolveName(corpus, l.name)!!) } }
+        // The cards the player owns outside the game, which only a wish reaches (Argentum's
+        // Deck.sideboard, citing CR 100.4). One the engine does not know is left out rather than
+        // refused, as the owner chose on 2026-09-21: a whole game is too much to refuse over a
+        // card only a wish could fetch. The reply names it, so the table can say so.
+        val side = readLines(o["sideboard"] as? JsonObject)
+        side.firstOrNull { it.count == null }?.let { throw Refused("$name's sideboard lists ${it.name} without a number of copies.") }
+        val (sideKnown, sideUnknown) = side.partition { resolveName(corpus, it.name) != null }
+        leftOutOfSideboards += sideUnknown.map { it.name }.distinct()
+        val sideboard = sideKnown.flatMap { l -> List(l.count!!) { CardEntry(resolveName(corpus, l.name)!!) } }
+        PlayerConfig(name = name, deck = Deck.fromEntries(entries, sideboard = sideboard), startingLife = o["life"]?.jsonPrimitive?.int ?: 20)
     }
     // The seed decides the shuffle, every coin flip and every other "at random",
     // so the same seed plays the same game. One is always chosen here and sent
@@ -450,14 +461,17 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
     ))
     val seats = env.playerIds.mapIndexed { i, id ->
         val o = players[i].jsonObject
-        Seat(id, configs[i].name, o["ai"]?.jsonPrimitive?.contentOrNull, o["autoPass"]?.jsonPrimitive?.boolean ?: false)
+        Seat(id, configs[i].name, o["ai"]?.jsonPrimitive?.contentOrNull, o["autoPass"]?.jsonPrimitive?.boolean ?: false, leftOutOfSideboards[i])
     }
     return Table(registry, env, seats, seed)
 }
 
 private fun seatsOf(table: Table): JsonArray = buildJsonArray {
     table.seats.forEach { s ->
-        add(buildJsonObject { put("id", s.id.value); put("name", s.name); put("ai", s.ai); put("autoPass", s.autoPass) })
+        add(buildJsonObject {
+            put("id", s.id.value); put("name", s.name); put("ai", s.ai); put("autoPass", s.autoPass)
+            putJsonArray("sideboardLeftOut") { s.sideboardLeftOut.forEach { add(JsonPrimitive(it)) } }
+        })
     }
 }
 

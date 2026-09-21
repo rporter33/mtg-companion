@@ -10,11 +10,11 @@
  * file knows a rule of Magic either — it knows whose turn the engine says
  * it is, and forwards.
  *
- *   from a client        sit { name, deck: { "Mountain": 14, … }, seat? }
+ *   from a client        sit { name, deck: { "Mountain": 14, … }, sideboard?: { … }, seat? }
  *                        act { stop, index, attackers?, blockers? }
  *                        decide { stop, … }        turn
  *   to every client      seats [ … ]               status { … }            gone { reason }
- *   to one client        seated { seat, engineSeat }   view { you, state, log }   refused { error }
+ *   to one client        seated { seat, engineSeat, sideboardLeftOut }   view { you, state, log }   refused { error }
  *
  * `stop` is the number of the status a client is answering: an act sent
  * against a stale status is refused rather than landing on a different
@@ -36,9 +36,10 @@ export const STARTUP_MS = 120_000
 export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', engineCommand, seed = null, deliver, onStderr = null }) {
   const humanSeats = Math.max(1, ai ? seatCount - 1 : seatCount)
   const seats = Array.from({ length: seatCount }, (_, i) => ({
-    seat: `p${i + 1}`, name: null, here: false, ready: false, socket: null, deck: null,
-    ai: ai && i === seatCount - 1 ? ai : null, engineSeat: null,
+    seat: `p${i + 1}`, name: null, here: false, ready: false, socket: null, deck: null, sideboard: null,
+    ai: ai && i === seatCount - 1 ? ai : null, engineSeat: null, sideboardLeftOut: [],
   }))
+  const seated = (seat) => ({ seat: seat.seat, engineSeat: seat.engineSeat, sideboardLeftOut: seat.sideboardLeftOut })
   const sockets = new Map()
   let engine = null
   let status = null
@@ -73,16 +74,27 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
       await engine.call('hello', {}, { timeoutMs: STARTUP_MS })
       // The engine's own seat plays the first human's deck: a mirror match,
       // until the lobby lets a deck be chosen for it. It is said so on screen.
-      const mirror = seats.find((s) => !s.ai && s.deck)?.deck ?? {}
+      // The mirror is the whole deck, sideboard too, or a wish in it would be
+      // a dead card on one side of the table only.
+      const first = seats.find((s) => !s.ai && s.deck)
+      const player = (s) => {
+        const side = s.ai ? first?.sideboard : s.sideboard
+        return { name: s.name ?? (s.ai ? 'The engine' : s.seat), deck: s.ai ? (first?.deck ?? {}) : (s.deck ?? {}), ...(side ? { sideboard: side } : {}), ai: s.ai, autoPass: !s.ai }
+      }
       const reply = await engine.call('new', {
-        players: seats.map((s) => ({ name: s.name ?? (s.ai ? 'The engine' : s.seat), deck: s.ai ? mirror : (s.deck ?? {}), ai: s.ai, autoPass: !s.ai })),
+        players: seats.map(player),
         // Absent, the engine picks one and says which in its reply.
         ...(seed == null ? {} : { seed }),
       })
-      reply.seats.forEach((es, i) => { seats[i].engineSeat = es.id; if (seats[i].ai) seats[i].name = es.name })
+      reply.seats.forEach((es, i) => {
+        seats[i].engineSeat = es.id
+        if (seats[i].ai) seats[i].name = es.name
+        // Read forgivingly: an engine from before the sideboard sends none.
+        seats[i].sideboardLeftOut = Array.isArray(es.sideboardLeftOut) ? es.sideboardLeftOut.filter((n) => typeof n === 'string') : []
+      })
       status = reply
       tell(OP.seats, { seats: seatList() })
-      for (const seat of seats) if (seat.socket) say(seat.socket, OP.seated, { seat: seat.seat, engineSeat: seat.engineSeat })
+      for (const seat of seats) if (seat.socket) say(seat.socket, OP.seated, seated(seat))
       await publish()
     } catch (e) {
       gone = e.message
@@ -98,15 +110,20 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     if (ready >= humanSeats) start()
   }
 
-  const sit = (socket, { name, seat: wanted, deck }) => {
+  const sit = (socket, { name, seat: wanted, deck, sideboard }) => {
     let seat = wanted ? seats.find((s) => s.seat === wanted && !s.ai) : null
     if (seat?.socket && seat.socket !== socket) { sockets.delete(seat.socket.id); seat.socket.terminate?.() }
     if (!seat) seat = seats.find((s) => !s.ai && !s.here) ?? null
     if (!seat) { say(socket, OP.refused, { error: 'Every seat is taken.' }); return }
     seat.socket = socket; seat.here = true; seat.name = name || seat.name || seat.seat
-    if (deck && typeof deck === 'object' && Object.keys(deck).length) { seat.deck = deck; seat.ready = true }
+    if (deck && typeof deck === 'object' && Object.keys(deck).length) {
+      seat.deck = deck
+      // The sideboard belongs to the deck it came with; a rejoin without a deck keeps both.
+      seat.sideboard = sideboard && typeof sideboard === 'object' && !Array.isArray(sideboard) && Object.keys(sideboard).length ? sideboard : null
+      seat.ready = true
+    }
     socket.seat = seat.seat
-    say(socket, OP.seated, { seat: seat.seat, engineSeat: seat.engineSeat })
+    say(socket, OP.seated, seated(seat))
     tell(OP.seats, { seats: seatList() })
     if (gone) { say(socket, OP.gone, { reason: gone }); return }
     if (engine && status) {

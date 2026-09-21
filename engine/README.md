@@ -57,7 +57,7 @@ One request per line, one reply per line, correlated by `id`:
 | `{"op":"hello"}` | `{"engine":"argentum","protocol":1,"cards":13246,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"load":{"ms":12842,"heapMb":104,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order |
 | `{"op":"cards"}` | `{"names":[…]}` — every name a deck may hold: no tokens and no back faces, though the engine knows both |
 | `{"op":"check","deck":{"Delver of Secrets // Insectile Aberration":4,"Made-Up Card":2},"sideboard":{…}}` | `{"known":4,"total":6,"unknown":["Made-Up Card"],"unknownSideboard":[]}` — which of a deck's cards the engine knows, before any game; unknown names come back exactly as sent |
-| `{"op":"new","players":[{"name":"You","deck":{"Mountain":14,"Raging Goblin":12},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic"}],"seed":20260921}` | the table's status (below) plus `seats` and the `seed` it was dealt from |
+| `{"op":"new","players":[{"name":"You","deck":{"Mountain":14,"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic"}],"seed":20260921}` | the table's status (below) plus `seats` and the `seed` it was dealt from; each seat says `sideboardLeftOut`, the sideboard cards it did not know |
 | `{"op":"turn"}` | the table's status |
 | `{"op":"act","index":3}` | the status after that action and everything that followed it |
 | `{"op":"act","index":0,"attackers":{"e16":"e1"}}` / `{"blockers":{"e20":["e16"]}}` | a declare-attackers or declare-blockers offer, filled in: which creatures, at whom |
@@ -100,6 +100,17 @@ because the relay reads it as a JavaScript number and a larger one would
 come back as a different game. The relay passes a seed only when told to
 (`createRelay({ engineSeed })`), which the engine's browser spec does so as
 to play one known game.
+
+**The sideboard.** `sideboard` sits beside `deck`, in the same shape, and is
+left out when empty, so an older engine never sees it. It becomes Argentum's
+`Deck.sideboard`: the cards a player owns outside the game, which only a wish
+reaches (Argentum cites CR 100.4 for it). The seat's own view gains a sideboard
+zone; another seat sees only its count. A sideboard card the engine does not
+know is left out rather than refusing the game, as the owner chose on
+2026-09-21, and each seat in the reply to `new` names what was left out as
+`sideboardLeftOut`, so the table can say so. The app sends a sideboard only for
+a format that has one: the Commander family's holds nothing, and what a
+Commander deck keeps there is usually its maybeboard.
 
 **Names.** A deck is sent in Scryfall's spelling, because that is what the app
 holds, and `new` and `check` resolve it the same way. A name the engine knows

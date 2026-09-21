@@ -13,6 +13,8 @@ let acted = 0
 // Told to be stubborn, it acknowledges quit and stays up, the way a hung JVM
 // would, so a test can make the bridge fall back to force.
 let stubborn = false
+// The last deal asked for, so a test can see exactly what the relay sent.
+let lastNew = null
 // The one rule the fake has for which cards it knows, used by check and new
 // alike: a name the real engine would resolve is not its business. The real
 // resolution is tested against the real engine, in engine-live.test.js.
@@ -53,10 +55,13 @@ lines.on('line', (line) => {
       const missing = (req.players ?? []).flatMap((p) => Object.keys(p.deck ?? {}).filter(unknownName))
       if (missing.length) { say({ id, ok: false, error: `The engine does not know ${missing.length} cards: ${missing.join(', ')}` }); break }
       at = 0; acted = 0
-      say({ id, ...status(), seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null })) })
+      lastNew = req
+      // A sideboard card it does not know is left out and named, as the real engine does.
+      say({ id, ...status(), seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName) })) })
       break
     }
     case 'turn': say({ id, ...status() }); break
+    case 'lastNew': say({ id, ok: true, request: lastNew }); break
     case 'act': {
       if (at < 0 || at >= shots.length) { say({ id, ok: false, error: 'The game is not waiting on anyone.' }); break }
       const offered = shots[at].status.actions ?? []

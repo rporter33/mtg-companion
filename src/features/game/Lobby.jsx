@@ -323,6 +323,10 @@ function DeckCheck({ check }) {
   else if (state === 'failed') lines.push(`The engine could not check this deck: ${check.message}`)
   else if (state === 'unreadable') lines.push("The relay's answer could not be read, so this deck has not been checked.")
   else lines.push('The relay did not answer, so this deck has not been checked.')
+  // Not a reason to stop: the owner chose (2026-09-21) that a sideboard card the
+  // engine does not know is left out and said, since only a wish could fetch it.
+  const side = check.unknownSideboard ?? []
+  if (side.length) lines.push(`Left out of the sideboard, as the engine does not know ${side.length === 1 ? 'it' : 'them'}: ${nameList(side.map((u) => u.name))}.`)
   return (
     <span className={`lobby__deckcheck faint tiny${state === 'short' ? ' lobby__deckcheck--short' : ''}`}>
       {lines.map((line) => <span key={line}>{line}</span>)}
