@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { FORMATS } from '../../lib/formats.js'
 import { libraryOf } from '../../lib/board/deck.js'
 import { unionColorIdentity } from '../../lib/deck.js'
@@ -6,9 +6,14 @@ import { artUrl, faceIdFor } from '../../lib/deck-art.js'
 import { getPrefs } from '../../lib/storage.js'
 import { navigate } from '../../lib/router.js'
 import { EXAMPLE_DECKS } from '../../data/example-decks.js'
+import { nameList } from '../../lib/engine/deck.js'
+import Confirm from '../../components/Confirm.jsx'
 import DeckArt from '../../components/DeckArt.jsx'
 import ManaCost from '../../components/ManaCost.jsx'
 import useShelfCards from './useShelfCards.js'
+import useEngineCheck from './useEngineCheck.js'
+import { agreeToLeaveOut } from './useEngineRoom.js'
+import { relayAddress } from './relayAddress.js'
 import Seats from './Seats.jsx'
 
 /**
@@ -84,7 +89,45 @@ export default function Lobby({ decks, room = null, engine = null }) {
   const guide = useMemo(() => pickGuide(format), [format])
 
   const start = (deck) => navigate({ tab: 'game', gameDeckId: deck.id, gameRoom: room, gameEngine: engine })
-  const pickFormat = (id) => { setFormat(id); setChosen(null); setWanted(new Set()) }
+
+  // At the engine's table every deck on the shelf is asked about before anyone
+  // sits: one the engine cannot fully hold says so on its tile, and pressing
+  // Sit with it says why and offers what can be done instead.
+  const checks = useEngineCheck({ address: engine ? relayAddress() : null, decks: inFormat, first: chosen })
+  const [pending, setPending] = useState(null)
+  const [gate, setGate] = useState(null)
+  const sit = (deck) => {
+    if (!engine) { start(deck); return }
+    const check = checks.get(deck.id)
+    if (!check || check.state === 'asking') { setPending(deck.id); return }
+    setPending(null)
+    if (check.state === 'short') { setGate(deck.id); return }
+    // Complete, or not checkable: sit as before. The engine still refuses a
+    // card it does not know, by name, so nothing is dealt short unremarked.
+    start(deck)
+  }
+  // A press made while the answer was still coming is carried out when it
+  // arrives, rather than refused or asked for again: one press, one sit.
+  const pendingState = pending ? checks.get(pending)?.state : null
+  useEffect(() => {
+    if (!pending || !pendingState || pendingState === 'asking') return
+    const deck = inFormat.find((d) => d.id === pending)
+    setPending(null)
+    if (deck) sit(deck)
+    // The answer arriving is what this waits for; sit is rebuilt every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, pendingState])
+  const choose = (id) => { setChosen(id); if (pending && pending !== id) setPending(null) }
+  const gateDeck = gate ? inFormat.find((d) => d.id === gate) ?? null : null
+  const gateCheck = gate ? checks.get(gate) : null
+  const playAlone = (deck) => { setGate(null); navigate({ tab: 'game', gameDeckId: deck.id, gameRoom: null, gameEngine: null }) }
+  const playWithout = (deck, names) => { setGate(null); agreeToLeaveOut(engine, deck.id, names); start(deck) }
+  // The Wildcard at the engine's table draws from the decks it fully knows,
+  // once any have been checked, so a random press lands on a game.
+  const known = engine ? shown.filter((d) => checks.get(d.id)?.state === 'complete') : []
+  const wildcards = known.length ? known : shown
+
+  const pickFormat = (id) => { setFormat(id); setChosen(null); setWanted(new Set()); setPending(null); setGate(null) }
 
   return (
     <div className="lobby">
@@ -133,7 +176,7 @@ export default function Lobby({ decks, room = null, engine = null }) {
               type="button"
               className="lobby__tile"
               disabled={!shown.length}
-              onClick={() => start(shown[Math.floor(Math.random() * shown.length)])}
+              onClick={() => sit(wildcards[Math.floor(Math.random() * wildcards.length)])}
             >
               <span className="lobby__tilekind">Wildcard</span>
               <span className="lobby__tilename">Random deck</span>
@@ -171,7 +214,8 @@ export default function Lobby({ decks, room = null, engine = null }) {
                     deck={deck}
                     info={info.get(deck.id)}
                     chosen={chosen === deck.id}
-                    onChoose={() => setChosen(deck.id)}
+                    check={checks.get(deck.id)}
+                    onChoose={() => choose(deck.id)}
                   />
                 </li>
               ))}
@@ -201,13 +245,25 @@ export default function Lobby({ decks, room = null, engine = null }) {
           type="button"
           className="btn btn--primary"
           disabled={!chosenDeck}
-          onClick={() => chosenDeck && start(chosenDeck)}
+          aria-busy={Boolean(chosenDeck && pending === chosenDeck.id)}
+          onClick={() => chosenDeck && pending !== chosenDeck.id && sit(chosenDeck)}
         >
-          {room || engine
+          {chosenDeck && pending === chosenDeck.id
+            ? `Asking the engine about ${chosenDeck.name}…`
+            : room || engine
             ? (chosenDeck ? `Sit down with ${chosenDeck.name} →` : 'Sit down →')
             : (chosenDeck ? `Start game with ${chosenDeck.name} →` : 'Start game →')}
         </button>
       </footer>
+      {gateDeck && gateCheck && (
+        <DeckGate
+          deck={gateDeck}
+          check={gateCheck}
+          onWithout={(names) => playWithout(gateDeck, names)}
+          onAlone={() => playAlone(gateDeck)}
+          onClose={() => setGate(null)}
+        />
+      )}
       {/* The shelf shows paintings cropped from their cards, so the credit the crop lost is said here. */}
       <p className="faint tiny lobby__credit">
         Deck art is the property of Wizards of the Coast and the artists named on each card,
@@ -222,7 +278,7 @@ export default function Lobby({ decks, room = null, engine = null }) {
  * The painting is decoration and the pips are spoken by ManaCost, so a
  * screen reader hears "white, green" where a sighted person sees two dots.
  */
-function DeckTile({ deck, info, chosen, onChoose }) {
+function DeckTile({ deck, info, chosen, check, onChoose }) {
   const pips = info?.identity ? (info.identity.length ? info.identity.map((c) => `{${c}}`).join('') : '{C}') : null
   return (
     <button
@@ -238,9 +294,86 @@ function DeckTile({ deck, info, chosen, onChoose }) {
           {info?.commanderName ? `${info.commanderName} · ` : ''}{sizeOf(deck, Boolean(info?.commanderName))}
         </span>
         {pips && <ManaCost cost={pips} className="lobby__pips" />}
+        <DeckCheck check={check} />
       </span>
       {chosen && <span className="lobby__tick" aria-hidden="true">✓</span>}
     </button>
+  )
+}
+
+/**
+ * What the engine said about a deck, on its tile. Every number is the deck's
+ * own count or the engine's answer; the one thing worked out here, that some
+ * cards did not load, is said as that.
+ */
+function DeckCheck({ check }) {
+  if (!check) return null
+  const { state, total, known, unknown = [], unloaded } = check
+  const lines = []
+  if (state === 'asking') lines.push('Asking the engine about these cards…')
+  else if (state === 'complete') lines.push(total === 1 ? 'The engine knows its one card.' : `The engine knows all ${total} cards.`)
+  else if (state === 'short') {
+    if (unknown.length) {
+      lines.push(`The engine knows ${known} of ${total} cards.`)
+      lines.push(`Not known: ${nameList(unknown.map((u) => u.name))}.`)
+    }
+    if (unloaded) lines.push(unloaded === 1 ? 'One card did not load, so the engine was not asked about it.' : `${unloaded} cards did not load, so the engine was not asked about them.`)
+  } else if (state === 'cannot-check') lines.push('This relay cannot check a deck, so this one has not been checked.')
+  else if (state === 'no-engine') lines.push('The relay has no engine now, so this deck cannot be checked.')
+  else if (state === 'failed') lines.push(`The engine could not check this deck: ${check.message}`)
+  else if (state === 'unreadable') lines.push("The relay's answer could not be read, so this deck has not been checked.")
+  else lines.push('The relay did not answer, so this deck has not been checked.')
+  return (
+    <span className={`lobby__deckcheck faint tiny${state === 'short' ? ' lobby__deckcheck--short' : ''}`}>
+      {lines.map((line) => <span key={line}>{line}</span>)}
+    </span>
+  )
+}
+
+/**
+ * Sit was pressed with a deck the engine cannot fully hold. The house dialog:
+ * the title is the situation, the body what each choice does, and every
+ * button says what pressing it does (src/components/Confirm.jsx). The owner's
+ * choice (2026-09-21) is to offer both ways on: the engine without the cards
+ * it does not know, the table then saying which were left out, or the whole
+ * deck played by hand. Without is offered only when every card loaded, since
+ * a card that did not load has no name to leave out, and only when something
+ * would be left to deal.
+ */
+function DeckGate({ deck, check, onWithout, onAlone, onClose }) {
+  const unknown = check.unknown ?? []
+  const copies = unknown.reduce((sum, u) => sum + u.count, 0)
+  const canGoWithout = unknown.length > 0 && !check.unloaded && check.known > 0
+  const actions = [
+    ...(canGoWithout ? [{ label: `Play the engine without ${copies === 1 ? 'it' : 'them'}`, kind: 'primary', onPress: () => onWithout(unknown.map((u) => u.name)) }] : []),
+    { label: 'Play it alone instead', kind: canGoWithout ? 'ghost' : 'primary', onPress: onAlone },
+    { label: 'Choose another deck', kind: 'ghost', onPress: onClose },
+  ]
+  return (
+    <Confirm
+      open
+      title={unknown.length ? `The engine does not know every card in ${deck.name}` : `Not every card in ${deck.name} has loaded`}
+      actions={actions}
+      onClose={onClose}
+    >
+      <div className="lobby__gate">
+        {unknown.length > 0 && (
+          <>
+            <p>It does not know {copies === 1 ? 'this one' : 'these'}, so it cannot hold a game with the whole deck:</p>
+            <ul className="lobby__unknown" tabIndex={0} aria-label="Cards the engine does not know">
+              {unknown.map((u) => <li key={u.name}>{u.count} {u.name}</li>)}
+            </ul>
+          </>
+        )}
+        {check.unloaded > 0 && (
+          <p>{check.unloaded === 1 ? 'One card did not load, so the engine was not asked about it.' : `${check.unloaded} cards did not load, so the engine was not asked about them.`}</p>
+        )}
+        {canGoWithout && (
+          <p>Without {copies === 1 ? 'it' : 'them'}, the engine deals the other {check.known} cards, and the table says what was left out.</p>
+        )}
+        <p>Played alone, the whole deck is dealt and you play it by hand: nobody sits opposite, and nothing checks whether a play is legal.</p>
+      </div>
+    </Confirm>
   )
 }
 

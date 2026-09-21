@@ -20,11 +20,20 @@ import { createRelay } from '../../scripts/relay-server.mjs'
 import { findEngine } from '../../scripts/engine-bridge.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 // Where the pictures go: the system's own temporary folder, so the same path
 // works on every machine rather than only where /tmp exists. Printed at the
 // end, because a picture nobody opens proves nothing.
 const SHOT = (name) => join(tmpdir(), `engine-${name}.png`)
+const AXE = fileURLToPath(new URL('../../node_modules/axe-core/axe.min.js', import.meta.url))
+
+// An engine process loads the whole card corpus before its first answer: 13 s
+// on the owner's machine (engine/README.md). A room's engine starts when the
+// seat is taken and the lobby's checker when a deck is first asked about, so
+// the waits that include one starting cover that, with room for a slower
+// runner; every other wait is after it.
+const ENGINE_START_MS = 60_000
 
 const TARGET = process.argv[2] ?? 'http://localhost:4173/'
 let pass = 0
@@ -79,15 +88,23 @@ const CARDS = [
   c('hulk', 'Hulking Goblin', 'Creature — Goblin', { mana_cost: '{2}{R}', cmc: 3, power: '2', toughness: '2' }),
   c('hammer', 'Volcanic Hammer', 'Sorcery', { mana_cost: '{1}{R}', cmc: 2, oracle_text: 'Volcanic Hammer deals 3 damage to any target.' }),
   c('axe', 'Lava Axe', 'Sorcery', { mana_cost: '{4}{R}', cmc: 5, oracle_text: 'Lava Axe deals 5 damage to target player.' }),
+  // No such card exists, so the engine cannot know it: the deck gate's case.
+  c('madeup', 'Made-Up Goblin', 'Creature — Goblin', { power: '1', toughness: '1' }),
+]
+const GOBLINS = [
+  { cardId: 'mountain', quantity: 14 }, { cardId: 'goblin', quantity: 6 }, { cardId: 'bully', quantity: 4 },
+  { cardId: 'hulk', quantity: 4 }, { cardId: 'hammer', quantity: 4 }, { cardId: 'axe', quantity: 2 },
 ]
 const STATE = {
   version: 4, collection: {}, games: [],
   decks: [{
     id: 'd1', name: 'Goblins', formatId: 'standard', commanders: [], signatureSpell: null, categoryOrder: [], versions: [],
-    main: [
-      { cardId: 'mountain', quantity: 14 }, { cardId: 'goblin', quantity: 6 }, { cardId: 'bully', quantity: 4 },
-      { cardId: 'hulk', quantity: 4 }, { cardId: 'hammer', quantity: 4 }, { cardId: 'axe', quantity: 2 },
-    ],
+    main: GOBLINS,
+    sideboard: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+  }, {
+    // Its name does not start with "Goblins", so selectors for d1 still find d1 alone.
+    id: 'd2', name: 'Mixed Goblins', formatId: 'standard', commanders: [], signatureSpell: null, categoryOrder: [], versions: [],
+    main: [...GOBLINS, { cardId: 'madeup', quantity: 2 }],
     sideboard: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
   }],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
@@ -112,6 +129,7 @@ await page.goto(`${TARGET}#/game`, { waitUntil: 'networkidle' })
 await page.reload({ waitUntil: 'networkidle' })
 
 console.log('\nFrom the lobby')
+check('a lobby that is not the engine\'s asks nothing about its decks', await page.locator('.lobby__deckcheck').count() === 0)
 const playEngine = page.getByRole('button', { name: 'Play the engine' })
 check('the lobby offers the engine when the relay has one', await until(() => playEngine.count().then((n) => n === 1)))
 await playEngine.click()
@@ -119,14 +137,41 @@ check('opening a table the engine holds changes the address', await until(() => 
 const code = await page.evaluate(() => location.hash.match(/engine\/([A-Z0-9]{5})/)?.[1])
 check('the lobby says the rules are enforced', await until(() => page.locator('.lobby__mode').textContent().then((t) => /Rules enforced/.test(t ?? ''))))
 check('the seats panel names the engine as the seat opposite', await until(() => page.locator('.lobby__seats').textContent().then((t) => /The engine/.test(t ?? ''))))
+
+console.log('\nThe deck gate')
+/** What axe finds on the page as it stands, at the WCAG levels a11y.spec.mjs holds the app to. */
+const axeViolations = async () => {
+  // A dialog rises in from 60% opacity over 0.2 s (sheet.css), and contrast
+  // measured mid-rise is the contrast of half-faded text. Wait for stillness.
+  await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'))
+  await page.addScriptTag({ path: AXE })
+  const result = await page.evaluate(async () => window.axe.run(document, { resultTypes: ['violations'], runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } }))
+  return result.violations.map((v) => `${v.impact} ${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join('; ')}`)
+}
+const tile = (name) => page.getByRole('button', { name: new RegExp(`^${name}`) }).first()
+// The first check starts the relay's checking engine, which loads the corpus first.
+check('a deck the engine fully knows says so on its tile', await until(() => tile('Goblins').textContent().then((t) => /The engine knows all 34 cards\./.test(t ?? '')), ENGINE_START_MS))
+check('a deck it does not says how much it knows, and names what it does not', await until(() => tile('Mixed Goblins').textContent().then((t) => /The engine knows 34 of 36 cards\./.test(t ?? '') && /Not known: Made-Up Goblin\./.test(t ?? '')), ENGINE_START_MS))
+check('the lobby at the engine\'s table has no accessibility violations', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
+await tile('Mixed Goblins').click()
+await page.getByRole('button', { name: /Sit down with Mixed Goblins/ }).click()
+const gate = page.getByRole('dialog', { name: 'The engine does not know every card in Mixed Goblins' })
+check('sitting with it says so instead, in the house dialog', await until(() => gate.count().then((n) => n === 1)))
+check('the dialog names every card it does not know, with how many', /2 Made-Up Goblin/.test(await gate.textContent() ?? ''))
+check('and offers both ways on, and a way back', await Promise.all([
+  gate.getByRole('button', { name: 'Play the engine without them' }).count(),
+  gate.getByRole('button', { name: 'Play it alone instead' }).count(),
+  gate.getByRole('button', { name: 'Choose another deck' }).count(),
+]).then((ns) => ns.every((n) => n === 1)))
+check('the dialog has no accessibility violations', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
+await page.screenshot({ path: SHOT('gate') })
+await gate.getByRole('button', { name: 'Choose another deck' }).click()
+check('choosing another deck closes it, and nothing was sat down with', await until(() => gate.count().then((n) => n === 0)) && /#\/game\/engine\/[A-Z0-9]{5}$/.test(await page.evaluate(() => location.hash)))
+
 await page.getByRole('button', { name: /^Goblins/ }).first().click()
 await page.getByRole('button', { name: /Sit down with Goblins/ }).click()
 
 console.log('\nAt the table')
-// The engine starts when the seat is taken and loads the whole card corpus
-// before it deals: 13 s on the owner's machine (engine/README.md). These two
-// waits cover that, with room for a slower runner; every later one is after it.
-const ENGINE_START_MS = 60_000
 check('the table opens for that deck', await until(() => page.locator('.game:not(.game--loading)').count().then((n) => n === 1), ENGINE_START_MS))
 const prompt = page.locator('.prompt')
 check('the engine deals and stops at the first thing worth stopping for', await until(() => prompt.count().then((n) => n === 1), ENGINE_START_MS))
@@ -224,9 +269,27 @@ check('the engine\'s table is not on the More panel\'s menu of things to do by h
 check('nor does the More panel say that nothing here checks a play', !/Nothing here checks whether a play is legal/.test(await page.locator('.more').textContent() ?? ''))
 check('undo is not offered', await page.getByRole('button', { name: '↶ Undo' }).isDisabled())
 
-check('no console errors throughout', errors.length === 0, errors.join('\n'))
 await page.screenshot({ path: SHOT('table') })
-console.log(`\nScreenshots: ${SHOT('attack')} and ${SHOT('table')}`)
+
+console.log('\nWithout the cards it does not know')
+// The owner's choice (2026-09-21): a deck the engine cannot fully hold may be
+// played with those cards left out, and the table then says which were.
+await page.goto(`${TARGET}#/game`, { waitUntil: 'networkidle' })
+await page.getByRole('button', { name: 'Play the engine' }).click()
+await until(() => page.evaluate(() => /#\/game\/engine\/[A-Z0-9]{5}$/.test(location.hash)))
+check('a second table asks again, and the answer is the same', await until(() => tile('Mixed Goblins').textContent().then((t) => /The engine knows 34 of 36 cards\./.test(t ?? '')), ENGINE_START_MS))
+await tile('Mixed Goblins').click()
+await page.getByRole('button', { name: /Sit down with Mixed Goblins/ }).click()
+await until(() => gate.count().then((n) => n === 1))
+await gate.getByRole('button', { name: 'Play the engine without them' }).click()
+check('playing without them sits down, and the engine deals', await until(() => page.locator('.prompt').count().then((n) => n === 1), ENGINE_START_MS))
+check('the log says what was left out and why', await until(() => logText().then((t) => /Played without 2 Made-Up Goblin: the engine does not know them\./.test(t))))
+await page.getByRole('button', { name: 'More' }).click()
+check('and so does the table, where the engine\'s rules are described', await until(() => page.locator('.more').textContent().then((t) => /Played without 2 Made-Up Goblin, as chosen in the lobby/.test(t ?? ''))))
+check('no Made-Up Goblin reaches the hand', !/Made-Up Goblin/.test(await page.locator('.tabletop__handcard').allTextContents().then((ts) => ts.join(' '))))
+
+check('no console errors throughout', errors.length === 0, errors.join('\n'))
+console.log(`\nScreenshots: ${SHOT('gate')}, ${SHOT('attack')} and ${SHOT('table')}`)
 await browser.close()
 await relayServer.shutdown()
 console.log(`\n${pass} passed, ${fail} failed`)

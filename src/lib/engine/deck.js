@@ -38,3 +38,54 @@ export function seatDeck(deck, lookup) {
   }
   return { deck: out, sideboard: {}, total, unloaded }
 }
+
+/**
+ * The seat without the named cards, and what was left out with its counts.
+ * Used when a player chose, in the lobby, to play the engine without the
+ * cards it does not know; a name the deck does not hold is ignored.
+ */
+export function leaveOut(seat, names) {
+  const deck = { ...seat.deck }
+  const left = []
+  for (const name of Array.isArray(names) ? names : []) {
+    if (typeof name !== 'string' || !(deck[name] > 0)) continue
+    left.push({ name, count: deck[name] })
+    delete deck[name]
+  }
+  const gone = left.reduce((sum, l) => sum + l.count, 0)
+  return { seat: { ...seat, deck, total: seat.total - gone }, left }
+}
+
+/**
+ * What the engine's answer about a deck means, read forgivingly: the engine is
+ * another program, and the lobby should never meet a shape it has to guard
+ * against. The unknown names are laid against the deck's own counts, in the
+ * deck's own order, and a name the deck does not hold is dropped rather than
+ * shown. A deck is complete only when the engine knows every card and every
+ * card loaded. `reply` null means the relay cannot check at all.
+ */
+export function verdictOf(seat, reply) {
+  const base = { total: seat.total, unloaded: seat.unloaded }
+  if (reply === null) return { state: 'cannot-check', ...base }
+  if (!Array.isArray(reply?.unknown)) return { state: 'unreadable', ...base }
+  const lines = (held, named) => {
+    const asked = new Set(Array.isArray(named) ? named.filter((n) => typeof n === 'string') : [])
+    return Object.keys(held ?? {}).filter((name) => asked.has(name)).map((name) => ({ name, count: held[name] }))
+  }
+  const unknown = lines(seat.deck, reply.unknown)
+  const missing = unknown.reduce((sum, u) => sum + u.count, 0)
+  return {
+    state: unknown.length || seat.unloaded ? 'short' : 'complete',
+    ...base,
+    known: seat.total - seat.unloaded - missing,
+    unknown,
+    unknownSideboard: lines(seat.sideboard, reply.unknownSideboard),
+  }
+}
+
+/** A few names, as a sentence says them: "A", "A and B", "A, B and C", "A, B, C and 2 more". */
+export function nameList(names, max = 3) {
+  if (names.length <= 1) return names.join('')
+  if (names.length <= max) return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  return `${names.slice(0, max).join(', ')} and ${names.length - max} more`
+}

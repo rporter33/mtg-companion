@@ -396,7 +396,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     // appear is already where it will be, and the line says what is being
     // waited for.
     const why = asking === 'carry' ? 'A game with this deck is waiting at the old table.' : engine
-      ? (held.gone ? `The engine has gone: ${held.gone}` : !ready ? 'Fetching the cards, then sitting down…' : held.wireStatus === 'open' ? 'Sitting down; the engine is dealing…' : held.wireStatus === 'connecting' ? 'Joining the table…' : 'The relay is not answering yet. Trying again…')
+      ? (held.gone ? `The engine has gone: ${held.gone}` : !ready ? 'Fetching the cards, then sitting down…'
+        // Not sent short: without those cards the engine would deal a smaller
+        // deck than the player's, and it has no name to be told them by.
+        : held.unloaded ? `${held.unloaded === 1 ? 'One card' : `${held.unloaded} cards`} in this deck did not load, so it is not sent to the engine: it would deal a smaller deck than yours.`
+        : held.wireStatus === 'open' ? 'Sitting down; the engine is dealing…' : held.wireStatus === 'connecting' ? 'Joining the table…' : 'The relay is not answering yet. Trying again…')
       : room
       ? (shared.status === 'open' ? 'Taking a seat…' : shared.status === 'connecting' ? 'Joining the table…' : 'The relay is not answering yet. Trying again…')
       : (missing.length ? 'Some cards could not be loaded; dealing anyway…' : 'Fetching the cards, then dealing…')
@@ -938,6 +942,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             prefs={prefs}
             shared={away}
             held={Boolean(engine)}
+            leftOut={engine ? held.leftOut : []}
             onDo={doAction}
             onToken={() => setPanel('token')}
             onMulligan={() => setAsking('mulligan')}
@@ -1324,7 +1329,7 @@ function Actions({ inst, name, card, host, mine = true, permanent = true, onDo, 
  * Behind the dots on the rail: everything a game needs now and then and a
  * screen should not spend space on all the time.
  */
-function More({ board, player, prefs, shared, held = false, onDo, onToken, onMulligan, onDealAgain, onTogglePref, onLeave }) {
+function More({ board, player, prefs, shared, held = false, leftOut = [], onDo, onToken, onMulligan, onDealAgain, onTogglePref, onLeave }) {
   return (
     <div className="more">
       {held && (
@@ -1333,6 +1338,11 @@ function More({ board, player, prefs, shared, held = false, onDo, onToken, onMul
           <p className="faint tiny m0">
             Drawing, untapping, life, tokens and dice are the engine's here: they happen when the rules say so, and are written in the log.
           </p>
+          {leftOut.length > 0 && (
+            <p className="faint tiny m0">
+              Played without {leftOut.map((l) => `${l.count} ${l.name}`).join(', ')}, as chosen in the lobby: the engine does not know {leftOut.reduce((sum, l) => sum + l.count, 0) === 1 ? 'it' : 'them'}.
+            </p>
+          )}
         </section>
       )}
       {!held && <section className="pile">

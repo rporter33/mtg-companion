@@ -137,8 +137,17 @@
 }
 .lobby__deckbody { position: relative; z-index: 1; display: grid; gap: 2px; }
 .lobby__deck--art .lobby__deckname,
-.lobby__deck--art .lobby__deckmeta { text-shadow: 0 1px 2px var(--bg); }
+.lobby__deck--art .lobby__deckmeta,
+.lobby__deck--art .lobby__deckcheck { text-shadow: 0 1px 2px var(--bg); }
 .lobby__pips { display: flex; gap: 2px; margin-top: var(--space-1); }
+/* What the engine said about a deck, a line or two under its pips. */
+.lobby__deckcheck { display: grid; gap: 0; margin-top: var(--space-1); }
+.lobby__deckcheck--short { color: var(--warn); }
+/* The deck gate's dialog. The shared dialog body puts no space between
+   paragraphs, so the spacing is kept here rather than changed for every one. */
+.lobby__gate { display: grid; gap: var(--space-2); }
+.lobby__gate p { margin: 0; }
+.lobby__unknown { margin: 0; padding-left: 1.25rem; max-height: 12rem; overflow: auto; }
 .lobby__tick { z-index: 2; }
 
 /* ==========================================================================

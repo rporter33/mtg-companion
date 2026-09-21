@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { seatDeck, engineName } from '../src/lib/engine/deck.js'
+import { seatDeck, engineName, leaveOut, verdictOf, nameList } from '../src/lib/engine/deck.js'
 
 const cards = {
   a: { name: 'Mountain' },
@@ -39,5 +39,50 @@ describe('a deck made ready for the engine', () => {
   it('reads an entry with no quantity as one copy, and no deck as an empty one', () => {
     expect(seatDeck({ main: [{ cardId: 'c' }] }, lookup)).toMatchObject({ deck: { 'Raging Goblin': 1 }, total: 1 })
     expect(seatDeck(null, lookup)).toEqual({ deck: {}, sideboard: {}, total: 0, unloaded: 0 })
+  })
+})
+
+describe('what the engine says about a deck', () => {
+  const seat = { deck: { Mountain: 14, 'Made-Up Goblin': 2, 'Raging Goblin': 4 }, sideboard: {}, total: 20, unloaded: 0 }
+
+  it('is complete when the engine knows every card and every card loaded', () => {
+    expect(verdictOf(seat, { unknown: [] })).toMatchObject({ state: 'complete', known: 20, total: 20, unknown: [] })
+  })
+
+  it('lays the unknown names against the deck\'s own counts, in the deck\'s order', () => {
+    const v = verdictOf(seat, { unknown: ['Raging Goblin', 'Made-Up Goblin'] })
+    expect(v.state).toBe('short')
+    expect(v.unknown).toEqual([{ name: 'Made-Up Goblin', count: 2 }, { name: 'Raging Goblin', count: 4 }])
+    expect(v.known).toBe(14)
+  })
+
+  it('drops a name the deck does not hold, and reads a broken answer as unreadable', () => {
+    expect(verdictOf(seat, { unknown: ['Not In This Deck', 7] }).unknown).toEqual([])
+    expect(verdictOf(seat, { unknown: 'Made-Up Goblin' }).state).toBe('unreadable')
+    expect(verdictOf(seat, {}).state).toBe('unreadable')
+  })
+
+  it('counts a deck with cards that did not load as short, even with nothing unknown', () => {
+    const v = verdictOf({ ...seat, total: 23, unloaded: 3 }, { unknown: [] })
+    expect(v).toMatchObject({ state: 'short', known: 20, unloaded: 3 })
+  })
+
+  it('says so when the relay cannot check at all', () => {
+    expect(verdictOf(seat, null)).toMatchObject({ state: 'cannot-check', total: 20 })
+  })
+
+  it('leaves out the named cards and says how many of each', () => {
+    const { seat: without, left } = leaveOut(seat, ['Made-Up Goblin', 'Not In This Deck', 42])
+    expect(without.deck).toEqual({ Mountain: 14, 'Raging Goblin': 4 })
+    expect(without.total).toBe(18)
+    expect(left).toEqual([{ name: 'Made-Up Goblin', count: 2 }])
+    expect(leaveOut(seat, 'nonsense').left).toEqual([])
+  })
+
+  it('lists names the way a sentence does', () => {
+    expect(nameList(['A'])).toBe('A')
+    expect(nameList(['A', 'B'])).toBe('A and B')
+    expect(nameList(['A', 'B', 'C'])).toBe('A, B and C')
+    expect(nameList(['A', 'B', 'C', 'D', 'E'])).toBe('A, B, C and 2 more')
   })
 })

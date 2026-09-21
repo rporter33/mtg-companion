@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { relay } from '../../lib/board/relay.js'
 import { boardFromView, eventsBetween, standIn } from '../../lib/engine/board.js'
-import { seatDeck } from '../../lib/engine/deck.js'
+import { leaveOut, seatDeck } from '../../lib/engine/deck.js'
 
 /**
  * A seat at a table the engine holds.
@@ -23,6 +23,17 @@ const memoryKey = (code) => `mtg-companion:engine:${code}`
 const remember = (code, value) => { try { localStorage.setItem(memoryKey(code), JSON.stringify(value)) } catch { /* private mode */ } }
 const recall = (code) => { try { return JSON.parse(localStorage.getItem(memoryKey(code)) ?? 'null') } catch { return null } }
 
+/**
+ * Record, for one table, the cards a player chose to play without: the ones
+ * the lobby showed them the engine does not know. Kept with the seat rather
+ * than passed along once, so a reload of the table still leaves them out
+ * instead of sitting down with a deck the engine will refuse.
+ */
+export function agreeToLeaveOut(code, deckId, names) {
+  if (!code) return
+  remember(code, { ...(recall(code) ?? {}), without: { deckId, names } })
+}
+
 export default function useEngineRoom({ address, code, name, deck, deckLookup, cardsReady }) {
   const [wireStatus, setWireStatus] = useState('connecting')
   const [seat, setSeat] = useState(null)
@@ -38,11 +49,21 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   const seq = useRef(0)
   const stands = useRef(new Map())
   const memory = useMemo(() => recall(code) ?? {}, [code])
+  // What the lobby agreed to leave out, for this deck only, read forgivingly:
+  // it was written by whatever build was running when the player chose.
+  const agreed = memory.without?.deckId === deck?.id && Array.isArray(memory.without?.names) ? memory.without.names : []
+  const prepared = cardsReady ? leaveOut(seatDeck(deck, deckLookup), agreed) : null
+  // A card that has not loaded has no name to send, and the deck sent without
+  // it would be smaller than the player's, so the seat is not taken at all
+  // while any is missing; the table says so instead.
+  const unloaded = prepared?.seat.unloaded ?? 0
   // The deck by name, as a string: the lookup function is new on every
   // render, and an effect keyed on an object rebuilt from it would open a
   // new socket each time. The names themselves change only with the deck.
-  const deckKey = cardsReady ? JSON.stringify(seatDeck(deck, deckLookup).deck) : null
+  const deckKey = prepared && !unloaded ? JSON.stringify(prepared.seat.deck) : null
   const deckNames = useMemo(() => (deckKey ? JSON.parse(deckKey) : null), [deckKey])
+  const leftKey = JSON.stringify(prepared?.left ?? [])
+  const leftOut = useMemo(() => JSON.parse(leftKey), [leftKey])
   const sat = useRef(false)
   const seating = useRef([])
 
@@ -58,6 +79,10 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
       if (m?.t !== 'engine') return
       switch (m.op) {
         case 'seated':
+          if (!sat.current && leftOut.length) {
+            const copies = leftOut.reduce((sum, l) => sum + l.count, 0)
+            note(`Played without ${leftOut.map((l) => `${l.count} ${l.name}`).join(', ')}: the engine does not know ${copies === 1 ? 'it' : 'them'}.`)
+          }
           sat.current = true
           if (m.engineSeat) setSeat(m.engineSeat)
           if (m.seat && memory.seat !== m.seat) { memory.seat = m.seat; remember(code, memory) }
@@ -118,7 +143,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   }, [])
 
   return {
-    run, seat, seats, status, refusal, gone, wireStatus,
+    run, seat, seats, status, refusal, gone, wireStatus, unloaded, leftOut,
     act, decide, cardFor, moveCard,
     refuse: (message) => setRefusal({ message }),
     clearRefusal: () => setRefusal(null),
