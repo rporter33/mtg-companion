@@ -90,6 +90,15 @@ describe.skipIf(!command)('the engine on the wire', () => {
     expect(reply.unknownSideboard).toEqual(['Made-Up Wish'])
   }, 60_000)
 
+  it('will not take a meld result as a card for a deck, though Scryfall lists it as one', async () => {
+    // Argentum registers Chittering Host so Graf Rats and Midnight Scavengers can
+    // meld into it, and keeps it out of every pool of cards a player can own.
+    const reply = await engine.call('check', { deck: { 'Chittering Host': 1, Mountain: 1 } })
+    expect(reply.unknown).toEqual(['Chittering Host'])
+    const { names } = await engine.call('cards')
+    expect(names).not.toContain('Chittering Host')
+  }, 60_000)
+
   it('deals a deck sent under Scryfall\'s names, as the cards the engine knows', async () => {
     const status = await engine.call('new', {
       players: [

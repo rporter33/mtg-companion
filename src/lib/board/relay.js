@@ -145,8 +145,19 @@ export function rooms(base) {
         body: JSON.stringify(sideboard ? { deck, sideboard } : { deck }), signal,
       })
       if (res.status === 404 || res.status === 501) return null
-      const body = await res.json().catch(() => null)
+      // An answer that cannot be read is not an answer. Taken as one, an empty
+      // reply would say the engine knows every card, and be kept as that.
+      const unreadable = () => new SyntaxError("The relay's answer could not be read.")
+      let body
+      try {
+        body = await res.json()
+      } catch (e) {
+        if (e.name === 'AbortError') throw e
+        if (!res.ok) throw Object.assign(new Error('The relay did not answer.'), { status: res.status })
+        throw unreadable()
+      }
       if (!res.ok) throw Object.assign(new Error(body?.error ?? 'The relay did not answer.'), { status: res.status })
+      if (!Array.isArray(body?.unknown)) throw unreadable()
       const names = (a) => (Array.isArray(a) ? a.filter((n) => typeof n === 'string') : [])
       return { known: Number(body?.known) || 0, total: Number(body?.total) || 0, unknown: names(body?.unknown), unknownSideboard: names(body?.unknownSideboard) }
     },

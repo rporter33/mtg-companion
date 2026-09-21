@@ -19,7 +19,7 @@ the whole card corpus. Measured on the owner's Windows machine on 2026-09-21:
 after that, seconds.
 
 **The whole corpus, loaded.** Every set Argentum has: 179 of them, 137 marked
-incomplete by Argentum itself, and 13,246 card names a deck may hold. Loading
+incomplete by Argentum itself, and 13,242 card names a deck may hold. Loading
 them, and building the printing registry from them, is most of the engine's
 first answer: 15.2 s of 15.4 s on the owner's machine (15.9 s on a second run),
 after which they hold 110 MB. The printings cost about 2.5 s and 6 MB of that;
@@ -56,7 +56,7 @@ One request per line, one reply per line, correlated by `id`:
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"engine":"argentum","protocol":2,"cards":13246,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"load":{"ms":15207,"heapMb":110,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order |
+| `{"op":"hello"}` | `{"engine":"argentum","protocol":2,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"load":{"ms":15207,"heapMb":110,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order |
 | `{"op":"cards"}` | `{"names":[…]}` — every name a deck may hold: no tokens and no back faces, though the engine knows both |
 | `{"op":"check","deck":{"Delver of Secrets // Insectile Aberration":4,"Made-Up Card":2},"sideboard":{…}}` | `{"known":4,"total":6,"unknown":["Made-Up Card"],"unknownSideboard":[]}` — which of a deck's cards the engine knows, before any game; unknown names come back exactly as sent |
 | `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic"}],"seed":20260921}` | the table's status (below) plus `seats` and the `seed` it was dealt from; each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got |

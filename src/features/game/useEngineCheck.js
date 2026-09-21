@@ -14,7 +14,8 @@ import { seatDeck, verdictOf } from '../../lib/engine/deck.js'
  * corpus loading, and a shelf's worth of requests would all queue behind it.
  * Answers are kept by the deck's own list, so changing tab does not ask again
  * and two decks with the same list share one answer. A failure is not kept,
- * so the next render after the relay comes back asks again.
+ * so it is asked again when the chosen deck, the shelf or the address changes;
+ * it is not retried on a timer.
  *
  * Returns a Map from deck id to `{ state, total, unloaded, … }`, where state is
  * 'asking', 'complete', 'short', 'cannot-check', 'no-engine', 'failed' (with
@@ -29,21 +30,24 @@ export default function useEngineCheck({ address, decks, first = null }) {
   // Every card of every deck, not the few the shelf loads for its art. Saved
   // decks are pinned, so these are reads from this device.
   const idsKey = address ? [...new Set(decks.flatMap((d) => [...(d.main ?? []), ...(d.sideboard ?? [])].map((e) => e.cardId)))].sort().join('\n') : ''
+  // The cards are kept with the shelf they were fetched for. Straight after a
+  // change of tab the new decks would otherwise be read against the old
+  // shelf's cards, found wanting, and asked about as decks of nothing.
   useEffect(() => {
     if (!idsKey) { setCards(null); return undefined }
     const ctl = new AbortController()
     getCardsByIds(idsKey.split('\n'), { signal: ctl.signal })
-      .then((found) => setCards(found))
-      .catch((e) => { if (e.name !== 'AbortError') setCards(new Map()) })
+      .then((found) => setCards({ key: idsKey, found }))
+      .catch((e) => { if (e.name !== 'AbortError') setCards({ key: idsKey, found: new Map() }) })
     return () => ctl.abort()
   }, [idsKey])
 
   const seats = useMemo(() => {
     const out = new Map()
-    if (!cards) return out
-    for (const deck of decks) out.set(deck.id, seatDeck(deck, (id) => cards.get(id)))
+    if (!cards || cards.key !== idsKey) return out
+    for (const deck of decks) out.set(deck.id, seatDeck(deck, (id) => cards.found.get(id)))
     return out
-  }, [decks, cards])
+  }, [decks, cards, idsKey])
 
   // A string, never an object rebuilt each render: an effect keyed on one
   // would ask again on every render (HANDOFF.md, "Traps").

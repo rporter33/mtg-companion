@@ -94,6 +94,8 @@ const CARDS = [
   // No such cards exist, so the engine cannot know them: the deck gate's cases.
   c('madeup', 'Made-Up Goblin', 'Creature — Goblin', { power: '1', toughness: '1' }),
   c('madewish', 'Made-Up Wish', 'Sorcery'),
+  // A real card in a printing Portal never had: the engine knows the card, not the printing.
+  c('goblin9999', 'Raging Goblin', 'Creature — Goblin Berserker', { power: '1', toughness: '1', oracle_text: 'Haste', collector_number: '9999' }),
 ]
 const GOBLINS = [
   { cardId: 'mountain', quantity: 14 }, { cardId: 'goblin', quantity: 6 }, { cardId: 'bully', quantity: 4 },
@@ -108,7 +110,7 @@ const STATE = {
   }, {
     // Its name does not start with "Goblins", so selectors for d1 still find d1 alone.
     id: 'd2', name: 'Mixed Goblins', formatId: 'standard', commanders: [], signatureSpell: null, categoryOrder: [], versions: [],
-    main: [...GOBLINS, { cardId: 'madeup', quantity: 2 }],
+    main: [...GOBLINS.map((e) => (e.cardId === 'goblin' ? { ...e, cardId: 'goblin9999' } : e)), { cardId: 'madeup', quantity: 2 }],
     // A sideboard card the engine does not know is left out and said, not a reason to stop.
     sideboard: [{ cardId: 'axe', quantity: 2 }, { cardId: 'madewish', quantity: 1 }], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
   }],
@@ -293,6 +295,7 @@ check('playing without them sits down, and the engine deals', await until(() => 
 check('the log says what was left out and why', await until(() => logText().then((t) => /Played without 2 Made-Up Goblin: the engine does not know them\./.test(t))))
 await page.getByRole('button', { name: 'More' }).click()
 check('and so does the table, where the engine\'s rules are described', await until(() => page.locator('.more').textContent().then((t) => /Played without 2 Made-Up Goblin, as chosen in the lobby/.test(t ?? ''))))
+check('a printing the engine has not got shows its own art, and the log says so once', /The engine does not have your printing of Raging Goblin, so it shows the engine's own art\./.test(await logText()))
 check('the sideboard card it does not know is left out, and the table says so', /Your sideboard is played without Made-Up Wish: the engine does not know it\./.test(await page.locator('.more').textContent() ?? '') && /Your sideboard is played without Made-Up Wish/.test(await logText()))
 check('no Made-Up Goblin reaches the hand', !/Made-Up Goblin/.test(await page.locator('.tabletop__handcard').allTextContents().then((ts) => ts.join(' '))))
 

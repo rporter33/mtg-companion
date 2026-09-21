@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
-import { createServer } from 'node:http'
+import { createServer, request } from 'node:http'
 import { createRelay } from '../scripts/relay-server.mjs'
 import { guest, KIND, PROTOCOL } from '../src/lib/board/net.js'
 import { relay, rooms as roomsApi } from '../src/lib/board/relay.js'
@@ -387,6 +387,13 @@ describe('an enforced room', () => {
     }
   })
 
+  it('tells a seat which of its printings the engine has not got', async () => {
+    const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+    const you = await join(code, 'Robin', { deck: { Mountain: 14, 'Raging Goblin': { count: 6, set: 'por', number: '9999' } } })
+    await until(() => you.got.some((m) => m.op === 'seated' && m.unknownPrintings?.includes('Raging Goblin')), 5000)
+    you.leave()
+  })
+
   it('sends no sideboard for a deck that has none', async () => {
     const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
     const you = await join(code, 'Robin')
@@ -548,7 +555,45 @@ describe('a deck checked before any room exists', () => {
     wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name: 'Robin', deck }))
     await until(() => got.some((m) => m.op === 'gone'), 5000)
     expect(got.find((m) => m.op === 'gone').reason).toMatch(/Made-Up Card/)
+    // The engine that refused the deal is closed, not left holding the corpus.
+    await until(() => relayServer.rooms.get(code).engine.lastStarted?.exited)
     wire.close()
+  })
+
+  it('reads a name whose letters are split between two chunks of the body', async () => {
+    const body = Buffer.from(JSON.stringify({ deck: { 'Made-Up Æther': 1 } }), 'utf8')
+    const at = body.indexOf(Buffer.from('Æ', 'utf8')) + 1 // inside the two bytes of Æ
+    const answer = await new Promise((resolve, reject) => {
+      const req = request(`${base}/engine/check`, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': body.length } }, (res) => {
+        const chunks = []
+        res.on('data', (c) => chunks.push(c))
+        res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))))
+      })
+      req.on('error', reject)
+      req.write(body.subarray(0, at))
+      setTimeout(() => req.end(body.subarray(at)), 50)
+    })
+    expect(answer.unknown).toEqual(['Made-Up Æther'])
+  })
+
+  it("says why the engine could not check a deck, in the engine's words alone", async () => {
+    const res = await post(JSON.stringify({ deck: { 'Made-Up Crash': 1 } }))
+    expect(res.status).toBe(502)
+    const { error } = await res.json()
+    expect(error).toMatch(/stopped/)
+    // The lobby puts "The engine could not check this deck:" in front itself.
+    expect(error).not.toMatch(/could not check/)
+  })
+
+  it('an answer that cannot be read is said to be one, not taken for a deck the engine knows', async () => {
+    let reply = '{"known":'
+    const odd = createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(reply) })
+    await new Promise((resolve) => odd.listen(0, resolve))
+    const api = roomsApi(`http://127.0.0.1:${odd.address().port}`)
+    await expect(api.check(DECK)).rejects.toBeInstanceOf(SyntaxError)
+    reply = '{}'
+    await expect(api.check(DECK)).rejects.toBeInstanceOf(SyntaxError)
+    await new Promise((resolve) => odd.close(resolve))
   })
 
   it('closes its engine with the relay', async () => {

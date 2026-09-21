@@ -20,6 +20,10 @@ let lastNew = null
 // resolution is tested against the real engine, in engine-live.test.js.
 const unknownName = (name) => /^Made-Up/.test(name)
 // A deck line is a count, or a printing with a count, or a list of those.
+// The printings it has not got: any whose collector number starts 9999.
+const missedPrintings = (deck) => Object.entries(deck ?? {})
+  .filter(([, v]) => [v].flat().some((x) => String(x?.number ?? '').startsWith('9999')))
+  .map(([name]) => name)
 const copiesOf = (v) => {
   if (Array.isArray(v)) return v.reduce((sum, x) => sum + copiesOf(x), 0)
   const n = typeof v === 'number' ? v : v?.count
@@ -42,6 +46,8 @@ lines.on('line', (line) => {
     case 'cards': say({ id, ok: true, names: [...new Set(shots.flatMap((s) => Object.values(s.view.cards).map((c) => c.name)))].sort() }); break
     case 'check': {
       if (!req.deck || typeof req.deck !== 'object') { say({ id, ok: false, error: '"deck" is required.' }); break }
+      // A check that kills the process, as a crashed JVM would, for the relay's 502.
+      if ('Made-Up Crash' in req.deck) process.exit(3)
       const lines = Object.entries(req.deck)
       const total = lines.reduce((sum, [, v]) => sum + copiesOf(v), 0)
       const known = lines.filter(([n]) => !unknownName(n)).reduce((sum, [, v]) => sum + copiesOf(v), 0)
@@ -58,7 +64,7 @@ lines.on('line', (line) => {
       at = 0; acted = 0
       lastNew = req
       // A sideboard card it does not know is left out and named, as the real engine does.
-      say({ id, ...status(), seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: [] })) })
+      say({ id, ...status(), seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(req.players?.[i]?.deck) })) })
       break
     }
     case 'turn': say({ id, ...status() }); break

@@ -52,6 +52,9 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
   const seated = (seat) => ({ seat: seat.seat, engineSeat: seat.engineSeat, sideboardLeftOut: seat.sideboardLeftOut, unknownPrintings: seat.unknownPrintings })
   const sockets = new Map()
   let engine = null
+  // The last process this room started, kept even after the room has let it
+  // go, so a test can see that one which failed to deal was closed.
+  let lastStarted = null
   let status = null
   let stop = 0
   let starting = false
@@ -79,6 +82,7 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     starting = true
     try {
       engine = startEngine({ command: engineCommand, onStderr })
+      lastStarted = engine
       // Asked first and given the long allowance, so that the corpus loading
       // is waited for once, here, and every later call keeps the usual wait.
       const hello = await engine.call('hello', {}, { timeoutMs: STARTUP_MS })
@@ -111,7 +115,12 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     } catch (e) {
       gone = e.message
       tell(OP.gone, { reason: e.message })
+      // A refused deal leaves the process up and waiting, and one that missed
+      // the startup allowance is still loading: either way it holds the whole
+      // corpus, and once the room lets go of it nothing else can close it.
+      const dead = engine
       engine = null
+      dead?.close().catch(() => {})
     } finally {
       starting = false
     }
@@ -163,6 +172,7 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
   return {
     mode: 'enforced',
     get engine() { return engine },
+    get lastStarted() { return lastStarted },
     get status() { return status },
     join(socket) { sockets.set(socket.id, socket) },
     leave(socket) {

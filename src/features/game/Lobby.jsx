@@ -99,7 +99,10 @@ export default function Lobby({ decks, room = null, engine = null }) {
   const sit = (deck) => {
     if (!engine) { start(deck); return }
     const check = checks.get(deck.id)
-    if (!check || check.state === 'asking') { setPending(deck.id); return }
+    // No answer at all means nothing was asked, which is a lobby with no relay
+    // address: sit as before, and the table says the relay is not set.
+    if (!check) { start(deck); return }
+    if (check.state === 'asking') { setPending(deck.id); return }
     setPending(null)
     if (check.state === 'short') { setGate(deck.id); return }
     // Complete, or not checkable: sit as before. The engine still refuses a
@@ -176,7 +179,13 @@ export default function Lobby({ decks, room = null, engine = null }) {
               type="button"
               className="lobby__tile"
               disabled={!shown.length}
-              onClick={() => sit(wildcards[Math.floor(Math.random() * wildcards.length)])}
+              onClick={() => {
+                // Chosen as well as sat with, so a press held for the engine's
+                // answer shows on the footer and is not cancelled by the shelf.
+                const pick = wildcards[Math.floor(Math.random() * wildcards.length)]
+                setChosen(pick.id)
+                sit(pick)
+              }}
             >
               <span className="lobby__tilekind">Wildcard</span>
               <span className="lobby__tilename">Random deck</span>

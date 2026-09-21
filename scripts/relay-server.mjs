@@ -271,17 +271,20 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
   // A body past its limit stops being kept but is still read to the end, so
   // the caller hears a 413 rather than a connection torn down under it. Far
   // past the limit the connection is dropped after all. `value` is null for
-  // text that is not JSON, and an empty object for no body.
+  // text that is not JSON, and an empty object for no body. The bytes are
+  // decoded once, at the end: a chunk can end halfway through a character,
+  // and "Æther Vial" decoded a chunk at a time comes out as a different name.
   const readBody = (req, { limit = 4096 } = {}) => new Promise((resolve) => {
-    let text = ''
+    const chunks = []
     let size = 0
     req.on('data', (chunk) => {
       size += chunk.length
-      if (size <= limit) text += chunk
+      if (size <= limit) chunks.push(chunk)
       else if (size > limit * 16) { req.destroy(); resolve({ tooLarge: true }) }
     })
     req.on('end', () => {
       if (size > limit) { resolve({ tooLarge: true }); return }
+      const text = Buffer.concat(chunks).toString('utf8')
       try { resolve({ value: text ? JSON.parse(text) : {} }) } catch { resolve({ value: null }) }
     })
     req.on('error', () => resolve({ value: null }))
@@ -347,7 +350,8 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
       } else if (e.refused) {
         json(res, 400, { error: e.message })
       } else {
-        json(res, 502, { error: `The engine could not check that deck: ${e.message}` })
+        // The engine's reason alone: the lobby puts its own words in front.
+        json(res, 502, { error: e.message || 'The engine gave no reason.' })
       }
       return
     }
@@ -430,9 +434,12 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     clearInterval(heartbeat)
     clearInterval(sweeper)
     clearTimeout(checkerIdle)
-    await letCheckerGo()
+    // Tables first: the program gives shutdown three seconds, and an engine
+    // still loading the corpus cannot answer quit in that time. Nothing that
+    // matters may wait behind it, so the engines are closed alongside the
+    // goodbyes and waited for last.
     for (const room of rooms.values()) flush(room)
-    await Promise.all([...rooms.values()].filter((r) => r.mode === 'enforced').map((r) => r.engine.close()))
+    const engines = Promise.all([letCheckerGo(), ...[...rooms.values()].filter((r) => r.mode === 'enforced').map((r) => r.engine.close())])
     // The close frame has to reach the client before the connection under
     // it is torn down, or the client sees a dropped socket rather than a
     // 1012 and waits the long way. So: say goodbye, wait briefly for the
@@ -445,6 +452,7 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     wss.close()
     server.closeAllConnections?.()
     await new Promise((resolve) => server.close(() => resolve()))
+    await engines
   }
 
   loadRooms()

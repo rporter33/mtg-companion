@@ -356,7 +356,7 @@ private class Corpus(
     /** Every printing the engine can put on a card: each definition's own, and each set's reprints. */
     val printings: PrintingRegistry,
     val sets: List<MtgSet>,
-    /** What a deck may hold: every set's cards and basic lands. Not a token, not a back face. */
+    /** What a deck may hold: every set's cards and basic lands. Not a token, not a back face, not a meld result. */
     val deckable: Set<String>,
     val loadMs: Long,
     val heapMb: Long,
@@ -375,7 +375,10 @@ private fun corpus(): Corpus {
             set.basicLandsFallback?.let { register(it.basicLands) }
         }
     }
-    val deckable = sets.flatMapTo(HashSet()) { set -> set.cards.map { it.name } + set.basicLands.map { it.name } }
+    // A meld result is registered, so melding finds it, but never dealt from a deck: Argentum
+    // keeps it out of every pool of cards a player can own (CardDefinition.meldResult), and
+    // Scryfall lists it as a card of its own that a player could add in the editor.
+    val deckable = sets.flatMapTo(HashSet()) { set -> set.cards.filterNot { it.meldResult }.map { it.name } + set.basicLands.map { it.name } }
     // As game-server builds its own: a default printing made from every registered
     // definition, which carries the set it was stamped with, then each set's reprint rows.
     // Built from the definitions already stamped above rather than stamping them again.

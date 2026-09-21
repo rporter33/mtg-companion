@@ -110,7 +110,9 @@ export function startEngine({ command, args = [], cwd, timeoutMs = 30_000, onStd
   /** Asks the engine to quit, waits briefly for it to go, and ends it if it does not. */
   const close = async ({ graceMs = 2000 } = {}) => {
     if (exited) return
-    try { await call('quit') } catch { /* it may already be gone */ }
+    // Quit is given only the grace to answer: an engine still loading the corpus
+    // reads nothing until it has, and would otherwise hold a close for 30 s.
+    try { await call('quit', {}, { timeoutMs: graceMs }) } catch { /* it may already be gone */ }
     await Promise.race([exitPromise, new Promise((r) => setTimeout(r, graceMs))])
     if (!exited) { kill(); await exitPromise }
   }
