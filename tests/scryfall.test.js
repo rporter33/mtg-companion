@@ -23,6 +23,9 @@ beforeEach(async () => {
   // Real backoff is 2s/4s/8s/16s. Shrink it so the retry paths are exercised
   // in milliseconds — the logic under test is the retry decision, not the wait.
   __internals.setBackoffBase(1)
+  // And the same for the 429 lockout, which is a real thirty seconds. Left
+  // alone it stalls the shared queue and every later test times out behind it.
+  __internals.setLockoutMs(1)
 })
 
 afterEach(() => {
@@ -92,8 +95,38 @@ describe('retry behaviour', () => {
     const fetchMock = vi.fn().mockResolvedValue(fail(429))
     vi.stubGlobal('fetch', fetchMock)
     await expect(searchCards('bears')).rejects.toThrow(ScryfallError)
-    expect(fetchMock).toHaveBeenCalledTimes(__internals.MAX_RETRIES + 1)
+    // A 429 gets one retry, not four: the other three would land inside the
+    // thirty seconds Scryfall has already shut us out for.
+    expect(fetchMock).toHaveBeenCalledTimes(__internals.MAX_LOCKOUT_RETRIES + 1)
   })
+
+  it('waits out the lockout after a 429 rather than backing off exponentially', async () => {
+    const previous = __internals.setLockoutMs(120)
+    const times = []
+    vi.stubGlobal('fetch', vi.fn(async () => { times.push(Date.now()); return fail(429) }))
+    await expect(searchCards('bears')).rejects.toThrow(ScryfallError)
+    __internals.setLockoutMs(previous)
+
+    expect(times).toHaveLength(__internals.MAX_LOCKOUT_RETRIES + 1)
+    // The backoff base is 1ms here, so anything near the lockout can only have
+    // come from the lockout.
+    expect(times[1] - times[0]).toBeGreaterThanOrEqual(100)
+  }, 10000)
+
+  it('honours Retry-After when Scryfall sends one, in place of the lockout', async () => {
+    const previous = __internals.setLockoutMs(10000)
+    const times = []
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      times.push(Date.now())
+      return { ok: false, status: 429, headers: { get: (h) => (h === 'retry-after' ? '0.05' : null) }, json: async () => ({}) }
+    }))
+    await expect(searchCards('bears')).rejects.toThrow(ScryfallError)
+    __internals.setLockoutMs(previous)
+
+    expect(times).toHaveLength(__internals.MAX_LOCKOUT_RETRIES + 1)
+    // Fifty milliseconds asked for, ten seconds not asked for.
+    expect(times[1] - times[0]).toBeLessThan(2000)
+  }, 10000)
 
   it('backs off exponentially rather than hammering', async () => {
     const previous = __internals.setBackoffBase(20)

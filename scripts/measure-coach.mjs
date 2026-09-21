@@ -37,6 +37,7 @@
  */
 
 import { CLASSIFIERS } from '../src/lib/coach.js'
+import { SLOW_INTERVAL_MS } from '../src/lib/scryfall-limits.js'
 
 const API = process.env.SCRYFALL_API || 'https://api.scryfall.com'
 const UA = 'mtg-companion-coach-measure/1.0 (+https://github.com/rporter33/mtg-companion)'
@@ -84,7 +85,7 @@ async function search(query, limit) {
     path = payload.has_more && payload.next_page
       ? payload.next_page.replace(/^https:\/\/api\.scryfall\.com/, '')
       : null
-    await sleep(120)
+    await sleep(SLOW_INTERVAL_MS)
   }
   return found.slice(0, limit)
 }

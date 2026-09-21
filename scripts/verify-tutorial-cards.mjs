@@ -12,11 +12,12 @@
  * the printing it checked — to paste into src/data/tutorial-cards.js.
  */
 import { TUTORIAL_CARDS } from '../src/data/tutorial-cards.js'
+import { LOCKOUT_MS, SLOW_INTERVAL_MS } from '../src/lib/scryfall-limits.js'
 
 const API = process.env.SCRYFALL_API || 'https://api.scryfall.com'
 const UA = 'mtg-companion-tutorial-verifier/1.0 (+https://github.com/rporter33/mtg-companion)'
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-let gapMs = Number(process.env.SCRYFALL_GAP_MS) || 350
+let gapMs = Number(process.env.SCRYFALL_GAP_MS) || SLOW_INTERVAL_MS
 
 async function request(url) {
   for (let attempt = 0; ; attempt++) {
@@ -24,7 +25,11 @@ async function request(url) {
     await wait(gapMs)
     if ((response.status === 429 || response.status >= 500) && attempt < 5) {
       const after = Number(response.headers.get('retry-after'))
-      const pause = Number.isFinite(after) && after > 0 ? after * 1000 : 1000 * 2 ** attempt
+      // Without a Retry-After, a 429 costs the full thirty-second lockout:
+      // anything shorter is spent inside it.
+      const pause = Number.isFinite(after) && after > 0
+        ? after * 1000
+        : (response.status === 429 ? LOCKOUT_MS : 1000 * 2 ** attempt)
       if (response.status === 429) gapMs = Math.min(gapMs * 2, 5000)
       console.error(`Scryfall answered ${response.status}; waiting ${pause / 1000}s, then trying again (${attempt + 1} of 5)`)
       await wait(pause)

@@ -1,33 +1,23 @@
 // Scryfall API client.
 //
-// Scryfall is a volunteer-funded free service with no API key and an explicit
-// request to be gentle: 50–100ms between requests, cache what you get back.
-// Every call in this app goes through the queue below so that holds even when
-// several components fetch at once.
+// Scryfall is a volunteer-funded free service with no API key, and it asks to
+// be left room. Its limits are per endpoint and live in ./scryfall-limits.js,
+// read from Scryfall's own page rather than remembered. Every call in this app
+// goes through the queue below, so the spacing holds even when several
+// components fetch at once.
 //
-// The search, named, random and collection endpoints are the expensive ones
-// on Scryfall's side and are held to two requests a second rather than ten
-// (docs/table-rebuild/SOURCES.md, "Scryfall"). So the queue spaces a request
-// by the endpoint it is for: half a second before those four, a tenth before
-// anything else. Being slower than the limit costs a person nothing they can
-// feel — a search is one request, a deck import is two — and being faster
-// costs everyone a 429.
-//
-// Note on User-Agent: Scryfall's docs ask for a descriptive one, but browsers
-// forbid scripts from setting that header, so we cannot comply from the client.
-// The rate limiting and caching are the parts we *can* honour, and do.
+// Note on User-Agent: Scryfall requires one, and for browser JavaScript its
+// docs say to "keep the browser's User-Agent intact" — so the right thing here
+// is to leave the header alone, which a browser enforces anyway. There is no
+// non-compliance to apologise for. The Accept header it also requires is set
+// on every request below. The Node scripts under scripts/ are not browsers and
+// do send a descriptive one.
 
 import { getCard, getCards, putCards, getQuery, putQuery } from './cache.js'
+import { LOCKOUT_MS, MIN_INTERVAL_MS, SLOW_INTERVAL_MS, spacingFor } from './scryfall-limits.js'
 
 const API = 'https://api.scryfall.com'
-const MIN_INTERVAL_MS = 100
-const SLOW_INTERVAL_MS = 500
-const SLOW = /^\/cards\/(search|named|random|collection)(?:[/?]|$)/
 
-/** How long the queue leaves before a request to this path. */
-function spacingFor(path) {
-  return SLOW.test(path) ? SLOW_INTERVAL_MS : MIN_INTERVAL_MS
-}
 // Four attempts backing off 2s / 4s / 8s / 16s — the same shape used by the
 // Socrata pipelines, so retry behaviour is consistent across projects.
 //
@@ -35,6 +25,22 @@ function spacingFor(path) {
 // sleeping thirty seconds to do it. Production never changes it.
 const MAX_RETRIES = 4
 let backoffBaseMs = 2000
+
+// A 429 is not a wobble to back off from. Scryfall has shut this application
+// out for a fixed thirty seconds, so the first three exponential waits would
+// all land inside that window and be exactly the overage it asked us to stop.
+// It gets one retry, taken after the lockout has actually elapsed — or after
+// Retry-After, when the response carries one. Holding the whole queue for that
+// is right rather than unfortunate: during a lockout every other request would
+// be refused too.
+const MAX_LOCKOUT_RETRIES = 1
+let lockoutMs = LOCKOUT_MS
+
+/** What a 429 costs: Scryfall's own Retry-After if it sent one, else the lockout. */
+function lockoutWait(response) {
+  const after = Number(response?.headers?.get?.('retry-after'))
+  return Number.isFinite(after) && after > 0 ? after * 1000 : lockoutMs
+}
 
 export class ScryfallError extends Error {
   constructor(message, { status, code, warnings } = {}) {
@@ -95,14 +101,15 @@ async function request(path, { method = 'GET', body, signal } = {}) {
 
         // 429 and 5xx are worth retrying; 4xx is a real answer and is not.
         if (response.status === 429 || response.status >= 500) {
+          const lockedOut = response.status === 429
           lastError = new ScryfallError(
-            response.status === 429
+            lockedOut
               ? 'Scryfall is rate limiting this app. Slowing down.'
               : 'Scryfall is having trouble right now.',
             { status: response.status },
           )
-          if (attempt < MAX_RETRIES) {
-            await sleep(2 ** attempt * backoffBaseMs)
+          if (attempt < (lockedOut ? MAX_LOCKOUT_RETRIES : MAX_RETRIES)) {
+            await sleep(lockedOut ? lockoutWait(response) : 2 ** attempt * backoffBaseMs)
             continue
           }
           throw lastError
@@ -121,9 +128,10 @@ async function request(path, { method = 'GET', body, signal } = {}) {
         if (error.name === 'AbortError') throw error
         if (error instanceof ScryfallError) {
           if (error.status === 429 || (error.status ?? 0) >= 500) {
+            const lockedOut = error.status === 429
             lastError = error
-            if (attempt < MAX_RETRIES) {
-              await sleep(2 ** attempt * backoffBaseMs)
+            if (attempt < (lockedOut ? MAX_LOCKOUT_RETRIES : MAX_RETRIES)) {
+              await sleep(lockedOut ? lockoutMs : 2 ** attempt * backoffBaseMs)
               continue
             }
           }
@@ -488,10 +496,18 @@ export const __internals = {
   SLOW_INTERVAL_MS,
   spacingFor,
   MAX_RETRIES,
+  MAX_LOCKOUT_RETRIES,
+  LOCKOUT_MS,
   /** Test seam: shrink the backoff so retry paths are testable in milliseconds. */
   setBackoffBase(ms) {
     const previous = backoffBaseMs
     backoffBaseMs = ms
+    return previous
+  },
+  /** Test seam: the same, for the thirty-second 429 lockout. */
+  setLockoutMs(ms) {
+    const previous = lockoutMs
+    lockoutMs = ms
     return previous
   },
 }

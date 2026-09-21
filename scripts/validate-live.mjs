@@ -17,6 +17,7 @@
  */
 
 import { classifySymbol, countPips, faceManaCost } from '../src/lib/mana.js'
+import { spacingFor } from '../src/lib/scryfall-limits.js'
 import { typeLineOf, oracleTextOf, isBasicLand, copyLimitOverride, FORMATS } from '../src/lib/formats.js'
 import { manaValueOf, colorSources, countManaSources } from '../src/lib/analysis.js'
 import { deckPrice } from '../src/lib/analysis.js'
@@ -78,7 +79,7 @@ class Unreachable extends Error {}
 class NotFound extends Error {}
 
 async function get(path) {
-  await sleep(120)
+  await sleep(spacingFor(path))
   let res
   try {
     res = await fetch(`${API}${path}`, {

@@ -16,6 +16,7 @@
  */
 
 import { EXAMPLE_DECKS, exampleSize, unverifiedIn } from '../src/data/example-decks.js'
+import { LOCKOUT_MS, SLOW_INTERVAL_MS } from '../src/lib/scryfall-limits.js'
 import { readFileSync, writeFileSync } from 'node:fs'
 
 const FIX = process.argv.includes('--fix')
@@ -61,6 +62,7 @@ console.log(`${c.head('Verifying')} ${names.length} distinct names across ${EXAM
  */
 async function ask(chunk) {
   let last = null
+  let lockedOut = false
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const response = await fetch(`${API}/cards/collection`, {
@@ -76,10 +78,14 @@ async function ask(chunk) {
         process.exit(2)
       }
       last = `HTTP ${response.status}`
+      lockedOut = response.status === 429
     } catch (error) {
       last = error.name === 'TimeoutError' ? 'timed out after 20s' : error.message
+      lockedOut = false
     }
-    if (attempt < 3) await sleep(attempt * 2000)
+    // A 429 means Scryfall has shut this script out for a fixed thirty
+    // seconds; the waits below would otherwise all land inside that window.
+    if (attempt < 3) await sleep(lockedOut ? LOCKOUT_MS : attempt * 2000)
   }
   console.error(`\n${c.bad('✗')} Could not reach Scryfall (${last}).`)
   console.error(`  ${c.dim('Check your connection, then run npm run examples:verify again.')}`)
@@ -151,7 +157,7 @@ const searchCache = new Map()
 async function cardsNamed(word) {
   if (searchCache.has(word)) return searchCache.get(word)
   const payload = await get(`/cards/search?q=${encodeURIComponent(`name:${word}`)}&include_extras=true&unique=cards`)
-  await sleep(120)
+  await sleep(SLOW_INTERVAL_MS)
   const found = (payload?.data ?? []).map((card) => ({
     name: card.name,
     set: card.set,
@@ -208,7 +214,7 @@ for (let i = 0; i < names.length; i += 75) {
   if (process.stdout.isTTY) {
     process.stdout.write(`  ${c.dim(`${Math.min(i + 75, names.length)}/${names.length}`)}\r`)
   }
-  await sleep(120)
+  await sleep(SLOW_INTERVAL_MS)
 }
 if (process.stdout.isTTY) process.stdout.write(`${' '.repeat(40)}\r`)
 

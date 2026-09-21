@@ -13,6 +13,7 @@
 import { COLOR_PAGES, FIRST_COMMANDERS } from '../src/data/colors.js'
 import { STRATEGIES } from '../src/data/strategies.js'
 import { stapleQueries } from '../src/lib/first-deck.js'
+import { LOCKOUT_MS, SLOW_INTERVAL_MS } from '../src/lib/scryfall-limits.js'
 
 const API = process.env.SCRYFALL_API || 'https://api.scryfall.com'
 const UA = 'mtg-companion-first-deck-verifier/1.0 (+https://github.com/rporter33/mtg-companion)'
@@ -29,7 +30,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
  * as long as Scryfall says, or a growing pause, and tries again, up to
  * five times, before it is a failure.
  */
-let gapMs = Number(process.env.SCRYFALL_GAP_MS) || 350
+let gapMs = Number(process.env.SCRYFALL_GAP_MS) || SLOW_INTERVAL_MS
 let requests = 0
 
 async function request(url, init = {}) {
@@ -39,7 +40,11 @@ async function request(url, init = {}) {
     await wait(gapMs)
     if ((response.status === 429 || response.status >= 500) && attempt < 5) {
       const after = Number(response.headers.get('retry-after'))
-      const pause = Number.isFinite(after) && after > 0 ? after * 1000 : 1000 * 2 ** attempt
+      // Without a Retry-After, a 429 costs the full thirty-second lockout:
+      // anything shorter is spent inside it.
+      const pause = Number.isFinite(after) && after > 0
+        ? after * 1000
+        : (response.status === 429 ? LOCKOUT_MS : 1000 * 2 ** attempt)
       if (response.status === 429) gapMs = Math.min(gapMs * 2, 5000)
       console.error(`Scryfall answered ${response.status} after ${requests} requests; waiting ${pause / 1000}s, then trying again (${attempt + 1} of 5) at one request every ${gapMs / 1000}s`)
       await wait(pause)

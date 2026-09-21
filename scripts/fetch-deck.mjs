@@ -41,6 +41,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { parseDecklist } from '../src/lib/decklist.js'
 import { identifySource, parseArchidekt, parseMoxfield } from '../src/lib/deck-sources.js'
+import { SLOW_INTERVAL_MS } from '../src/lib/scryfall-limits.js'
 
 const SCRYFALL = 'https://api.scryfall.com'
 const UA = 'mtg-companion-example-curator/1.0 (+https://github.com/rporter33/mtg-companion)'
@@ -185,7 +186,7 @@ async function verifyNames(names) {
       if (match) canonical.set(match, card.name)
     }
     for (const entry of payload.not_found ?? []) missing.push(entry.name)
-    await sleep(120)
+    await sleep(SLOW_INTERVAL_MS)
   }
 
   return { canonical, missing }
