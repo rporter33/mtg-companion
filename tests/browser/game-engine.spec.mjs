@@ -18,6 +18,13 @@
 import { chromium } from 'playwright'
 import { createRelay } from '../../scripts/relay-server.mjs'
 import { findEngine } from '../../scripts/engine-bridge.mjs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+// Where the pictures go: the system's own temporary folder, so the same path
+// works on every machine rather than only where /tmp exists. Printed at the
+// end, because a picture nobody opens proves nothing.
+const SHOT = (name) => join(tmpdir(), `engine-${name}.png`)
 
 const TARGET = process.argv[2] ?? 'http://localhost:4173/'
 let pass = 0
@@ -167,7 +174,7 @@ for (let i = 0; i < 24 && !attacked; i++) {
     if (!(await attacker.count())) { await page.getByRole('button', { name: 'No attack' }).click(); continue }
     await attacker.click()
     check('tapping a creature draws its attack as an arrow', await until(() => page.locator('.game__field .field__arrow--attack').count().then((n) => n === 1)))
-    await page.screenshot({ path: '/tmp/claude-0/engine-attack.png' })
+    await page.screenshot({ path: SHOT('attack') })
     await page.getByRole('button', { name: /Attack with 1/ }).click()
     // The engine may block, so damage is not promised; the attack being
     // declared is, and the log says so in the engine's words.
@@ -200,7 +207,8 @@ check('the engine\'s table is not on the More panel\'s menu of things to do by h
 check('undo is not offered', await page.getByRole('button', { name: '↶ Undo' }).isDisabled())
 
 check('no console errors throughout', errors.length === 0, errors.join('\n'))
-await page.screenshot({ path: '/tmp/claude-0/engine-table.png' })
+await page.screenshot({ path: SHOT('table') })
+console.log(`\nScreenshots: ${SHOT('attack')} and ${SHOT('table')}`)
 await browser.close()
 await relayServer.shutdown()
 console.log(`\n${pass} passed, ${fail} failed`)

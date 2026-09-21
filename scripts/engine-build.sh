@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Builds the engine process in engine/ against a checkout of Argentum.
 #
-#   scripts/engine-build.sh          # clone or update, copy the module in, build
+#   scripts/engine-build.sh          # fetch the pinned commit, copy the module in, build
 #   scripts/engine-build.sh --play   # ...and then play one game through it
 #
 # ENGINE_HOME says where the checkout lives (default: ../argentum, beside this
@@ -12,10 +12,45 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 home=${ENGINE_HOME:-"$here/../argentum"}
 repo=${ENGINE_REPO:-https://github.com/ronoccc/engine-choo-choo.git}
+# The Argentum commit everything was last built and measured against. Upstream
+# main moves daily, and a build that follows it can change under a test that
+# passed yesterday. Moving the pin is a deliberate commit, with the compile time
+# and a game measured again (engine/README.md).
+rev=${ENGINE_REV:-70d525c69845c4a8c14516a5c7214444096e1018}
 
 if [ ! -d "$home/.git" ]; then
-  echo "engine: cloning $repo into $home"
-  git clone --depth 1 "$repo" "$home"
+  echo "engine: fetching $repo at $rev into $home"
+  git init -q "$home"
+  git -C "$home" remote add origin "$repo"
+fi
+# LF on disk, whatever this machine's autocrlf says: gradlew is a shell script,
+# and a CRLF shebang stops it running at all.
+git -C "$home" config core.autocrlf false
+if [ "$(git -C "$home" rev-parse -q --verify HEAD 2>/dev/null || true)" != "$rev" ]; then
+  git -C "$home" fetch -q --depth 1 origin "$rev"
+  # --force: the include line added below is the only local edit to a tracked
+  # file, and it is added again after the checkout.
+  git -C "$home" checkout -q --force FETCH_HEAD
+fi
+
+# Gradle builds with whatever JAVA_HOME names. When that is a Java runtime
+# rather than a JDK, it fails with "No Java compiler found", which says nothing
+# about JAVA_HOME. A Windows machine can easily have JAVA_HOME on a JRE that
+# some other program installed while a JDK sits on PATH; build with that one
+# rather than make anyone change what the other program relies on.
+has_javac() { [ -x "$1/bin/javac" ] || [ -x "$1/bin/javac.exe" ]; }
+if [ -n "${JAVA_HOME:-}" ] && ! has_javac "$JAVA_HOME"; then
+  if command -v javac >/dev/null 2>&1; then
+    jdk=$(dirname "$(dirname "$(command -v javac)")")
+    # The JVM reads JAVA_HOME too, and on Windows it wants C:\ not /c/.
+    if command -v cygpath >/dev/null 2>&1; then jdk=$(cygpath -w "$jdk"); fi
+    echo "engine: JAVA_HOME ($JAVA_HOME) has no compiler; building with $jdk"
+    JAVA_HOME=$jdk
+    export JAVA_HOME
+  else
+    echo "engine: JAVA_HOME ($JAVA_HOME) is a Java runtime, not a JDK, and there is no javac on PATH. The engine needs JDK 21." >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "$home/companion/src/main/kotlin"
@@ -26,9 +61,9 @@ grep -q 'include(":companion")' "$home/settings.gradle.kts" || printf '\ninclude
 
 cd "$home"
 ./gradlew :companion:installDist --no-daemon -q
-echo "engine: built $home/companion/build/install/companion/bin/companion"
+echo "engine: built $home/companion/build/install/companion/bin/companion (Argentum $rev)"
 
 if [ "${1:-}" = "--play" ]; then
   cd "$here"
-  ENGINE_CMD="$home/companion/build/install/companion/bin/companion" node scripts/engine-play.mjs
+  node scripts/engine-play.mjs
 fi

@@ -116,7 +116,7 @@ npm test && npm run build
 (npx vite preview --port 4173 --strictPort &) && npm run test:browser
 
 # The engine, pinned to the commit above
-ENGINE_REV=70d525c69845c4a8c14516a5c7214444096e1018 npm run engine:build   # see M1 for the pin
+npm run engine:build                      # fetches Argentum at the pinned commit (engine/README.md)
 npm run engine:play                       # one game, from the command line
 npx vitest run tests/engine-live.test.js  # a game over the wire
 
@@ -133,6 +133,25 @@ backgrounding and on `sh`. Clone into a folder of your own (`~/code`, or
 If the session must run in PowerShell, its first task is to make
 `engine-build.sh` and the preview step work there (a `.ps1` beside the
 `.sh`, calling `gradlew.bat`), and to say so in this section.
+
+**Done in Git Bash on the owner's machine, 2026-09-20 and 21**, and what it took:
+
+- `.gitattributes` holds every text file to LF. With `core.autocrlf` on and
+  no attributes, three unit suites failed to load with "SyntaxError: Invalid
+  or unexpected token": a CRLF shebang in a `scripts/*.mjs` defeats Vite's
+  blanking of it. CI never saw it, because CI checks out LF.
+- `npm run engine:build` works from Git Bash, because npm hands Git Bash's
+  `PATH`, `sh` included, to `cmd.exe`; from PowerShell `sh` is not found.
+  The script fetches Argentum with `core.autocrlf` off, so `gradlew` keeps an
+  LF shebang, and builds with the JDK on `PATH` when `JAVA_HOME` names a
+  runtime, as it does on that machine (an Adoptium JRE 25 that something
+  else installed; left alone).
+- The bridge runs Gradle's `companion.bat` through a shell, and ends the
+  whole process tree on a forced close, since ending the shell alone leaves
+  the JVM running.
+- The browser suite needs the Chromium revision Playwright asks for:
+  `npx playwright install chromium`, or `CHROMIUM_PATH` pointing at one
+  already under `%LOCALAPPDATA%\ms-playwright`.
 
 Two habits from the last stretch that save an hour each: run the browser
 suite in the background with its output in a file and poll the file, never

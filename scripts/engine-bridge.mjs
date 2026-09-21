@@ -14,11 +14,16 @@ const here = dirname(fileURLToPath(import.meta.url))
 /**
  * Where the built engine is, or null. `ENGINE_CMD` wins; otherwise the
  * launcher `scripts/engine-build.sh` produces in the sibling checkout.
+ *
+ * Gradle writes two launchers side by side, a POSIX shell script and a .bat,
+ * and Windows can run only the second: handed the script, it cannot start it
+ * at all.
  */
-export function findEngine(env = process.env) {
+export function findEngine(env = process.env, platform = process.platform) {
   if (env.ENGINE_CMD) return env.ENGINE_CMD
   const home = env.ENGINE_HOME || resolve(here, '..', '..', 'argentum')
-  const launcher = resolve(home, 'companion', 'build', 'install', 'companion', 'bin', 'companion')
+  const launcher = resolve(home, 'companion', 'build', 'install', 'companion', 'bin',
+    platform === 'win32' ? 'companion.bat' : 'companion')
   return existsSync(launcher) ? launcher : null
 }
 
@@ -38,9 +43,22 @@ export function startEngine({ command, args = [], cwd, timeoutMs = 30_000, onStd
   // A JavaScript file as the engine — the scripted stand-in the tests use —
   // is run by this same Node rather than executed as a program.
   const viaNode = /\.(mjs|cjs|js)$/.test(command)
+  // A .bat is the launcher Gradle writes for Windows. Node will not start one
+  // without a shell, and the shell does not quote what it is given, so the
+  // path goes in quotes here or a folder with a space in its name splits it.
+  const viaShell = /\.(bat|cmd)$/i.test(command)
+  const stdio = ['pipe', 'pipe', 'pipe']
   const child = viaNode
-    ? spawn(process.execPath, [command, ...args], { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
-    : spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    ? spawn(process.execPath, [command, ...args], { cwd, stdio })
+    : viaShell
+      ? spawn(`"${command}"`, args.map((a) => `"${a}"`), { cwd, stdio, shell: true })
+      : spawn(command, args, { cwd, stdio })
+  // Through a shell, the process Node holds is cmd.exe, and killing that
+  // leaves the JVM it started running with nothing left to stop it. So a
+  // forced close takes the whole tree down instead.
+  const kill = () => (viaShell && process.platform === 'win32'
+    ? spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+    : child.kill())
   const waiting = new Map()
   let nextId = 1
   let exited = null
@@ -91,7 +109,7 @@ export function startEngine({ command, args = [], cwd, timeoutMs = 30_000, onStd
     if (exited) return
     try { await call('quit') } catch { /* it may already be gone */ }
     await Promise.race([exitPromise, new Promise((r) => setTimeout(r, graceMs))])
-    if (!exited) { child.kill(); await exitPromise }
+    if (!exited) { kill(); await exitPromise }
   }
 
   return { call, close, get exited() { return exited }, pid: child.pid }

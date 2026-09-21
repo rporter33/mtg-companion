@@ -9,14 +9,30 @@ It is a Gradle module meant to be dropped into a checkout of the engine, the
 same way the spike was:
 
 ```bash
-scripts/engine-build.sh            # clones or updates ../argentum, copies this in, builds
+scripts/engine-build.sh            # fetches ../argentum at the pinned commit, copies this in, builds
 scripts/engine-build.sh --play     # then plays one game through it as a smoke test
 ```
 
 JDK 21 and Maven Central. The first build compiles `rules-engine`, `gym`,
-`ai` and one era of the card corpus, about five minutes; after that, seconds.
-The launcher lands at `../argentum/companion/build/install/companion/bin/companion`
-and `scripts/engine-bridge.mjs` finds it there (or wherever `ENGINE_CMD` says).
+`ai` and one era of the card corpus, about five minutes (280 s on the owner's
+Windows machine on 2026-09-21); after that, seconds.
+
+**The pin.** Argentum is fetched at one commit, `70d525c` (2026-09-20), and
+not at upstream `main`, which moves daily. `ENGINE_REV` overrides it for an
+experiment. Moving the default is a deliberate commit, with the first compile
+and a game measured again.
+
+**`JAVA_HOME`.** Gradle builds with whatever `JAVA_HOME` names. Where that is
+a Java runtime rather than a JDK, the script builds with the JDK on `PATH`
+instead and says so, rather than let Gradle fail with "No Java compiler found",
+which does not mention `JAVA_HOME` at all.
+
+The launchers land in `../argentum/companion/build/install/companion/bin/`:
+`companion`, a shell script, and `companion.bat`. `scripts/engine-bridge.mjs`
+picks the one the platform can run (or runs whatever `ENGINE_CMD` says). On
+Windows it starts the `.bat` through a shell, and if it ever has to force the
+engine closed it ends the whole process tree, because killing the shell alone
+leaves the JVM running.
 
 ## The protocol
 

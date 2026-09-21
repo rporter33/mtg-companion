@@ -10,6 +10,9 @@ const FIXTURE = JSON.parse(readFileSync(new URL('./engine-views.json', import.me
 const shots = FIXTURE.shots
 let at = -1
 let acted = 0
+// Told to be stubborn, it acknowledges quit and stays up, the way a hung JVM
+// would, so a test can make the bridge fall back to force.
+let stubborn = false
 
 const lines = createInterface({ input: process.stdin })
 const say = (o) => process.stdout.write(`${JSON.stringify(o)}\n`)
@@ -48,7 +51,9 @@ lines.on('line', (line) => {
     case 'echo': say({ id, ok: true, got: req }); break
     case 'garbage': process.stdout.write('this is not json\n'); say({ id, ok: true }); break
     case 'die': process.stderr.write('fake engine: dying on request\n'); process.exit(3); break
-    case 'quit': say({ id, ok: true }); process.exit(0); break
+    case 'pid': say({ id, ok: true, pid: process.pid }); break
+    case 'stubborn': stubborn = true; say({ id, ok: true }); break
+    case 'quit': say({ id, ok: true }); if (!stubborn) process.exit(0); break
     default: say({ id, ok: false, error: `Unknown op "${req.op}".` })
   }
 })

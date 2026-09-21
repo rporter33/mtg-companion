@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach } from 'vitest'
 import { fileURLToPath } from 'node:url'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { startEngine, findEngine } from '../scripts/engine-bridge.mjs'
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-engine.mjs', import.meta.url))
@@ -62,11 +65,66 @@ describe('the engine bridge', () => {
     await e.close()
     expect(e.exited).toMatchObject({ code: 0 })
   })
+
+  it('ends an engine that acknowledges quit and stays up', async () => {
+    const e = fake()
+    await e.call('stubborn')
+    await e.close({ graceMs: 100 })
+    expect(e.exited).toBeTruthy()
+    expect(e.exited.code).not.toBe(0)
+  })
+})
+
+// A folder with a space in its name, because that is where quoting breaks.
+const launcherDir = () => mkdtempSync(join(tmpdir(), 'engine launcher-'))
+const batFor = (dir) => {
+  const bat = join(dir, 'companion.bat')
+  writeFileSync(bat, `@echo off\r\n"${process.execPath}" "${FAKE}" %*\r\n`)
+  return bat
+}
+const alive = (pid) => { try { process.kill(pid, 0); return true } catch { return false } }
+
+describe('the engine on Windows, through the .bat Gradle writes', () => {
+  it.runIf(process.platform === 'win32')('starts it from a folder with a space in the path, and talks to it', async () => {
+    const dir = launcherDir()
+    const e = startEngine({ command: batFor(dir) })
+    engines.push(e)
+    expect((await e.call('hello')).engine).toBe('fake')
+    await e.close()
+    expect(e.exited).toMatchObject({ code: 0 })
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it.runIf(process.platform === 'win32')('takes the engine down too when it has to force the launcher closed', async () => {
+    const dir = launcherDir()
+    const e = startEngine({ command: batFor(dir) })
+    engines.push(e)
+    // The process behind the .bat, not the cmd.exe in front of it.
+    const { pid } = await e.call('pid')
+    expect(pid).not.toBe(e.pid)
+    await e.call('stubborn')
+    await e.close({ graceMs: 100 })
+    const start = Date.now()
+    while (alive(pid) && Date.now() - start < 3000) await new Promise((r) => setTimeout(r, 25))
+    expect(alive(pid)).toBe(false)
+    rmSync(dir, { recursive: true, force: true })
+  })
 })
 
 describe('finding the engine', () => {
   it('honours ENGINE_CMD, else looks beside the repo, else says so', () => {
     expect(findEngine({ ENGINE_CMD: '/somewhere/companion' })).toBe('/somewhere/companion')
     expect(findEngine({ ENGINE_HOME: '/nowhere/at/all' })).toBeNull()
+  })
+
+  it('picks the launcher the platform can run: the .bat on Windows, the script elsewhere', () => {
+    const home = launcherDir()
+    const bin = join(home, 'companion', 'build', 'install', 'companion', 'bin')
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(join(bin, 'companion'), '')
+    writeFileSync(join(bin, 'companion.bat'), '')
+    expect(findEngine({ ENGINE_HOME: home }, 'win32')).toBe(join(bin, 'companion.bat'))
+    expect(findEngine({ ENGINE_HOME: home }, 'linux')).toBe(join(bin, 'companion'))
+    rmSync(home, { recursive: true, force: true })
   })
 })
