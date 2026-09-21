@@ -215,6 +215,10 @@ describe('the wire', () => {
     await new Promise((resolve) => raw.on('open', resolve))
     const port = relayServer.server.address().port
     await relayServer.shutdown()
+    // shutdown() waits for the server side of the closing handshake. The
+    // client socket learns the code a tick later, so wait for it rather
+    // than read `codes` while the frame is still in flight.
+    await until(() => codes.length > 0)
     expect(codes).toEqual([1012])
     await until(() => ada.statuses.includes('reconnecting'))
     // Back on the same port, from the same directory: the room is there.
@@ -359,6 +363,9 @@ describe('an enforced room', () => {
     you.send({ op: 'act', stop, index: 0 })
     await until(() => you.last('status').status.stop === stop + 1, 5000)
     await until(() => them.last('status').status.stop === stop + 1, 5000)
+    // The new status and the new view are separate messages, and the status
+    // can land first, so wait for the view instead of counting it in flight.
+    await until(() => you.got.filter((m) => m.op === 'view').length >= 2, 5000)
     expect(you.got.filter((m) => m.op === 'view').length).toBeGreaterThanOrEqual(2)
     // Their view is theirs: the engine was asked for it by their seat.
     expect(them.last('view').you).toBe('e1')
