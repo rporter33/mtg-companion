@@ -178,9 +178,8 @@ or the session's to fetch locally.
   not adopted; a claim about Moxgate is compared with `TARGET.md` and
   `CREATOR-POST.md`, which outrank it. **Update:** the owner then uploaded
   Grok's handoff zip, filed at `inbox/grok-pack-2026-09-20/` and read in
-  `SOURCES.md` under "The Grok handoff pack"; it is most of what the second
-  link held. Ask the owner whether anything in that project post-dates the
-  zip (2026-09-20) before asking for more.
+  `SOURCES.md` under "The Grok handoff pack". The owner confirmed on
+  2026-09-21 that the zip is the whole of it; nothing more to ask for.
 - **The season's first suggestion.** From the Grok preview: while a set is
   the focus, the Cards tab's "Try one of these" leads with that set's cards
   (`e:fra`), through `src/lib/season.js` rather than a hard-coded query,
