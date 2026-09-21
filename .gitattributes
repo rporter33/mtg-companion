@@ -1,0 +1,23 @@
+# Line endings are normalised to LF everywhere: in the repository, and in the
+# working tree on every platform.
+#
+# Without this, a Windows clone with core.autocrlf=true gets CRLF working files
+# while the committed blobs stay LF, and that divergence alone breaks the unit
+# suite. Vite neutralises a script's `#!` line by blanking it to spaces, but
+# only while it is still the first byte of the module, and it decides where to
+# splice a module's injected imports using /^#!.*\n/ — which a CRLF shebang
+# does not match. So under CRLF the imports go in ahead of the shebang, the
+# shebang is no longer byte zero, the blanking is skipped, and it survives into
+# the function body vitest compiles. Every suite importing a scripts/*.mjs then
+# fails to load with "SyntaxError: Invalid or unexpected token", which names
+# neither the shebang nor the line endings and costs an afternoon to find.
+#
+# eol=lf and not text=auto on its own: autocrlf would otherwise hand this
+# machine CRLF again on the next clone.
+* text=auto eol=lf
+
+# Binary, kept byte for byte.
+*.jpg   -text
+*.png   -text
+*.webp  -text
+*.woff2 -text
