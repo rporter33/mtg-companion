@@ -23,9 +23,9 @@ and `ASSET_PACK.md` on provenance and licences:
 | Section | Home in the code | Check |
 | --- | --- | --- |
 | Colour philosophy | `src/data/colors.js` (`COLOR_PAGES`); the on-screen note changes from "the app's own" to sourced | `tests/first-deck.test.js` |
-| Hexhaven's schools | `src/data/set-themes.js` → `schools`, keyed by allied pair and shown with their emblems in the first-deck flow | `tests/set-themes.test.js`, browser `firstdeck` and `theme` specs |
+| Hexhaven's schools | `src/data/set-themes.js` → `schools`, keyed by allied pair and shown with their emblems in the first-deck flow while the set is the season's focus | `tests/set-themes.test.js`, `tests/first-deck-lore.test.jsx`, browser `firstdeck` and `theme` specs |
 | Inferred theme colours, typography | `src/data/set-themes.js` → `accent`, `accentDim`, `displayFont`; applied app-wide while the set is the season's focus | `tests/season.test.js` |
-| Mechanics | `src/data/set-mechanics.js` (dated, provisional until release) | `tests/set-mechanics.test.js` |
+| Mechanics | `src/data/set-mechanics.js` (dated, provisional until the set's release date in Scryfall's set list, then marked unchecked until `checkedAt` is added; `src/lib/curation.js`) | `tests/set-mechanics.test.js`, `tests/curation.test.js` |
 | Gameplay concepts, characters | `src/data/glossary.js`, `src/data/lessons.js` | `tests/glossary.test.js`, browser `explain` spec |
 | Card treatments | `src/components/CardFace.jsx` frame variants | browser `zoom` spec |
 | CSS tokens | `src/styles/tokens.css`; `npm run tokens:check` diffs the documents against it | script |

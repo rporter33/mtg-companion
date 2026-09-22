@@ -163,10 +163,33 @@ src/
 ### Scryfall client (`src/lib/scryfall.js`)
 
 - One serial request queue with a minimum gap between calls, honouring
-  `Retry-After` on 429.
+  `Retry-After` on 429. It has two lanes: a request marked `background` goes
+  only when no foreground request is queued, and is asked once (no retries;
+  a 429 is still waited out before the line moves on), so a refresh never
+  holds up a search. A background request that fails pauses the background
+  lane (until the lockout ends after a 429, five minutes after a 5xx or an
+  unreachable Scryfall); background requests made meanwhile are refused
+  unsent, foreground ones go as ever.
 - Every response is cached in IndexedDB (`cache.js`); deck cards are *pinned*
   so they survive eviction, which is what makes a deck built at home open on
   a phone with no signal.
+- **Saved cards are refreshed** (2026-09-21). `refreshDue` in
+  `card-refresh.js` says when a cached record is due: older than a week;
+  fetched before its card's release day began (UTC) once that day has come;
+  or, in the week after release, older than a day, the app's own choice,
+  since when Scryfall gives a new set its legalities after release is not
+  known. `getCardsByIds(ids, { refresh })` (and `getCardRecordsByIds`, which
+  also gives each record's `fetchedAt`) and `refreshCards` fetch due records
+  again by id, 75 at a time, in the background lane, filling a last batch
+  with room in it with records a day old or more, oldest first, so a deck's
+  records fall due together. A cached id Scryfall lists as `not_found` keeps
+  its copy, with `checkedAt` noted on it (`markCardsChecked`), and is asked
+  about again a week on; an id never saved is remembered for a day
+  (`notfound:<id>` in the query store). An open deck shows the cache at once
+  and redraws if anything came back (`useDeckCards`); the launch legality
+  watch fetches each deck's missing cards, then refreshes every deck's cards
+  in one pass, stops asking after a failure, and gives the date of the
+  oldest data it compared.
 - `searchCards`, `getCardById`, `getCardByName`, `getCardsByIds` (chunked to
   75 per call), `getCardsByNames`, `getPrintings` (`oracleid:` +
   `unique=prints`), `getRulings`, `getSets`, `randomCard`.
@@ -515,19 +538,91 @@ Lair numbers now parsed. Checked by `tests/release.test.js`,
 browser spec `unreleased.spec.mjs`, which fixes the page's clock on
 2026-09-21 and 2026-11-13.
 
-**Next (slice 2), before 2 October if it can be:** refresh cached deck cards
-around a release (today a saved card is never re-fetched, so a Reality
-Fracture card saved now stays Scryfall's pre-release `not_legal` after 2
-October), with a grace note while Scryfall catches up and no "became more
-playable" noise; the season focus rule above; curated set content saying
-when it was written and whether it has been checked since release, and the
-Hexhaven schools (`LORE_SET = 'fra'`) following the focus; an optional
+**Built (slice 2, card refresh):** saved cards are fetched again when due
+(see §5, "Saved cards are refreshed"), so a Reality Fracture card saved
+before 2 October reads Scryfall's word after it. In the week after a card's
+release a `not_legal` from a record that lists the card in no paper format
+(not legal, banned or restricted in Vintage, Legacy or Commander, as
+Scryfall lists every new card before release; `listedInPaper`) is
+`catching_up` in `legalityStatus`. A record that lists it somewhere is
+Scryfall's word since release, so a Commander product's card in Modern or a
+rare in Pauper is `not_legal` at once; so are a reprint outside Standard and
+Future Standard's `not_legal` in Standard. `catching_up` is a warning saying
+only what the data on this device shows, with no "yet" and no promise:
+"Not known here" on the Legality tab, a "legality not known" chip in Add to
+deck, and "N cards with legality not known" on the verdict; after the week
+it is an error again. The legality watch does not announce `not_legal` to
+`legal` for a snapshot entry read from a record that listed the card
+nowhere (`listedNowhere`, so a snapshot saved again after release from a
+stale record, offline or on a failed refresh, still counts), nor, for an
+unmarked entry, from a snapshot taken before the end of the card's release
+week; it re-reads each deck before saving its snapshot so an edit made
+while it ran is kept. Checked by `tests/card-refresh.test.js`,
+`tests/legality-watch.test.jsx`, `tests/deck-cards.test.jsx`,
+`tests/snapshot.test.js`, `tests/not-out-legality.test.js` and the browser
+spec `refresh.spec.mjs`, which saves a Modern deck on 2026-09-21 and opens
+it at 00:30 UTC on 2026-10-02 (the weekly rule), then a Standard deck saved
+at 20:00 UTC on 2026-10-01 and opened at 10:00 UTC on 2026-10-02 (the
+release-day rule alone: the Mountain is not asked about) twice, once with
+Scryfall listing the new card as legal and once still as before release.
+
+**Built (slice 2, season and curation):** `findSeason` returns the
+`focus` by the owner's rule: the latest released set stays the focus until
+the next set is nearer in days, and on a tie the released set stays
+(Reality Fracture from its preview season through 23 October 2026, Star
+Trek from 24 October). While a released set is the focus the banner shows
+its "Latest set" view, "Browse the set" and the set that follows it, and the
+Commanders guide opens on it. Whether curated content is provisional is
+worked out from the focus set's release date in Scryfall's set list
+(`src/lib/curation.js`), never from a date in code; the entries' own
+`provisional` flags are kept and read only when that date is unknown. After
+release the banner and "What's new" say "Written on … from previews, before
+release on …; not yet checked against the released cards" until the owner
+adds `checkedAt` to the entry, which makes it "checked against the released
+cards on …" from that day on (a date still to come is not a check yet). The
+banner gives its dates in one form ("2 Oct 2026") and, having said
+"Released …", leaves the date out of the note. `LORE_SET` is gone: the
+first-deck flow shows a set's schools only while the shell wears that set's
+theme (`useThemeSet`, which App sets from the season engine through
+`themeSetFor`), so Hexhaven is not presented as current once the focus
+moves on; App publishes the set's release date beside it
+(`data-theme-set-released`, `useThemeRelease`), and a note under the
+schools says they are the app's reading, when they were written and how
+current they are, as the banner does. Checked by `tests/season.test.js`,
+`tests/curation.test.js`, `tests/set-themes.test.js`,
+`tests/set-mechanics.test.js`, `tests/first-deck-lore.test.jsx` and the
+browser spec `theme.spec.mjs`, which holds the page's clock on 2026-09-21,
+2026-10-02, 2026-10-22 and 2026-10-24.
+
+**Built (slice 2, Standard's pool and the engine's reasons):** the coach's
+suggestion searches and the first deck's commander and staple searches
+build their format term with `poolQuery`, so in Standard they take in the
+cards Scryfall's Future Standard names, as the deck search does. At the
+engine's table, `POST /engine/check` also returns `engineSets`, the sets the
+checking engine's hello lists (codes as the engine gives them, and whether
+it marks each incomplete; its own release dates are not passed on), and
+`verdictOf` gives each card the engine does not know a reason from the set
+of the printing the deck holds, codes compared without regard to case: "The
+rules engine has no Reality Fracture cards yet" for a set it does not list,
+"… has Star Trek Commander only in part, and not this card yet" for one it
+marks incomplete, "… does not know this card" for one it has. The engine
+knows cards by name from any set, so a reprint (a Secret Lair or The List
+printing) in a set it does not list is "… does not know this card", not
+that set's fault. With no set
+list or no record the card is "Not known", as before, and nothing estimates
+when a set will reach the engine. The tile and the deck gate list the cards
+under their reasons, one line per reason. Checked by `tests/coach.test.js`,
+`tests/first-deck.test.js`, `tests/engine-deck.test.js`,
+`tests/relay-server.test.js` (the fake engine's hello lists Portal, Star
+Trek Commander marked incomplete, and The Hobbit, as the built engine's did
+on 2026-09-21) and the browser spec `game-engine.spec.mjs` where an engine is
+built.
+
+**Next (slice 2, the rest), before 2 October if it can be:** an optional
 "Find released printings" for decks imported before this; stamping names on
 deck entries so a preview id Scryfall later merges or deletes stays
-readable, with `/cards/migrations` followed on a 404; the engine lobby's
-reasons from the engine's own set list; the coach's and first deck's
-queries using the Standard pool term; the Archidekt URL fetch keeping
-printings; printings past the first 175.
+readable, with `/cards/migrations` followed on a 404; the Archidekt URL
+fetch keeping printings; printings past the first 175.
 
 ### T4b-1 — the replication protocol and transport (built)
 
