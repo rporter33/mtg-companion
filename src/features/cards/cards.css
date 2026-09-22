@@ -35,9 +35,11 @@
 .legality--restricted .legality__status { color: var(--warn); }
 .legality--not_legal  .legality__status,
 .legality--unknown    .legality__status { color: var(--text-faint); }
-/* Not out yet: the NotOutChip's tone, since it is the same news. */
+/* Not out yet: the NotOutChip's tone, since it is the same news. Not listed
+   yet, the week after release, is the same news a week on. */
 .legality--future_legal .legality__status,
-.legality--pending      .legality__status { color: var(--warn); }
+.legality--pending      .legality__status,
+.legality--catching_up  .legality__status { color: var(--warn); }
 
 .ruling {
   padding: var(--space-3) 0;

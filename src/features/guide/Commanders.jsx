@@ -26,10 +26,12 @@ export default function Commanders({ onOpenCard, onBuild }) {
         if (cancelled) return
         const season = findSeason(all)
         // Both the set that is coming and the one people are playing now: one
-        // is exciting, the other is what is actually on the shelf.
+        // is exciting, the other is what is actually on the shelf. It opens on
+        // the season's focus, so a set just out is shown first until the next
+        // one is nearer, the same set the banner above it names.
         const options = [season.next, season.current].filter(Boolean)
         setSets(options)
-        setActive(options[0]?.code ?? null)
+        setActive(season.focus?.code ?? options[0]?.code ?? null)
       })
       .catch(() => { if (!cancelled) setSets([]) })
     return () => { cancelled = true; controller.abort() }

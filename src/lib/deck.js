@@ -149,6 +149,14 @@ const warn = (code, message, cardId) => ({ code, severity: 'warning', message, c
 export const NOT_OUT_CODES = new Set(['not_out_yet', 'legality_pending'])
 
 /**
+ * The warning for a card in the week after its release whose Scryfall record
+ * lists it in no paper format yet, as a record from before release does (see
+ * legalityStatus). It does not make a deck illegal either; after the week,
+ * Scryfall's not_legal is an error again.
+ */
+export const CATCHING_UP_CODE = 'legality_catching_up'
+
+/**
  * Validates a deck against its format.
  *
  * @param deck       deck object
@@ -269,6 +277,11 @@ export function validateDeck(deck, cardsById, { now = today() } = {}) {
     } else if (status === 'pending') {
       violations.push(warn('legality_pending',
         `${card.name} is not out until ${releaseLabel(notOutUntil(card, now))}. Scryfall sets its ${format.name} legality when it is released.`, cardId))
+    } else if (status === 'catching_up') {
+      // What the record shows, and no more: it may yet say legal here, or
+      // not, and the app does not guess which.
+      violations.push(warn(CATCHING_UP_CODE,
+        `${card.name} came out on ${releaseLabel(card.released_at)}, but the Scryfall data on this device lists it as legal in no format, as Scryfall does before a release, so the app does not know whether it is ${format.name}-legal.`, cardId))
     } else if (status === 'restricted' && first && quantity > 1) {
       violations.push(onGroup(err('restricted',
         `${card.name} is restricted in ${format.name} — only one copy is allowed, but this deck has ${quantity}.`, cardId)))
@@ -320,9 +333,12 @@ export function notOutCount(deck, cardsById, { now = today() } = {}) {
 
 /**
  * The deck's verdict in a few words, for the chip at the top of the editor:
- * its problems when it has any, then how many cards are not out yet, and only
- * then "Legal", since a deck with cards nobody can hold yet is not one the
- * app can call legal to play today. `tone` is the chip's: error, warn or ok.
+ * its problems when it has any, then how many cards are not out yet, then how
+ * many are out but have no legality the app can read in the Scryfall data on
+ * this device (the week after a release, see legalityStatus), and only then
+ * "Legal", since a deck with cards nobody can hold yet, or cards whose
+ * legality the app does not know, is not one it can call legal to play today.
+ * Copies are counted, as elsewhere. `tone` is the chip's: error, warn or ok.
  */
 export function deckVerdict(deck, validation, cardsById, { now = today() } = {}) {
   if (!validation.legal) {
@@ -331,6 +347,13 @@ export function deckVerdict(deck, validation, cardsById, { now = today() } = {})
   }
   const notOut = notOutCount(deck, cardsById, { now })
   if (notOut) return { tone: 'warn', text: `${notOut} card${notOut === 1 ? '' : 's'} not out yet` }
+  const catchingUp = new Set(validation.violations
+    .filter((v) => v.code === CATCHING_UP_CODE).map((v) => v.cardId))
+  let unlisted = 0
+  for (const [cardId, quantity] of combinedCounts(deck)) {
+    if (catchingUp.has(cardId)) unlisted += quantity
+  }
+  if (unlisted) return { tone: 'warn', text: `${unlisted} card${unlisted === 1 ? '' : 's'} with legality not known` }
   return { tone: 'ok', text: 'Legal' }
 }
 

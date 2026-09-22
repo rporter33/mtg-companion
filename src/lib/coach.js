@@ -18,7 +18,7 @@
 // search that finds cards to fix it, built from oracle text so no hand-written
 // card list can rot.
 
-import { getFormat } from './formats.js'
+import { getFormat, poolQuery } from './formats.js'
 import { analyzeDeck, resolveEntries, manaValueOf } from './analysis.js'
 import { recommendedSourceCount } from './probability.js'
 import { isLandCard } from './deck.js'
@@ -48,9 +48,13 @@ function check({ id, label, have, want, severity, message, why, query, unit = 'c
   return { id, label, have, want, severity, message, why, query, unit, scored }
 }
 
-/** Colour-identity scope for suggestion searches, so results are playable. */
+/**
+ * Colour-identity scope for suggestion searches, so results are playable. The
+ * format's pool is the deck search's own (poolQuery), so in Standard the coach
+ * finds the next set's previewed cards that Scryfall says will be legal.
+ */
 function scopeFor(deck, format, identity) {
-  const parts = [`legal:${format.legalityKey}`]
+  const parts = [poolQuery(format)]
   if (format.commander?.colorIdentity && identity?.length) {
     parts.push(`id<=${identity.join('').toLowerCase()}`)
   } else if (format.commander?.colorIdentity) {

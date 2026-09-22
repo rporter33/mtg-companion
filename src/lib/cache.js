@@ -75,7 +75,8 @@ export async function getCard(id) {
     const db = await openDb()
     const record = await wrap(tx(db, STORE_CARDS, 'readonly').get(id))
     if (!record) return null
-    const stale = Date.now() - record.fetchedAt > CARD_TTL_MS
+    // A record with no readable fetchedAt is from an older build: read as old.
+    const stale = !Number.isFinite(record.fetchedAt) || Date.now() - record.fetchedAt > CARD_TTL_MS
     return { card: record.card, stale, pinned: !!record.pinned }
   }, null)
 }
@@ -93,11 +94,63 @@ export async function getCards(ids) {
   return out
 }
 
-export async function putCards(cards, { pinned = false } = {}) {
+/**
+ * The cached records themselves, with when each was fetched, for deciding
+ * which are due to be asked for again (see card-refresh.js). A record with no
+ * readable fetchedAt, as an older build may have left, comes back with
+ * fetchedAt null, which is read as old; one with no card in it is left out,
+ * as a miss. `checkedAt` (see markCardsChecked) is there only when it is a
+ * time.
+ */
+export async function getCardRecords(ids) {
+  const out = new Map()
+  await safely(async () => {
+    const db = await openDb()
+    const store = tx(db, STORE_CARDS, 'readonly')
+    await Promise.all(ids.map(async (id) => {
+      const record = await wrap(store.get(id))
+      if (!record?.card || typeof record.card !== 'object') return
+      const fetchedAt = Number.isFinite(record.fetchedAt) ? record.fetchedAt : null
+      out.set(id, {
+        card: record.card,
+        fetchedAt,
+        ...(Number.isFinite(record.checkedAt) ? { checkedAt: record.checkedAt } : {}),
+      })
+    }))
+  }, null)
+  return out
+}
+
+/**
+ * Notes on saved records that Scryfall was asked about at `checkedAt` and
+ * said it has no card with that id, as it does for a preview it has since
+ * merged or deleted. The record is kept, since it may be the only one of
+ * what the card was, and the note keeps it from being asked about again for
+ * a week (see refreshDue). A fresh copy saved later replaces the note with
+ * the record.
+ */
+export async function markCardsChecked(ids, checkedAt) {
   return safely(async () => {
     const db = await openDb()
     const store = tx(db, STORE_CARDS, 'readwrite')
-    const now = Date.now()
+    for (const id of ids) {
+      const record = await wrap(store.get(id))
+      if (record) store.put({ ...record, checkedAt })
+    }
+    return true
+  }, false)
+}
+
+/**
+ * `fetchedAt` is when Scryfall answered. It is now, except where the caller
+ * works to a clock of its own, as the refresh does, so that a record it has
+ * just fetched is never due again by that clock.
+ */
+export async function putCards(cards, { pinned = false, fetchedAt } = {}) {
+  return safely(async () => {
+    const db = await openDb()
+    const store = tx(db, STORE_CARDS, 'readwrite')
+    const now = Number.isFinite(fetchedAt) ? fetchedAt : Date.now()
     for (const card of cards) {
       if (!card?.id) continue
       // Never downgrade a pinned card to unpinned just because it was also

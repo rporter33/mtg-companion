@@ -273,6 +273,15 @@ describe('a sixty-card first deck', () => {
     expect(q).not.toMatch(/is:commander/)
     expect(stapleQueries('GW', 'theme')[0]).toMatch(/legal:commander game:paper id<=gw -is:commander/)
   })
+  it('in Standard, asks for the pool the deck search asks for, so the next set’s previewed cards are found', () => {
+    for (const role of ['lands', 'ramp', 'draw', 'removal', 'theme']) {
+      for (const q of stapleQueries('GW', role, { formatId: 'standard' })) {
+        expect(q).toMatch(/^\(legal:standard or legal:future\) game:paper id<=gw usd<=4/)
+      }
+    }
+    expect(stapleQueries('GW', 'theme', { formatId: 'pioneer' })[0]).toMatch(/^legal:pioneer game:paper /)
+    expect(stapleQueries('GW', 'theme', { formatId: 'pioneer' })[0]).not.toMatch(/legal:future/)
+  })
   it('fills with up to four copies of a card, never past sixty', () => {
     const deck = { commanders: [], main: [], colors: 'G' }
     const candidates = {

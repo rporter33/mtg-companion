@@ -96,6 +96,10 @@ const CARDS = [
   c('madewish', 'Made-Up Wish', 'Sorcery'),
   // A real card in a printing Portal never had: the engine knows the card, not the printing.
   c('goblin9999', 'Raging Goblin', 'Creature — Goblin Berserker', { power: '1', toughness: '1', oracle_text: 'Haste', collector_number: '9999' }),
+  // Made-up cards of a made-up set, whose code no real set could have, so the
+  // lobby's reason for them holds whatever sets the engine comes to have.
+  c('rift', 'Made-Up Rift', 'Sorcery', { set: 'made-up', set_name: 'Made-Up Expansion' }),
+  c('riftwalker', 'Made-Up Rift Walker', 'Creature — Goblin', { power: '1', toughness: '1', set: 'made-up', set_name: 'Made-Up Expansion' }),
 ]
 const GOBLINS = [
   { cardId: 'mountain', quantity: 14 }, { cardId: 'goblin', quantity: 6 }, { cardId: 'bully', quantity: 4 },
@@ -113,6 +117,11 @@ const STATE = {
     main: [...GOBLINS.map((e) => (e.cardId === 'goblin' ? { ...e, cardId: 'goblin9999' } : e)), { cardId: 'madeup', quantity: 2 }],
     // A sideboard card the engine does not know is left out and said, not a reason to stop.
     sideboard: [{ cardId: 'axe', quantity: 2 }, { cardId: 'madewish', quantity: 1 }], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+  }, {
+    // Two cards of a set the engine does not list: one reason, said once.
+    id: 'd3', name: 'Rift Goblins', formatId: 'standard', commanders: [], signatureSpell: null, categoryOrder: [], versions: [],
+    main: [...GOBLINS, { cardId: 'rift', quantity: 2 }, { cardId: 'riftwalker', quantity: 1 }],
+    sideboard: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
   }],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
   prefs: { relayUrl: RELAY, playerName: 'Robin', reduceMotion: true },
@@ -158,7 +167,13 @@ const axeViolations = async () => {
 const tile = (name) => page.getByRole('button', { name: new RegExp(`^${name}`) }).first()
 // The first check starts the relay's checking engine, which loads the corpus first.
 check('a deck the engine fully knows says so on its tile', await until(() => tile('Goblins').textContent().then((t) => /The engine knows all 34 cards\./.test(t ?? '')), ENGINE_START_MS))
-check('a deck it does not says how much it knows, and names what it does not', await until(() => tile('Mixed Goblins').textContent().then((t) => /The engine knows 34 of 36 cards\./.test(t ?? '') && /Not known: Made-Up Goblin\./.test(t ?? '')), ENGINE_START_MS))
+// Made-Up Goblin is dealt as a Portal card, and the engine lists Portal as
+// complete (engine-live.test.js), so the reason is that it has the set and not the card.
+check('a deck it does not says how much it knows, and names what it does not, with why', await until(() => tile('Mixed Goblins').textContent().then((t) => /The engine knows 34 of 36 cards\./.test(t ?? '') && /The rules engine does not know this card: Made-Up Goblin\./.test(t ?? '')), ENGINE_START_MS))
+check('cards of a set the engine does not list are one reason, said once', await until(() => tile('Rift Goblins').textContent().then((t) => /The engine knows 34 of 37 cards\./.test(t ?? '')
+  && /The rules engine has no Made-Up Expansion cards yet: Made-Up Rift and Made-Up Rift Walker\./.test(t ?? '')
+  && (t ?? '').split('The rules engine').length === 2), ENGINE_START_MS), await tile('Rift Goblins').textContent())
+check('and no date of the engine\'s own is shown', !/\d{4}-\d{2}-\d{2}|\d{1,2} [A-Z][a-z]{2} \d{4}/.test(await page.locator('.lobby__shelf').textContent() ?? ''))
 check('and says a sideboard card it does not know will be left out', /Left out of the sideboard, as the engine does not know it: Made-Up Wish\./.test(await tile('Mixed Goblins').textContent() ?? ''))
 check('the lobby at the engine\'s table has no accessibility violations', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
 await tile('Mixed Goblins').click()
@@ -166,6 +181,7 @@ await page.getByRole('button', { name: /Sit down with Mixed Goblins/ }).click()
 const gate = page.getByRole('dialog', { name: 'The engine does not know every card in Mixed Goblins' })
 check('sitting with it says so instead, in the house dialog', await until(() => gate.count().then((n) => n === 1)))
 check('the dialog names every card it does not know, with how many', /2 Made-Up Goblin/.test(await gate.textContent() ?? ''))
+check('under the reason the tile gives', /The rules engine does not know this card:\s*2 Made-Up Goblin/.test(await gate.getByRole('list', { name: 'Cards the engine does not know' }).textContent() ?? ''))
 check('and offers both ways on, and a way back', await Promise.all([
   gate.getByRole('button', { name: 'Play the engine without them' }).count(),
   gate.getByRole('button', { name: 'Play it alone instead' }).count(),
@@ -175,6 +191,19 @@ check('the dialog has no accessibility violations', await axeViolations().then((
 await page.screenshot({ path: SHOT('gate') })
 await gate.getByRole('button', { name: 'Choose another deck' }).click()
 check('choosing another deck closes it, and nothing was sat down with', await until(() => gate.count().then((n) => n === 0)) && /#\/game\/engine\/[A-Z0-9]{5}$/.test(await page.evaluate(() => location.hash)))
+
+await tile('Rift Goblins').click()
+await page.getByRole('button', { name: /Sit down with Rift Goblins/ }).click()
+const riftGate = page.getByRole('dialog', { name: 'The engine does not know every card in Rift Goblins' })
+await until(() => riftGate.count().then((n) => n === 1))
+const riftList = riftGate.getByRole('list', { name: 'Cards the engine does not know' })
+check('the dialog gives the reason once, with each card and its count under it', await riftList.textContent().then((t) => (t ?? '').split('The rules engine').length === 2
+  && /The rules engine has no Made-Up Expansion cards yet:\s*2 Made-Up Rift\s*1 Made-Up Rift Walker/.test(t ?? '')), await riftList.textContent())
+// The dialog rises in over 0.2 s (sheet.css); a picture taken mid-rise shows the shelf through it.
+await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'))
+await page.screenshot({ path: SHOT('gate-reasons') })
+await riftGate.getByRole('button', { name: 'Choose another deck' }).click()
+await until(() => riftGate.count().then((n) => n === 0))
 
 await page.getByRole('button', { name: /^Goblins/ }).first().click()
 await page.getByRole('button', { name: /Sit down with Goblins/ }).click()
@@ -307,7 +336,7 @@ check('the sideboard card it does not know is left out, and the table says so', 
 check('no Made-Up Goblin reaches the hand', !/Made-Up Goblin/.test(await page.locator('.tabletop__handcard').allTextContents().then((ts) => ts.join(' '))))
 
 check('no console errors throughout', errors.length === 0, errors.join('\n'))
-console.log(`\nScreenshots: ${SHOT('gate')}, ${SHOT('attack')} and ${SHOT('table')}`)
+console.log(`\nScreenshots: ${SHOT('gate')}, ${SHOT('gate-reasons')}, ${SHOT('attack')} and ${SHOT('table')}`)
 await browser.close()
 await relayServer.shutdown()
 console.log(`\n${pass} passed, ${fail} failed`)

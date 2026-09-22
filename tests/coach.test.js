@@ -189,6 +189,17 @@ describe('format differences', () => {
     const sixty = addCard(createDeck({ formatId: 'modern' }), 'forest', 24)
     expect(checkOf(coachDeck(sixty, lookup), 'removal').query).not.toMatch(/id<=/)
   })
+
+  it('searches Standard as the deck search does, taking in the cards Future Standard names', () => {
+    const standard = coachDeck(addCard(createDeck({ formatId: 'standard' }), 'forest', 24), lookup)
+    const queries = standard.checks.map((c) => c.query).filter(Boolean)
+    expect(queries.length).toBeGreaterThan(0)
+    for (const q of queries) expect(q).toMatch(/^\(legal:standard or legal:future\)( |$)/)
+    // Every other format keeps its own pool alone.
+    const modern = coachDeck(addCard(createDeck({ formatId: 'modern' }), 'forest', 24), lookup)
+    expect(checkOf(modern, 'removal').query).toMatch(/^legal:modern /)
+    expect(checkOf(modern, 'removal').query).not.toMatch(/legal:future/)
+  })
 })
 
 describe('tone and progression', () => {

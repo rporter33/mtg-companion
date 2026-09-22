@@ -3,18 +3,21 @@ import { getSets, getSetColorProfile } from '../../lib/scryfall.js'
 import { buildSeasonTheme } from '../../lib/season.js'
 import HeroArt from '../../components/HeroArt.jsx'
 import { mechanicsForSet, curationAgeDays } from '../../data/set-mechanics.js'
+import { curationStatus, curationNote, themeNote } from '../../lib/curation.js'
+import { releaseLabel } from '../../lib/release.js'
 import Sheet from '../../components/Sheet.jsx'
 import Term from '../../components/Term.jsx'
 import './season.css'
 
 /**
- * The upcoming-set banner.
+ * The season's set banner: the set coming next, or the one just out while it
+ * is still the nearer of the two (see findSeason).
  *
- * Everything here is derived from Scryfall at runtime — which set is next, when
- * it lands, its official icon — so it stays correct for sets that do not exist
- * yet, with no code change. The accent is computed from the set code rather
- * than hand-picked, because this app has no way to know a set's art direction
- * and should not pretend otherwise.
+ * Everything here is derived from Scryfall at runtime — which set is the
+ * focus, when it lands, its official icon — so it stays correct for sets that
+ * do not exist yet, with no code change. The accent is computed from the set
+ * code rather than hand-picked, because this app has no way to know a set's
+ * art direction and should not pretend otherwise.
  *
  * Renders nothing at all when there is no data. A set banner is a nice touch,
  * not a load-bearing element, and it must never be the reason a screen is empty.
@@ -50,7 +53,7 @@ export default function SeasonBanner({ onExplore }) {
   }, [])
 
   if (!theme) return null
-  const { set, isUpcoming, countdown, accent, accentDim } = theme
+  const { set, isUpcoming, countdown, following, accent, accentDim } = theme
   // A curated theme brings its own art and voice (src/data/set-themes.js);
   // a derived one gets the plain banner, because a hash is not art direction.
   const curatedTheme = theme.derivedFrom === 'curated' ? theme : null
@@ -101,7 +104,8 @@ export default function SeasonBanner({ onExplore }) {
           {isUpcoming
             ? `Releases ${formatDate(set.releasedAt)}.`
             : `Released ${formatDate(set.releasedAt)}${set.cardCount ? ` · ${set.cardCount} cards` : ''}.`}
-          {curatedTheme?.provisional && ' Colours and lore here are the app\u2019s own reading of public previews, not official.'}
+          {following && ` ${following.name} follows on ${formatDate(following.releasedAt)}.`}
+          {curatedTheme && ` ${themeNote(curationStatus(curatedTheme, set.releasedAt), { releaseShown: true })}`}
         </p>
       </div>
 
@@ -126,7 +130,7 @@ export default function SeasonBanner({ onExplore }) {
     >
       {curated && (
         <div style={{ '--season-accent': accent }}>
-          <SetMechanics entry={curated} />
+          <SetMechanics entry={curated} releasedAt={set.releasedAt} />
         </div>
       )}
     </Sheet>
@@ -134,8 +138,8 @@ export default function SeasonBanner({ onExplore }) {
   )
 }
 
-function SetMechanics({ entry }) {
-  const age = curationAgeDays(entry)
+function SetMechanics({ entry, releasedAt }) {
+  const status = curationStatus(entry, releasedAt)
 
   return (
     <div className="stack">
@@ -167,14 +171,13 @@ function SetMechanics({ entry }) {
         </section>
       )}
 
-      {/* Say plainly how old this is and where it came from. Every other fact in
-          this app is fetched live; this section is hand-written, so it is the
-          one place that can quietly go stale. */}
-      <div className="banner banner--warn tiny">
-        {entry.provisional && <strong>Written during spoiler season. </strong>}
-        Summarised by hand on {entry.curatedAt}
-        {age != null && age > 0 && ` — ${age} day${age === 1 ? '' : 's'} ago`}
-        {entry.provisional && ', and wording sometimes changes before release'}.
+      {/* Say plainly how old this is, whether it has been checked since the
+          set came out, and where it came from. Every other fact in this app is
+          fetched live; this section is hand-written, so it is the one place
+          that can quietly go stale. */}
+      <div className={`banner ${status.state === 'preview' || status.state === 'unchecked' ? 'banner--warn' : 'banner--info'} tiny`}>
+        {status.state === 'preview' && <strong>Provisional. </strong>}
+        {curationNote(status, { ageDays: curationAgeDays(entry) })}
         {' '}Everything else in this app is read live from Scryfall; this section is not.
         {entry.sources?.length > 0 && (
           <div className="mt2">
@@ -199,8 +202,9 @@ function shortHost(url) {
   }
 }
 
+// The one date form the curated note beside it uses (releaseLabel, "2 Oct
+// 2026"), so one paragraph never gives a date two ways. The note is told the
+// release date is already given, and leaves it out once the set is out.
 function formatDate(iso) {
-  const date = new Date(`${iso}T00:00:00Z`)
-  if (Number.isNaN(date.getTime())) return iso
-  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
+  return releaseLabel(iso) || iso
 }

@@ -26,6 +26,9 @@ beforeEach(async () => {
   // And the same for the 429 lockout, which is a real thirty seconds. Left
   // alone it stalls the shared queue and every later test times out behind it.
   __internals.setLockoutMs(1)
+  // A background failure in one test pauses the background lane for minutes;
+  // each test starts with it open.
+  __internals.resumeBackground()
 })
 
 afterEach(() => {

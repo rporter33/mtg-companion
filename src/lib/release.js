@@ -1,4 +1,5 @@
 import { today } from './season.js'
+import { CARD_TTL_MS } from './cache.js'
 // Whether a printing is out yet.
 //
 // Scryfall lists a set's cards as they are previewed, weeks before release,
@@ -21,6 +22,34 @@ export function notOutUntil(card, now = today()) {
   const date = card?.released_at
   if (typeof date !== 'string' || !DATE.test(date)) return null
   return date > now ? date : null
+}
+
+/**
+ * The moment a printing's release day begins, midnight UTC, as a time in
+ * milliseconds; null for a date it cannot read.
+ */
+export function releaseStart(card) {
+  const date = card?.released_at
+  if (typeof date !== 'string' || !DATE.test(date)) return null
+  const start = Date.parse(`${date}T00:00:00Z`)
+  return Number.isFinite(start) ? start : null
+}
+
+/**
+ * Whether a printing came out within the last week by `now`'s day: its
+ * release day and the six after it. A record saved before release says
+ * not_legal until it is fetched again, and when Scryfall gives a new set its
+ * legalities after release is not known, so for this week the app fetches a
+ * deck's new cards daily (see card-refresh.js) and does not treat a record
+ * that lists the card nowhere as settled (see legalityStatus). The week is
+ * CARD_TTL_MS, the age at which any card record is fetched again anyway, so
+ * the two rules end together.
+ */
+export function justOut(card, now = today()) {
+  const start = releaseStart(card)
+  const day = typeof now === 'string' && DATE.test(now) ? Date.parse(`${now}T00:00:00Z`) : NaN
+  if (start === null || !Number.isFinite(day)) return false
+  return day >= start && day - start < CARD_TTL_MS
 }
 
 /** A printing that is out, and printed on paper: what a player can hold. */

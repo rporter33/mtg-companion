@@ -40,9 +40,20 @@ lines.on('line', (line) => {
   const { id } = req
   switch (req.op) {
     // The real engine's shape: every set it knows, in release order, and what
-    // loading them cost. Portal's details are Argentum's own (PortalSet.kt).
-    // FAKE_PROTOCOL plays an older engine, to test what the relay sends one.
-    case 'hello': say({ id, ok: true, engine: 'fake', protocol: Number(process.env.FAKE_PROTOCOL) || 2, cards: 3, sets: [{ code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false }], load: { ms: 0, heapMb: 0, maxHeapMb: 0 } }); break
+    // loading them cost. Each set's details are Argentum's own, as the built
+    // engine's hello gave them on 2026-09-21: Star Trek Commander is one it
+    // marks incomplete, and its date is Argentum's, not Scryfall's.
+    // FAKE_PROTOCOL plays an older engine, to test what the relay sends one;
+    // FAKE_NO_SETS one whose hello lists no sets.
+    case 'hello': say({
+      id, ok: true, engine: 'fake', protocol: Number(process.env.FAKE_PROTOCOL) || 2, cards: 3,
+      ...(process.env.FAKE_NO_SETS ? {} : { sets: [
+        { code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false },
+        { code: 'TRC', name: 'Star Trek Commander', released: '2026-01-23', incomplete: true },
+        { code: 'HOB', name: 'The Hobbit', released: '2026-08-14', incomplete: false },
+      ] }),
+      load: { ms: 0, heapMb: 0, maxHeapMb: 0 },
+    }); break
     case 'cards': say({ id, ok: true, names: [...new Set(shots.flatMap((s) => Object.values(s.view.cards).map((c) => c.name)))].sort() }); break
     case 'check': {
       if (!req.deck || typeof req.deck !== 'object') { say({ id, ok: false, error: '"deck" is required.' }); break }

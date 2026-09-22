@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { FORMATS, cardLegality, legalityStatus, poolQuery } from '../src/lib/formats.js'
 import {
   createDeck, addCard, setCommanders, validateDeck, notOutCount, deckVerdict, NOT_OUT_CODES,
+  CATCHING_UP_CODE,
 } from '../src/lib/deck.js'
 import { card, legalEverywhere, FOREST, COMMANDER_BEAR } from './fixtures.js'
 // What Scryfall sent on 2026-09-21 (see tests/browser/unreleased.spec.mjs).
@@ -21,6 +22,9 @@ const captured = (set, number) => CAPTURED.cards.find((c) => c.set === set && c.
 
 const BEFORE = '2026-09-21'
 const RELEASE = '2026-10-02'
+// The last day of the week after release, and the first day after it.
+const LAST_DAY = '2026-10-08'
+const AFTER_WEEK = '2026-10-09'
 
 const notLegalAnywhere = Object.fromEntries(
   Object.values(FORMATS).map((f) => [f.legalityKey, 'not_legal']),
@@ -77,11 +81,12 @@ describe('legalityStatus', () => {
     }
   })
 
-  it("is Scryfall's word again from release day, even on a record from before it", () => {
+  it("is Scryfall's word again once the week after release is over, even on a record from before it", () => {
     // A card saved before release still says not_legal until it is fetched
-    // again; that is Scryfall's word and it stands.
-    expect(legalityStatus(FRA_NEW, FORMATS.standard, RELEASE)).toBe('not_legal')
-    expect(legalityStatus(FRA_NEW, FORMATS.commander, RELEASE)).toBe('not_legal')
+    // again. In the week after release that reads as not settled yet (see
+    // 'the week after release' below); after it, Scryfall's word stands.
+    expect(legalityStatus(FRA_NEW, FORMATS.standard, AFTER_WEEK)).toBe('not_legal')
+    expect(legalityStatus(FRA_NEW, FORMATS.commander, AFTER_WEEK)).toBe('not_legal')
     expect(legalityStatus({ ...FRA_NEW, legalities: { ...FRA_NEW.legalities, standard: 'legal' } }, FORMATS.standard, RELEASE)).toBe('legal')
   })
 
@@ -192,9 +197,9 @@ describe('validateDeck with cards not out yet', () => {
     )
   })
 
-  it('reports a stale not_legal record as an error from release day, as before', () => {
-    expect(errorCodes(validateDeck(standardDeck(FRA_NEW), lookup, { now: RELEASE }))).toEqual(['not_legal'])
-    expect(errorCodes(validateDeck(commanderDeckWith(FRA_NEW), lookup, { now: RELEASE }))).toEqual(['not_legal'])
+  it('reports a stale not_legal record as an error once the week after release is over', () => {
+    expect(errorCodes(validateDeck(standardDeck(FRA_NEW), lookup, { now: AFTER_WEEK }))).toEqual(['not_legal'])
+    expect(errorCodes(validateDeck(commanderDeckWith(FRA_NEW), lookup, { now: AFTER_WEEK }))).toEqual(['not_legal'])
   })
 
   it('leaves reprints and banned cards as they were', () => {
@@ -249,6 +254,159 @@ describe('the deck verdict', () => {
     mixed = addCard(mixed, FRC_NEW.id, 1)
     expect(verdictOn(mixed, BEFORE)).toEqual({ tone: 'error', text: '1 problem' })
 
-    expect(verdictOn(standardDeck(FRA_NEW), RELEASE)).toEqual({ tone: 'error', text: '1 problem' })
+    expect(verdictOn(standardDeck(FRA_NEW), AFTER_WEEK)).toEqual({ tone: 'error', text: '1 problem' })
+  })
+})
+
+describe('the week after release', () => {
+  // The same records, saved before Reality Fracture came out and not yet
+  // fetched again: Scryfall's not_legal from before release is all they say.
+  const FRA_REPRINT_NOT_LEGAL = card({
+    id: 'fra-reprint-pioneer', name: 'Old Friend', set: 'fra', released_at: RELEASE, reprint: true,
+    legalities: { ...notLegalAnywhere, future: 'legal' },
+  })
+  const all = new Map([...lookup, [FRA_REPRINT_NOT_LEGAL.id, FRA_REPRINT_NOT_LEGAL]])
+
+  it('reads a lingering not_legal as catching up in Standard and in Commander, from release day to the last of the week', () => {
+    for (const now of [RELEASE, '2026-10-03', LAST_DAY]) {
+      expect(legalityStatus(FRA_NEW, FORMATS.standard, now)).toBe('catching_up')
+      expect(legalityStatus(FRA_NEW, FORMATS.commander, now)).toBe('catching_up')
+      expect(legalityStatus(FRC_NEW, FORMATS.commander, now)).toBe('catching_up')
+    }
+  })
+
+  it("is Scryfall's not_legal again the day the week is over", () => {
+    expect(legalityStatus(FRA_NEW, FORMATS.standard, AFTER_WEEK)).toBe('not_legal')
+    expect(legalityStatus(FRA_NEW, FORMATS.commander, AFTER_WEEK)).toBe('not_legal')
+    expect(legalityStatus(FRA_NEW, FORMATS.commander, '2027-01-01')).toBe('not_legal')
+  })
+
+  it("keeps Future Standard's not_legal an error in Standard: a Commander-product card is never Standard-legal", () => {
+    for (const now of [RELEASE, LAST_DAY]) {
+      expect(legalityStatus(FRC_NEW, FORMATS.standard, now)).toBe('not_legal')
+      expect(errorCodes(validateDeck(standardDeck(FRC_NEW), lookup, { now }))).toEqual(['not_legal'])
+    }
+  })
+
+  it("keeps a reprint's not_legal outside Standard, and reads it like a new card in Standard", () => {
+    expect(legalityStatus(FRA_REPRINT_NOT_LEGAL, FORMATS.pioneer, RELEASE)).toBe('not_legal')
+    expect(legalityStatus(FRA_REPRINT_NOT_LEGAL, FORMATS.commander, RELEASE)).toBe('not_legal')
+    expect(legalityStatus(FRA_REPRINT_NOT_LEGAL, FORMATS.standard, RELEASE)).toBe('catching_up')
+    expect(legalityStatus(FRA_REPRINT_NOT_LEGAL, FORMATS.standard, AFTER_WEEK)).toBe('not_legal')
+  })
+
+  // The same kind of cards as Scryfall lists them once the set is out: its
+  // word since release, which settles the formats they are not legal in.
+  const FRC_OUT = card({
+    id: 'frc-out', name: 'Rift Commander', set: 'frc', released_at: RELEASE, reprint: false,
+    legalities: { ...notLegalAnywhere, future: 'not_legal', commander: 'legal', oathbreaker: 'legal', duel: 'legal', legacy: 'legal', vintage: 'legal' },
+  })
+  const FRA_MYTHIC_OUT = card({
+    id: 'fra-mythic-out', name: 'Rift Tyrant', set: 'fra', released_at: RELEASE, reprint: false, rarity: 'mythic',
+    legalities: {
+      ...Object.fromEntries(Object.values(FORMATS).map((f) => [f.legalityKey, 'legal'])),
+      future: 'legal', pauper: 'not_legal',
+    },
+  })
+
+  it("keeps a not_legal from a record that lists the card anywhere on paper: that is Scryfall's word since release", () => {
+    for (const now of [RELEASE, LAST_DAY]) {
+      expect(legalityStatus(FRC_OUT, FORMATS.modern, now)).toBe('not_legal')
+      expect(legalityStatus(FRC_OUT, FORMATS.brawl, now)).toBe('not_legal')
+      expect(legalityStatus(FRC_OUT, FORMATS.pioneer, now)).toBe('not_legal')
+      expect(legalityStatus(FRC_OUT, FORMATS.commander, now)).toBe('legal')
+      expect(legalityStatus(FRA_MYTHIC_OUT, FORMATS.pauper, now)).toBe('not_legal')
+      expect(legalityStatus(FRA_MYTHIC_OUT, FORMATS.modern, now)).toBe('legal')
+      // A record from before release, read on the same days, is not settled.
+      expect(legalityStatus(FRC_NEW, FORMATS.modern, now)).toBe('catching_up')
+      expect(legalityStatus(FRA_NEW, FORMATS.pauper, now)).toBe('catching_up')
+    }
+  })
+
+  it('fails a deck for such a card as for any card not in the pool', () => {
+    const settled = new Map([...all, [FRC_OUT.id, FRC_OUT], [FRA_MYTHIC_OUT.id, FRA_MYTHIC_OUT]])
+    let modern = createDeck({ formatId: 'modern' })
+    modern = addCard(addCard(modern, FOREST.id, 56), FRC_OUT.id, 4)
+    let pauper = createDeck({ formatId: 'pauper' })
+    pauper = addCard(addCard(pauper, FOREST.id, 56), FRA_MYTHIC_OUT.id, 4)
+    for (const now of [RELEASE, LAST_DAY]) {
+      const m = validateDeck(modern, settled, { now })
+      expect(m.legal).toBe(false)
+      expect(m.violations.filter((v) => v.cardId === FRC_OUT.id).map((v) => v.code)).toEqual(['not_legal'])
+      expect(deckVerdict(modern, m, settled, { now })).toEqual({ tone: 'error', text: '1 problem' })
+      const p = validateDeck(pauper, settled, { now })
+      expect(p.violations.filter((v) => v.cardId === FRA_MYTHIC_OUT.id).map((v) => v.code)).toEqual(['not_legal'])
+    }
+  })
+
+  it('reads only paper formats as listing a card: a digital format listed before release settles nothing', () => {
+    // Scryfall listed Reality Fracture's new cards in `tlr` on 2026-09-21,
+    // before release.
+    const digital = { ...FRA_NEW, legalities: { ...FRA_NEW.legalities, tlr: 'legal', historic: 'legal' } }
+    expect(legalityStatus(digital, FORMATS.modern, RELEASE)).toBe('catching_up')
+    // Banned or restricted is a listing as much as legal is.
+    const banned = { ...FRA_NEW, legalities: { ...FRA_NEW.legalities, vintage: 'restricted' } }
+    expect(legalityStatus(banned, FORMATS.modern, RELEASE)).toBe('not_legal')
+  })
+
+  it('passes legal, banned and unknown straight through', () => {
+    expect(legalityStatus(FRA_REPRINT, FORMATS.standard, RELEASE)).toBe('legal')
+    expect(legalityStatus({ ...FRA_NEW, legalities: { ...FRA_NEW.legalities, commander: 'banned' } }, FORMATS.commander, RELEASE)).toBe('banned')
+    expect(legalityStatus({ ...FRA_NEW, legalities: {} }, FORMATS.commander, RELEASE)).toBe('unknown')
+  })
+
+  it('does not apply to a card with no readable release date, or a day it cannot read', () => {
+    const { released_at, ...undated } = FRA_NEW
+    expect(released_at).toBe(RELEASE)
+    expect(legalityStatus(undated, FORMATS.commander, RELEASE)).toBe('not_legal')
+    expect(legalityStatus(FRA_NEW, FORMATS.commander, 'someday')).toBe('not_legal')
+  })
+
+  it('warns rather than fails, and says what the data on this device says and no more', () => {
+    const standard = validateDeck(standardDeck(FRA_NEW), all, { now: RELEASE })
+    expect(standard.legal).toBe(true)
+    expect(errorCodes(standard)).toEqual([])
+    const [warning] = warningsOf(standard)
+    expect(warning.code).toBe(CATCHING_UP_CODE)
+    expect(warning.cardId).toBe(FRA_NEW.id)
+    expect(warning.message).toBe(
+      'Fractured Scholar came out on 2 Oct 2026, but the Scryfall data on this device lists it as legal in no format, as Scryfall does before a release, so the app does not know whether it is Standard-legal.',
+    )
+
+    const commander = validateDeck(commanderDeckWith(FRA_NEW), all, { now: LAST_DAY })
+    expect(commander.legal).toBe(true)
+    expect(warningsOf(commander).map((w) => w.message)).toEqual([
+      'Fractured Scholar came out on 2 Oct 2026, but the Scryfall data on this device lists it as legal in no format, as Scryfall does before a release, so the app does not know whether it is Commander-legal.',
+    ])
+    expect(NOT_OUT_CODES.has(CATCHING_UP_CODE)).toBe(false)
+    // Nothing promised: no "yet" about a legality that may never come, and no
+    // daily check, which only a deck's cards get.
+    for (const w of [...warningsOf(standard), ...warningsOf(commander)]) {
+      expect(w.message).not.toMatch(/\byet\b|each day/)
+    }
+  })
+
+  it('makes the verdict count the copies whose legality is not known, as it counts cards not out', () => {
+    const verdictOn = (deck, now) => deckVerdict(deck, validateDeck(deck, all, { now }), all, { now })
+    expect(verdictOn(standardDeck(FRA_NEW, 4), RELEASE)).toEqual({ tone: 'warn', text: '4 cards with legality not known' })
+    expect(verdictOn(commanderDeckWith(FRA_NEW), LAST_DAY)).toEqual({ tone: 'warn', text: '1 card with legality not known' })
+    expect(verdictOn(standardDeck(FRA_NEW, 4), AFTER_WEEK)).toEqual({ tone: 'error', text: '1 problem' })
+
+    // Once the record says legal, the deck is simply legal.
+    const fetched = { ...FRA_NEW, legalities: { ...FRA_NEW.legalities, standard: 'legal' } }
+    const refreshed = new Map([...all, [FRA_NEW.id, fetched]])
+    const deck = standardDeck(FRA_NEW, 4)
+    expect(deckVerdict(deck, validateDeck(deck, refreshed, { now: RELEASE }), refreshed, { now: RELEASE }))
+      .toEqual({ tone: 'ok', text: 'Legal' })
+
+    // A card not out yet is counted first, as the stronger news.
+    const TRK_NEW = card({
+      id: 'trk-new', name: 'Away Team', set: 'trk', released_at: '2026-11-13',
+      legalities: { ...notLegalAnywhere, future: 'legal' },
+    })
+    const both = new Map([...all, [TRK_NEW.id, TRK_NEW]])
+    const mixed = addCard(standardDeck(FRA_NEW, 4), TRK_NEW.id, 1)
+    expect(deckVerdict(mixed, validateDeck(mixed, both, { now: RELEASE }), both, { now: RELEASE }))
+      .toEqual({ tone: 'warn', text: '1 card not out yet' })
   })
 })

@@ -1,13 +1,15 @@
 import { useState } from 'react'
+import { checkedAgainst } from '../../lib/snapshot.js'
 
 /**
  * The launch banner for rules changes that touched the user's own decks.
  *
  * Collapsed by default to a single sentence, because the headline ("something
  * you own is no longer playable") is the part that has to land; the specifics
- * matter only once you have decided to care.
+ * matter only once you have decided to care. `dataFrom` is when the oldest
+ * card data it compared was fetched, which the details give as a date.
  */
-export default function LegalityChanges({ report, summary, onDismiss, onOpenDeck }) {
+export default function LegalityChanges({ report, summary, dataFrom, onDismiss, onOpenDeck }) {
   const [open, setOpen] = useState(false)
   if (!summary) return null
 
@@ -41,8 +43,7 @@ export default function LegalityChanges({ report, summary, onDismiss, onOpenDeck
             </div>
           ))}
           <p className="faint tiny m0">
-            Checked against Scryfall&rsquo;s current legality data, not a list baked into this app.
-            You will only be told once per change.
+            {checkedAgainst(dataFrom)} You will only be told once per change.
           </p>
         </div>
       )}

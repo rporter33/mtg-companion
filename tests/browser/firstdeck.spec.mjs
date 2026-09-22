@@ -88,10 +88,16 @@ check('the dial is a real slider a keyboard can drive', (await dial.getAttribute
 await dial.fill('0')
 await page.waitForTimeout(150)
 check('at the left it is white alone', (await dial.getAttribute('aria-valuetext')) === 'White' && /Cares about/.test(await body()))
+// Scryfall's set list is empty here, so no set is the season's focus and no
+// set's lore is current: the colours stand alone. The theme spec shows a
+// set's schools beside them while that set is the focus, and gone after.
+check('with no set in season, no set\'s schools are presented beside the colours',
+  (await page.locator('.colour-page__school').count()) === 0 && !/At Hexhaven|Fatehold|Vigorbloom/.test(await body()))
 await dial.fill('150')
 await page.waitForTimeout(150)
 check('between two colours it names the pair', /Blue and Black — Dimir/.test(await dial.getAttribute('aria-valuetext')), await dial.getAttribute('aria-valuetext'))
 check('and shows both colours and what the pair does', /Trickery and attrition/.test(await body()) && (await page.locator('.colour-page').count()) === 2)
+check('and no school for the pair', (await page.locator('.school').count()) === 0)
 check('it says the writing is the app\'s own', /this app.s own summary/.test(await body()))
 await page.getByRole('button', { name: 'Boros' }).click()
 await page.waitForTimeout(150)

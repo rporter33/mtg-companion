@@ -6,6 +6,10 @@
  * cause a request to Moxfield. The app has no backend and Moxfield publishes no
  * browser-readable API, so the honest behaviour is to explain the Export route
  * rather than attempt something that cannot work.
+ *
+ * The page's clock is held on 21 Sep 2026, the day the mocked set list is
+ * true of (Reality Fracture coming, The Hobbit out), so the commanders
+ * browser offers both however long after that the suite runs.
  */
 
 import { chromium } from 'playwright'
@@ -25,8 +29,11 @@ const card = (name, over = {}) => ({
   legalities: { commander: 'legal' }, prices: { usd: '1.00' }, ...over,
 })
 
+const NOW = Date.parse('2026-09-21T10:00:00Z')
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
-const page = await browser.newPage({ viewport: { width: 420, height: 1000 } })
+const context = await browser.newContext({ viewport: { width: 420, height: 1000 } })
+await context.clock.install({ time: NOW })
+const page = await context.newPage()
 const errors = []
 const requestedHosts = new Set()
 page.on('pageerror', (e) => errors.push(e.message))
@@ -280,9 +287,10 @@ console.log('\nAn Archidekt export, pasted as it is')
 console.log('\nEvery line names the printing it adds')
 {
   // A bare name gets Scryfall's pick for it, and Scryfall lists a set's
-  // cards before the set is out. The dates are counted from today, so "not
-  // out" stays not out however long after this was written the suite runs.
-  const day = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10)
+  // cards before the set is out. The dates are counted from the page's held
+  // day, so "not out" stays not out however long after this was written the
+  // suite runs.
+  const day = (offset) => new Date(NOW + offset * 86400000).toISOString().slice(0, 10)
   const upcoming = { set: 'trk', set_name: 'Star Trek', released_at: day(60), type_line: 'Basic Land — Island' }
   const previews = {
     'Preview Island': card('Preview Island', { ...upcoming, oracle_id: 'o-preview-island', collector_number: '319' }),

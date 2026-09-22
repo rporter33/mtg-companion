@@ -22,6 +22,7 @@ const STATUS_LABEL = {
   legal: 'Legal', banned: 'Banned', restricted: 'Restricted',
   not_legal: 'Not in pool', unknown: 'Unknown',
   future_legal: 'Not out yet', pending: 'Not out yet',
+  catching_up: 'Not known here',
 }
 
 export default function CardDetail({ card, onClose, onOpenCard }) {
@@ -192,6 +193,7 @@ function Legality({ card }) {
   const statuses = FORMAT_IDS.map((id) => [id, legalityStatus(card, FORMATS[id])])
   const future = statuses.some(([, s]) => s === 'future_legal')
   const pending = statuses.some(([, s]) => s === 'pending')
+  const catchingUp = statuses.some(([, s]) => s === 'catching_up')
   return (
     <div className="stack">
       <div className="legality-grid">
@@ -211,10 +213,22 @@ function Legality({ card }) {
           {pending && ` Scryfall sets its legality in ${future ? 'the other formats' : 'the formats'} marked Not out yet when it is released.`}
         </p>
       )}
+      {/* The week after release, while the record may be the one from
+          before it: said as what the data on this device says, no more. Only
+          a deck's cards are fetched daily that week (card-refresh.js), so
+          that is all the note says of it. */}
+      {catchingUp && (
+        <p className="muted tiny m0">
+          Came out on {releaseLabel(card.released_at)}. The Scryfall data on this device lists it
+          as legal in no format, as Scryfall does before a release, so the app does not know its
+          legality in the formats marked Not known here. Cards in your decks are checked against
+          Scryfall again each day for the week after a release.
+        </p>
+      )}
+      {/* The record shown may be days old, so it is not called current. */}
       <p className="faint tiny">
-        Straight from Scryfall, so this reflects the current ban lists rather than a copy
-        baked into this app. <Term id="singleton">Singleton</Term> and deck-size rules are
-        checked separately when you add a card to a deck.
+        From Scryfall, not a copy baked into this app. <Term id="singleton">Singleton</Term> and
+        deck-size rules are checked separately when you add a card to a deck.
       </p>
     </div>
   )

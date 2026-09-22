@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { listDecks, saveDeck } from '../../lib/storage.js'
-import { addCard, setCommanders, validateDeck, NOT_OUT_CODES } from '../../lib/deck.js'
+import { addCard, setCommanders, validateDeck, NOT_OUT_CODES, CATCHING_UP_CODE } from '../../lib/deck.js'
 import { getFormat, canBeCommander, legalityStatus } from '../../lib/formats.js'
+import { releaseLabel } from '../../lib/release.js'
 import { pinCards } from '../../lib/cache.js'
 import NotOutChip from '../../components/NotOutChip.jsx'
 
@@ -37,11 +38,11 @@ export default function AddToDeck({ card }) {
     const result = validateDeck(next, new Map([[card.id, card]]))
     const about = (v) => (v.cardIds ?? [v.cardId]).includes(card.id)
     const problem = result.violations.find((v) => v.severity === 'error' && about(v))
-    const notOut = result.violations.find((v) => NOT_OUT_CODES.has(v.code) && about(v))
+    const note = result.violations.find((v) => (NOT_OUT_CODES.has(v.code) || v.code === CATCHING_UP_CODE) && about(v))
     setMessage(problem
       ? { tone: 'warn', text: `Added to ${deck.name}, but ${problem.message.replace(/^.*?: /, '')}` }
-      : notOut
-        ? { tone: 'warn', text: `Added to ${deck.name}. ${notOut.message}` }
+      : note
+        ? { tone: 'warn', text: `Added to ${deck.name}. ${note.message}` }
         : { tone: 'ok', text: `Added to ${deck.name}.` })
   }
 
@@ -54,8 +55,11 @@ export default function AddToDeck({ card }) {
         const status = legalityStatus(card, format)
         const blocked = status === 'banned' || status === 'not_legal'
         // Not out yet is not illegal: Scryfall has not ruled on the card in
-        // this format, so the row says that and nothing more.
+        // this format, so the row says that and nothing more. Nor is a card
+        // just out whose record lists it nowhere yet: the row says the app
+        // does not know, where everyone can see it, not only in a tooltip.
         const notOut = status === 'future_legal' || status === 'pending'
+        const unknown = status === 'catching_up'
         const commanderOk = format.commander?.required && canBeCommander(card, format).ok
 
         return (
@@ -67,12 +71,14 @@ export default function AddToDeck({ card }) {
               title={blocked ? `${card.name} is not legal in ${format.name}`
                 : status === 'future_legal' ? `Not out yet. Scryfall's Future Standard lists ${card.name}.`
                   : notOut ? `Not out yet. Scryfall sets its ${format.name} legality at release.`
-                    : undefined}
+                    : unknown ? `Came out on ${releaseLabel(card.released_at)}. The Scryfall data on this device lists it as legal in no format, so the app does not know whether it is ${format.name}-legal.`
+                      : undefined}
             >
               {deck.name}
               <span className="faint tiny" style={{ marginLeft: 6 }}>{format.name}</span>
               {blocked && <span className="chip chip--error tiny ml-auto">illegal</span>}
               {notOut && <NotOutChip card={card} short className="tiny ml-auto" />}
+              {unknown && <span className="chip chip--warn tiny ml-auto">legality not known</span>}
             </button>
             {commanderOk && (
               <button className="btn btn--sm" onClick={() => add(deck, true)} title="Set as commander">

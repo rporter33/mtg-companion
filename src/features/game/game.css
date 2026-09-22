@@ -148,6 +148,9 @@
 .lobby__gate { display: grid; gap: var(--space-2); }
 .lobby__gate p { margin: 0; }
 .lobby__unknown { margin: 0; padding-left: 1.25rem; max-height: 12rem; overflow: auto; }
+/* Grouped by reason: the reason is the line, and its cards the list under it. */
+.lobby__unknown--grouped { padding-left: 0; list-style: none; display: grid; gap: var(--space-1); }
+.lobby__unknown--grouped ul { margin: 0; padding-left: 1.25rem; }
 .lobby__tick { z-index: 2; }
 
 /* ==========================================================================

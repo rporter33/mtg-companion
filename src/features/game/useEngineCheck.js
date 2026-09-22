@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { rooms } from '../../lib/board/relay.js'
 import { getCardsByIds } from '../../lib/scryfall.js'
-import { seatDeck, verdictOf } from '../../lib/engine/deck.js'
+import { recordsByName, seatDeck, verdictOf } from '../../lib/engine/deck.js'
 
 /**
  * What the relay's engine says about each deck on the shelf, asked before a
@@ -42,11 +42,19 @@ export default function useEngineCheck({ address, decks, first = null }) {
     return () => ctl.abort()
   }, [idsKey])
 
-  const seats = useMemo(() => {
+  // Beside each seat, the main deck's cards by the name the seat sends them
+  // under, so a card the engine does not know can be given a reason from its
+  // printing's set. Never sent: the engine is asked about names alone.
+  const [seats, records] = useMemo(() => {
     const out = new Map()
-    if (!cards || cards.key !== idsKey) return out
-    for (const deck of decks) out.set(deck.id, seatDeck(deck, (id) => cards.found.get(id)))
-    return out
+    const named = new Map()
+    if (!cards || cards.key !== idsKey) return [out, named]
+    const lookup = (id) => cards.found.get(id)
+    for (const deck of decks) {
+      out.set(deck.id, seatDeck(deck, lookup))
+      named.set(deck.id, recordsByName(deck.main, lookup))
+    }
+    return [out, named]
   }, [decks, cards, idsKey])
 
   // A string, never an object rebuilt each render: an effect keyed on one
@@ -75,7 +83,7 @@ export default function useEngineCheck({ address, decks, first = null }) {
           }
         }
         if (!live) return
-        setResults((was) => new Map(was).set(`${id}=${list}`, stateOf(seat, found)))
+        setResults((was) => new Map(was).set(`${id}=${list}`, stateOf(seat, found, records.get(id))))
       }
     })()
     return () => { live = false; ctl.abort() }
@@ -99,9 +107,9 @@ export default function useEngineCheck({ address, decks, first = null }) {
 const listOf = (seat) => JSON.stringify({ deck: seat.deck, sideboard: seat.sideboard })
 
 /** One deck's answer, or the reason there is none, in the lobby's terms. */
-function stateOf(seat, { reply, error }) {
+function stateOf(seat, { reply, error }, records) {
   const base = { total: seat.total, unloaded: seat.unloaded }
-  if (!error) return verdictOf(seat, reply)
+  if (!error) return verdictOf(seat, reply, records)
   if (error.status === 503) return { state: 'no-engine', ...base }
   if (error.status) return { state: 'failed', message: error.message, ...base }
   if (error instanceof SyntaxError) return { state: 'unreadable', ...base }

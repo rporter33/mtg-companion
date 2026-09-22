@@ -465,10 +465,17 @@ describe('an enforced room', () => {
 describe('a deck checked before any room exists', () => {
   const DECK = { Mountain: 14, 'Raging Goblin': 6 }
   const post = (body, init = {}) => fetch(`${base}/engine/check`, { method: 'POST', headers: { 'content-type': 'application/json' }, body, ...init })
+  // The fake engine's hello, as the relay passes it on: codes as the engine
+  // gives them, and without the engine's own release dates.
+  const ENGINE_SETS = [
+    { code: 'POR', name: 'Portal', incomplete: false },
+    { code: 'TRC', name: 'Star Trek Commander', incomplete: true },
+    { code: 'HOB', name: 'The Hobbit', incomplete: false },
+  ]
 
   it('answers which cards the engine knows, naming the rest, and opens no room to do it', async () => {
     const answer = await roomsApi(base).check({ ...DECK, 'Made-Up Card': 2 })
-    expect(answer).toEqual({ known: 20, total: 22, unknown: ['Made-Up Card'], unknownSideboard: [] })
+    expect(answer).toEqual({ known: 20, total: 22, unknown: ['Made-Up Card'], unknownSideboard: [], engineSets: ENGINE_SETS })
     expect(relayServer.rooms.size).toBe(0)
   })
 
@@ -477,7 +484,37 @@ describe('a deck checked before any room exists', () => {
       { Mountain: { count: 14, set: 'por', number: '1' }, 'Raging Goblin': [{ count: 4, set: 'por', number: '2' }, { count: 2 }] },
       { sideboard: { 'Made-Up Wish': 1 } },
     )
-    expect(answer).toEqual({ known: 20, total: 20, unknown: [], unknownSideboard: ['Made-Up Wish'] })
+    expect(answer).toEqual({ known: 20, total: 20, unknown: [], unknownSideboard: ['Made-Up Wish'], engineSets: ENGINE_SETS })
+  })
+
+  it('passes on the sets the engine says it holds, incomplete ones marked, and never their dates', async () => {
+    const res = await post(JSON.stringify({ deck: DECK }))
+    const body = await res.json()
+    expect(body.engineSets).toEqual(ENGINE_SETS)
+    expect(JSON.stringify(body)).not.toMatch(/released|\d{4}-\d{2}-\d{2}/)
+  })
+
+  it('an engine that lists no sets sends none, and the client reads that as no list', async () => {
+    // The environment is read when the relay starts its checking engine, at the first check.
+    process.env.FAKE_NO_SETS = '1'
+    try {
+      const res = await post(JSON.stringify({ deck: DECK }))
+      expect('engineSets' in (await res.json())).toBe(false)
+      expect((await roomsApi(base).check(DECK)).engineSets).toBeNull()
+    } finally {
+      delete process.env.FAKE_NO_SETS
+    }
+  })
+
+  it('reads a list from the reply forgivingly, keeping it as the relay sent it for the lobby to read', async () => {
+    let reply = { known: 1, total: 1, unknown: [], engineSets: 'POR' }
+    const odd = createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply)) })
+    await new Promise((resolve) => odd.listen(0, resolve))
+    const api = roomsApi(`http://127.0.0.1:${odd.address().port}`)
+    expect((await api.check(DECK)).engineSets).toBeNull()
+    reply = { ...reply, engineSets: [{ code: 'POR' }, null, 7] }
+    expect((await api.check(DECK)).engineSets).toEqual([{ code: 'POR' }, null, 7])
+    await new Promise((resolve) => odd.close(resolve))
   })
 
   it('starts one engine only when asked, and keeps it for every check after', async () => {

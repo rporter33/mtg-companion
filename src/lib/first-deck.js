@@ -4,7 +4,7 @@
  * sensible skeleton. All pure; the screen is a thin layer over this.
  */
 import { WHEEL, PAIRS, STYLE_AXES } from '../data/colors.js'
-import { getFormat } from './formats.js'
+import { getFormat, poolQuery } from './formats.js'
 import { rolesFor, roleCounts as countRoles } from './skeleton.js'
 
 /**
@@ -78,9 +78,20 @@ export function suggestColors(answers = {}) {
 
 const idOf = (colors) => colors.toLowerCase()
 
+/**
+ * A format's card pool as the deck search asks for it (poolQuery), so a
+ * first deck in Standard can find the next set's previewed cards that
+ * Scryfall says will be legal. A format this flow does not know keeps the
+ * plain term it always had.
+ */
+const poolOf = (formatId) => {
+  const format = getFormat(formatId)
+  return format ? poolQuery(format) : `legal:${formatId}`
+}
+
 /** Commanders of exactly these colours, most played first. */
 export function commanderQuery(colors) {
-  return `is:commander legal:commander game:paper id=${idOf(colors)}`
+  return `is:commander ${poolOf('commander')} game:paper id=${idOf(colors)}`
 }
 
 /** The Commander skeleton, from the one place both the coach and this flow read it. */
@@ -104,7 +115,7 @@ export function stapleQueries(colors, roleId, { capUsd = 4, strategy = null, for
   // sixty-card deck it is a slightly strict reading (a hybrid card counts as
   // both colours), which errs toward castable cards.
   const commander = getFormat(formatId)?.group === 'commander'
-  const base = `legal:${formatId} game:paper id<=${idOf(colors)}${commander ? ' -is:commander' : ''} usd<=${capUsd}`
+  const base = `${poolOf(formatId)} game:paper id<=${idOf(colors)}${commander ? ' -is:commander' : ''} usd<=${capUsd}`
   switch (roleId) {
     case 'lands': return [`${base} t:land -t:basic`]
     case 'ramp': return [`${base} otag:ramp`, `${base} otag:mana-ramp`, `${base} (t:artifact o:"add {") -t:land`]

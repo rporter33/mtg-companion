@@ -4,22 +4,49 @@ import { useEffect, useState } from 'react'
  * Which curated set theme, if any, the shell is wearing right now.
  *
  * App.jsx decides (from the season engine) and writes data-theme-set on the
- * root element; components that choose an asset by theme — the empty-state
- * illustration, the card back — read it here rather than each asking the
- * season engine again.
+ * root element, with the set's release date beside it in
+ * data-theme-set-released; components that choose an asset or lore by theme — the
+ * empty-state illustration, the card back, the schools in the first-deck
+ * flow — read it here rather than each asking the season engine again.
  */
 export const THEME_SET_EVENT = 'mtg:theme-set'
+
+/**
+ * The set whose curated theme the shell should wear for a season theme from
+ * buildSeasonTheme: the focus set when someone designed a theme for it, and
+ * otherwise none, because a derived accent is not art direction.
+ */
+export function themeSetFor(theme) {
+  return theme?.derivedFrom === 'curated' ? theme.set?.code ?? null : null
+}
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/
 
 export function currentThemeSet() {
   if (typeof document === 'undefined') return null
   return document.documentElement.dataset.themeSet ?? null
 }
 
-export function applyThemeSet(code) {
+/**
+ * The release date of the set whose theme the shell wears, 'YYYY-MM-DD', as
+ * Scryfall's set list gave it to the season engine, or null when there is no
+ * theme or no date. Lore shown under the theme says from it how current it is
+ * (see curation.js).
+ */
+export function currentThemeRelease() {
+  if (typeof document === 'undefined') return null
+  const date = document.documentElement.dataset.themeSetReleased
+  return typeof date === 'string' && DATE.test(date) ? date : null
+}
+
+export function applyThemeSet(code, releasedAt = null) {
   const root = document.documentElement
   if (code) root.dataset.themeSet = code
   else delete root.dataset.themeSet
-  window.dispatchEvent(new CustomEvent(THEME_SET_EVENT, { detail: { code: code ?? null } }))
+  const released = code && typeof releasedAt === 'string' && DATE.test(releasedAt) ? releasedAt : null
+  if (released) root.dataset.themeSetReleased = released
+  else delete root.dataset.themeSetReleased
+  window.dispatchEvent(new CustomEvent(THEME_SET_EVENT, { detail: { code: code ?? null, releasedAt: released } }))
 }
 
 export function useThemeSet() {
@@ -30,6 +57,17 @@ export function useThemeSet() {
     return () => window.removeEventListener(THEME_SET_EVENT, on)
   }, [])
   return code
+}
+
+/** The theme set's release date (see currentThemeRelease), kept current. */
+export function useThemeRelease() {
+  const [date, setDate] = useState(currentThemeRelease)
+  useEffect(() => {
+    const on = () => setDate(currentThemeRelease())
+    window.addEventListener(THEME_SET_EVENT, on)
+    return () => window.removeEventListener(THEME_SET_EVENT, on)
+  }, [])
+  return date
 }
 
 /** Asset paths, relative to the app's base, for the shell in force. */

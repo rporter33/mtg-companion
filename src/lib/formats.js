@@ -1,4 +1,4 @@
-import { notOutUntil } from './release.js'
+import { notOutUntil, justOut } from './release.js'
 import { today } from './season.js'
 // Format definitions and deck construction rules.
 //
@@ -242,16 +242,56 @@ export function cardLegality(card, format) {
  * new card. A record with no `reprint` field, as an older cache may be, is
  * read as new, which is how it was read before this was checked.
  *
- * Returns cardLegality's statuses plus 'future_legal' | 'pending'.
+ * Once a card is out, a record can still say what Scryfall said before
+ * release: one saved then says it until it is fetched again, and when
+ * Scryfall gives a new set its legalities after release has not been
+ * checked. Such a record is not_legal in every paper format, which a record
+ * of a released card almost never is (see listedInPaper). So in the week
+ * after a card's release (justOut), a not_legal from a record that lists the
+ * card in no paper format is 'catching_up': the app does not call the card
+ * legal, and does not fail a deck for it, while a deck's cards are fetched
+ * daily (see card-refresh.js). A record that lists it somewhere is
+ * Scryfall's word since release, and its not_legal stands at once: a
+ * Commander product's cards in Modern, a rare in Pauper. So do a reprint's
+ * not_legal outside Standard and Future Standard's not_legal in Standard, as
+ * before release. After the week every not_legal stands.
+ *
+ * Returns cardLegality's statuses plus 'future_legal' | 'pending' |
+ * 'catching_up'.
  */
 export function legalityStatus(card, format, now = today()) {
   const base = cardLegality(card, format)
-  if (base !== 'not_legal' || !notOutUntil(card, now)) return base
-  if (format.legalityKey !== 'standard') return card?.reprint === true ? base : 'pending'
+  if (base !== 'not_legal') return base
+  const standard = format.legalityKey === 'standard'
   const future = card?.legalities?.future
-  if (future === 'legal') return 'future_legal'
-  if (future === 'not_legal') return 'not_legal'
-  return 'pending'
+  if (notOutUntil(card, now)) {
+    if (!standard) return card?.reprint === true ? base : 'pending'
+    if (future === 'legal') return 'future_legal'
+    if (future === 'not_legal') return 'not_legal'
+    return 'pending'
+  }
+  if (!justOut(card, now)) return base
+  const settled = listedInPaper(card) || (standard ? future === 'not_legal' : card?.reprint === true)
+  return settled ? base : 'catching_up'
+}
+
+/**
+ * Whether Scryfall's record of a card lists it in a paper format: legal,
+ * banned or restricted in Vintage, Legacy or Commander. Before a set is out
+ * Scryfall lists each of its new cards as not_legal in all three, and once
+ * the card is out nearly every one is listed in at least one of them. Only
+ * these are read: before release Scryfall already lists new cards in Future
+ * Standard and in some digital formats (Reality Fracture's in `tlr` on
+ * 2026-09-21), so any other key could make a pre-release record look settled.
+ * An Un-set card is not_legal everywhere even after release, and reads as
+ * unlisted for its first week, which only means the app does not call it
+ * illegal for that week.
+ */
+export function listedInPaper(card) {
+  return ['vintage', 'legacy', 'commander'].some((key) => {
+    const status = card?.legalities?.[key]
+    return typeof status === 'string' && status !== 'not_legal'
+  })
 }
 
 /**

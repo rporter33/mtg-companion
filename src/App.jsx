@@ -32,7 +32,7 @@ import { loadState, PERSIST_FAILED_EVENT, ROOM_MADE_EVENT } from './lib/storage.
 import { useRoute, navigate } from './lib/router.js'
 import { getCardById, getSets } from './lib/scryfall.js'
 import { buildSeasonTheme } from './lib/season.js'
-import { applyThemeSet } from './lib/theme-set.js'
+import { applyThemeSet, themeSetFor } from './lib/theme-set.js'
 import { checkForUpdate, reloadForUpdate, minutesAgo } from './lib/version.js'
 
 const TABS = [
@@ -129,10 +129,11 @@ export default function App() {
       getSets({ signal: controller.signal })
         .then((sets) => {
           const theme = buildSeasonTheme(sets)
-          if (theme?.derivedFrom !== 'curated') { clear(); return }
+          const code = themeSetFor(theme)
+          if (!code) { clear(); return }
           // The shell's colours live in tokens.css under the attribute; only
           // what a curated entry can vary per set is written here.
-          applyThemeSet(theme.set.code)
+          applyThemeSet(code, theme.set?.releasedAt)
           root.style.setProperty('--accent', theme.accent)
           root.style.setProperty('--accent-soft', theme.accentDim)
           if (theme.displayFont) root.style.setProperty('--font-display', theme.displayFont)

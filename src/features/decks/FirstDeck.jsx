@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { COLOR_PAGES, PAIRS, STYLE_AXES, FIRST_COMMANDERS, WHEEL } from '../../data/colors.js'
-import { schoolsFor, schoolsForColor, SET_THEMES, LORE_SET } from '../../data/set-themes.js'
-import { decorFor, useThemeSet } from '../../lib/theme-set.js'
+import { loreFor, schoolsForColor, curatedThemeFor } from '../../data/set-themes.js'
+import { decorFor, useThemeSet, useThemeRelease } from '../../lib/theme-set.js'
+import { curationStatus, curationNote } from '../../lib/curation.js'
 import {
   DIAL_MAX, dialToColors, colorsToDial, describeColors, suggestColors, commanderQuery,
   stapleQueries, roleCounts, rolesForFormat, fillPlan, identityKeyOf, fitsIdentity, whyFor, FIRST_FORMATS,
@@ -249,15 +250,37 @@ export default function FirstDeck({ onOpenCard }) {
 
 const SWATCH = { W: 'var(--mtg-w)', U: 'var(--mtg-u)', B: 'var(--mtg-b)', R: 'var(--mtg-r)', G: 'var(--mtg-g)' }
 
+/**
+ * The line under a set's schools. They are curated set content, so it says
+ * whose writing they are, when it was written and how current it is, from
+ * the theme set's release date in Scryfall's set list (see curation.js), as
+ * the season banner does. With no release date to go on it gives only the
+ * day they were written, rather than the entry's own `provisional`, which
+ * stays set after release and would call them previews of a set that is out.
+ */
+function schoolsNote(entry, releasedAt) {
+  const status = releasedAt
+    ? curationStatus(entry, releasedAt)
+    : curationStatus({ curatedAt: entry?.curatedAt }, null)
+  const provisional = status.state === 'preview' ? 'Provisional. ' : ''
+  return `${provisional}The schools are this app’s own reading of the set’s lore, not official. ${curationNote(status)}`
+}
+
 function ColourStep({ dial, colors, chosen, onDial, onPair, onOpenCard, onNext, formatId, onFormat }) {
   // Hexhaven's schools are the five allied pairs, so a pair shows its school
   // and a single colour shows the two it belongs to. Every emblem carries the
   // school's name beside it; the emblem alone never says which school.
-  const schools = schoolsFor()
-  const school = chosen.kind === 'pair' ? schools?.[chosen.id] : null
-  const decor = decorFor(useThemeSet())
+  // Schools belong to a set's curated theme, so they follow the theme the
+  // shell is wearing, which App.jsx takes from the season engine: shown while
+  // the season's focus has schools written, gone once it moves to a set that
+  // has none, and never presented as current after that.
+  const themeSet = useThemeSet()
+  const releasedAt = useThemeRelease()
+  const lore = loreFor(themeSet)
+  const school = chosen.kind === 'pair' ? lore?.schools[chosen.id] : null
+  const decor = decorFor(themeSet)
+  const loreNote = lore ? schoolsNote(curatedThemeFor(themeSet), releasedAt) : ''
   const withBase = (path) => `${import.meta.env.BASE_URL}${path}`
-  const setName = SET_THEMES[LORE_SET]?.setName ?? 'the current set'
   const label = chosen.kind === 'mono'
     ? COLOR_PAGES[chosen.id].name
     : `${COLOR_PAGES[chosen.id[0]].name} and ${COLOR_PAGES[chosen.id[1]].name} — ${chosen.pair?.name ?? ''}`
@@ -339,7 +362,7 @@ function ColourStep({ dial, colors, chosen, onDial, onPair, onOpenCard, onNext, 
             <div className="stack stack--tight min0">
               <div className="school__name">
                 <strong>{school.name}</strong>
-                <span className="faint tiny"> · {school.discipline} · {setName}</span>
+                <span className="faint tiny"> · {school.discipline} · {lore.setName}</span>
               </div>
               <div className="tiny"><span className="muted">Virtue:</span> {school.virtue}</div>
               <div className="tiny"><span className="muted">Horror:</span> {school.horror}</div>
@@ -357,11 +380,11 @@ function ColourStep({ dial, colors, chosen, onDial, onPair, onOpenCard, onNext, 
                 <div><dt>Cares about</dt><dd>{page.values}</dd></div>
                 <div><dt>Wins by</dt><dd>{page.wins}</dd></div>
                 <div><dt>Bad at</dt><dd>{page.weak}</dd></div>
-                {schoolsForColor(page.id).length > 0 && (
+                {lore && schoolsForColor(page.id, themeSet).length > 0 && (
                   <div className="colour-page__school">
-                    <dt>At Hexhaven</dt>
+                    <dt>{lore.academy ? `At ${lore.academy}` : `In ${lore.setName}`}</dt>
                     <dd>
-                      {schoolsForColor(page.id).map((sc, i) => (
+                      {schoolsForColor(page.id, themeSet).map((sc, i) => (
                         <span key={sc.id}>
                           {i > 0 && ' and '}
                           <img className="school__emblem school__emblem--inline" src={withBase(sc.emblem)} alt="" aria-hidden="true" width="18" height="18" />
@@ -380,6 +403,7 @@ function ColourStep({ dial, colors, chosen, onDial, onPair, onOpenCard, onNext, 
             </article>
           ))}
         </div>
+        {loreNote && <p className="muted tiny m0">{loreNote}</p>}
       </section>
 
       <div className="row">

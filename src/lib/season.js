@@ -17,19 +17,29 @@ import { curatedThemeFor } from '../data/set-themes.js'
 // pretending to know what the set looks like.
 
 const PAPER_TYPES = new Set(['expansion', 'core'])
+const DATE = /^\d{4}-\d{2}-\d{2}$/
 
 export function today() {
   return new Date().toISOString().slice(0, 10)
 }
 
 /**
- * Splits the set list into what just came out and what is coming next.
- * Digital-only and supplemental products are excluded: this drives a
- * "what's next in paper" headline, not a release log.
+ * Splits the set list into what just came out and what is coming next, and
+ * says which of the two is the season's focus. Digital-only and supplemental
+ * products are excluded: this drives a "what's new in paper" headline, not a
+ * release log.
+ *
+ * The focus is the owner's rule (2026-09-21): the latest released set stays
+ * the focus until the next one is nearer in days, and on a tie the released
+ * set stays. A set is what people most want to read about in the weeks after
+ * it comes out, so it must not give way to the next one on its own release
+ * day. With only one of the two, that one is the focus.
  */
 export function findSeason(sets, now = today()) {
+  // A date the app cannot read would sort anywhere as a string, so a set
+  // carrying one is left out rather than guessed at.
   const paper = (sets ?? [])
-    .filter((set) => PAPER_TYPES.has(set.setType) && !set.digital && set.releasedAt)
+    .filter((set) => PAPER_TYPES.has(set?.setType) && !set.digital && DATE.test(set.releasedAt ?? ''))
 
   const upcoming = paper
     .filter((set) => set.releasedAt > now)
@@ -41,13 +51,15 @@ export function findSeason(sets, now = today()) {
 
   const next = upcoming[0] ?? null
   const current = released[0] ?? null
+  const daysUntilNext = next ? daysBetween(now, next.releasedAt) : null
+  const daysSinceCurrent = current ? daysBetween(current.releasedAt, now) : null
 
-  return {
-    next,
-    current,
-    daysUntilNext: next ? daysBetween(now, next.releasedAt) : null,
-    daysSinceCurrent: current ? daysBetween(current.releasedAt, now) : null,
+  let focus = next ?? current
+  if (next && current && daysSinceCurrent !== null && daysUntilNext !== null) {
+    focus = daysSinceCurrent <= daysUntilNext ? current : next
   }
+
+  return { next, current, focus, daysUntilNext, daysSinceCurrent }
 }
 
 export function daysBetween(from, to) {
@@ -148,7 +160,7 @@ export function describeCountdown(days) {
 export function buildSeasonTheme(sets, now = undefined, colorProfile = null) {
   now = now ?? today()
   const season = findSeason(sets, now)
-  const focus = season.next ?? season.current
+  const focus = season.focus
   if (!focus) return null
 
   // A theme someone designed comes first; then the set's real colour
@@ -164,7 +176,14 @@ export function buildSeasonTheme(sets, now = undefined, colorProfile = null) {
     isUpcoming,
     countdown: isUpcoming ? describeCountdown(season.daysUntilNext) : null,
     daysSinceRelease: isUpcoming ? null : season.daysSinceCurrent,
+    // While a released set holds the focus, the one after it is still worth
+    // a line, so the banner can say what is coming without switching to it.
+    following: isUpcoming ? null : season.next,
     ...accent,
+    // A curated theme is provisional exactly while its set is not out. The
+    // release date decides, not the entry's hand-kept flag, so the screen
+    // changes on release day with nobody editing anything.
+    ...(accent.derivedFrom === 'curated' ? { provisional: isUpcoming } : {}),
     // A set-legality query, so the caller can ask "what is new for my deck"
     // without knowing anything about Scryfall syntax.
     searchQuery: `set:${focus.code}`,

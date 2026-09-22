@@ -9,7 +9,16 @@
 //
 // PRECEDENCE, while the set is the season's focus: curated → colour profile
 // → code hash. When the season moves on to a set with no entry here, the
-// derived accent returns on its own; nothing has to be undone.
+// derived accent returns on its own; nothing has to be undone. The schools go
+// with the theme: they are shown while the shell wears this set's theme and
+// not after.
+//
+// DATES. `curatedAt` is when the entry was written. Whether it is still
+// provisional is worked out from its set's release date in Scryfall's set
+// list (src/lib/curation.js), never from a date written here; `provisional`
+// is the author's own note and is read only when that date is not known.
+// Once the set is out and the entry has been checked against the released
+// cards, add `checkedAt` with the day it was checked, and the screen says so.
 //
 // Values come from docs/REALITY_FRACTURE_SET_REFERENCE.md, which states that
 // its colours are an implementation palette inferred from public promotional
@@ -54,6 +63,7 @@ export const SET_THEMES = {
     // §5.3 and §8: Hexhaven's five schools are the five allied pairs, in wheel
     // order. Each carries its discipline, its virtue and its horror, because
     // the reference is explicit that the academy is not a playful reskin.
+    academy: 'Hexhaven',
     schools: {
       WU: { id: 'fatehold', name: 'Fatehold', discipline: 'Future History', virtue: 'Foresight in service of society.', horror: 'Individual futures manipulated for an imposed optimum.', accents: ['#E9E1C8', '#72A9D8', '#B8A064'], emblem: `${ASSETS}reality-fracture/schools/fatehold.svg` },
       UB: { id: 'theorix', name: 'Theorix', discipline: 'Esoteric Mathematics', virtue: 'Fearless inquiry and powerful problem-solving.', horror: 'Sanity and other realities treated as expendable research material.', accents: ['#3158B8', '#15111E', '#764FC2'], emblem: `${ASSETS}reality-fracture/schools/theorix.svg` },
@@ -64,10 +74,11 @@ export const SET_THEMES = {
   },
 }
 
-/** The set whose lore the app shows beside the colours; the season's focus, moving forward. */
-export const LORE_SET = 'fra'
-
-/** A theme worth applying: an entry with at least an accent. */
+/**
+ * A theme worth applying: an entry with at least an accent. `provisional` here
+ * is the entry as written; buildSeasonTheme (src/lib/season.js) replaces it
+ * with what the set's release date says.
+ */
 export function curatedThemeFor(code) {
   const entry = SET_THEMES[code?.toLowerCase?.()]
   if (!entry?.accent) return null
@@ -80,17 +91,30 @@ export function curatedThemeFor(code) {
     voice: entry.voice ?? null,
     derivedFrom: 'curated',
     curatedAt: entry.curatedAt,
+    checkedAt: entry.checkedAt ?? null,
     provisional: !!entry.provisional,
   }
 }
 
-/** The schools for a set, keyed by allied pair in wheel order, or null when none are written. */
-export function schoolsFor(code = LORE_SET) {
-  return SET_THEMES[code]?.schools ?? null
+/**
+ * The schools for a set, keyed by allied pair in wheel order, or null when
+ * none are written. There is no default set: the caller names the one the
+ * season is on (the shell's theme set, see src/lib/theme-set.js), so a set's
+ * lore is never presented as current after the season has moved on.
+ */
+export function schoolsFor(code) {
+  return SET_THEMES[code?.toLowerCase?.()]?.schools ?? null
+}
+
+/** A set's schools with the names to present them by, or null when it has none written. */
+export function loreFor(code) {
+  const entry = SET_THEMES[code?.toLowerCase?.()]
+  if (!entry?.schools) return null
+  return { setName: entry.setName, academy: entry.academy ?? null, schools: entry.schools }
 }
 
 /** The schools a single colour belongs to — two, one on each side of it on the wheel. */
-export function schoolsForColor(color, code = LORE_SET) {
+export function schoolsForColor(color, code) {
   const schools = schoolsFor(code)
   if (!schools) return []
   return Object.entries(schools).filter(([pair]) => pair.includes(color)).map(([pair, school]) => ({ pair, ...school }))

@@ -9,8 +9,13 @@
 // So each entry is hand-written, dated, and sourced, and the UI says when it was
 // written. An entry that is stale is visibly stale rather than quietly wrong.
 //
-// Entries added during spoiler season are marked provisional: previewed
-// mechanics occasionally change wording before release.
+// Entries written during spoiler season are provisional, because previewed
+// mechanics occasionally change wording before release. Whether an entry is
+// still provisional is worked out from its set's release date in Scryfall's
+// set list (src/lib/curation.js), not from a date written here; `provisional`
+// is the author's own note, read only when that date is not known. After
+// release the screen says the entry has not been checked against the released
+// cards until `checkedAt` is added with the day it was.
 
 export const SET_MECHANICS = {
   fra: {

@@ -13,9 +13,13 @@
 // on every request below. The Node scripts under scripts/ are not browsers and
 // do send a descriptive one.
 
-import { getCard, getCards, putCards, getQuery, putQuery } from './cache.js'
+import {
+  getCard, getCards, getCardRecords, putCards, markCardsChecked, getQuery, putQuery,
+  CARD_TTL_MS, QUERY_TTL_MS,
+} from './cache.js'
 import { LOCKOUT_MS, MIN_INTERVAL_MS, SLOW_INTERVAL_MS, spacingFor } from './scryfall-limits.js'
 import { isReleasedPaper } from './release.js'
+import { refreshDue, dayOf } from './card-refresh.js'
 import { today } from './season.js'
 import { oracleIdOf } from './formats.js'
 
@@ -63,34 +67,129 @@ export class OfflineError extends Error {
 }
 
 // --- request queue --------------------------------------------------------
-let chain = Promise.resolve()
+//
+// One line, one request at a time, each spaced for its endpoint, in two
+// lanes. A request somebody is waiting on (a search, a deck opening, an
+// import) is in the foreground lane. Refreshing cards a deck already has is
+// in the background lane, and a background request only goes when no
+// foreground request is queued: a foreground request that arrives behind
+// background ones goes before them, and waits at most for the one request
+// already under way and its spacing. A second line would not help, because
+// Scryfall's spacing is per application, and the refresh cannot simply pause
+// between batches, because it does not know when somebody is about to search.
+// The launch watch refreshes every deck's cards in one pass, so twenty
+// Commander decks of a hundred different cards each, all due at once, are
+// twenty-seven requests of 75 cards, and a search made meanwhile still goes
+// next.
+const lanes = { foreground: [], background: [] }
+let draining = false
 let lastRequestAt = 0
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-function enqueue(task, spacing = MIN_INTERVAL_MS) {
-  const run = chain.then(async () => {
-    const wait = spacing - (Date.now() - lastRequestAt)
-    if (wait > 0) await sleep(wait)
-    lastRequestAt = Date.now()
-    return task()
+const nextInLine = () => lanes.foreground[0] ?? lanes.background[0]
+
+function enqueue(task, spacing = MIN_INTERVAL_MS, { background = false, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    lanes[background ? 'background' : 'foreground'].push({ task, spacing, signal, resolve, reject })
+    drain()
   })
-  // Keep the chain alive even when a task rejects, or one failure stalls
-  // every request queued behind it.
-  chain = run.then(() => undefined, () => undefined)
-  return run
+}
+
+async function drain() {
+  if (draining) return
+  draining = true
+  // Everything queued in this same moment is in line before the first goes,
+  // so a foreground request made alongside background ones goes first.
+  await null
+  try {
+    for (let next = nextInLine(); next; next = nextInLine()) {
+      // The spacing is waited out before whichever request goes next, which
+      // is looked at again after the wait: a foreground request may have
+      // arrived during it.
+      let wait = next.spacing - (Date.now() - lastRequestAt)
+      while (wait > 0) {
+        await sleep(wait)
+        next = nextInLine()
+        wait = next.spacing - (Date.now() - lastRequestAt)
+      }
+      const lane = lanes.foreground[0] === next ? lanes.foreground : lanes.background
+      lane.shift()
+      // A request whose caller has gone is dropped without spending a slot.
+      if (next.signal?.aborted) {
+        next.reject(new DOMException('The request was abandoned.', 'AbortError'))
+        continue
+      }
+      lastRequestAt = Date.now()
+      // A failure is its caller's to handle. The line moves on either way, or
+      // one failure would stall every request queued behind it.
+      try {
+        next.resolve(await next.task())
+      } catch (error) {
+        next.reject(error)
+      }
+    }
+  } finally {
+    draining = false
+  }
 }
 
 function isOffline() {
   return typeof navigator !== 'undefined' && navigator.onLine === false
 }
 
-async function request(path, { method = 'GET', body, signal } = {}) {
-  if (isOffline()) throw new OfflineError()
+// --- the background lane's pause ---------------------------------------------
+//
+// A background request that fails leaves the background lane quiet for a
+// while. Nobody is waiting on a refresh, and a Scryfall that has just refused
+// or could not be reached will very likely do so again a moment later, so the
+// decks after the first, a return to the Decks screen and the device coming
+// back online ask nothing until the pause is over. After a 429 it lasts until
+// the lockout ends (Retry-After, or LOCKOUT_MS); after a 5xx, or a failure to
+// reach Scryfall at all, a few minutes. A background request made during it
+// is refused at once without being sent, as if it had failed. A foreground
+// request is never held back by it: somebody is waiting on that one.
+const BACKGROUND_PAUSE_MS = 5 * 60 * 1000
+let backgroundQuietUntil = 0
 
-  return enqueue(async () => {
+function pauseBackground(ms) {
+  backgroundQuietUntil = Math.max(backgroundQuietUntil, Date.now() + ms)
+}
+
+function backgroundPaused() {
+  return Date.now() < backgroundQuietUntil
+}
+
+const pausedError = () => new ScryfallError(
+  'Scryfall could not be reached a moment ago, so this background refresh waits.',
+  { code: 'background_paused' },
+)
+
+/** A failure that says Scryfall is down or unreachable, rather than an answer. */
+const isOutage = (error) => error instanceof OfflineError
+  || (error instanceof ScryfallError && (error.status ?? 0) >= 500)
+
+/**
+ * One call to Scryfall, through the queue.
+ *
+ * `background` puts it in the background lane (see above), and it is also
+ * asked once only: a background refresh keeps the cached copy when a request
+ * fails and tries again another day, whereas four retries backing off for
+ * thirty seconds would hold the one line that a search is waiting in. A 429
+ * is still waited out before the line moves on, because during a lockout the
+ * next request, whoever made it, would be refused too. A background request
+ * that fails pauses the background lane, and one made or reached in the
+ * line during the pause is not sent (see above).
+ */
+async function request(path, { method = 'GET', body, signal, background = false } = {}) {
+  if (isOffline()) throw new OfflineError()
+  if (background && backgroundPaused()) throw pausedError()
+  const retries = background ? 0 : MAX_RETRIES
+  const lockoutRetries = background ? 0 : MAX_LOCKOUT_RETRIES
+
+  const task = async () => {
     let lastError
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const response = await fetch(`${API}${path}`, {
           method,
@@ -111,9 +210,16 @@ async function request(path, { method = 'GET', body, signal } = {}) {
               : 'Scryfall is having trouble right now.',
             { status: response.status },
           )
-          if (attempt < (lockedOut ? MAX_LOCKOUT_RETRIES : MAX_RETRIES)) {
+          if (attempt < (lockedOut ? lockoutRetries : retries)) {
             await sleep(lockedOut ? lockoutWait(response) : 2 ** attempt * backoffBaseMs)
             continue
+          }
+          if (lockedOut && background) {
+            // Paused from now until the lockout is over, so a background
+            // request made while this one waits it out is refused at once
+            // rather than lined up behind it.
+            pauseBackground(lockoutWait(response))
+            await sleep(lockoutWait(response))
           }
           throw lastError
         }
@@ -133,7 +239,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
           if (error.status === 429 || (error.status ?? 0) >= 500) {
             const lockedOut = error.status === 429
             lastError = error
-            if (attempt < (lockedOut ? MAX_LOCKOUT_RETRIES : MAX_RETRIES)) {
+            if (attempt < (lockedOut ? lockoutRetries : retries)) {
               await sleep(lockedOut ? lockoutMs : 2 ** attempt * backoffBaseMs)
               continue
             }
@@ -142,7 +248,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
         }
         // Network-level failure: the fetch never landed.
         lastError = new OfflineError('Could not reach Scryfall. Showing cached cards only.')
-        if (attempt < MAX_RETRIES) {
+        if (attempt < retries) {
           await sleep(2 ** attempt * backoffBaseMs)
           continue
         }
@@ -150,7 +256,18 @@ async function request(path, { method = 'GET', body, signal } = {}) {
       }
     }
     throw lastError ?? new ScryfallError('Request failed.')
-  }, spacingFor(path))
+  }
+
+  if (!background) return enqueue(task, spacingFor(path), { signal })
+  return enqueue(async () => {
+    if (backgroundPaused()) throw pausedError()
+    try {
+      return await task()
+    } catch (error) {
+      if (isOutage(error)) pauseBackground(BACKGROUND_PAUSE_MS)
+      throw error
+    }
+  }, spacingFor(path), { background, signal })
 }
 
 // --- public API -----------------------------------------------------------
@@ -224,7 +341,7 @@ export async function getCardById(id, { signal, allowStale = true } = {}) {
 }
 
 function refreshInBackground(id) {
-  request(`/cards/${encodeURIComponent(id)}`)
+  request(`/cards/${encodeURIComponent(id)}`, { background: true })
     .then((card) => putCards([card]))
     .catch(() => {})
 }
@@ -283,15 +400,41 @@ export async function getPrintings(card, { signal } = {}) {
  * Bulk fetch by id. Scryfall's collection endpoint takes 75 identifiers per
  * call, so this chunks — and checks the cache first, which for an open deck
  * usually means no network at all.
+ *
+ * With `refresh`, the cached records that are due (see card-refresh.js) are
+ * fetched again as well, in the background lane, and what comes back
+ * replaces them; see refreshCards. It is not tried after a request for the
+ * missing ids has failed, which would only ask a Scryfall that has just not
+ * answered. `background` puts the fetch of missing ids in the background
+ * lane too, for a caller nobody is waiting on. With either, an id Scryfall
+ * has lately said it has no card for is not asked about again until a day
+ * has passed. `now` is the clock the refresh works to, a time in
+ * milliseconds. Offline, the cache is the answer.
  */
-export async function getCardsByIds(ids, { signal } = {}) {
-  const unique = [...new Set(ids.filter(Boolean))]
-  const found = await getCards(unique)
-  const missing = unique.filter((id) => !found.has(id))
-  if (missing.length === 0) return found
+export async function getCardsByIds(ids, options = {}) {
+  const { records } = await getCardRecordsByIds(ids, options)
+  return new Map([...records].map(([id, record]) => [id, record.card]))
+}
 
-  if (isOffline()) return found
+/**
+ * getCardsByIds with each card's record rather than the card alone, for a
+ * caller that needs to know how old its data is: `records` maps each id found
+ * to { card, fetchedAt }, fetchedAt being `now` for a card fetched here.
+ * `failed` says that a request failed, not merely that Scryfall had no card
+ * for an id, so a caller working through several decks can stop asking for
+ * the rest of its run. The cache is read once, and the refresh works from
+ * what was read.
+ */
+export async function getCardRecordsByIds(ids, { signal, refresh = false, background = false, now = Date.now() } = {}) {
+  const unique = [...new Set((ids ?? []).filter(Boolean))]
+  const records = await getCardRecords(unique)
+  let missing = unique.filter((id) => !records.has(id))
+  if (!missing.length && !refresh) return { records, failed: false }
 
+  if (isOffline()) return { records, failed: false }
+  if (refresh || background) missing = await notKnownMissing(missing, now)
+
+  let failed = false
   for (let i = 0; i < missing.length; i += 75) {
     const chunk = missing.slice(i, i + 75)
     try {
@@ -299,18 +442,142 @@ export async function getCardsByIds(ids, { signal } = {}) {
         method: 'POST',
         body: { identifiers: chunk.map((id) => ({ id })) },
         signal,
+        background,
       })
       const cards = payload.data ?? []
-      await putCards(cards, { pinned: true })
-      for (const card of cards) found.set(card.id, card)
+      await putCards(cards, { pinned: true, fetchedAt: now })
+      for (const card of cards) records.set(card.id, { card, fetchedAt: now })
+      await rememberNotFound(payload, chunk, now)
     } catch (error) {
       if (error.name === 'AbortError') throw error
+      failed = failed || !isNotFound(error)
       // Partial results beat no results — a deck with three unresolved cards
       // should still open and say so.
       break
     }
   }
-  return found
+
+  if (refresh && !failed) {
+    const result = await refreshRecords(records, { signal, now })
+    for (const [id, card] of result.fresh) records.set(id, { card, fetchedAt: now })
+    failed = result.failed
+  }
+  return { records, failed }
+}
+
+/**
+ * Fetches again the cached records among `ids` that are due, and returns
+ * only the cards that came back, so a screen already showing the cache can
+ * tell whether it has anything new to show. `records`, when the caller has
+ * just read them (getCardRecordsByIds), saves reading the cache again.
+ *
+ * Every request is in the background lane, 75 ids at a time. What comes
+ * back replaces the cached record and stays pinned. An id Scryfall says it
+ * has no card for keeps its cached copy, which may be the only record of what
+ * the card was, and is noted on it so that it is asked about a week on rather
+ * than daily (see markCardsChecked). A request that fails keeps every cached
+ * copy, the batches after it are not sent, and the background lane pauses
+ * (see above), so the next deck opened meanwhile asks nothing. Offline,
+ * nothing is asked.
+ */
+export async function refreshCards(ids, { signal, now = Date.now(), records } = {}) {
+  if (isOffline()) return new Map()
+  const unique = [...new Set((ids ?? []).filter(Boolean))]
+  const held = records instanceof Map
+    ? new Map(unique.filter((id) => records.has(id)).map((id) => [id, records.get(id)]))
+    : await getCardRecords(unique)
+  return (await refreshRecords(held, { signal, now })).fresh
+}
+
+/**
+ * The refresh itself, over records already read: { fresh, failed }.
+ *
+ * The due records are asked for, and when their last batch has room, it is
+ * filled with records that are not due yet, oldest first, among those at
+ * least a day old (QUERY_TTL_MS) and not lately found missing. A deck's
+ * records are fetched on different days as searches and imports bring its
+ * cards back one by one, so without this each group would fall due on its own
+ * day and cost a small request of its own every time; filling the batch lets
+ * them fall due together again, and costs no request that was not being made.
+ */
+async function refreshRecords(records, { signal, now }) {
+  const fresh = new Map()
+  if (isOffline()) return { fresh, failed: false }
+  const day = dayOf(now)
+  const due = []
+  const spare = []
+  for (const [id, record] of records) {
+    if (refreshDue(record, now, day)) due.push(id)
+    else if (fillsBatch(record, now)) spare.push([id, record.fetchedAt])
+  }
+  const room = (BATCH - (due.length % BATCH)) % BATCH
+  const ids = due.length
+    ? [...due, ...spare.sort((a, b) => a[1] - b[1]).slice(0, room).map(([id]) => id)]
+    : []
+
+  let failed = false
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const chunk = ids.slice(i, i + BATCH)
+    let payload
+    try {
+      payload = await request('/cards/collection', {
+        method: 'POST',
+        body: { identifiers: chunk.map((id) => ({ id })) },
+        signal,
+        background: true,
+      })
+    } catch (error) {
+      if (error.name === 'AbortError') throw error
+      failed = !isNotFound(error)
+      break
+    }
+    // Only the records asked for are replaced: a card Scryfall sends under
+    // another id is not a newer copy of one of these.
+    const asked = new Set(chunk)
+    const cards = (payload?.data ?? []).filter((card) => asked.has(card?.id))
+    await putCards(cards, { pinned: true, fetchedAt: now })
+    for (const card of cards) fresh.set(card.id, card)
+    await markCardsChecked(notFoundIn(payload, chunk), now)
+  }
+  return { fresh, failed }
+}
+
+const BATCH = 75
+
+/** A record not due that may fill a batch: a day old or more, and not lately found missing. */
+function fillsBatch(record, now) {
+  const { fetchedAt, checkedAt } = record ?? {}
+  if (Number.isFinite(checkedAt) && checkedAt <= now && now - checkedAt <= CARD_TTL_MS) return false
+  return Number.isFinite(fetchedAt) && fetchedAt <= now && now - fetchedAt >= QUERY_TTL_MS
+}
+
+const isNotFound = (error) => error instanceof ScryfallError && error.status === 404
+
+// Scryfall lists what it could not find in a collection request's
+// `not_found`, as the identifiers that were sent. A cached record it does not
+// find is noted on the record itself (markCardsChecked). An id with no record
+// to note it on, one a deck names but this device never saved, is kept in the
+// query store, which forgets it after QUERY_TTL_MS by the device's clock; the
+// time stored with each is checked against the caller's clock as well.
+const notFoundKey = (id) => `notfound:${id}`
+
+function notFoundIn(payload, chunk) {
+  const asked = new Set(chunk)
+  return (Array.isArray(payload?.not_found) ? payload.not_found : [])
+    .map((identifier) => identifier?.id)
+    .filter((id) => typeof id === 'string' && asked.has(id))
+}
+
+async function rememberNotFound(payload, chunk, now) {
+  await Promise.all(notFoundIn(payload, chunk).map((id) => putQuery(notFoundKey(id), now)))
+}
+
+async function notKnownMissing(ids, now) {
+  const known = await Promise.all(ids.map(async (id) => {
+    const at = await getQuery(notFoundKey(id))
+    return Number.isFinite(at) && at <= now && now - at < QUERY_TTL_MS
+  }))
+  return ids.filter((_, i) => !known[i])
 }
 
 /**
@@ -704,5 +971,10 @@ export const __internals = {
     const previous = lockoutMs
     lockoutMs = ms
     return previous
+  },
+  BACKGROUND_PAUSE_MS,
+  /** Test seam: ends the background lane's pause, so each test starts unpaused. */
+  resumeBackground() {
+    backgroundQuietUntil = 0
   },
 }

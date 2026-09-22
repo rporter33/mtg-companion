@@ -56,6 +56,63 @@ describe('findSeason', () => {
     expect(findSeason([], TODAY).next).toBeNull()
     expect(findSeason(undefined, TODAY).current).toBeNull()
     expect(findSeason([set('bad', null)], TODAY).current).toBeNull()
+    expect(findSeason([null, set('odd', 'soon'), set('bad', 20261002)], TODAY).focus).toBeNull()
+  })
+})
+
+// The owner's rule, 2026-09-21: the latest released set stays the focus until
+// the next set is nearer in days, and on a tie the released set stays. These
+// are the real sets around it, as Scryfall listed them that day, with the
+// Commander products that come out beside them; every day is given, so the
+// suite means the same after these dates as before them.
+describe('the season focus', () => {
+  const REAL = [
+    set('hob', '2026-08-14'),
+    set('fra', '2026-10-02'),
+    set('frc', '2026-10-02', { setType: 'commander' }),
+    set('trk', '2026-11-13'),
+    set('trc', '2026-11-13', { setType: 'commander' }),
+  ]
+  const focusOn = (day) => findSeason(REAL, day).focus?.code
+
+  it('is the upcoming set while it is nearer than the released one', () => {
+    // 38 days since The Hobbit, 11 to Reality Fracture.
+    expect(focusOn('2026-09-21')).toBe('fra')
+  })
+
+  it('stays on a set on its release day', () => {
+    const season = findSeason(REAL, '2026-10-02')
+    expect(season.focus.code).toBe('fra')
+    expect(season.focus).toBe(season.current)
+    expect(season.next.code).toBe('trk')
+  })
+
+  it('stays on the released set while it is nearer', () => {
+    // 20 days since Reality Fracture, 22 to Star Trek.
+    expect(focusOn('2026-10-22')).toBe('fra')
+  })
+
+  it('stays on the released set on a tie', () => {
+    const season = findSeason(REAL, '2026-10-23')
+    expect([season.daysSinceCurrent, season.daysUntilNext]).toEqual([21, 21])
+    expect(season.focus.code).toBe('fra')
+  })
+
+  it('moves to the next set the day it is nearer', () => {
+    // 22 days since Reality Fracture, 20 to Star Trek.
+    expect(focusOn('2026-10-24')).toBe('trk')
+  })
+
+  it('is the released set when nothing is announced, and the upcoming one when nothing is out', () => {
+    expect(findSeason([set('hob', '2026-08-14')], '2027-06-01').focus.code).toBe('hob')
+    expect(findSeason([set('fra', '2026-10-02')], '2026-01-01').focus.code).toBe('fra')
+    expect(findSeason([], '2026-09-21').focus).toBeNull()
+  })
+
+  it('never focuses a supplemental product released beside a set', () => {
+    for (const day of ['2026-09-21', '2026-10-02', '2026-10-23', '2026-11-13']) {
+      expect(['frc', 'trc']).not.toContain(focusOn(day))
+    }
   })
 })
 
@@ -130,12 +187,25 @@ describe('describeCountdown', () => {
 })
 
 describe('buildSeasonTheme', () => {
-  it('focuses the upcoming set when there is one', () => {
-    const theme = buildSeasonTheme(SETS, TODAY)
+  it('focuses the upcoming set once it is nearer than the released one', () => {
+    // 55 days since 'now', 50 to 'nxt'.
+    const theme = buildSeasonTheme(SETS, '2026-09-25')
     expect(theme.set.code).toBe('nxt')
     expect(theme.isUpcoming).toBe(true)
     expect(theme.countdown).toMatch(/months away/)
+    expect(theme.following).toBeNull()
     expect(theme.searchQuery).toBe('set:nxt')
+  })
+
+  it('keeps the released set while it is the nearer, and names the one that follows', () => {
+    // 46 days since 'now', 59 to 'nxt'.
+    const theme = buildSeasonTheme(SETS, TODAY)
+    expect(theme.set.code).toBe('now')
+    expect(theme.isUpcoming).toBe(false)
+    expect(theme.countdown).toBeNull()
+    expect(theme.daysSinceRelease).toBe(46)
+    expect(theme.following.code).toBe('nxt')
+    expect(theme.searchQuery).toBe('set:now')
   })
 
   it('falls back to the most recent set when nothing is announced', () => {
@@ -143,6 +213,20 @@ describe('buildSeasonTheme', () => {
     expect(theme.isUpcoming).toBe(false)
     expect(theme.countdown).toBeNull()
     expect(theme.daysSinceRelease).toBe(46)
+    expect(theme.following).toBeNull()
+  })
+
+  it('says a curated theme is provisional exactly while its set is not out', () => {
+    // Reality Fracture's entry is written with provisional: true; the date
+    // decides what the screen says, not the flag.
+    const sets = [set('hob', '2026-08-14'), set('fra', '2026-10-02'), set('trk', '2026-11-13')]
+    const before = buildSeasonTheme(sets, '2026-10-01')
+    expect([before.set.code, before.derivedFrom, before.provisional]).toEqual(['fra', 'curated', true])
+    const out = buildSeasonTheme(sets, '2026-10-02')
+    expect([out.set.code, out.derivedFrom, out.provisional, out.isUpcoming]).toEqual(['fra', 'curated', false, false])
+    expect(out.following.code).toBe('trk')
+    const moved = buildSeasonTheme(sets, '2026-10-24')
+    expect([moved.set.code, moved.derivedFrom, moved.provisional]).toEqual(['trk', 'code', undefined])
   })
 
   it('returns null when there is nothing worth showing', () => {

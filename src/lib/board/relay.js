@@ -137,7 +137,9 @@ export function rooms(base) {
      * exists. `deck` is the map a sit sends (`seatDeck`), so the answer is
      * about exactly what would be dealt. Null when this relay cannot check:
      * one from before the endpoint, or one whose engine predates the op. The
-     * lobby says so rather than guessing either way.
+     * lobby says so rather than guessing either way. `engineSets` is the
+     * engine's own set list as the relay passed it on, or null from a relay
+     * that sends none; verdictOf reads it.
      */
     async check(deck, { sideboard = null, signal } = {}) {
       const res = await fetch(`${origin}/engine/check`, {
@@ -159,7 +161,10 @@ export function rooms(base) {
       if (!res.ok) throw Object.assign(new Error(body?.error ?? 'The relay did not answer.'), { status: res.status })
       if (!Array.isArray(body?.unknown)) throw unreadable()
       const names = (a) => (Array.isArray(a) ? a.filter((n) => typeof n === 'string') : [])
-      return { known: Number(body?.known) || 0, total: Number(body?.total) || 0, unknown: names(body?.unknown), unknownSideboard: names(body?.unknownSideboard) }
+      return {
+        known: Number(body?.known) || 0, total: Number(body?.total) || 0, unknown: names(body?.unknown), unknownSideboard: names(body?.unknownSideboard),
+        engineSets: Array.isArray(body?.engineSets) ? body.engineSets : null,
+      }
     },
     async peek(code) {
       const res = await fetch(`${origin}/rooms/${encodeURIComponent(code)}`)

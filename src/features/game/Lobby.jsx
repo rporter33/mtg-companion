@@ -6,7 +6,7 @@ import { artUrl, faceIdFor } from '../../lib/deck-art.js'
 import { getPrefs } from '../../lib/storage.js'
 import { navigate } from '../../lib/router.js'
 import { EXAMPLE_DECKS } from '../../data/example-decks.js'
-import { nameList } from '../../lib/engine/deck.js'
+import { byReason, nameList, reasonText } from '../../lib/engine/deck.js'
 import Confirm from '../../components/Confirm.jsx'
 import DeckArt from '../../components/DeckArt.jsx'
 import ManaCost from '../../components/ManaCost.jsx'
@@ -313,7 +313,9 @@ function DeckTile({ deck, info, chosen, check, onChoose }) {
 /**
  * What the engine said about a deck, on its tile. Every number is the deck's
  * own count or the engine's answer; the one thing worked out here, that some
- * cards did not load, is said as that.
+ * cards did not load, is said as that. The cards it does not know are named a
+ * line per reason, each reason from the engine's own set list (verdictOf), so
+ * a deck of twenty cards from a set it has not got says that once.
  */
 function DeckCheck({ check }) {
   if (!check) return null
@@ -324,7 +326,9 @@ function DeckCheck({ check }) {
   else if (state === 'short') {
     if (unknown.length) {
       lines.push(`The engine knows ${known} of ${total} cards.`)
-      lines.push(`Not known: ${nameList(unknown.map((u) => u.name))}.`)
+      for (const group of byReason(unknown)) {
+        lines.push(`${reasonText(group.reason, group.cards.length > 1)}: ${nameList(group.cards.map((u) => u.name))}.`)
+      }
     }
     if (unloaded) lines.push(unloaded === 1 ? 'One card did not load, so the engine was not asked about it.' : `${unloaded} cards did not load, so the engine was not asked about them.`)
   } else if (state === 'cannot-check') lines.push('This relay cannot check a deck, so this one has not been checked.')
@@ -351,11 +355,15 @@ function DeckCheck({ check }) {
  * it does not know, the table then saying which were left out, or the whole
  * deck played by hand. Without is offered only when every card loaded, since
  * a card that did not load has no name to leave out, and only when something
- * would be left to deal.
+ * would be left to deal. The cards are listed under their reasons, as on the
+ * tile, when the engine's set list gave any; otherwise one list, as before.
  */
 function DeckGate({ deck, check, onWithout, onAlone, onClose }) {
   const unknown = check.unknown ?? []
   const copies = unknown.reduce((sum, u) => sum + u.count, 0)
+  const groups = byReason(unknown)
+  const reasoned = groups.some((g) => g.reason)
+  const item = (u) => <li key={u.name}>{u.count} {u.name}</li>
   const canGoWithout = unknown.length > 0 && !check.unloaded && check.known > 0
   const actions = [
     ...(canGoWithout ? [{ label: `Play the engine without ${copies === 1 ? 'it' : 'them'}`, kind: 'primary', onPress: () => onWithout(unknown.map((u) => u.name)) }] : []),
@@ -373,8 +381,15 @@ function DeckGate({ deck, check, onWithout, onAlone, onClose }) {
         {unknown.length > 0 && (
           <>
             <p>It does not know {copies === 1 ? 'this one' : 'these'}, so it cannot hold a game with the whole deck:</p>
-            <ul className="lobby__unknown" tabIndex={0} aria-label="Cards the engine does not know">
-              {unknown.map((u) => <li key={u.name}>{u.count} {u.name}</li>)}
+            <ul className={`lobby__unknown${reasoned ? ' lobby__unknown--grouped' : ''}`} role="list" tabIndex={0} aria-label="Cards the engine does not know">
+              {reasoned
+                ? groups.map((g) => (
+                  <li key={g.cards[0].name}>
+                    {reasonText(g.reason, g.cards.length > 1)}:
+                    <ul>{g.cards.map(item)}</ul>
+                  </li>
+                ))
+                : unknown.map(item)}
             </ul>
           </>
         )}

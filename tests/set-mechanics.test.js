@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { SET_MECHANICS, mechanicsForSet, curationAgeDays } from '../src/data/set-mechanics.js'
+import { curationStatus, curationNote } from '../src/lib/curation.js'
+import { releaseLabel } from '../src/lib/release.js'
 import { GLOSSARY } from '../src/data/glossary.js'
 
 describe('set mechanics', () => {
@@ -23,6 +25,8 @@ describe('set mechanics', () => {
       expect(entry.curatedAt, `${entry.setCode} has no curation date`).toMatch(/^\d{4}-\d{2}-\d{2}$/)
       expect(entry.sources?.length, `${entry.setCode} has no sources`).toBeGreaterThan(0)
       for (const url of entry.sources) expect(url).toMatch(/^https:\/\//)
+      // Added by hand once the entry has been checked against the released cards.
+      if (entry.checkedAt !== undefined) expect(entry.checkedAt, `${entry.setCode} checkedAt`).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     }
   })
 
@@ -56,6 +60,44 @@ describe('set mechanics', () => {
         expect(GLOSSARY[mechanic.id], `${mechanic.id} collides with a glossary term`).toBeUndefined()
       }
     }
+  })
+})
+
+// What "What's new" says about how current Reality Fracture's entry is, by the
+// day. The release date is the one Scryfall's set list gave on 2026-09-21,
+// passed in the way SeasonBanner passes the focus set's. The entry is the
+// shipped one without any checkedAt, so these still hold once the owner adds
+// one; the check itself is covered below and in tests/curation.test.js.
+describe('Reality Fracture’s mechanics, before and after release', () => {
+  const RELEASE = '2026-10-02'
+  const UNCHECKED = { ...SET_MECHANICS.fra, checkedAt: undefined }
+  const noteOn = (day, entry = UNCHECKED) => curationNote(curationStatus(entry, RELEASE, day))
+  // "16 Sep 2026" or "16 Sept 2026", as the runtime's own British date data
+  // abbreviates September; tests/release.test.js checks the format itself.
+  const WRITTEN = releaseLabel(SET_MECHANICS.fra.curatedAt)
+
+  it('is provisional while the set is not out', () => {
+    expect(SET_MECHANICS.fra.curatedAt).toBe('2026-09-16')
+    expect(curationStatus(SET_MECHANICS.fra, RELEASE, '2026-10-01')).toMatchObject({ state: 'preview', provisional: true })
+    expect(noteOn('2026-09-21')).toBe(`Written on ${WRITTEN} from previews; the set comes out on 2 Oct 2026, and wording sometimes changes before release.`)
+  })
+
+  it('says from release day that it was written before and not checked since', () => {
+    expect(curationStatus(UNCHECKED, RELEASE, RELEASE)).toMatchObject({ state: 'unchecked', provisional: false })
+    expect(noteOn(RELEASE)).toBe(`Written on ${WRITTEN} from previews, before release on 2 Oct 2026; not yet checked against the released cards.`)
+    // And goes on saying so, however long it has been.
+    expect(noteOn('2027-03-01')).toBe(noteOn(RELEASE))
+  })
+
+  it('says when it was checked once the owner adds checkedAt, and not before that day', () => {
+    const checked = { ...SET_MECHANICS.fra, checkedAt: '2026-10-09' }
+    expect(noteOn('2026-10-20', checked)).toBe(`Written on ${WRITTEN} from previews, before release on 2 Oct 2026; checked against the released cards on 9 Oct 2026.`)
+    expect(noteOn(RELEASE, checked)).toBe(noteOn(RELEASE))
+  })
+
+  it('dates any check the shipped entry carries on or after release day', () => {
+    const { checkedAt } = SET_MECHANICS.fra
+    if (checkedAt !== undefined) expect(checkedAt >= RELEASE).toBe(true)
   })
 })
 

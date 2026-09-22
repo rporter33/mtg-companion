@@ -34,7 +34,7 @@
  *   GET  /rooms/<code>                              -> { code, seats, seq, players }
  *   WS   /rooms/<code>/ws                           the protocol in src/lib/board/net.js
  *   POST /engine/check     body: { deck: { name: count, … }, sideboard? }
- *                                                  -> { known, total, unknown, unknownSideboard }
+ *                                                  -> { known, total, unknown, unknownSideboard, engineSets? }
  *   GET  /health                                    -> { ok, rooms, engine }
  *   GET  /*                 the built app, when STATIC_DIR is set
  *
@@ -313,13 +313,15 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     checker = null
     return gone?.engine.close()
   }
+  // The hello comes back with the answer: its set list is what the lobby
+  // gives its reasons from.
   const check = async (body) => {
     const held = checkerFor()
     checksInFlight++
     clearTimeout(checkerIdle)
     try {
-      await held.ready
-      return await held.engine.call('check', body)
+      const hello = await held.ready
+      return { hello, reply: await held.engine.call('check', body) }
     } catch (e) {
       // A refusal is an answer. Anything else means this process is no use,
       // and the next check starts another rather than asking a dead one.
@@ -342,8 +344,9 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     if (!deck) { json(res, 400, { error: 'A deck to check is required.' }); return }
     const sideboard = plainObject(read.value?.sideboard)
     let reply
+    let hello
     try {
-      reply = await check(sideboard ? { deck, sideboard } : { deck })
+      ({ reply, hello } = await check(sideboard ? { deck, sideboard } : { deck }))
     } catch (e) {
       if (e.refused && /Unknown op/.test(e.message)) {
         json(res, 501, { error: 'The engine on this relay is too old to check a deck; rebuild it.' })
@@ -359,7 +362,16 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     // never meet a shape it has to guard against.
     const count = (n) => (Number.isFinite(n) ? n : 0)
     const names = (a) => (Array.isArray(a) ? a.filter((n) => typeof n === 'string') : [])
-    json(res, 200, { known: count(reply?.known), total: count(reply?.total), unknown: names(reply?.unknown), unknownSideboard: names(reply?.unknownSideboard) })
+    const answer = { known: count(reply?.known), total: count(reply?.total), unknown: names(reply?.unknown), unknownSideboard: names(reply?.unknownSideboard) }
+    // The sets the engine says it holds, with their codes as it gives them and
+    // whether it marks each incomplete, so the lobby can say why a card is not
+    // known from the engine's own word. Its release dates stay here: they are
+    // Argentum's, not Scryfall's, and the lobby does not show them. An engine
+    // whose hello lists no sets sends none, and the lobby names the cards alone.
+    const sets = (Array.isArray(hello?.sets) ? hello.sets : [])
+      .filter((s) => typeof s?.code === 'string' && s.code)
+      .map((s) => ({ code: s.code, name: typeof s.name === 'string' ? s.name : null, incomplete: s.incomplete === true }))
+    json(res, 200, sets.length ? { ...answer, engineSets: sets } : answer)
   }
 
   const describe = (room) => (room.mode === 'enforced'

@@ -47,7 +47,7 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
   const [decks, setDecks] = useState(() => listDecks())
   const [creating, setCreating] = useState(false)
   const [pending, setPending] = useState(null)
-  const { report, summary, dismiss } = useLegalityWatch({ enabled: !offline })
+  const { report, summary, dataFrom, dismiss } = useLegalityWatch({ enabled: !offline })
   const themeSet = useThemeSet()
 
   // Which deck is open, and whether the data screen is, come from the URL.
@@ -142,6 +142,7 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
       <LegalityChanges
         report={report}
         summary={summary}
+        dataFrom={dataFrom}
         onDismiss={dismiss}
         onOpenDeck={(id) => openDeck(id)}
       />
