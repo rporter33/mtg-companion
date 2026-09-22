@@ -29,7 +29,8 @@
  *   PORT=9000 ROOMS_DIR=/data/rooms STATIC_DIR=dist node scripts/relay-server.mjs
  *
  * The API, in full:
- *   POST /rooms            body: { seats?: 2..6, enforced?: true, ai?: 'heuristic' | 'random' | null }
+ *   POST /rooms            body: { seats?: 2..6, enforced?: true, ai?: 'heuristic' | 'random' | null,
+ *                                  pace?: milliseconds | false }
  *                                                  -> { code, seats, mode }
  *   GET  /rooms/<code>                              -> { code, seats, seq, players }
  *   WS   /rooms/<code>/ws                           the protocol in src/lib/board/net.js
@@ -49,7 +50,7 @@ import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { host, KIND, PROTOCOL, restore } from '../src/lib/board/net.js'
 import { findEngine, startEngine } from './engine-bridge.mjs'
-import { createEngineRoom, STARTUP_MS } from './relay-engine.mjs'
+import { createEngineRoom, PACE_MS, STARTUP_MS } from './relay-engine.mjs'
 import { newRun } from '../src/lib/board/runner.js'
 import { createBoard } from '../src/lib/board/model.js'
 
@@ -69,6 +70,13 @@ export const IDLE_MS = 7 * 24 * 60 * 60 * 1000
  * for a lobby nobody is looking at; starting it again costs one slow answer.
  */
 export const CHECK_IDLE_MS = 10 * 60 * 1000
+/**
+ * The longest pace a room may be opened with. A pace is a wait between the
+ * engine's plays, not a timeout, so a number far past watching is a mistake
+ * rather than a preference, and one that would hold a turn for a minute is
+ * brought back to something a person would sit through.
+ */
+export const MAX_PACE_MS = 10 * 1000
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -81,7 +89,7 @@ const TYPES = {
  * with a fast ping and a temporary rooms directory; `main` below runs it
  * from the environment.
  */
-export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = null, idleMs = IDLE_MS, now = Date.now, engineCommand = findEngine(), engineSeed = null, checkIdleMs = CHECK_IDLE_MS } = {}) {
+export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = null, idleMs = IDLE_MS, now = Date.now, engineCommand = findEngine(), engineSeed = null, checkIdleMs = CHECK_IDLE_MS, pace = PACE_MS } = {}) {
   const rooms = new Map()
   let nextSocketId = 1
 
@@ -138,7 +146,21 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     return room
   }
 
-  const makeRoom = ({ seats = MIN_SEATS, enforced = false, ai = 'heuristic' } = {}) => {
+  /**
+   * A room's pace: how long one of the engine's plays stands before the room
+   * asks for the next (`relay-engine.mjs`). The relay's own is the default;
+   * a room may be opened with its own, which is where a playback-speed preset
+   * will land. `false` or 0 turns the pacing off, and the engine's turn then
+   * arrives in one jump, as it did before there was a pace at all.
+   */
+  const paceFor = (asked) => {
+    if (asked === undefined || asked === null || asked === true) return pace
+    if (asked === false) return 0
+    const ms = Number(asked)
+    return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, MAX_PACE_MS) : pace
+  }
+
+  const makeRoom = ({ seats = MIN_SEATS, enforced = false, ai = 'heuristic', pace: asked } = {}) => {
     const n = Math.min(MAX_SEATS, Math.max(MIN_SEATS, Math.floor(Number(seats)) || MIN_SEATS))
     let code = makeCode()
     while (rooms.has(code)) code = makeCode()
@@ -153,7 +175,7 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
       const room = {
         code, mode: 'enforced', sockets: new Map(), touchedAt: now(), flushTimer: null,
         engine: createEngineRoom({
-          code, seats: n, ai: ai || null, engineCommand, seed: engineSeed,
+          code, seats: n, ai: ai || null, engineCommand, seed: engineSeed, paceMs: paceFor(asked),
           deliver, onStderr: (line) => console.error(`[${code}] ${line}`),
         }),
       }

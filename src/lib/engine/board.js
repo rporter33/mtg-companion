@@ -30,6 +30,20 @@ import { laneFor, snapToLane } from '../board/placement.js'
 import { freeAlong } from '../board/geometry.js'
 import { FIRST_STEP } from '../../data/turn-structure.js'
 
+/**
+ * What the table says while the engine is playing its own turn.
+ *
+ * A paced table stops after each of the engine's plays and says
+ * `waiting: "engine"` with `actor` the seat that made it (engine/README.md,
+ * "Pacing, and `continue`"). Moxgate's table says the opponent is thinking
+ * and asks the player for nothing meanwhile, and this says the same in
+ * words, on the plate of the seat it is waiting on — not in a colour and not
+ * in a spinner, so it is there to be read whether or not anything moves.
+ */
+export const THINKING = 'The engine is thinking…'
+export const thinkingAt = (status, seat) =>
+  Boolean(seat) && status?.waiting === 'engine' && status?.actor === seat && !status?.over
+
 /** The engine's steps, by the names this app's turn structure uses. */
 export const STEP_IDS = {
   UNTAP: 'untap', UPKEEP: 'upkeep', DRAW: 'draw',
@@ -90,6 +104,102 @@ const hiddenInstance = (id, owner, zone) => ({
   faceDown: true,
   lane: null,
 })
+
+/** A zone is named by whose it is and which it is; nothing else identifies it. */
+const zoneKey = (id) => (id?.ownerId && id?.zoneType ? `${id.ownerId}:${id.zoneType}` : null)
+const isMap = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
+/** A scalar the delta left out is one that did not change (StateDelta's own rule). */
+const kept = (next, was) => (next == null ? was : next)
+
+/**
+ * A view moved on by one of the engine's `StateDelta`s.
+ *
+ * The engine answers `view { delta: true }` with Argentum's own DTO
+ * (`rules-engine/…/view/StateDelta.kt`), and this is that DTO's contract
+ * written in JavaScript, nothing more: a null field means unchanged, a
+ * changed card arrives whole, a changed zone replaces the one with its
+ * key, `players` always arrive whole, and combat that has ended is said
+ * with `combatCleared` rather than by absence. The hijack fields overwrite
+ * rather than merge, because a hijack that ends is said by its absence.
+ *
+ * The log is the exception, and the reason for `log`. `StateDelta` carries
+ * its own `newLogEntries`, which this engine never fills — the process keeps
+ * each seat's log itself so it can mask and phrase it, and sends the new
+ * lines beside the delta instead (engine/README.md, "The log"). Both are
+ * appended, in that order, so whichever way the lines travel they arrive
+ * once and in order.
+ *
+ * Two of `ClientGameState`'s fields have no way to travel in a delta at all:
+ * `voidActive` and `activeYields` are declared on the state and on no
+ * `StateDelta`, and `StateDiffCalculator` never diffs them. So a delta-fed
+ * view keeps the last whole view's word for them, which is what Argentum's
+ * own client does with them and what the spread below does here. Nothing in
+ * this app reads either today; a screen that wanted one would need a field on
+ * Argentum's `StateDelta`, or a whole view at the moment it changed.
+ *
+ * Pure, and forgiving: given a delta it cannot make sense of — no players,
+ * a card map that is not a map, a zone with no name — it returns null, and
+ * the caller asks for the table whole rather than draw a board built on a
+ * guess.
+ */
+export function applyDelta(view, delta, { log = null } = {}) {
+  if (!isMap(view) || !isMap(delta)) return null
+  // Always whole, so a delta without them is not one.
+  if (!Array.isArray(delta.players)) return null
+  if (delta.addedCards != null && !isMap(delta.addedCards)) return null
+  if (delta.updatedCards != null && !isMap(delta.updatedCards)) return null
+  if (delta.removedCardIds != null && !Array.isArray(delta.removedCardIds)) return null
+  if (delta.updatedZones != null && !Array.isArray(delta.updatedZones)) return null
+
+  // A card is diffed whole: added, replaced, or gone from sight.
+  const cards = { ...(view.cards ?? {}) }
+  for (const [id, card] of Object.entries(delta.addedCards ?? {})) cards[id] = card
+  for (const [id, card] of Object.entries(delta.updatedCards ?? {})) cards[id] = card
+  for (const id of delta.removedCardIds ?? []) delete cards[id]
+
+  // A zone is diffed whole too, and stands in for the one with its key; a
+  // zone the view had not got yet joins the end.
+  const zones = [...(view.zones ?? [])]
+  for (const zone of delta.updatedZones ?? []) {
+    const key = zoneKey(zone?.zoneId)
+    if (!key) return null
+    const at = zones.findIndex((z) => zoneKey(z?.zoneId) === key)
+    if (at >= 0) zones[at] = zone
+    else zones.push(zone)
+  }
+
+  const lines = [
+    ...(Array.isArray(delta.newLogEntries) ? delta.newLogEntries : []),
+    ...(Array.isArray(log) ? log : []),
+  ]
+
+  return {
+    ...view,
+    cards,
+    zones,
+    players: delta.players,
+    currentPhase: kept(delta.currentPhase, view.currentPhase),
+    currentStep: kept(delta.currentStep, view.currentStep),
+    activePlayerId: kept(delta.activePlayerId, view.activePlayerId),
+    priorityPlayerId: kept(delta.priorityPlayerId, view.priorityPlayerId),
+    turnNumber: kept(delta.turnNumber, view.turnNumber),
+    isGameOver: kept(delta.isGameOver, view.isGameOver),
+    winnerId: kept(delta.winnerId, view.winnerId),
+    dayNight: kept(delta.dayNight, view.dayNight),
+    // Present means changed; cleared is said, because a combat that ended
+    // would otherwise be indistinguishable from one that did not change.
+    combat: delta.combatCleared === true ? null : kept(delta.combat, view.combat),
+    // These overwrite: the DTO sends them every time, and a Mindslaver turn
+    // that ends says so by leaving them out.
+    youAreHijacking: delta.youAreHijacking ?? null,
+    youAreHijackedBy: delta.youAreHijackedBy ?? null,
+    // Whole-game and never changing mid-game, so an engine that left it out
+    // is better believed to have meant the last word than to have cleared it.
+    hotseat: delta.hotseat ?? view.hotseat ?? false,
+    deck: kept(delta.deck, view.deck),
+    log: [...(view.log ?? []), ...lines],
+  }
+}
 
 /**
  * The board for one view.

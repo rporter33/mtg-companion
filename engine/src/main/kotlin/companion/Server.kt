@@ -53,9 +53,11 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
@@ -92,10 +94,19 @@ import java.util.Random
  *    ordering, damage assignment, mana sources — is answered by the engine's
  *    own responder for now and reported under `decided`, so the table can
  *    show what was done on the player's behalf rather than hide it.
+ *  - **What is worth watching is Law 1's question turned around.** A paced
+ *    table stops after each of the engine's own plays so they can be seen
+ *    happening, but not after a priority pass or a mana ability: the same
+ *    `MeaningfulActionFilter` answers both.
  */
 // 2: a deck line may name its printing, {"count","set","number"} or a list of those, and
 // the deal honours it. An engine at 1 reads only counts, so the relay sends it only counts.
-const val PROTOCOL = 2
+// 3: a table may be paced. "new" takes "pace", after which the table stops as soon as the
+// engine's own seat has taken one action worth watching — waiting "engine" — and "continue"
+// takes the next step; and a delta view's log carries only its seat's new lines. An
+// engine at 2 has neither: it would ignore "pace" and refuse "continue" as an unknown op, so
+// a relay that reads protocol 2 must not ask for a pace.
+const val PROTOCOL = 3
 
 private val json = Json { encodeDefaults = false; ignoreUnknownKeys = true }
 
@@ -156,9 +167,19 @@ private fun logLines(events: List<GameEvent>, viewer: EntityId, from: Step?): Li
 /** A line of one seat's log, and the step it happened in, if the game had begun one. */
 private class LogLine(val event: ClientEvent, val step: Step?)
 
-private class Table(val registry: CardRegistry, val env: GameEnvironment, val seats: List<Seat>, val seed: Long, dealt: List<GameEvent> = emptyList()) {
+private class Table(
+    val registry: CardRegistry,
+    val env: GameEnvironment,
+    val seats: List<Seat>,
+    val seed: Long,
+    /** Whether this table stops between the engine's own actions, so they can be watched. */
+    val paced: Boolean,
+    dealt: List<GameEvent> = emptyList(),
+) {
     val transformer = ClientStateTransformer(registry)
     val lastView = HashMap<EntityId, ClientGameState>()
+    /** How much of each seat's log it has been sent, so a delta carries only what is new. */
+    val sentLines = HashMap<EntityId, Int>()
     /** What each seat has been told happened, in its own words: the game log. */
     val logs = HashMap<EntityId, MutableList<LogLine>>()
     private var logged = 0
@@ -183,6 +204,13 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
     var offered: List<LegalAction> = emptyList()
     var offeredTo: EntityId? = null
 
+    /**
+     * On a paced table, the engine's seat that took the action the table stopped after;
+     * null when the table is waiting on a player, or on nothing at all. It is what
+     * `continue` acts on and what makes the status say it is waiting on the engine.
+     */
+    var pausedAfter: EntityId? = null
+
     /** What happened on the way to the current stop, reported once and cleared. */
     var autoPassed = 0
     val decided = mutableListOf<JsonObject>()
@@ -197,16 +225,30 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
      * autoPass is passed for when it has nothing affordable (Law 1); a
      * decision a human cannot answer over this protocol is answered by the
      * engine's responder and noted.
+     *
+     * A paced table stops sooner: as soon as the engine's seat has taken one
+     * action worth watching. Without that, a whole turn of the engine's arrives
+     * as one jump and there is nothing to see happen (HANDOFF.md, M2). The
+     * stopping is all that changes — the same seed plays the same game either
+     * way, because the same actions are chosen in the same order by the same
+     * players — and the waiting itself belongs to the relay, which asks for
+     * `continue` at the room's pace.
      */
     fun drive() {
         var guard = 0
         offered = emptyList(); offeredTo = null
+        pausedAfter = null
+        // The engine's seat that has acted in this step, on a paced table.
+        var acted: EntityId? = null
         while (!env.isTerminal && guard++ < 10_000) {
             val actor = env.agentToAct ?: return
             val seat = seat(actor)
             val decision = env.pendingDecision
             if (decision != null) {
                 if (seat.ai == null && decision.isAskable()) return
+                // A decision answered here — the engine's own, or one this protocol cannot
+                // put to a human — belongs to the action that raised it, so a paced table
+                // does not stop for it: a step is one action and the answers it needed.
                 val response = player(actor).respondToDecision(env.state, decision)
                 if (seat.ai == null) decided += describe(decision)
                 env.step(SubmitDecision(actor, response))
@@ -214,13 +256,24 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
             }
             val actions = env.legalActions()
             if (actions.isEmpty()) return
+            // Where a paced table stops. It is here, before the next action of any kind,
+            // rather than straight after the engine's own: what its action left to decide is
+            // decided first, so what the relay publishes is that seat having finished its go.
+            if (acted != null) { pausedAfter = acted; return }
             if (seat.ai != null) {
-                val pick = when (seat.ai) {
+                val chosen = when (seat.ai) {
                     "random" -> randoms.getOrPut(actor) { RandomActionSelector(Random(actor.value.hashCode().toLong())) }
                         .selectAction(env.state, actions)
                     else -> player(actor).chooseFrom(env.state, actions).action
                 }
-                env.step(pick)
+                // Worth stopping to watch? The engine's own judgement, the same question Law 1
+                // asks on the player's behalf a few lines below: a priority pass, a land tapped
+                // for mana or a declaration of nothing shows nothing, and a pace waited out for
+                // one would put "the engine is thinking" between every step of your own turn —
+                // the engine passes in all of them. So a step is one action there is something
+                // to see in, and a turn it does nothing in arrives whole, as it does today.
+                if (paced && actions.any { it.action == chosen && MeaningfulActionFilter.isMeaningful(it) }) acted = actor
+                env.step(chosen)
                 continue
             }
             // Law 1 asks the engine's own question: is there something here worth
@@ -254,10 +307,15 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
         put("phase", env.state.phase.name)
         put("step", env.state.step.name)
         val actor = env.agentToAct
-        put("actor", actor?.value)
+        // A paced table that has stopped after one of the engine's actions names the seat
+        // that took it, not whoever has priority now: what there is to see is what that seat
+        // did, and what the table is waiting for is the relay's next `continue`.
+        val paused = pausedAfter.takeIf { !env.isTerminal }
+        put("actor", (paused ?: actor)?.value)
         val decision = env.pendingDecision
         when {
             env.isTerminal -> put("waiting", JsonNull)
+            paused != null -> put("waiting", "engine")
             actor != null && decision != null && decision.isAskable() -> {
                 put("waiting", "decision")
                 put("decision", describe(decision, full = true))
@@ -278,17 +336,23 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
         val next = transformer.transform(env.state, viewer)
         val prev = lastView[viewer]
         lastView[viewer] = next
+        val lines = logs[viewer] ?: emptyList()
+        // A full view carries the whole log and starts the count again; a delta carries only
+        // the lines added since this seat's last view, which the client appends to the log it
+        // already holds. A paced turn asks for a view every few hundred milliseconds, and the
+        // whole log each time would soon be most of what the wire carried.
+        val since = if (delta && prev != null) sentLines[viewer] ?: 0 else 0
+        sentLines[viewer] = lines.size
         return buildJsonObject {
             put("ok", true)
-            // The whole log so far, phrased for this seat. A view is asked for
-            // once per stop, and a stop is worth a few hundred bytes of history.
-            // Most events work out their `description` as a default, which
-            // encodeDefaults = false leaves off the wire, and a line without one
-            // is a line the table cannot say: a land played and the engine's
-            // whole turn went by in silence until M1's run in a browser. So
-            // every line carries its words explicitly, and the step it happened in.
+            // The log, phrased for this seat. Most events work out their
+            // `description` as a default, which encodeDefaults = false leaves off
+            // the wire, and a line without one is a line the table cannot say: a
+            // land played and the engine's whole turn went by in silence until
+            // M1's run in a browser. So every line carries its words explicitly,
+            // and the step it happened in.
             putJsonArray("log") {
-                for (line in logs[viewer] ?: emptyList()) {
+                for (line in lines.drop(since)) {
                     val fields = json.encodeToJsonElement(ClientEvent.serializer(), line.event).jsonObject.toMutableMap()
                     fields["description"] = JsonPrimitive(line.event.description)
                     line.step?.let { fields["step"] = JsonPrimitive(it.name) }
@@ -318,6 +382,21 @@ private class Table(val registry: CardRegistry, val env: GameEnvironment, val se
         }
         env.step(action)
         env.lastRejection?.let { throw Refused("The engine refused that: $it") }
+        drive()
+        return status()
+    }
+
+    /**
+     * The next step of a paced table: the engine's seat takes one more action, and the
+     * table stops again, unless what comes next is the player's or the game has ended.
+     *
+     * Only a table dealt with a pace stops between the engine's actions, and only one
+     * stopped there has a step to take. Either way round it says so rather than quietly
+     * doing nothing, because a relay that asks is a relay that thinks it is paced.
+     */
+    fun resume(): JsonObject {
+        if (!paced) throw Refused("This table is not paced: \"new\" was sent without \"pace\", so it never stops between the engine's actions and there is nothing to continue.")
+        if (pausedAfter == null) throw Refused("Nothing is waiting on the engine. Ask for \"turn\" to see where the table stands.")
         drive()
         return status()
     }
@@ -530,6 +609,19 @@ private fun pinOf(corpus: Corpus, line: Line, card: String): PrintingRef? {
     return PrintingRef(set.uppercase(), number).takeIf { corpus.printings.getPrinting(it)?.name == card }
 }
 
+/**
+ * Whether a table was asked to be paced, from `new`'s `pace`.
+ *
+ * `true` or a number of milliseconds both mean yes. The number is the relay's own pace
+ * between steps, and the engine reads it only as a yes: it never sleeps, because one
+ * process serves one table over one line and a process that waited would hold up every
+ * other request on it. Absent, false or nothing positive is today's behaviour exactly.
+ */
+private fun pacedBy(params: JsonObject): Boolean = when (val v = params["pace"]) {
+    is JsonPrimitive -> v.booleanOrNull ?: ((v.doubleOrNull ?: 0.0) > 0.0)
+    else -> false
+}
+
 private fun newTable(corpus: Corpus, params: JsonObject): Table {
     val registry = corpus.registry
     val players = params["players"]?.jsonArray ?: throw Refused("\"players\" is required.")
@@ -585,7 +677,7 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
         val o = players[i].jsonObject
         Seat(id, configs[i].name, o["ai"]?.jsonPrimitive?.contentOrNull, o["autoPass"]?.jsonPrimitive?.boolean ?: false, leftOutOfSideboards[i], printingsMissed[i])
     }
-    return Table(registry, env, seats, seed, dealt.events)
+    return Table(registry, env, seats, seed, pacedBy(params), dealt.events)
 }
 
 private fun seatsOf(table: Table): JsonArray = buildJsonArray {
@@ -660,9 +752,16 @@ fun main() {
                     val t = newTable(corpus, req)
                     table = t
                     t.drive()
-                    JsonObject(t.status() + mapOf("seats" to seatsOf(t), "seed" to JsonPrimitive(t.seed)))
+                    // `paced` is said only when it is on, as everything else this process
+                    // leaves off the wire is: a relay sees whether the engine understood
+                    // the pace it asked for rather than assuming an older one did.
+                    JsonObject(t.status() + mapOf("seats" to seatsOf(t), "seed" to JsonPrimitive(t.seed)) +
+                        (if (t.paced) mapOf("paced" to JsonPrimitive(true)) else emptyMap()))
                 }
                 "turn" -> (table ?: throw Refused("No game yet. Send \"new\" first.")).status()
+                // One more of the engine's own actions, on a paced table. The relay asks
+                // for this at the room's pace, publishing a view between steps.
+                "continue" -> (table ?: throw Refused("No game yet. Send \"new\" first.")).resume()
                 "act" -> (table ?: throw Refused("No game yet.")).act(req["index"]?.jsonPrimitive?.int ?: throw Refused("\"index\" is required."), req)
                 "decide" -> (table ?: throw Refused("No game yet.")).decide(req)
                 "view" -> {

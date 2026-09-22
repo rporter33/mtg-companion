@@ -37,8 +37,13 @@ export function findEngine(env = process.env, platform = process.platform) {
  * `call` resolves with the reply's body (minus `id`) when `ok`, and rejects
  * with an Error carrying the engine's `error` text when not. A reply that
  * never comes — the process died — rejects every call still waiting.
+ *
+ * `onExit` is told once when the process goes, however it went. A caller with
+ * nothing waiting would otherwise not hear of it at all: a process can stop
+ * answering before its exit lands, and a room with no call in flight would
+ * learn of the death only from whatever it happened to ask next.
  */
-export function startEngine({ command, args = [], cwd, timeoutMs = 30_000, onStderr } = {}) {
+export function startEngine({ command, args = [], cwd, timeoutMs = 30_000, onStderr, onExit } = {}) {
   if (!command) throw new Error('startEngine needs a command')
   // A JavaScript file as the engine — the scripted stand-in the tests use —
   // is run by this same Node rather than executed as a program.
@@ -86,12 +91,21 @@ export function startEngine({ command, args = [], cwd, timeoutMs = 30_000, onStd
     for (const [, entry] of waiting) { clearTimeout(entry.timer); entry.reject(new Error(why)) }
     waiting.clear()
   }
+  // Whatever the listener does with the news, it must not take the bridge
+  // down with it: the waiting calls have already been told.
+  const told = (why) => { try { onExit?.(why) } catch { /* the caller's problem, not this one's */ } }
   child.on('exit', (code, signal) => {
     exited = { code, signal }
     fail(`The engine stopped (${signal ?? `exit ${code}`}).`)
     settleExit()
+    told(`The engine stopped (${signal ?? `exit ${code}`}).`)
   })
-  child.on('error', (err) => { exited = { error: err }; fail(`The engine could not start: ${err.message}`); settleExit() })
+  child.on('error', (err) => {
+    exited = { error: err }
+    fail(`The engine could not start: ${err.message}`)
+    settleExit()
+    told(`The engine could not start: ${err.message}`)
+  })
 
   // One call may be given longer than the rest: the first answer waits on the
   // whole card corpus loading, and no later one should wait that long before

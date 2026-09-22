@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { createServer, request } from 'node:http'
 import { createRelay } from '../scripts/relay-server.mjs'
+import { createEngineRoom, PACE_MS } from '../scripts/relay-engine.mjs'
 import { guest, KIND, PROTOCOL } from '../src/lib/board/net.js'
 import { relay, rooms as roomsApi } from '../src/lib/board/relay.js'
 import { handOf, invariants } from '../src/lib/board/model.js'
@@ -30,6 +31,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const until = async (test, ms = 2000) => {
   const start = Date.now()
   while (!test()) {
+    if (Date.now() - start > ms) throw new Error('gave up waiting')
+    await sleep(10)
+  }
+}
+/** The same, for something only the engine can be asked. */
+const untilAsked = async (test, ms = 2000) => {
+  const start = Date.now()
+  while (!(await test())) {
     if (Date.now() - start > ms) throw new Error('gave up waiting')
     await sleep(10)
   }
@@ -302,12 +311,12 @@ describe('an enforced room', () => {
   const DECK = { Mountain: 14, 'Raging Goblin': 6 }
 
   /** A client at an enforced room: the raw messages, kept. */
-  async function join(code, name, { deck = DECK, seat = null, sideboard = null } = {}) {
+  async function join(code, name, { deck = DECK, seat = null, sideboard = null, deltas = false } = {}) {
     const api = roomsApi(base)
     const got = []
     const wire = relay({ url: api.socketUrl(code), WebSocket })
     wire.onMessage((m) => got.push(m))
-    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat, ...(sideboard ? { sideboard } : {}) }))
+    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat, ...(sideboard ? { sideboard } : {}), ...(deltas ? { deltas: true } : {}) }))
     const last = (op) => [...got].reverse().find((m) => m.t === 'engine' && m.op === op) ?? null
     await until(() => last('seated'))
     return { got, wire, last, send: (m) => wire.send({ t: 'engine', ...m }), leave: () => wire.close() }
@@ -441,6 +450,346 @@ describe('an enforced room', () => {
     expect(again.last('seated')).toMatchObject({ seat: 'p1', engineSeat: 'e0' })
     expect(again.last('status').status.waiting).toBe('action')
     again.leave()
+  })
+
+  /**
+   * Watching the engine take its turn (HANDOFF.md, M2). A paced table stops
+   * after each of the engine's own plays and the room takes the next step at
+   * its pace, so what arrives on the wire is the turn happening rather than
+   * the turn having happened. The stand-in engine plays as many as a test says
+   * with `plays`: the captured shots are the player's stops alone.
+   */
+  describe('watching the engine play', () => {
+    /** A room of the relay's, opened with a pace of its own. */
+    const openPaced = async (pace, { seats = 2 } = {}) => {
+      const res = await fetch(`${base}/rooms`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ seats, enforced: true, pace }),
+      })
+      return res.json()
+    }
+    const engineAt = (code) => relayServer.rooms.get(code).engine.engine
+    const views = (client) => client.got.filter((m) => m.op === 'view')
+    const stops = (client) => client.got.filter((m) => m.op === 'status')
+
+    it('takes the engine\'s turn a step at a time, and publishes a view after each', async () => {
+      const { code } = await openPaced(20)
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const engine = engineAt(code)
+      await engine.call('plays', { count: 3 })
+      const seen = views(you).length
+      const { stop } = you.last('status').status
+      you.send({ op: 'act', stop, index: 0 })
+      await until(() => you.last('status').status.stop === stop + 4, 5000)
+      // Three of the engine's plays, each its own stop, each saying whose it
+      // was and offering nothing; then the table is the player's again.
+      expect(you.last('status').status.waiting).toBe('action')
+      const engineStops = stops(you).filter((m) => m.status.waiting === 'engine')
+      expect(engineStops).toHaveLength(3)
+      expect(engineStops.every((m) => m.status.actor === 'e1')).toBe(true)
+      expect(engineStops.every((m) => !m.status.actions && !m.status.decision)).toBe(true)
+      expect(you.last('status').status.stop).toBe(stop + 4)
+      // A status and the view it belongs to are two messages, and the status
+      // is sent first, so the last view is waited for rather than counted
+      // while it is still in flight.
+      await until(() => views(you).length === seen + 4, 5000)
+      // One continue a step, and not one more.
+      expect((await engine.call('tally')).continues).toBe(3)
+      you.leave()
+    })
+
+    it('waits the room\'s own pace between steps, and six hundred milliseconds where a room has none', async () => {
+      // The waiting itself is faked: what is under test is how long the room
+      // asks for, not that a test can sit through it.
+      const runOne = async (paceMs) => {
+        const waits = []
+        const sent = []
+        const socket = { id: 's1', seat: null }
+        const room = createEngineRoom({
+          code: 'PACED', seats: 2, ai: 'heuristic', engineCommand: FAKE_ENGINE,
+          deliver: (_socket, m) => sent.push(m), wait: async (ms) => { waits.push(ms) },
+          ...(paceMs === undefined ? {} : { paceMs }),
+        })
+        const last = (op) => [...sent].reverse().find((m) => m.op === op) ?? null
+        room.join(socket)
+        room.receive({ t: 'engine', op: 'sit', name: 'Robin', deck: DECK }, socket)
+        await until(() => last('view'), 5000)
+        await room.engine.call('plays', { count: 2 })
+        const { stop } = last('status').status
+        room.receive({ t: 'engine', op: 'act', stop, index: 0 }, socket)
+        // The act's own stop, then one for each of the engine's two plays.
+        await until(() => last('status').status.stop === stop + 3, 5000)
+        await room.close()
+        return waits
+      }
+      expect(await runOne(25)).toEqual([25, 25])
+      expect(await runOne(undefined)).toEqual([PACE_MS, PACE_MS])
+      // The number itself, not only that the room fell back to it: read from
+      // the module under test, the line above holds for any default at all,
+      // including one that left each of the engine's plays standing for five
+      // seconds. Six hundred milliseconds is the pace M2 chose.
+      expect(PACE_MS).toBe(600)
+    })
+
+    it('sends the table whole once, then deltas, numbered, each carrying only the log lines added since', async () => {
+      const { code } = await openPaced(20)
+      const you = await join(code, 'Robin', { deltas: true })
+      await until(() => you.last('view'), 5000)
+      const first = views(you)[0]
+      expect(first.seq).toBe(1)
+      expect(first.state).toBeTruthy()
+      expect(first.delta).toBeUndefined()
+      await engineAt(code).call('plays', { count: 2 })
+      you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
+      await until(() => views(you).length === 4, 5000)
+      const after = views(you).slice(1)
+      expect(after.map((m) => m.seq)).toEqual([2, 3, 4])
+      expect(after.every((m) => m.delta && !m.state)).toBe(true)
+      // The delta is Argentum's own: players whole, the log beside it rather
+      // than inside it, and nothing said for what did not change.
+      expect(after.every((m) => Array.isArray(m.delta.players))).toBe(true)
+      expect(after.every((m) => m.delta.newLogEntries === undefined)).toBe(true)
+      // Each line of the log arrives once, in order, across the deltas.
+      expect(after.flatMap((m) => m.log.map((l) => l.description))).toEqual([
+        'Something happened (1)', 'Something happened (2)', 'Something happened (3)', 'Something happened (4)',
+      ])
+      you.leave()
+    })
+
+    it('sends whole views to a client that never said it could apply a delta', async () => {
+      const { code } = await openPaced(20)
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await engineAt(code).call('plays', { count: 2 })
+      you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
+      await until(() => views(you).length === 4, 5000)
+      expect(views(you).every((m) => m.state && !m.delta)).toBe(true)
+      expect(views(you).map((m) => m.seq)).toEqual([1, 2, 3, 4])
+      // Whole means whole: the log comes with it every time, not in pieces.
+      expect(views(you)[3].log.map((l) => l.description)).toEqual([
+        'Something happened (1)', 'Something happened (2)', 'Something happened (3)', 'Something happened (4)',
+      ])
+      you.leave()
+    })
+
+    it('answers a resync with the table whole, numbered on from the view that was missed', async () => {
+      const { code } = await openPaced(20)
+      const you = await join(code, 'Robin', { deltas: true })
+      await until(() => you.last('view'), 5000)
+      await engineAt(code).call('plays', { count: 0 })
+      you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
+      await until(() => views(you).length === 2, 5000)
+      expect(views(you)[1].delta).toBeTruthy()
+      you.send({ op: 'resync' })
+      await until(() => views(you).length === 3, 5000)
+      const whole = views(you)[2]
+      expect(whole.seq).toBe(3)
+      expect(whole.state).toBeTruthy()
+      expect(whole.delta).toBeUndefined()
+      // And the whole log with it, so a client that missed a delta replaces
+      // what it held rather than appending to a log with a hole in it.
+      expect(whole.log.map((l) => l.description)).toEqual(['Something happened (1)'])
+      you.leave()
+    })
+
+    it('stops when the last socket goes, and takes the turn up again when somebody sits back down', async () => {
+      const { code } = await openPaced(40)
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const engine = engineAt(code)
+      await engine.call('plays', { count: 6 })
+      you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
+      await until(() => you.last('status').status.waiting === 'engine', 5000)
+      you.leave()
+      await until(() => relayServer.rooms.get(code).sockets.size === 0, 2000)
+      const stopped = (await engine.call('tally')).continues
+      await sleep(200)
+      expect((await engine.call('tally')).continues).toBe(stopped)
+      const again = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await untilAsked(async () => (await engine.call('tally')).continues > stopped, 5000)
+      await until(() => again.last('status')?.status.waiting === 'action', 5000)
+      again.leave()
+    })
+
+    it('stops when the last seat is empty, even with a socket still in the room', async () => {
+      // A socket is in the room from the moment it connects, seat or no seat,
+      // and a sit refused for want of one leaves it there. It can be sent no
+      // view — `sendView` has no seat to send one to — so a turn driven for it
+      // is a turn nobody watches and a round trip a step for nothing.
+      const { code } = await openPaced(40)
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const spare = await new Promise((resolve) => {
+        const got = []
+        const wire = relay({ url: roomsApi(base).socketUrl(code), WebSocket })
+        wire.onMessage((m) => { got.push(m); if (m.op === 'refused') resolve({ got, leave: () => wire.close() }) })
+        wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name: 'Sam', deck: DECK }))
+      })
+      expect(spare.got.some((m) => m.op === 'refused' && /Every seat is taken/.test(m.error))).toBe(true)
+      const engine = engineAt(code)
+      await engine.call('plays', { count: 6 })
+      you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
+      await until(() => you.last('status').status.waiting === 'engine', 5000)
+      you.leave()
+      await until(() => relayServer.rooms.get(code).sockets.size === 1, 2000)
+      const stopped = (await engine.call('tally')).continues
+      await sleep(250)
+      expect((await engine.call('tally')).continues).toBe(stopped)
+      spare.leave()
+    })
+
+    it('takes the chain up again when a view never reaches a seat, rather than leaving a hole in it', async () => {
+      // The engine moves a seat on as it builds the reply — its own last view
+      // for that seat, and its count of the lines sent — so a view the room
+      // never got has still advanced it, and the delta after it would be
+      // against a view nobody holds. The numbers would stay consecutive, and
+      // the client would see nothing wrong.
+      const { code } = await openPaced(20)
+      const you = await join(code, 'Robin', { deltas: true })
+      await until(() => you.last('view'), 5000)
+      const engine = engineAt(code)
+      await engine.call('dropViews', { count: 1 })
+      await engine.call('plays', { count: 2 })
+      you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
+      await until(() => views(you).length === 3, 5000)
+      const after = views(you).slice(1)
+      // The lost one is not sent at all, and what follows it is the table
+      // whole: a delta chain that has a hole in it is started again.
+      expect(after[0].state).toBeTruthy()
+      expect(after[0].delta).toBeUndefined()
+      // With the whole log, so not one line went with the view that was lost.
+      expect(after[0].log.map((l) => l.description)).toEqual([
+        'Something happened (1)', 'Something happened (2)', 'Something happened (3)',
+      ])
+      // And deltas again from there.
+      expect(after[1].delta).toBeTruthy()
+      expect(after[1].log.map((l) => l.description)).toEqual(['Something happened (4)'])
+      you.leave()
+    })
+
+    it('gives up on a turn the engine will not take, and says so rather than leave the table thinking', async () => {
+      const { code } = await openPaced(20)
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const engine = engineAt(code)
+      await engine.call('plays', { count: 6 })
+      you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
+      await until(() => you.last('status').status.waiting === 'engine', 5000)
+      // Alive, still saying the turn is its own, and refusing every step of
+      // it: a call that timed out looks exactly like this from the room.
+      await engine.call('sulk')
+      await until(() => you.last('gone'), 5000)
+      expect(you.last('gone').reason).toMatch(/stopped taking its turn/)
+      // Bounded: it tried a few times and then stopped, rather than asking a
+      // broken engine once a pace for the rest of the game.
+      const tried = (await engine.call('tally')).continues
+      await sleep(200)
+      expect((await engine.call('tally')).continues).toBe(tried)
+      you.leave()
+    })
+
+    it('takes up one loop only when somebody rejoins a seat mid-turn', async () => {
+      // A sit takes the turn up again — whoever came back mid-turn is who the
+      // pace was waiting for — and without the guard that is a second loop on
+      // the same room: two steps asked for per pace, two publishes to the same
+      // seats, and view numbers handed out against views fetched out of order.
+      // An act mid-turn cannot start one (it is refused before it reaches
+      // `drive`), so a rejoin is the only way in. Counted rather than timed:
+      // the room's own wait is faked, and what is watched is how many of them
+      // are outstanding at once, which is one loop or two and nothing else.
+      const sent = []
+      let waiting = 0
+      let atOnce = 0
+      const first = { id: 's1', seat: null }
+      const back = { id: 's2', seat: null }
+      const room = createEngineRoom({
+        code: 'REJOIN', seats: 2, ai: 'heuristic', engineCommand: FAKE_ENGINE, paceMs: 5,
+        deliver: (socket, m) => sent.push({ socket, ...m }),
+        wait: async () => { waiting++; atOnce = Math.max(atOnce, waiting); await sleep(5); waiting-- },
+      })
+      const last = (op) => [...sent].reverse().find((m) => m.op === op) ?? null
+      room.join(first)
+      room.receive({ t: 'engine', op: 'sit', name: 'Robin', deck: DECK, deltas: true }, first)
+      await until(() => last('view'), 5000)
+      await room.engine.call('plays', { count: 8 })
+      room.receive({ t: 'engine', op: 'act', stop: last('status').status.stop, index: 0 }, first)
+      await until(() => last('status').status.waiting === 'engine', 5000)
+      room.join(back)
+      room.receive({ t: 'engine', op: 'sit', name: 'Robin', seat: 'p1', deck: null, deltas: true }, back)
+      await until(() => last('status').status.waiting === 'action', 5000)
+      expect(atOnce).toBe(1)
+      // One step a play, and not one more.
+      expect((await room.engine.call('tally')).continues).toBe(8)
+      // The rejoin ends the first socket from inside `sit`, so the numbers are
+      // read from the one that took the seat: consecutive, none twice.
+      const seqs = sent.filter((m) => m.op === 'view' && m.socket === back).map((m) => m.seq)
+      expect(seqs.length).toBeGreaterThan(1)
+      expect(seqs.slice(1).every((n, i) => n === seqs[i] + 1)).toBe(true)
+      const numbers = sent.filter((m) => m.op === 'status' && m.socket === back).map((m) => m.status.stop)
+      expect(new Set(numbers).size).toBe(numbers.length)
+      await room.close()
+    })
+
+    it('refuses a player who acts while the engine is mid-turn, and the turn goes on without a second loop', async () => {
+      const { code } = await openPaced(30)
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const engine = engineAt(code)
+      await engine.call('plays', { count: 3 })
+      you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
+      await until(() => you.last('status').status.waiting === 'engine', 5000)
+      you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
+      await until(() => you.last('refused'), 5000)
+      expect(you.last('refused').error).toMatch(/not you/)
+      await until(() => you.last('status').status.waiting === 'action', 5000)
+      expect((await engine.call('tally')).continues).toBe(3)
+      you.leave()
+    })
+
+    it('reports an engine that dies mid-turn, as it reports one that dies at any other time', async () => {
+      const { code } = await openPaced(40)
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const engine = engineAt(code)
+      await engine.call('plays', { count: 6 })
+      you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
+      await until(() => you.last('status').status.waiting === 'engine', 5000)
+      await engine.call('die').catch(() => {})
+      await until(() => you.last('gone'), 5000)
+      // Whichever way round it happened — the step in flight when the process
+      // went, or the one asked for after — the room says so in the engine's
+      // own words, once, exactly as it does for an act that finds it dead.
+      expect(you.last('gone').reason).toMatch(/The engine (stopped|is not running)/)
+      you.leave()
+    })
+
+    it('never asks an older engine for a pace, a continue or a delta', async () => {
+      // The environment is read when the relay starts that room's engine, at the sit.
+      process.env.FAKE_PROTOCOL = '2'
+      try {
+        const { code } = await openPaced(20)
+        const you = await join(code, 'Robin', { deltas: true })
+        await until(() => you.last('view'), 5000)
+        const engine = engineAt(code)
+        expect('pace' in (await engine.call('lastNew')).request).toBe(false)
+        expect(relayServer.rooms.get(code).engine.describe().paced).toBe(false)
+        // It would stop, if it had been asked to and could be continued.
+        await engine.call('plays', { count: 3 })
+        const { stop } = you.last('status').status
+        you.send({ op: 'act', stop, index: 0 })
+        await until(() => you.last('status').status.stop === stop + 1, 5000)
+        await sleep(150)
+        expect((await engine.call('tally')).continues).toBe(0)
+        expect(you.got.some((m) => m.op === 'status' && m.status.waiting === 'engine')).toBe(false)
+        // And its views come whole, because its deltas carry a log this relay
+        // would append twice.
+        expect(views(you).every((m) => m.state && !m.delta)).toBe(true)
+        you.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
+    })
   })
 
   it('is not written to disk, and its engine goes when the relay does', async () => {

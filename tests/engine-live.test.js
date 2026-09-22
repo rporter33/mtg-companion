@@ -27,7 +27,7 @@ describe.skipIf(!command)('the engine on the wire', () => {
 
   it('says who it is, and knows the whole corpus rather than one set', async () => {
     expect(hello.engine).toBe('argentum')
-    expect(hello.protocol).toBe(2)
+    expect(hello.protocol).toBe(3)
     expect(hello.cards).toBeGreaterThan(12_000)
     expect(hello.sets.length).toBeGreaterThan(100)
     expect(hello.sets.find((s) => s.code === 'POR')).toEqual({ code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false })
@@ -296,6 +296,140 @@ describe.skipIf(!command)('the engine on the wire', () => {
     expect(Number.isSafeInteger(c.seed)).toBe(true)
     expect((await playOut(c.seed)).course).toEqual(c.course)
   }, 300_000)
+
+  // The human seat these tests play: the first thing worth doing that needs no
+  // target, else a pass. The same choice as every other game here, so a paced
+  // game and an unpaced one are played by the same player.
+  const plainest = (status) =>
+    status.actions.find((a) => a.meaningful && a.affordable && !a.requiresTargets)
+      ?? status.actions.find((a) => a.type === 'PassPriority')
+
+  it('stops after each of the engine\'s plays when the table is paced, and says whose they are', async () => {
+    let status = await engine.call('new', {
+      players: [{ name: 'You', deck, autoPass: true }, { name: 'Bot', deck, ai: 'heuristic' }],
+      seed: 20260922,
+      // A number of milliseconds is the relay's own pace between steps; the
+      // engine reads it only as a yes, and never waits itself.
+      pace: 600,
+    })
+    expect(status.paced).toBe(true)
+    const you = status.seats[0].id
+    const bot = status.seats[1].id
+
+    // The whole log once, then only what each delta adds: appending them must
+    // rebuild the log exactly, or a watched turn would draw a wrong one.
+    const first = await engine.call('view', { viewer: you })
+    expect(first.state).toBeDefined()
+    const assembled = first.log.map((l) => JSON.stringify(l))
+    let longestDelta = 0
+    let refusedMidTurn = false
+    // How often the engine's own turn was watched in pieces, by turn number.
+    const stopsInTurn = new Map()
+
+    for (let steps = 0; !status.over && steps < 250; steps++) {
+      const v = await engine.call('view', { viewer: you, delta: true })
+      expect(v.delta).toBeDefined()
+      expect(v.state).toBeUndefined()
+      expect(v.log.filter((l) => typeof l.description !== 'string' || !l.description)).toEqual([])
+      assembled.push(...v.log.map((l) => JSON.stringify(l)))
+      longestDelta = Math.max(longestDelta, v.log.length)
+
+      if (status.waiting === 'engine') {
+        // The seat that acted, and nothing to do about it: this is a stop to
+        // watch, not one to answer.
+        expect(status.actor).toBe(bot)
+        expect(status.actions).toBeUndefined()
+        expect(status.decision).toBeUndefined()
+        stopsInTurn.set(status.turn, (stopsInTurn.get(status.turn) ?? 0) + 1)
+        status = await engine.call('continue')
+      } else if (status.waiting === 'decision') {
+        status = await engine.call('decide', { auto: true })
+      } else if (status.waiting === 'action') {
+        expect(status.actor).toBe(you)
+        if (!refusedMidTurn) {
+          // Waiting on the player is not waiting on the engine, and a relay that
+          // asks anyway is told so rather than left believing it stepped.
+          await expect(engine.call('continue')).rejects.toThrow(/Nothing is waiting on the engine/)
+          refusedMidTurn = true
+        }
+        status = await engine.call('act', { index: plainest(status).index })
+      } else break
+    }
+
+    // The engine's turn arrives in pieces, not as one jump: more than one stop
+    // inside a turn of its own, each after a single play of its own. And none
+    // inside a turn of yours — it passes priority in every window of those, and
+    // a pace waited out for a pass would pace a turn it is only watching.
+    expect(Math.max(...stopsInTurn.values())).toBeGreaterThan(1)
+    expect([...stopsInTurn.values()].reduce((a, b) => a + b, 0)).toBeGreaterThan(10)
+    expect(refusedMidTurn).toBe(true)
+    // Two seats, you start, and nothing in this deck takes an extra turn, so the
+    // engine's turns are the even ones and every stop should be in one of them.
+    expect([...stopsInTurn.keys()].filter((t) => t % 2 === 1)).toEqual([])
+
+    // One last delta for whatever the final act did, then the whole log: the
+    // lines appended along the way are exactly it, in order and once each.
+    const last = await engine.call('view', { viewer: you, delta: true })
+    assembled.push(...last.log.map((l) => JSON.stringify(l)))
+    const whole = await engine.call('view', { viewer: you })
+    expect(whole.state).toBeDefined()
+    expect(assembled).toEqual(whole.log.map((l) => JSON.stringify(l)))
+    expect(whole.log.length).toBeGreaterThan(30)
+    // And no delta carried the log over again: the point of sending only what
+    // is new is that a turn watched at 600 ms does not resend it every time.
+    expect(longestDelta).toBeLessThan(whole.log.length / 2)
+  }, 300_000)
+
+  it('plays the same game paced and unpaced, so the stopping is all a pace changed', async () => {
+    // The same seed, the same decks, the same player: the course is every stop
+    // the player was given and what was done there, and then who won.
+    const playOut = async (paced) => {
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck, autoPass: true }, { name: 'Bot', deck, ai: 'heuristic' }],
+        seed: 20260922,
+        ...(paced ? { pace: true } : {}),
+      })
+      expect(status.paced).toBe(paced ? true : undefined)
+      const you = status.seats[0].id
+      const opening = (await engine.call('view', { viewer: you })).state
+      const hand = opening.zones.find((z) => z.zoneId.zoneType === 'Hand' && z.zoneId.ownerId === you)
+      const course = [hand.cardIds.map((id) => opening.cards[id].name).join(', ')]
+      let engineStops = 0
+      // Held to the same number of the player's own stops either way, so the two
+      // runs cover the same game however far it gets; the guard is only there so
+      // a paced run's many small steps cannot spin.
+      for (let guard = 0; !status.over && course.length < 120 && guard < 20_000; guard++) {
+        if (status.waiting === 'engine') { engineStops++; status = await engine.call('continue') }
+        else if (status.waiting === 'decision') status = await engine.call('decide', { auto: true })
+        else if (status.waiting === 'action') {
+          const pick = plainest(status)
+          course.push(`${status.turn} ${status.step}: ${pick.description}`)
+          status = await engine.call('act', { index: pick.index })
+        } else break
+      }
+      course.push(`won by ${status.winner}`)
+      return { course, engineStops }
+    }
+
+    const plain = await playOut(false)
+    const paced = await playOut(true)
+    expect(paced.course).toEqual(plain.course)
+    // An end, not a shared cap: this game is won, and both runs win it the same
+    // way on the same turn. And the paced run really did stop along the way,
+    // which is the only difference there was to make.
+    expect(plain.course.at(-1)).toMatch(/^won by e/)
+    expect(plain.course.length).toBeGreaterThan(10)
+    expect(plain.engineStops).toBe(0)
+    expect(paced.engineStops).toBeGreaterThan(5)
+  }, 420_000)
+
+  it('refuses to be continued at a table that was never paced', async () => {
+    await engine.call('new', {
+      players: [{ name: 'You', deck, autoPass: true }, { name: 'Bot', deck, ai: 'random' }],
+      seed: 12,
+    })
+    await expect(engine.call('continue')).rejects.toThrow(/not paced/)
+  }, 60_000)
 })
 
 if (!command) {

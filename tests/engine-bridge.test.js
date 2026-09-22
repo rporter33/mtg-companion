@@ -19,7 +19,7 @@ describe('the engine bridge', () => {
   it('correlates replies to requests by id and strips the envelope', async () => {
     const e = fake()
     const [a, b] = await Promise.all([e.call('hello'), e.call('echo', { x: 1 })])
-    expect(a).toMatchObject({ engine: 'fake', protocol: 2, cards: 3 })
+    expect(a).toMatchObject({ engine: 'fake', protocol: 3, cards: 3 })
     expect(b.got).toMatchObject({ op: 'echo', x: 1 })
     expect(b.got.id).toBeTypeOf('number')
   })
@@ -53,6 +53,18 @@ describe('the engine bridge', () => {
     await expect(pending).rejects.toThrow(/stopped/)
     expect(e.exited).toMatchObject({ code: 3 })
     await expect(e.call('hello')).rejects.toThrow(/not running/)
+  })
+
+  it('says the engine has gone once, to a caller with nothing waiting to hear it', async () => {
+    // A room between steps has no call in flight, so without this it would
+    // learn of a death only from whatever it happened to ask next — and a
+    // paced room asks nothing while it is waiting out its own pace.
+    const said = []
+    const e = fake({ onExit: (why) => said.push(why) })
+    await e.call('hello')
+    await expect(e.call('die')).rejects.toThrow(/stopped/)
+    expect(said).toHaveLength(1)
+    expect(said[0]).toMatch(/The engine stopped/)
   })
 
   it('gives up on a reply that never comes', async () => {

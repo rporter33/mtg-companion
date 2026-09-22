@@ -29,6 +29,7 @@ import TokenMaker from '../../components/table/TokenMaker.jsx'
 import Printings from '../../components/Printings.jsx'
 import Confirm from '../../components/Confirm.jsx'
 import { nameList } from '../../lib/engine/deck.js'
+import { THINKING, thinkingAt } from '../../lib/engine/board.js'
 import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
 import useEngineRoom from './useEngineRoom.js'
@@ -558,6 +559,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
         </div>
       ) : others.map((them) => {
         const sitting = seatOf(them)
+        // A paced table stops after each of the engine's plays and says it is
+        // waiting on itself; the plate says so in words, where the seat's own
+        // state is already read, and the prompt panel says nothing, as
+        // Moxgate's does (docs/MOXGATE_STUDY.md; HANDOFF.md, M2).
+        const thinking = thinkingAt(status, them)
         const theirHand = handOf(board, them).length
         const theirCommander = zoneOf(board, them, 'command')[0]
         const face = theirCommander && showImages ? artUrl(cardFor(theirCommander)) : null
@@ -565,7 +571,8 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
           <div className={`game__them game__them--seated${sitting?.here ? '' : ' game__them--away'}`} key={them} data-seat={them}>
             <Plate
               who="them"
-              status={!sitting ? 'Open seat' : !sitting.here ? 'Away' : board.active === them ? 'Their turn' : 'Waiting'}
+              status={thinking ? THINKING : !sitting ? 'Open seat' : !sitting.here ? 'Away' : board.active === them ? 'Their turn' : 'Waiting'}
+              thinking={thinking}
               active={board.active === them}
               name={nameOfSeat(them)}
               life={sitting ? board.life[them] : null}
@@ -587,6 +594,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                   <Tag
                     key={zone}
                     data-zone={zone}
+                    // A pile nobody may look through is not a control, and a
+                    // bare span is a role that may not be named: it is a
+                    // picture of a pile with a count, and says so, or its
+                    // label is thrown away (found by the axe sweep, 2026-09-22).
+                    role={open ? undefined : 'img'}
                     className={`ztile${open ? '' : ' ztile--closed'}${zoneOpen === zone && zoneWho === them ? ' ztile--open' : ''}`}
                     onClick={open ? () => openZone(zone, them) : undefined}
                     aria-expanded={open ? zoneOpen === zone && zoneWho === them : undefined}
@@ -999,11 +1011,20 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
  * A life plate: the status word or phase pill, the name, the life with its
  * steppers, and whatever the seat wants under it. The active seat wears a
  * ring, which is how Moxgate says whose turn it is without a word.
+ *
+ * `thinking` is the engine taking its own turn a play at a time. It is a
+ * sentence rather than a word, so the pill reads as one and is allowed to
+ * breathe; the breathing stops under reduced motion, and nothing about the
+ * state is said by that motion alone. It is not a live region: the words are
+ * the seat's own state, read where the seat is, and a turn's worth of plays
+ * announced one after another would talk over a player reading their hand.
+ * What the engine did is in the log, which is a record to be read rather
+ * than an announcement.
  */
-function Plate({ who, status, active = false, name, life, onLife, children }) {
+function Plate({ who, status, active = false, thinking = false, name, life, onLife, children }) {
   return (
     <section className={`plate plate--${who}${active ? ' plate--active' : ''}`} aria-label={`${name}: ${status}${life == null ? '' : `, ${life} life`}`}>
-      <span className={`plate__status${active ? ' plate__status--turn' : ''}`}>{status}</span>
+      <span className={`plate__status${active ? ' plate__status--turn' : ''}${thinking ? ' plate__status--thinking' : ''}`}>{status}</span>
       <span className="plate__name">{name}</span>
       <div className="plate__life">
         {onLife && <button className="plate__step" onClick={() => onLife(-1)} aria-label="Lose 1 life">−</button>}
@@ -1029,6 +1050,11 @@ function Plate({ who, status, active = false, name, life, onLife, children }) {
  * pressing it does. It appears only when there is something to answer or
  * a pass to make; the engine never stops the player where there is
  * nothing to do, so a quiet table is one where it is not their stop.
+ *
+ * A paced table stops after each of the engine's own plays, and those stops
+ * name the engine's seat as the actor, so this says nothing through the whole
+ * of the engine's turn — Moxgate's own behaviour. What is happening is on the
+ * engine's plate, and what happened is in the log.
  */
 function EnginePrompt({ status, me, step, chosen, blocks, blocker, declaring, blocking, nameOf, onAct, onDecide }) {
   if (status.over) {

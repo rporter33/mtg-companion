@@ -56,15 +56,16 @@ One request per line, one reply per line, correlated by `id`:
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"engine":"argentum","protocol":2,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"load":{"ms":15207,"heapMb":110,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order |
+| `{"op":"hello"}` | `{"engine":"argentum","protocol":3,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"load":{"ms":15207,"heapMb":110,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order |
 | `{"op":"cards"}` | `{"names":[…]}` — every name a deck may hold: no tokens and no back faces, though the engine knows both |
 | `{"op":"check","deck":{"Delver of Secrets // Insectile Aberration":4,"Made-Up Card":2},"sideboard":{…}}` | `{"known":4,"total":6,"unknown":["Made-Up Card"],"unknownSideboard":[]}` — which of a deck's cards the engine knows, before any game; unknown names come back exactly as sent |
-| `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic"}],"seed":20260921}` | the table's status (below) plus `seats` and the `seed` it was dealt from; each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got |
+| `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic"}],"seed":20260921,"pace":true}` | the table's status (below) plus `seats` and the `seed` it was dealt from, and `paced` when the table was paced; each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got |
 | `{"op":"turn"}` | the table's status |
+| `{"op":"continue"}` | the next step of a paced table: the status once the engine's seat has made its next play |
 | `{"op":"act","index":3}` | the status after that action and everything that followed it |
 | `{"op":"act","index":0,"attackers":{"e16":"e1"}}` / `{"blockers":{"e20":["e16"]}}` | a declare-attackers or declare-blockers offer, filled in: which creatures, at whom |
 | `{"op":"decide","targets":{"0":["e12"]}}` / `{"yes":true}` / `{"option":1}` / `{"auto":true}` | likewise |
-| `{"op":"view","viewer":"<seat id>","delta":true}` | `{"state":ClientGameState,"log":[ClientEvent…]}` first, `{"delta":StateDelta,"log":[…]}` after; the log is everything that seat has been told so far, phrased for it |
+| `{"op":"view","viewer":"<seat id>","delta":true}` | `{"state":ClientGameState,"log":[ClientEvent…]}` first, `{"delta":StateDelta,"log":[…]}` after; a full view's `log` is everything that seat has been told so far, a delta's only what is new since its last view |
 | `{"op":"quit"}` | `{"ok":true}` and the process ends |
 
 The status is where the table stands and what it is waiting for:
@@ -84,11 +85,13 @@ stopping for (a mana ability is not, and is marked `mana`); a
 declare-attackers offer carries `validAttackers` and `validAttackTargets`,
 a declare-blockers one `validBlockers`.
 
-`waiting` is `"action"` with `actions`, `"decision"` with `decision`, or null
-when the game is over or nobody is to act. `autoPassed` is how many priority
-windows the server passed on the human's behalf since the last stop, because
-nothing meaningful was affordable there (FRICTION.md Law 1, asked with the
-engine's own `MeaningfulActionFilter`). `decided` lists the
+`waiting` is `"action"` with `actions`, `"decision"` with `decision`,
+`"engine"` on a paced table that has stopped after one of the engine's own
+plays (nothing on offer, nothing to decide, and `actor` the seat that made
+it), or null when the game is over or nobody is to act. `autoPassed` is how
+many priority windows the server passed on the human's behalf since the last
+stop, because nothing meaningful was affordable there (FRICTION.md Law 1,
+asked with the engine's own `MeaningfulActionFilter`). `decided` lists the
 decisions the engine's responder answered for a human seat because this
 protocol cannot yet ask them (ordering, damage assignment, mana sources), so
 the table can say so.
@@ -103,6 +106,42 @@ come back as a different game. The relay passes a seed only when told to
 (`createRelay({ engineSeed })`), which the engine's browser spec does so as
 to play one known game.
 
+**Pacing, and `continue`.** Without a pace the process runs every one of the
+engine's actions before it answers, so a whole turn of the engine's arrives as
+one jump and there is nothing to watch. `new` takes `pace` — `true`, or the
+relay's own pace in milliseconds, which the engine reads only as a yes — and
+the table then stops as soon as the engine's seat has taken one action worth
+watching, with `waiting: "engine"`, `actor` that seat and nothing on offer.
+`continue` takes the next step and answers the same way; when what comes next
+is the player's turn to act or the game has ended, the status is what it would
+have been without a pace. A decision the engine answers for itself belongs to
+the action that raised it and is not a stop of its own. The waiting itself is
+the relay's: this process never sleeps, because one line serves one table and a
+sleeping process holds up every request on it.
+
+"Worth watching" is `MeaningfulActionFilter` again — the engine's own
+judgement, the same question Law 1 asks on the player's behalf. A priority
+pass, a land tapped for mana and a declaration of nothing are not worth a
+pace: the engine passes in every window of *your* turn too, so pausing for
+those would put "the engine is thinking" between every step of a turn it is
+only watching. What is left is what a person would call a play — a land, a
+spell, an ability, a real attack or block — and a turn the engine does nothing
+in arrives whole, as it does without a pace, because there was nothing in it
+to see.
+
+The stopping is all a pace changes. The same seed plays the same game with one
+and without — the same actions, in the same order, to the same end — which
+`tests/engine-live.test.js` checks by playing both and comparing the courses.
+`continue` on a table that was not paced is refused, and so is one sent while
+the table is waiting on the player rather than on itself: a relay that asks is
+a relay that believes it is paced, and silence would leave it believing it.
+
+Neither exists before protocol 3. An engine at 2 ignores `pace` — it ignores
+every key it does not know — and refuses `continue` as an unknown op, so a
+relay reading `hello.protocol` below 3 must not ask for a pace and must never
+send `continue`. The reply to `new` says `paced` when the pace was taken, so a
+relay can see that it was rather than assume.
+
 **The log.** Each seat's log is Argentum's `ClientEvent`s for that seat, with
 three changes, all found in M1's run in a browser. Every line carries its
 `description`: most events work it out as a default, which `encodeDefaults =
@@ -115,6 +154,17 @@ once, by its own event, not again as a move into hand or graveyard. Taps,
 untaps and mana are left out, as Argentum's own game server leaves them out
 (`GameSession`). The engine marks each turn with a `turnChanged` line; the
 table draws it as its own turn header and files what follows under that turn.
+
+The `log` beside a full `state` is that seat's whole log. The `log` beside a
+`delta` is only the lines added since that seat's last view, in order, and the
+client appends them to the log it already holds; a full view sends everything
+again and starts the count over, which is what a client does when it has missed
+a delta. (`StateDelta` has a `newLogEntries` of its own, which is always absent
+here: `ClientStateTransformer` never fills `ClientGameState.gameLog`, and this
+process keeps each seat's log itself so it can mask and phrase it.) Every line
+still carries its `description` and its `step`, whichever way it arrives. A
+paced turn asks for a view every few hundred milliseconds, and the whole log
+each time would soon be most of what the wire carried.
 
 **Printings.** A deck line may name the printing the player chose, by
 Scryfall's set and collector number, and the deal puts that printing's art on
@@ -158,8 +208,26 @@ printings is one line of the deck.
 `ClientGameState` and `StateDelta` are the engine's own client DTOs
 (`rules-engine/…/view/`), passed through untouched: per-viewer, with the
 opponent's hand as a count and no ids. `src/lib/engine/board.js` lays them
-onto the board model the table draws; `scripts/relay-engine.mjs` is the
-room around this process.
+onto the board model the table draws (`applyDelta` is that DTO's contract in
+JavaScript, with the two fields it cannot carry named in its header:
+`voidActive` and `activeYields` are on the state and on no delta, so a
+delta-fed view holds the last whole view's word for them, as Argentum's own
+client does); `scripts/relay-engine.mjs` is the room around this process.
+
+**The captured run.** `node scripts/engine-capture.mjs` plays a paced game
+from a fixed seed and writes `tests/fixtures/engine-views.json`: every stop as
+the delta since the one before it, and, at the moments worth pinning, the
+whole state the engine would have sent instead. `tests/engine-delta.test.js`
+walks that run and holds the applied deltas against those full views, which is
+what says `applyDelta` agrees with `StateDiffCalculator` rather than with this
+app's reading of it. It takes about 40 s, needs a built engine, and keeps the
+first capture's `shots` unless asked for `--shots`, because the adapter's older
+tests hold those to exact life totals and card ids. Its header says what the
+window holds and what it could not reach, and a run that reached neither a
+decision nor declared blockers says so on the way out rather than reporting
+success with the gap in. The mark for a stop where blockers may be declared is
+`blockable`; `blocks` is blockers actually on the board, which no view a client
+is sent has ever carried.
 
 ## What is deliberately not here
 

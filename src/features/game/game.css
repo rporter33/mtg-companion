@@ -204,6 +204,25 @@
   color: var(--text-faint); border: 1px solid var(--border);
 }
 .plate__status--turn { color: var(--ok); border-color: #4ea87a66; background: #4ea87a18; }
+/*
+ * The engine taking its own turn, a play at a time (HANDOFF.md, M2). A
+ * sentence rather than a label, so it keeps its own case, its own spacing and
+ * the room to wrap; the words are the whole of what is said, and the slow
+ * breath of the border only follows them. Nothing here dims the text: text
+ * under an opacity fails the contrast bar the a11y sweep holds every screen to.
+ */
+.plate__status--thinking, .plate--them .plate__status--thinking {
+  color: var(--text); background: var(--accent-soft); border-color: var(--accent);
+  letter-spacing: 0.01em; text-transform: none; font-weight: 500;
+}
+/* The breath is on a rule of its own, at one class, so the reduced-motion rule
+   below can reach it. On the selector list above it would be at two, and the
+   media query — which adds no weight of its own — would lose to it for every
+   pill that is actually drawn, all of them inside .plate--them. The list is
+   needed for the colours, which have .plate--them .plate__status to beat. */
+.plate__status--thinking { animation: plate-thinking 1.8s ease-in-out infinite; }
+@keyframes plate-thinking { 0%, 100% { border-color: var(--border); } 50% { border-color: var(--accent); } }
+@media (prefers-reduced-motion: reduce) { .plate__status--thinking { animation: none; } }
 .plate__name { font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); }
 .plate__life { display: flex; align-items: center; gap: var(--space-2); }
 .plate__total { font-size: 1.8rem; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 2.2ch; text-align: center; line-height: 1.1; }
@@ -365,8 +384,12 @@
 }
 /* The block is .facepeek, so is its face: named .peek__face here until
  * 2026-09-22, it matched nothing, and the image drew at Scryfall's own 488px
- * inside a 280px box that clipped it — a preview with its text box cut off. */
-.facepeek__face { display: block; width: 100%; height: 100%; object-fit: cover; }
+ * inside a 280px box that clipped it — a preview with its text box cut off.
+ * `contain` rather than `cover` because the whole card is the point of a
+ * preview: the box is the card's own 63:88, so there is nothing to letterbox
+ * at a printing's usual proportions, and a printing with others — a token, a
+ * double-faced back, an oversized card — is shown whole rather than trimmed. */
+.facepeek__face { display: block; width: 100%; height: 100%; object-fit: contain; }
 @keyframes facepeek-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .facepeek { animation: none; } }
 

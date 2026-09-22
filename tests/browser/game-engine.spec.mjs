@@ -70,7 +70,14 @@ if (!engineCommand) {
 // comes in time. Those are the deals for making the spec sturdier.
 // ENGINE_SEED plays another.
 const SEED = Number(process.env.ENGINE_SEED) || 1
-const relayServer = createRelay({ engineCommand, pingMs: 300, engineSeed: SEED })
+// The pace a play of the engine's stands for before the room asks for the next
+// one (HANDOFF.md, M2). Low, but never zero: at zero the room stops pacing
+// altogether and the engine's turn arrives in one jump again, so the very
+// thing this spec watches would not exist. The room's own default is 600 ms,
+// which is right for a person and would have this suite sitting through whole
+// seconds of every engine turn — a dozen turns of it before the attack comes.
+const PACE = 120
+const relayServer = createRelay({ engineCommand, pingMs: 300, engineSeed: SEED, pace: PACE })
 await new Promise((resolve) => relayServer.server.listen(0, resolve))
 const RELAY = `http://127.0.0.1:${relayServer.server.address().port}`
 
@@ -131,6 +138,12 @@ const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PAT
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
 const errors = []
 page.on('pageerror', (e) => errors.push(e.message))
+// Not the same thing as a thrown error: a view applied wrongly, a delta the
+// hook could not take or a socket message it did not understand is written to
+// the console and the screen carries on. A paced turn is a message every few
+// hundred milliseconds, so this is where such a thing would show.
+const consoleErrors = []
+page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()) })
 await page.route('**/api.scryfall.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))
 await page.route('**/api.scryfall.com/cards/collection', (route) => route.fulfill({
   status: 200, contentType: 'application/json', body: JSON.stringify({ data: CARDS }) }))
@@ -247,9 +260,89 @@ check('the tile is in the lands row', await until(() => page.locator('.game__fie
 const passBtn = page.getByRole('button', { name: '→ Pass' })
 const logText = () => page.locator('.gamelog').textContent().then((t) => t ?? '')
 check('every printing the deck names is one the engine has, so the log does not say otherwise', !/does not have your printing/.test(await logText()))
+
+// The engine's turn arrives a play at a time now (HANDOFF.md, M2), each one
+// left standing for the room's pace. That is whole seconds of screen, but a
+// poll can still fall between two of them, so the page itself watches: every
+// time anything changes, it writes down whether the opponent's plate says the
+// engine is thinking, and what else was on screen while it did.
+await page.addScriptTag({ path: AXE })
+const errorsBeforeTheTurn = consoleErrors.length
+await page.evaluate(() => {
+  window.__thinking = []
+  window.__thinkingAxe = null
+  const look = () => {
+    const pill = document.querySelector('.game__them .plate__status')
+    if (!pill || !/thinking/i.test(pill.textContent ?? '')) return
+    const style = getComputedStyle(pill)
+    const plate = pill.closest('.plate')
+    window.__thinking.push({
+      text: pill.textContent,
+      label: plate?.getAttribute('aria-label') ?? '',
+      classes: pill.className,
+      prompt: Boolean(document.querySelector('.prompt')),
+      colour: `${style.color} on ${style.backgroundColor}`,
+      // The rest of the table at that moment, which is what "watching" means:
+      // whose turn the plate says it is, what stands on their own side of the
+      // table, and how much the log has said. The engine's land has to appear
+      // on their side while they still hold the turn, and the log has to fill
+      // in as it goes — not both at the end, in one jump (HANDOFF.md, M2).
+      theirTurn: Boolean(plate?.classList.contains('plate--active')),
+      theirTiles: document.querySelectorAll('.game__theirfield .bcard--tile').length,
+      logLines: document.querySelectorAll('.gamelog__item').length,
+      // Which turn the log is showing at the top of itself. "A play at a
+      // time" is a claim about one turn of the engine's, and a count taken
+      // over the whole game is satisfied by one play in each of a dozen
+      // turns — which is the jump M2 exists to end. So the moments are
+      // grouped by the turn they happened in, and the claim is made of one.
+      turnHead: document.querySelector('.gamelog__turns > li .gamelog__turn')?.innerText.replace(/\s+/g, ' ').trim() ?? '',
+      at: performance.now(),
+    })
+    if (window.__thinkingAxe === null && window.axe) {
+      window.__thinkingAxe = 'running'
+      // The whole page, the way a11y.spec.mjs sweeps every other state: the
+      // thinking table is a state of its own — a plate that says something no
+      // other state says, and no prompt panel at all — and a sweep of the seat
+      // opposite alone would not notice what its absence left behind.
+      window.axe.run(document, { resultTypes: ['violations'], runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } })
+        .then((r) => { window.__thinkingAxe = r.violations.map((v) => `${v.impact} ${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join('; ')}`) })
+        .catch((e) => { window.__thinkingAxe = [`axe could not run: ${e.message}`] })
+    }
+  }
+  new MutationObserver(look).observe(document.body, { subtree: true, childList: true, characterData: true })
+  look()
+})
+
 await passBtn.click()
 check('after a pass the engine comes back to the next stop', await until(() => prompt.count().then((n) => n === 1), 20000))
 check('the log says how many windows the engine passed for you', await until(() => logText().then((t) => /passed \d+ priority window/.test(t)), 20000))
+// The status arrives before the view it belongs to, so said as it arrived a
+// note would sit above the lines of the view it belongs to — above the deal
+// itself for the first one, and above the land for the one after the pass.
+//
+// Read inside one turn's block rather than across the log, and against the
+// lines above the note as well as below it. The log is newest turn first, so
+// a search of the whole of it forward from the land is satisfied by any note
+// in any older turn, which renders below that point whatever the order within
+// a turn; and a note said too early still lands after the land, because the
+// land was said at the stop before. What only the fix makes true is that the
+// first note falls under the deal's own lines instead of over them.
+const landBlock = () => page.evaluate(() => {
+  const li = [...document.querySelectorAll('.gamelog__turns > li')]
+    .find((el) => /Your Mountain entered the battlefield/.test(el.innerText))
+  return li ? { head: li.querySelector('.gamelog__turn')?.innerText.replace(/\s+/g, ' ').trim() ?? '', text: li.innerText } : null
+})
+const noteIsUnderItsView = (block) => {
+  if (!block) return false
+  const dealt = block.text.indexOf('You shuffled your library')
+  const land = block.text.indexOf('Your Mountain entered the battlefield')
+  const first = block.text.search(/passed \d+ priority window/)
+  // The lines of the first view, then its note; and a note after the land too.
+  return dealt >= 0 && land >= 0 && first > dealt && block.text.slice(land).search(/passed \d+ priority window/) >= 0
+}
+check('and says it under the view it belongs to, not over it',
+  await until(async () => noteIsUnderItsView(await landBlock()), 20000),
+  JSON.stringify(await landBlock()).slice(0, 600))
 for (let i = 0; i < 6 && !/Turn [23]/i.test(await logText()); i++) {
   if (await passBtn.isEnabled()) { await passBtn.click(); await until(() => prompt.count().then((n) => n === 1), 20000); await sleep(150) }
   else if ((await prompt.getAttribute('aria-label')) === 'Your attack') await page.getByRole('button', { name: 'No attack' }).click()
@@ -300,6 +393,140 @@ for (let i = 0; i < 24 && !attacked; i++) {
 }
 check('an attack was declared within a few turns', attacked)
 
+// A picture of the milestone itself: the table while the engine is playing.
+// Never a check — the state lasts the room's pace and a screenshot takes about
+// as long, so catching one is luck — but a picture when one can be caught.
+let thinkingShot = false
+const thinkingPill = page.locator('.game__them .plate__status--thinking')
+for (let i = 0; i < 3 && !thinkingShot; i++) {
+  // The attack above may have left the engine mid-turn, and there is nothing
+  // to press while it is: wait for the stop to come back first.
+  await until(() => prompt.count().then((n) => n === 1), 20000)
+  if ((await prompt.getAttribute('aria-label').catch(() => null)) === 'Game over') break
+  if (await passBtn.isEnabled().catch(() => false)) await passBtn.click()
+  else if (await page.getByRole('button', { name: 'No attack' }).isEnabled().catch(() => false)) await page.getByRole('button', { name: 'No attack' }).click()
+  else break
+  if (await thinkingPill.waitFor({ timeout: 8000 }).then(() => true).catch(() => false)) {
+    // The table scrolls inside itself, so a picture taken where play left it
+    // starts below the seat opposite — and the plate that says the engine is
+    // thinking is the thing being photographed. Bring it into view first.
+    await page.evaluate(() => document.querySelector('.game__them')?.scrollIntoView({ block: 'start', behavior: 'instant' }))
+    await page.screenshot({ path: SHOT('thinking') })
+    thinkingShot = true
+  }
+}
+
+console.log('\nWatching the engine play')
+// A paced turn has to end somewhere, and where it ends is back at the player:
+// the plate stops saying the engine is thinking and the prompt panel returns.
+// Waited for before anything is read, so that the newest moment recorded is a
+// finished one — read mid-turn, it could be a status whose view is still in
+// flight, and the checks below would be racing the wire rather than reading it.
+const handedBack = await until(async () =>
+  (await page.locator('.game__them .plate__status--thinking').count()) === 0 && (await prompt.count()) === 1, 20000)
+const thinking = await page.evaluate(() => window.__thinking ?? [])
+check('the engine\'s turn is watched a play at a time, and the plate says so in words', thinking.length > 0)
+check('in the words M2 asked for', thinking.every((t) => t.text === 'The engine is thinking…'), thinking[0]?.text)
+check('said in the plate\'s own label, so it is read and not only seen', thinking.every((t) => /The engine is thinking…/.test(t.label)), thinking[0]?.label)
+check('and marked, so nothing rests on the colour alone', thinking.every((t) => /plate__status--thinking/.test(t.classes)), thinking[0]?.classes)
+check('the prompt panel says nothing while it thinks, as Moxgate\'s does', thinking.every((t) => !t.prompt), JSON.stringify(thinking.find((t) => t.prompt) ?? {}))
+
+// What was on the table at each of those moments. A stop of the engine's is
+// taken only for a play of its own (engine/README.md, pacing), so the stops
+// themselves fall inside its own turn — which is what makes "the land appears
+// while the turn is still its own" mean during their turn, not between turns.
+const watched = thinking.filter((t) => t.theirTurn)
+check('the engine is watched inside its own turn, with the plate saying whose turn it is', watched.length > 0,
+  `${watched.length} of ${thinking.length} moments were inside its turn`)
+// A stop is two messages and the status comes first (scripts/relay-engine.mjs),
+// so at the first render of a stop the plate already says the engine is
+// thinking while the board still shows the turn as yours. It is the wire's own
+// latency — the relay asking the engine for the view — and it closes when that
+// view lands; measured here rather than assumed, because a view that stopped
+// following would leave the table saying the turn was still yours through the
+// whole of the engine's, which is the fault M2 exists to end.
+//
+// Measured to the next moment where the board has caught up, not to the next
+// moment of any kind: a status can render twice before its view arrives, and
+// that is the same one message of lag, not two faults. A board that never
+// catches up counts as forever, which the bound below is what fails on.
+const behind = thinking
+  .map((t, i) => ({ t, caught: thinking.slice(i + 1).find((n) => n.theirTurn) }))
+  .filter(({ t }) => !t.theirTurn)
+const seam = Math.max(0, ...behind.map(({ t, caught }) => (caught ? caught.at - t.at : Infinity)))
+// A second, against a 120 ms pace: this is not a measure of smoothness but a
+// guard against a view that never arrives, which would be seconds or never.
+check('a board a message behind the plate catches up, in well under a second, so no turn is watched on a stale one',
+  seam < 1000, `${behind.length} of ${thinking.length} moments were behind; the worst waited ${Math.round(seam)} ms`)
+console.log(`  (${thinking.length} moments over the engine's turns at a ${PACE} ms pace; the board at most ${Math.round(seam)} ms behind the plate)`)
+const span = (of) => watched.map(of).reduce((r, n) => ({ low: Math.min(r.low, n), high: Math.max(r.high, n) }), { low: Infinity, high: -Infinity })
+const tiles = span((t) => t.theirTiles)
+check('the engine\'s land appears on its own side while the turn is still its own', tiles.high > 0 && tiles.high > tiles.low,
+  `${tiles.low} to ${tiles.high} tiles on their side while thinking`)
+const lines = span((t) => t.logLines)
+check('and the log fills in as it goes, not all at the end', lines.high > lines.low,
+  `${lines.low} to ${lines.high} log lines while thinking`)
+
+// The same claim, made of one turn rather than of the game: counted across the
+// game, "many thinking moments" is satisfied by one play in each of a dozen
+// turns, which is the jump M2 exists to end, and a drive() narrowed back to one
+// stop a turn would leave every check above green.
+//
+// Grouped by the turn the log was showing, one growth of the log *inside* a
+// turn of the engine's is already two views inside it, and so two stops. The
+// turn's first stop does not count towards it: its status arrives before its
+// view (the seam measured above), so that moment is recorded while the log
+// still shows the player's turn and groups under that. With one stop a turn
+// the only moments inside the engine's turn are renders of the one view it
+// sent, all reading the same log, and the count is zero.
+const byTurn = new Map()
+for (const t of thinking) byTurn.set(t.turnHead, [...(byTurn.get(t.turnHead) ?? []), t])
+const grew = (moments, of) => moments.filter((m, i) => i > 0 && of(m) > of(moments[i - 1])).length
+// The first stop of an engine turn is recorded while the log still shows the
+// player's (the status arrives before its view, the seam measured above), so
+// that moment groups under the player's turn and is not counted here.
+const engineTurns = [...byTurn.entries()].filter(([head]) => head && !/Your turn/.test(head))
+const plays = (ms) => grew(ms, (m) => m.logLines)
+const mostPlays = Math.max(0, ...engineTurns.map(([, ms]) => plays(ms)))
+check('one turn of the engine\'s arrived as two stops or more, not in one jump', mostPlays >= 1,
+  engineTurns.map(([head, ms]) => `${head}: the log grew ${plays(ms)} times over ${ms.length} moments`).join(' | ') || 'no moment fell inside a turn of the engine\'s')
+console.log(`  (${engineTurns.map(([head, ms]) => `${head.replace(' · ', ' ')}: ${plays(ms)} over ${ms.length} moments`).join(', ') || 'no moment fell inside a turn of the engine\'s'})`)
+check('the turn ends back at your stop, with nobody thinking', handedBack)
+const thinkingAxe = await page.evaluate(() => window.__thinkingAxe)
+check('and the table has no accessibility violations while it thinks', Array.isArray(thinkingAxe) && thinkingAxe.length === 0, JSON.stringify(thinkingAxe))
+
+// Nothing animates without a reduced-motion path. The pill's border breathes
+// on a 1.8 s loop, and for somebody who has asked for stillness it must not.
+// Read off the real plate opposite with the modifier the app puts on it, at
+// the player's own stop, rather than caught mid-turn: the pill stands for the
+// room's pace, and two reads either side of a media change do not fit inside
+// 120 ms often enough for a check to rest on it. The plate matters as much as
+// the pill — it is a `.plate--them`, the only place the pill is ever drawn,
+// and the one case the reduced-motion rule used to be outweighed in.
+const breath = await (async () => {
+  const wear = (on) => page.evaluate((add) => {
+    const pill = document.querySelector('.game__them .plate__status')
+    pill?.classList[add ? 'add' : 'remove']('plate__status--thinking')
+    return Boolean(pill)
+  }, on)
+  const reads = async () => page.evaluate(() => {
+    const pill = document.querySelector('.game__them .plate__status--thinking')
+    return pill ? getComputedStyle(pill).animationName : null
+  })
+  const found = await wear(true)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  const moving = await reads()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const still = await reads()
+  await page.emulateMedia({ reducedMotion: null })
+  await wear(false)
+  return { found, moving, still }
+})()
+check('the thinking pill breathes, and stops for somebody who asked for stillness',
+  breath.found && breath.moving === 'plate-thinking' && breath.still === 'none', JSON.stringify(breath))
+check('no console error through a paced turn', consoleErrors.length === errorsBeforeTheTurn,
+  consoleErrors.slice(errorsBeforeTheTurn).join('\n'))
+
 console.log('\nComing back')
 await page.reload({ waitUntil: 'networkidle' })
 check('a reload lands back in the same seat', await until(() => page.locator('.game:not(.game--loading)').count().then((n) => n === 1), 20000))
@@ -336,7 +563,7 @@ check('the sideboard card it does not know is left out, and the table says so', 
 check('no Made-Up Goblin reaches the hand', !/Made-Up Goblin/.test(await page.locator('.tabletop__handcard').allTextContents().then((ts) => ts.join(' '))))
 
 check('no console errors throughout', errors.length === 0, errors.join('\n'))
-console.log(`\nScreenshots: ${SHOT('gate')}, ${SHOT('gate-reasons')}, ${SHOT('attack')} and ${SHOT('table')}`)
+console.log(`\nScreenshots: ${SHOT('gate')}, ${SHOT('gate-reasons')}, ${SHOT('attack')}${thinkingShot ? `, ${SHOT('thinking')}` : ''} and ${SHOT('table')}`)
 await browser.close()
 await relayServer.shutdown()
 console.log(`\n${pass} passed, ${fail} failed`)

@@ -10,20 +10,37 @@
  * file knows a rule of Magic either — it knows whose turn the engine says
  * it is, and forwards.
  *
- *   from a client        sit { name, deck: { "Mountain": 14, … }, sideboard?: { … }, seat? }
+ *   from a client        sit { name, deck: { "Mountain": 14, … }, sideboard?: { … }, seat?, deltas? }
  *                        act { stop, index, attackers?, blockers? }
- *                        decide { stop, … }        turn
+ *                        decide { stop, … }        turn                    resync
  *   to every client      seats [ … ]               status { … }            gone { reason }
- *   to one client        seated { seat, engineSeat, sideboardLeftOut, unknownPrintings }   view { you, state, log }   refused { error }
+ *   to one client        seated { seat, engineSeat, sideboardLeftOut, unknownPrintings }
+ *                        view { you, seq, state | delta, log }             refused { error }
  *
  * `stop` is the number of the status a client is answering: an act sent
  * against a stale status is refused rather than landing on a different
  * offer with the same index.
+ *
+ * A view carries a `seq` of its own, counted per seat: the first view a seat
+ * is sent is the whole `state`, and every later one may be a `delta` against
+ * the one before it, with only the log lines added since. A client that sees
+ * a gap in the numbers asks for `resync` and is sent a whole state again,
+ * rather than draw a board built on a delta it never had. Deltas are sent
+ * only to a client that said in its `sit` that it can apply them, and only by
+ * a room whose engine speaks protocol 3: a tab left open across a deploy, or
+ * an older engine, is served whole views as before.
+ *
+ * Watching the engine's turn is the room's job too (HANDOFF.md, M2). The
+ * engine is dealt a paced table, which stops as soon as its own seat has made
+ * a play worth watching; the room publishes that stop to every seat, waits
+ * its pace, asks for the next step, and repeats until a player is to act or
+ * the game ends. The engine never sleeps — one process serves one table over
+ * one line — so all the waiting in wall-clock time is here.
  */
 import { startEngine } from './engine-bridge.mjs'
 
 export const OP = {
-  sit: 'sit', act: 'act', decide: 'decide', turn: 'turn',
+  sit: 'sit', act: 'act', decide: 'decide', turn: 'turn', resync: 'resync',
   seated: 'seated', seats: 'seats', status: 'status', view: 'view', refused: 'refused', gone: 'gone',
 }
 
@@ -32,6 +49,18 @@ export const OP = {
 // allowance rather than a measurement: engine/README.md has the measured load,
 // and this is revisited against it.
 export const STARTUP_MS = 120_000
+
+/**
+ * How long one of the engine's plays is left standing before the room asks for
+ * the next. Moxgate's table plays the opponent's turn at a pace rather than in
+ * one jump, and 600 ms is where this one starts (HANDOFF.md, M2). It is the
+ * room's setting rather than a constant in the loop, so the playback-speed
+ * preset of TARGET.md §5 — Relaxed, Brisk, Instant — has somewhere to land.
+ */
+export const PACE_MS = 600
+
+/** The protocol that first had a pace, a `continue` and a log inside a delta. */
+const PACED_PROTOCOL = 3
 
 // A deck line is a count, or a printing with a count, or a list of those.
 const copiesOf = (v) => {
@@ -43,11 +72,15 @@ const copiesOf = (v) => {
 // counts: the printings are lost, but the game is dealt rather than refused.
 const forProtocol = (protocol, lines) => (!lines || protocol >= 2 ? lines : Object.fromEntries(Object.entries(lines).map(([name, v]) => [name, copiesOf(v)])))
 
-export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', engineCommand, seed = null, deliver, onStderr = null }) {
+export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', engineCommand, seed = null, deliver, onStderr = null, paceMs = PACE_MS, wait = null }) {
   const humanSeats = Math.max(1, ai ? seatCount - 1 : seatCount)
   const seats = Array.from({ length: seatCount }, (_, i) => ({
     seat: `p${i + 1}`, name: null, here: false, ready: false, socket: null, deck: null, sideboard: null,
     ai: ai && i === seatCount - 1 ? ai : null, engineSeat: null, sideboardLeftOut: [], unknownPrintings: [],
+    // What this seat has been sent: the number of its last view, whether it
+    // has had a whole state since it last connected, and whether the client
+    // there said it can apply a delta.
+    seq: 0, whole: false, deltas: false,
   }))
   const seated = (seat) => ({ seat: seat.seat, engineSeat: seat.engineSeat, sideboardLeftOut: seat.sideboardLeftOut, unknownPrintings: seat.unknownPrintings })
   const sockets = new Map()
@@ -59,21 +92,137 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
   let stop = 0
   let starting = false
   let gone = null
+  // What the engine said it is: whether it took the pace, and whether it is new
+  // enough to be asked for a delta. Both are the engine's word rather than this
+  // room's assumption, because an older one answers neither and must not be
+  // driven as though it had.
+  let paced = false
+  let protocol = 0
+  let closed = false
 
   const say = (socket, op, body = {}) => deliver(socket, { t: 'engine', op, ...body })
   const tell = (op, body = {}) => { for (const s of sockets.values()) say(s, op, body) }
   const seatList = () => seats.map(({ seat, name, here, ready, ai: bot, engineSeat }) => ({ seat, name, here, ready: ready || Boolean(bot), ai: bot, engineSeat }))
 
+  /**
+   * The room has lost its engine, said once. A process can be found to have
+   * gone by three different routes at once — a call that rejects, the step the
+   * pace asked for, the exit itself — and a room that told each of them would
+   * say the same thing three times to every seat. The first word is kept,
+   * because it is the one that says what happened rather than what followed.
+   */
+  const lost = (reason) => {
+    if (gone) return
+    gone = reason
+    tell(OP.gone, { reason })
+  }
+
+  /**
+   * One seat's view of the table, numbered. A seat that has had a whole state
+   * and said it can apply a delta is sent one; anything else is sent the state
+   * entire. What comes back decides which it was: an engine that answered a
+   * delta with a whole state is believed, and the seat's count starts again
+   * from it, rather than a delta being announced that was never sent.
+   */
+  const sendView = async (seat, { whole = false } = {}) => {
+    if (!engine || !seat.socket || !seat.engineSeat) return
+    const asDelta = !whole && seat.whole && seat.deltas && protocol >= PACED_PROTOCOL
+    // A view the engine answered but this room did not send is a hole in the
+    // chain with no gap for the client to see. The engine moves a seat on when
+    // it builds the reply — its own last view for that seat, and its count of
+    // the log lines sent — so a reply that is lost, refused or never comes has
+    // still moved it: the next delta would be against a view nobody has, and
+    // the lines that travelled with the lost one never come again, while the
+    // numbers stay consecutive and nothing asks. So the seat is marked as
+    // holding nothing whole, and its next view is asked for whole, which
+    // starts both of the engine's counts again and resends the log entire.
+    try {
+      const v = await engine.call('view', { viewer: seat.engineSeat, ...(asDelta ? { delta: true } : {}) })
+      const body = v.state ? { state: v.state } : v.delta ? { delta: v.delta } : null
+      if (!body) { seat.whole = false; return }
+      if (v.state) seat.whole = true
+      // The log beside a delta is only what was added since this seat's last
+      // view, which its client appends; beside a whole state it is the lot.
+      say(seat.socket, OP.view, { you: seat.engineSeat, seq: ++seat.seq, ...body, log: v.log ?? [] })
+    } catch { seat.whole = false }
+  }
+
   const publish = async () => {
     if (!engine || !status) return
     stop++
     tell(OP.status, { status: { ...status, stop } })
-    for (const seat of seats) {
-      if (!seat.socket || !seat.engineSeat) continue
-      try {
-        const v = await engine.call('view', { viewer: seat.engineSeat })
-        say(seat.socket, OP.view, { you: seat.engineSeat, state: v.state, log: v.log ?? [] })
-      } catch (e) { /* the engine's death is reported once, by its exit */ }
+    for (const seat of seats) await sendView(seat)
+  }
+
+  // The room's own wait between the engine's steps. Held as a wake so that a
+  // room closing, or the last seat emptying, is not waited out first: the loop
+  // is woken and finds its own reason to stop.
+  let napWake = null
+  const nap = (ms) => new Promise((done) => {
+    const timer = setTimeout(() => { napWake = null; done() }, Math.max(0, ms))
+    timer.unref?.()
+    napWake = () => { clearTimeout(timer); napWake = null; done() }
+  })
+  const wakeNap = () => napWake?.()
+  const pause = wait ?? nap
+
+  /**
+   * Watching the engine's turn. While the engine is waiting on itself, the room
+   * publishes what it just did, waits the room's pace and asks for the next
+   * step. It stops the moment there is nothing or nobody to watch it for — the
+   * game hands back, the room closes, the engine dies, the last seat empties —
+   * and only one loop ever runs, so a rejoin mid-turn takes the turn up again
+   * without starting a second (an act cannot: it is refused before it gets
+   * here, because it is not that seat the game is waiting on).
+   */
+  let driving = false
+  // Somebody in a seat, not merely somebody on the wire: a socket is in the
+  // room from the moment it connects, and one whose sit was refused — every
+  // seat taken — would otherwise keep the turn running for a room where
+  // nobody can be sent a view, since `sendView` has no seat to send one to.
+  const watching = () => Boolean(engine) && !closed && paced && seats.some((s) => s.socket) && status?.waiting === 'engine'
+  /**
+   * How many steps in a row may fail before the room stops taking them. A step
+   * can fail without the engine being dead: a call that timed out, a reply
+   * that threw after the table had already moved on. Giving up on the first
+   * would leave the plate saying the engine was thinking about a turn nobody
+   * was taking, and never giving up would ask a broken engine once a pace for
+   * the rest of the game. So a few, and then it is said in words.
+   */
+  const STEPS_BEFORE_GIVING_UP = 3
+  const drive = async () => {
+    if (driving || !watching()) return
+    driving = true
+    let failed = 0
+    try {
+      // The try is inside the loop, so a step that failed and was recovered
+      // from is one step lost rather than the whole of the engine's turn: the
+      // loop looks again at whether there is anything to watch and carries on.
+      while (watching()) {
+        try {
+          await pause(paceMs)
+          if (!watching()) break
+          status = await engine.call('continue')
+          await publish()
+          failed = 0
+        } catch (e) {
+          // An engine that has gone is said by its exit, and there is no turn
+          // left to take.
+          if (engine?.exited) break
+          failed++
+          // A continue the engine refused: it is not waiting on itself after all.
+          // Its word for where the table stands is worth more than this room's,
+          // so the room asks rather than keep asking for a step that is not there.
+          try { status = await engine.call('turn'); await publish() } catch { /* an engine that cannot say has gone, and its exit says so */ }
+          // Still the engine's to play, and still not playing it. A room left
+          // saying "The engine is thinking…" about a turn nobody is taking is
+          // a screen saying something untrue, so this is the end of the turn
+          // and the room says why.
+          if (failed >= STEPS_BEFORE_GIVING_UP) { lost(`The engine stopped taking its turn: ${e.message}`); break }
+        }
+      }
+    } finally {
+      driving = false
     }
   }
 
@@ -81,7 +230,18 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     if (engine || starting) return
     starting = true
     try {
-      engine = startEngine({ command: engineCommand, onStderr })
+      // Watched for its exit as well as asked: a process can stop answering
+      // before it is gone — a write to a stdin that is no longer writable
+      // rejects while the exit is still in flight — and without this the room
+      // would learn of it only from whichever call happened to be waiting.
+      // Said only while the room still holds this process: one let go of after
+      // a refused deal, or closed with the room, has not gone, it was ended.
+      const started = startEngine({
+        command: engineCommand,
+        onStderr,
+        onExit: (why) => { if (!closed && engine === started) lost(why) },
+      })
+      engine = started
       lastStarted = engine
       // Asked first and given the long allowance, so that the corpus loading
       // is waited for once, here, and every later call keeps the usual wait.
@@ -96,11 +256,21 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
         const deck = forProtocol(hello?.protocol, s.ai ? (first?.deck ?? {}) : (s.deck ?? {}))
         return { name: s.name ?? (s.ai ? 'The engine' : s.seat), deck, ...(side ? { sideboard: side } : {}), ai: s.ai, autoPass: !s.ai }
       }
+      protocol = Number(hello?.protocol) || 0
+      // A pace is asked for only of an engine that has one: an older one ignores
+      // the key and would then refuse the `continue` that followed it.
+      const asking = paceMs > 0 && protocol >= PACED_PROTOCOL
       const reply = await engine.call('new', {
         players: seats.map(player),
         // Absent, the engine picks one and says which in its reply.
         ...(seed == null ? {} : { seed }),
+        // Sent as the room's own pace in milliseconds, which the engine reads
+        // only as a yes: the waiting is this room's, not the process's.
+        ...(asking ? { pace: paceMs } : {}),
       })
+      // Taken only where the engine says it took it, so a room never drives a
+      // table that is not stopping for it.
+      paced = asking && reply?.paced === true
       reply.seats.forEach((es, i) => {
         seats[i].engineSeat = es.id
         if (seats[i].ai) seats[i].name = es.name
@@ -112,9 +282,9 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
       tell(OP.seats, { seats: seatList() })
       for (const seat of seats) if (seat.socket) say(seat.socket, OP.seated, seated(seat))
       await publish()
+      drive()
     } catch (e) {
-      gone = e.message
-      tell(OP.gone, { reason: e.message })
+      lost(e.message)
       // A refused deal leaves the process up and waiting, and one that missed
       // the startup allowance is still loading: either way it holds the whole
       // corpus, and once the room lets go of it nothing else can close it.
@@ -131,11 +301,17 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     if (ready >= humanSeats) start()
   }
 
-  const sit = (socket, { name, seat: wanted, deck, sideboard }) => {
+  const sit = (socket, { name, seat: wanted, deck, sideboard, deltas }) => {
     let seat = wanted ? seats.find((s) => s.seat === wanted && !s.ai) : null
     if (seat?.socket && seat.socket !== socket) { sockets.delete(seat.socket.id); seat.socket.terminate?.() }
     if (!seat) seat = seats.find((s) => !s.ai && !s.here) ?? null
     if (!seat) { say(socket, OP.refused, { error: 'Every seat is taken.' }); return }
+    // A client that has just arrived holds no view to apply a delta to, whether
+    // it is a new one or the same one come back, so this seat starts whole
+    // again. Deltas are what this client says it can read, asked each time it
+    // sits: the one at a seat may be a newer build than the one before it.
+    if (seat.socket !== socket) seat.whole = false
+    seat.deltas = deltas === true
     seat.socket = socket; seat.here = true; seat.name = name || seat.name || seat.seat
     if (deck && typeof deck === 'object' && Object.keys(deck).length) {
       seat.deck = deck
@@ -149,8 +325,23 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     if (gone) { say(socket, OP.gone, { reason: gone }); return }
     if (engine && status) {
       say(socket, OP.status, { status: { ...status, stop } })
-      engine.call('view', { viewer: seat.engineSeat }).then((v) => say(socket, OP.view, { you: seat.engineSeat, state: v.state, log: v.log ?? [] })).catch(() => {})
+      // Whole, and then the engine's turn goes on being watched: somebody who
+      // came back mid-turn is who the pace was waiting for.
+      sendView(seat, { whole: true }).then(drive)
     } else maybeStart()
+  }
+
+  /**
+   * A client that missed a view asks for the table whole. Its next number is
+   * the one after the view it never got, so a gap is closed rather than
+   * papered over, and what it draws is the engine's own state, not a board
+   * built on a delta applied to the wrong thing.
+   */
+  const resync = (socket) => {
+    const seat = seats.find((s) => s.socket === socket)
+    if (!seat) { say(socket, OP.refused, { error: 'Sit down first.' }); return }
+    if (!engine || !status) { say(socket, OP.refused, { error: gone ?? 'The game has not started.' }); return }
+    sendView(seat, { whole: true })
   }
 
   const forward = async (socket, op, message) => {
@@ -163,9 +354,10 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     try {
       status = await engine.call(op, params)
       await publish()
+      drive()
     } catch (e) {
       say(socket, OP.refused, { error: e.message })
-      if (engine?.exited) { gone = e.message; tell(OP.gone, { reason: e.message }) }
+      if (engine?.exited) lost(e.message)
     }
   }
 
@@ -178,7 +370,11 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     leave(socket) {
       sockets.delete(socket.id)
       const seat = seats.find((s) => s.socket === socket)
-      if (seat) { seat.socket = null; seat.here = false; tell(OP.seats, { seats: seatList() }) }
+      if (seat) { seat.socket = null; seat.here = false; seat.whole = false; tell(OP.seats, { seats: seatList() }) }
+      // Nobody left in a seat to watch the engine play: the pace is woken so
+      // the turn stops where it is rather than running on to a room nobody can
+      // be sent a view in. It goes on from there when somebody sits down again.
+      if (!seats.some((s) => s.socket)) wakeNap()
     },
     receive(message, socket) {
       if (message?.t !== 'engine') return
@@ -187,12 +383,20 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
         case OP.act: forward(socket, 'act', message); break
         case OP.decide: forward(socket, 'decide', message); break
         case OP.turn: if (status) say(socket, OP.status, { status: { ...status, stop } }); break
+        case OP.resync: resync(socket); break
         default: say(socket, OP.refused, { error: `Unknown op "${message.op}".` })
       }
     },
     describe() {
-      return { mode: 'enforced', ai, seats: seatList(), started: Boolean(engine), over: Boolean(status?.over) }
+      return { mode: 'enforced', ai, seats: seatList(), started: Boolean(engine), over: Boolean(status?.over), pace: paceMs, paced }
     },
-    async close() { await engine?.close() },
+    async close() {
+      // The loop is told the room has gone before the engine is: a step asked
+      // for after this would be a call on a closing process, and a pace waited
+      // out would hold the close for as long as it had left.
+      closed = true
+      wakeNap()
+      await engine?.close()
+    },
   }
 }

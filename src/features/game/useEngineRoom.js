@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { relay } from '../../lib/board/relay.js'
 import { boardFromView, eventsBetween, standIn } from '../../lib/engine/board.js'
+import { nothingHeld, receiveView } from '../../lib/engine/stream.js'
 import { leaveOut, nameList, seatDeck } from '../../lib/engine/deck.js'
 
 /**
@@ -18,6 +19,20 @@ import { leaveOut, nameList, seatDeck } from '../../lib/engine/deck.js'
  * what the engine did on its behalf: the windows it passed because nothing
  * was affordable, and the decisions it answered because this protocol
  * cannot yet ask them, both written into the log as lines of their own.
+ *
+ * Two things here are about the order in which the wire says things.
+ *
+ * A view may be a delta, and a run of them is only worth having whole:
+ * `src/lib/engine/stream.js` counts the numbers, applies what follows and
+ * asks for the table whole where anything is missing. This seat says in its
+ * `sit` that it can read them, so a room never sends a delta to a tab that
+ * was open before this was written.
+ *
+ * And what the engine did *for* the player — the windows it passed, the
+ * decisions it answered — arrives in the status, which the room sends before
+ * the view it belongs to. Said as it arrives, "passed 4 priority windows"
+ * would sit above the land that was played before those windows. So it is
+ * held until the view's own lines are in the log and added after them.
  */
 const memoryKey = (code) => `mtg-companion:engine:${code}`
 const remember = (code, value) => { try { localStorage.setItem(memoryKey(code), JSON.stringify(value)) } catch { /* private mode */ } }
@@ -44,9 +59,14 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   const [gone, setGone] = useState(null)
   const wire = useRef(null)
   const board = useRef(null)
-  const view = useRef(null)
+  // The run of views this seat has been sent: the last one whole, its number,
+  // and whether a whole one has been asked for after a gap.
+  const stream = useRef(nothingHeld())
   const events = useRef([])
   const seq = useRef(0)
+  // What the status said the engine did for the player, waiting for the view
+  // it belongs to so that it lands under it rather than over it.
+  const held = useRef([])
   const stands = useRef(new Map())
   const memory = useMemo(() => recall(code) ?? {}, [code])
   // What the lobby agreed to leave out, for this deck only, read forgivingly:
@@ -76,12 +96,23 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   const note = useCallback((text) => {
     events.current = [...events.current, { type: 'said', seq: ++seq.current, turn: board.current?.turn ?? 1, text, player: null }]
   }, [])
+  /** Said once the view it is about has been drawn, not before it. */
+  const hold = useCallback((text) => { held.current = [...held.current, text] }, [])
+  const flush = useCallback(() => {
+    if (!held.current.length) return false
+    const waiting = held.current
+    held.current = []
+    for (const text of waiting) note(text)
+    return true
+  }, [note])
 
   useEffect(() => {
     if (!address || !code || !deckNames) return undefined
     const line = relay({ url: `${address.replace(/\/$/, '').replace(/^http/, 'ws')}/rooms/${encodeURIComponent(code)}/ws`, onStatus: (s) => setWireStatus(s) })
     const side = Object.keys(deckNames.sideboard ?? {}).length ? { sideboard: deckNames.sideboard } : {}
-    line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, ...side }))
+    // `deltas` says this build can apply one. A room asks it of every sit,
+    // because the tab at a seat may be a newer build than the one before it.
+    line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, deltas: true, ...side }))
     line.onMessage((m) => {
       if (m?.t !== 'engine') return
       switch (m.op) {
@@ -117,28 +148,55 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
         case 'seats': seating.current = m.seats ?? []; setSeats(seating.current); break
         case 'status': {
           const s = m.status
-          if (s?.autoPassed > 0) note(`The engine passed ${s.autoPassed} priority window${s.autoPassed === 1 ? '' : 's'} for you: nothing was affordable.`)
-          for (const d of s?.decided ?? []) note(`Decided for you — ${d.prompt}${d.source ? ` (${d.source})` : ''}.`)
+          // Anything still held belonged to a view that never came; it is
+          // said now rather than lost under what this status brings, and the
+          // log is redrawn for it, since no view is coming to do that.
+          if (flush()) setRun((r) => (r ? { ...r, events: events.current } : r))
+          if (s?.autoPassed > 0) hold(`The engine passed ${s.autoPassed} priority window${s.autoPassed === 1 ? '' : 's'} for you: nothing was affordable.`)
+          for (const d of s?.decided ?? []) hold(`Decided for you — ${d.prompt}${d.source ? ` (${d.source})` : ''}.`)
           setStatus(s)
-          setRefusal(null)
+          // A refusal stands until the table is the player's to answer again.
+          // A paced room publishes a status for each of the engine's own plays
+          // — one every few hundred milliseconds — and none of them is an
+          // answer to anything this seat pressed, so clearing on those would
+          // take the banner away inside a pace: too fast to read, and for a
+          // screen reader a live region cut off mid-sentence.
+          if (s?.waiting !== 'engine') setRefusal(null)
           break
         }
         case 'view': {
-          const next = { ...m.state, log: m.log ?? [] }
+          const was = stream.current.view
+          const taken = receiveView(stream.current, m)
+          stream.current = taken.held
+          // A gap, or a delta this build could not read: the table whole is
+          // asked for, and the board already drawn stands until it arrives —
+          // a moment behind is better than a board built on a guess.
+          if (taken.resync) line.send({ t: 'engine', op: 'resync' })
+          const next = taken.view
+          if (!next) break
           for (const c of Object.values(next.cards ?? {})) { const stand = standIn(c); stands.current.set(stand.id, stand) }
-          const fresh = eventsBetween(view.current, next, { seq: seq.current })
+          const fresh = eventsBetween(was, next, { seq: seq.current })
           if (fresh.length) seq.current = fresh[fresh.length - 1].seq
           events.current = [...events.current, ...fresh]
           // Seats in the room's order once the engine has named them all, so
           // the plates sit where the lobby said they would.
           const order = seating.current.length && seating.current.every((x) => x.engineSeat) ? seating.current.map((x) => ({ id: x.engineSeat })) : null
           board.current = boardFromView(next, { prev: board.current, seats: order })
-          view.current = next
+          // Now that this view's own lines are in the log, what the engine did
+          // for the player before them can be said under them.
+          flush()
           setRun({ board: board.current, events: events.current, restored: false, past: [], refusal: null })
           break
         }
         case 'refused': setRefusal({ message: m.error, stale: Boolean(m.stale) }); break
-        case 'gone': setGone(m.reason ?? 'The engine has gone.'); break
+        case 'gone': {
+          // Nothing more is coming, so anything held is said now: the log is
+          // the record of the game, and a table that has gone still has one.
+          flush()
+          setRun((r) => (r ? { ...r, events: events.current } : r))
+          setGone(m.reason ?? 'The engine has gone.')
+          break
+        }
         default: break
       }
     })

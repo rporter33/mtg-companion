@@ -13,8 +13,14 @@
  */
 
 import { chromium } from 'playwright'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const TARGET = process.argv[2] ?? 'http://localhost:4173/'
+// Where the pictures go, as in game-engine.spec.mjs: the system's own
+// temporary folder, so the same path works on every machine. Printed at the
+// end, because a picture nobody opens proves nothing.
+const SHOT = (name) => join(tmpdir(), `game-${name}.png`)
 let pass = 0
 let fail = 0
 const check = (label, ok, detail) => {
@@ -42,6 +48,25 @@ const STATE = {
  * a commander shows that commander's art and colours, not what the art is.
  */
 const PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAI+PjwAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw=='
+/*
+ * A card-shaped face, at Scryfall's own `normal` size, for the one place a
+ * pixel will not do: the preview. Its whole job is to show a printing whole,
+ * and a preview of a grey dot says nothing about whether it does — neither to
+ * a measurement nor to the picture this run leaves behind. So this is drawn
+ * like a card, with its text box at the bottom, which is the part a cropped
+ * preview cuts away and the part somebody opens a preview to read.
+ */
+const CARD_FACE = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="488" height="680" viewBox="0 0 488 680">
+  <rect width="488" height="680" rx="24" fill="#1d1a16"/>
+  <rect x="18" y="18" width="452" height="54" rx="10" fill="#cdc4b4"/>
+  <text x="34" y="55" font-family="Georgia, serif" font-size="26" fill="#12100d">Llanowar Elves</text>
+  <rect x="18" y="84" width="452" height="330" rx="8" fill="#3b5b3a"/>
+  <rect x="18" y="426" width="452" height="56" rx="10" fill="#cdc4b4"/>
+  <text x="34" y="464" font-family="Georgia, serif" font-size="22" fill="#12100d">Creature — Elf Druid</text>
+  <rect x="18" y="494" width="452" height="168" rx="10" fill="#e6dfd2"/>
+  <text x="34" y="542" font-family="Georgia, serif" font-size="22" fill="#12100d">{T}: Add {G}.</text>
+  <text x="372" y="640" font-family="Georgia, serif" font-size="30" fill="#12100d">1/1</text>
+</svg>`)}`
 const c = (id, name, type_line, over = {}) => ({
   object: 'card', id, oracle_id: `o-${id}`, name, mana_cost: '{1}{G}', cmc: 2, type_line,
   oracle_text: '', color_identity: ['G'], colors: ['G'], rarity: 'common', set: 'tst',
@@ -49,10 +74,10 @@ const c = (id, name, type_line, over = {}) => ({
 })
 const CARDS = [
   c('cmdr', 'Test Commander', 'Legendary Creature — Elf', {
-    color_identity: ['G', 'W'], image_uris: { art_crop: PIXEL, small: PIXEL, normal: PIXEL },
+    color_identity: ['G', 'W'], image_uris: { art_crop: PIXEL, small: PIXEL, normal: CARD_FACE },
   }),
   c('elf', 'Llanowar Elves', 'Creature — Elf Druid', {
-    power: '1', toughness: '1', image_uris: { art_crop: PIXEL, small: PIXEL, normal: PIXEL },
+    power: '1', toughness: '1', image_uris: { art_crop: PIXEL, small: PIXEL, normal: CARD_FACE },
   }),
 ]
 
@@ -307,6 +332,21 @@ console.log('\nReading a card without picking it up')
   check('the whole card is in the preview, not a corner of it',
     face && box && Math.abs(face.width - box.width) <= 1 && Math.abs(face.height - box.height) <= 1,
     `face ${JSON.stringify(face)} in ${JSON.stringify(box)}`)
+  // The box being right is not the card being right. `object-fit` makes the
+  // element box the container's whatever is inside it, so a preview showing
+  // the art crop — 626 by 457, a quarter of a card — would measure exactly as
+  // well as this one. What is measured here is the picture: that it loaded at
+  // all, and that what was loaded has a card's own proportions.
+  const drawn = await page.locator('.facepeek img').evaluate((img) => ({ w: img.naturalWidth, h: img.naturalHeight }))
+  check('and it is a printing, at the proportions of a card rather than a crop of one',
+    drawn.w > 1 && box && Math.abs(drawn.w / drawn.h - box.width / box.height) < 0.01,
+    `the image is ${drawn.w} by ${drawn.h} in a ${box?.width} by ${box?.height} box`)
+  // The measurement above is what fails when the face is unsized, but the
+  // fault the owner reported was seen and not measured — a preview with its
+  // text box cut away, in a test run. So the run leaves a picture of it, of a
+  // card-shaped face rather than a flat grey rectangle, since a picture that
+  // could not show the fault is no answer to somebody who saw it.
+  await page.screenshot({ path: SHOT('peek') })
   await page.mouse.move(5, 5)
   await page.waitForTimeout(100)
   check('moving away puts it away', (await page.locator('.facepeek').count()) === 0)
@@ -485,6 +525,7 @@ await page.waitForTimeout(250)
 
 console.log()
 check('no console errors throughout', errors.length === 0, errors.join('\n'))
+console.log(`\nScreenshot: ${SHOT('peek')}`)
 
 await browser.close()
 console.log(`\n${pass} passed, ${fail} failed`)
