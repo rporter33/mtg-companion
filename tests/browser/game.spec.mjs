@@ -301,6 +301,12 @@ console.log('\nReading a card without picking it up')
   check('resting on a card shows its printed face beside it', (await page.locator('.facepeek img').count()) === 1)
   const box = await page.locator('.facepeek').boundingBox()
   check('and not under the pointer', box && (box.x > p.x + 8 || box.x + box.width < p.x - 8), JSON.stringify(box))
+  // The whole card, not the top left corner of it: the face is drawn at the
+  // size of the preview, never at the image's own, which the box would clip.
+  const face = await page.locator('.facepeek img').boundingBox()
+  check('the whole card is in the preview, not a corner of it',
+    face && box && Math.abs(face.width - box.width) <= 1 && Math.abs(face.height - box.height) <= 1,
+    `face ${JSON.stringify(face)} in ${JSON.stringify(box)}`)
   await page.mouse.move(5, 5)
   await page.waitForTimeout(100)
   check('moving away puts it away', (await page.locator('.facepeek').count()) === 0)

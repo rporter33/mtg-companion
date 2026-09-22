@@ -363,7 +363,10 @@
   pointer-events: none;
   animation: facepeek-in 0.12s ease-out;
 }
-.peek__face { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* The block is .facepeek, so is its face: named .peek__face here until
+ * 2026-09-22, it matched nothing, and the image drew at Scryfall's own 488px
+ * inside a 280px box that clipped it — a preview with its text box cut off. */
+.facepeek__face { display: block; width: 100%; height: 100%; object-fit: cover; }
 @keyframes facepeek-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .facepeek { animation: none; } }
 
