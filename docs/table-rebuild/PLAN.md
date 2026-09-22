@@ -587,6 +587,179 @@ The bar at the end: 1,313 unit tests; 29 browser specs, 910 checks, none
 failed, the engine's own spec 49 of them against the real engine; the live
 engine suite 12 of 12; no JVM left running after either.
 
+### M2: watching the engine's turn, and deltas on the wire — 2026-09-22
+
+**What a paced turn costs.** A room's pace is 600 ms by default — the wait
+between one play of the engine's and the next — set per room and clamped to
+10 s, because a pace is a wait between plays and not a timeout. A stop costs
+each seat two messages, a `status` and the `view` it belongs to, and the room
+one `continue` to the process. On the Portal goblin deck the engine takes
+about two stops in a turn of its own (the captured run: two in each of turns
+2, 4 and 6, one in turn 8), so watching a turn costs a seat about four
+messages where the whole turn used to arrive in two. It stops for a land, a
+spell, an ability or a real attack or block and for nothing else — 16 stops
+over 23 turns on seed 20260922, against 53 in six turns had it stopped after
+every action its AI takes, most of those the engine passing priority in a turn
+of *yours* with nothing to see.
+
+**What a delta saves.** Measured over the captured run (20 views, 4 of them
+whole): a whole view and its log is 23.7 kB at the median and 31.1 kB at the
+largest; a delta and the lines added since is 3.4 kB at the median and 9.1 kB
+at the largest. A delta is 14% of a whole view, median for median, and the
+run as it goes over the wire — one whole view and then nineteen deltas — is
+88 kB against about 464 kB had every view gone whole: a fifth. (The fixture
+on disk is larger than either, because it keeps the engine's own whole state
+beside four of the deltas so they can be held against it.) The saving is the
+point of sending them, but the `seq` beside them is the part that matters: a
+client that misses one asks for the table whole rather than drawing a board
+built on a guess.
+
+**What was built**, per the brief. In the process (`Server.kt`): `PROTOCOL` 3;
+`pace` on `new`; `drive()` stopping after each play of the engine's worth
+watching, with `waiting: "engine"` and `actor`; `{"op":"continue"}`, refused in
+plain words on a table that was never paced and when nothing is waiting on the
+engine; and a per-seat count of log lines sent, so a reply carrying a delta
+carries only the lines added since. In the room (`relay-engine.mjs`,
+`relay-server.mjs`): the pace loop, one only, woken rather than waited out when
+the room closes or the last socket goes; views numbered per seat, whole first
+and deltas after; `resync`; `createRelay({ pace })` and `POST /rooms { pace }`.
+In the client: `applyDelta` and `thinkingAt`/`THINKING` in
+`src/lib/engine/board.js`, the numbering and the gap rule in a module of its
+own (`src/lib/engine/stream.js`), the hook sitting with `deltas: true` and
+asking for a resync on a gap, the plate saying "The engine is thinking…" while
+the prompt panel says nothing, and the "passed N priority windows" note held
+until the view it belongs to has landed. And `scripts/engine-capture.mjs`,
+kept this time, which wrote the run in `tests/fixtures/engine-views.json`.
+
+**Deviations from the brief, each written down where it was taken.** The
+process stops only for the engine's *meaningful* plays, by its own
+`MeaningfulActionFilter`, not after every AI action as the brief's wording
+said — the measurement above is why. The engine takes `pace` as a number but
+never sleeps on it: one process serving one table over one line must not hold
+up every other request, so all pacing in wall-clock time is the room's. Deltas
+are opt-in per client (`deltas: true` on the sit) rather than sent to
+everyone after the first full view, because a tab still running an older build
+after a deploy is a thing this project keeps alive deliberately, and a delta
+sent to a client that cannot apply it draws exactly the wrong board the `seq`
+exists to prevent. The fixture was extended rather than replaced: the first
+capture's `seats` and `shots` are pinned by `tests/engine-board.test.js` to
+exact life totals and card ids, and the new `run` sits beside them.
+
+**The run in a browser.** The engine's table at a 120 ms pace, through the
+built app and the real relay, on the spec's own seed. The engine's turn
+arrives a play at a time: the plate opposite says "The engine is thinking…",
+in words and in its own `aria-label` and under a class of its own so nothing
+rests on the colour; its Goblin Bully appears on *its* side of the table while
+the turn is still its, not after it; the log fills in as it goes — the engine's
+turn, its draw in its draw step, its cast, the permanent entering, the spell
+resolving; the prompt panel says nothing throughout, as Moxgate's does; and
+the turn ends back at the player's stop. axe found nothing on the table while
+it thought, and no console error came through a paced turn.
+
+**Found by the run, and measured rather than assumed.** A stop is two messages
+and the status is sent first, so at the first render of a stop the plate
+already says the engine is thinking while the board still shows the turn as
+yours. Measured: the board was at most 151 ms behind the plate, and caught up
+at the very next render, every time. That is the relay asking the engine for
+the view, not a fault, and the spec now holds it under a second — a view that
+stopped following would leave the table saying the turn was still yours
+through the whole of the engine's, which is the fault M2 exists to end.
+Earlier in the milestone the run found two real faults, both fixed: the
+log-order check was asserting the wrong note, and the opponent's closed zone
+tiles were bare `<span aria-label=…>` — a role that may not be named, which
+axe reports as serious `aria-prohibited-attr` and which threw the label away.
+That one was pre-existing; the new sweep of the thinking state surfaced it.
+
+**Gone over afterwards, and what the reading found.** A dozen things, each now
+tested where it could be. In the room: a view the engine answered but the room
+never sent used to be dropped in silence, and because the process advances what
+it holds for a seat as it builds the reply, the next delta was against a view
+nobody had while the numbers stayed consecutive — a card gone from the board
+for the rest of the game, with nothing to notice it. A lost view now marks the
+seat as holding nothing whole, so the next one is asked for whole and the log
+comes with it. A step the engine refused used to end the turn for good, leaving
+the plate saying it was thinking about a turn nobody was taking; the loop now
+recovers, and gives up after three in a row and says why. The room watches the
+engine's exit rather than hearing of it only from whatever it asked next, and
+says it once however it is found out. And the pace runs for a seat being held,
+not for a socket being open: a sit refused for want of a seat used to keep the
+turn going for a room nobody could be sent a view in. In the client: a refusal
+stood for one pace and no longer, because a paced room publishes a status for
+each of the engine's plays and every one of them cleared the banner — it now
+stands until the table is the player's again. A seat whose ask for a whole
+view went missing dropped every delta after it for good and drew a frozen
+board saying nothing; the ask is now made again after a few. On screen: the
+thinking pill's reduced-motion rule never applied — a selector list of two
+classes against a media query's one — so the border breathed through every
+engine turn for somebody who had asked for stillness; the animation is on a
+rule of its own now, and the spec reads the computed style in both states. And
+`applyDelta` carries `voidActive` and `activeYields` over from the last whole
+view because `StateDelta` has no way to send them, which is what Argentum's
+own client does; neither is read here, and the header says so rather than
+claiming the DTO's contract entire. Four of the tests were the finding: the
+drive-guard test never reached the guard (an act mid-turn is refused before
+it), the pace default was asserted against itself, the browser spec's "a play
+at a time" counted moments across the whole game, and its log-order check
+searched the whole log from the land rather than one turn's block. All four
+are narrowed, and the fixture's own marks now name the offer to block
+`blockable` rather than claiming declared blockers.
+
+**One thing beside the milestone**, reported by the owner from a test run of a
+Commander game and fixed in `6c265a4`: the card preview showed the top corner
+of a card instead of the card. The face inside it was styled as `.peek__face`
+while it is drawn as `.facepeek__face`, so nothing sized it and Scryfall's own
+488 by 680 image drew at its own size inside a 280 by 391 box that clipped it
+— cutting away the text box, which is the part somebody opens a preview to
+read. The box is 280 by 391, the card's own 63:88, and the face now fills it —
+`contain` rather than `cover`, since the whole card is the point of a preview
+and a printing with other proportions should be shown whole rather than
+trimmed. The spec had measured the preview's box but never the face inside it,
+so it passed throughout; `game.spec.mjs` now measures both. The box alone is
+still not enough — `object-fit` makes the element box the container's whatever
+is in it, so the art crop would measure as well as the card — so the image
+itself is measured too: that it loaded, and that it has a card's proportions
+rather than a crop's. And the picture the run leaves is of a card-shaped face
+instead of the one grey pixel the spec served for everything, because a
+picture that could not show the fault is no answer to somebody who saw it.
+
+**Not done, and where it goes.** Nothing on screen chooses a pace yet: it is
+`createRelay({ pace })` or `POST /rooms { pace }`, which is the hook the
+playback-speed preset (`TARGET.md` §5, `MOXGATE_STUDY.md`) is meant to land
+on. No view a client can be sent ever carries declared blockers, so the
+capture holds an attack and the offer to block it but no blocks declared; if
+M3's harder AI or an instant in the deck makes a stop land inside combat,
+re-capture and the window will hold one. A targeted spell cannot be cast at
+the engine's table by anyone — `Table.act` fills in `attackers` and `blockers`
+but not `targets`, so Argentum refuses the cast before any `ChooseTargets`
+decision is raised — which means the prompt panel's target-picking is
+unreachable and untested on screen; it is one `when` branch beside the two
+that already exist, and it is M4's ground but live now. A paced room with
+nobody connected does not advance the engine's turn and takes it up again at
+the next sit, which is deliberate and tested but worth knowing if a headless
+or spectator mode ever wants the game to run on.
+
+The bar at the end: 1,567 unit tests across 78 files; 32 browser specs, 1,089
+checks, none failed, the engine's own spec 67 of them against the real engine
+through the real relay; the live engine suite 15 of 15; axe clean, including
+over the table while the engine is thinking. The whole browser suite was run
+a second time with every page's clock moved on a month, to 2026-10-24, so
+that nothing written for this milestone leans on the real date. No JVM and no
+preview left running after any of it.
+
+The bar after the going-over: 1,574 unit tests across 78 files; 32 browser
+specs, 1,091 checks, none failed, the engine's own spec 68 of them against the
+real engine through the real relay, run three times over for the two checks
+that were rewritten; the live engine suite 15 of 15; the token check clean. Six
+of the fixes were held against the code they fix — reverted, the test fails;
+restored, it passes — and the reduced-motion one was read off the built
+stylesheet both ways round before and after. One thing the re-running found on
+its own and fixed beside the rest: the check that the board catches up with the
+plate was asserting it happens at the very next render, and a status that
+renders twice before its view is the same one message of lag rather than two
+faults, so it now measures to the next moment the board has caught up and
+leaves the bound to say whether that was quick enough. No JVM and no preview
+left running after any of it.
+
 ## Phase 3-alt — Writing the rules core ourselves
 
 Only if the owner wants the engine to be ours. `src/lib/engine/`, TypeScript,

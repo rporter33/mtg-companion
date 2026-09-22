@@ -356,6 +356,26 @@ prompt's. Under reduced motion the glows are static, not animated.
 
 *Size: medium. The biggest felt gap: the opponent's turn vanishes.*
 
+**Done, 2026-09-22, with one item short.** What a paced turn costs, what the
+run in a browser found, and what is left are in `PLAN.md`, "M2: watching the
+engine's turn". The wire is in `engine/README.md` (the process) and the header
+of `scripts/relay-engine.mjs` (the room); §7 below has both in short.
+
+Item 4 below is met but for one thing: `scripts/engine-capture.mjs` is written
+and kept, and its run holds the engine's turn mid-flight, a combat and the
+offer to block it — but no decision, and no blockers declared. Neither is a
+gap in the capture. A targeted spell cannot be cast at this table by anybody
+(`Table.act` in `Server.kt` fills in `attackers` and `blockers` but not
+`targets`, so Argentum refuses the cast with "No valid targets available"
+before any `ChooseTargets` decision is raised), and combat resolves between
+two stops, so no view a client is ever sent carries declared blockers. The
+capture says so on every run rather than reporting success with the gap in,
+and `run.held` names the offer to block `blockable`, not `blocks`. Closing the
+first is a `when` branch in `act` beside the two that are there, and a
+target-picking step in the client before the act: M4's ground, live now.
+
+The rest of this section is the brief it was built to, kept as written.
+
 Today `drive()` in `Server.kt` runs every AI action synchronously until the
 human's next stop, so the browser sees the engine's whole turn as one jump,
 and the log skips it. Moxgate shows the opponent acting, at a pace, with a
@@ -704,15 +724,42 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 ## 7. Appendix — the wire, in one place
 
 Between the browser and the relay, over the room's socket, all
-`{ t: "engine", op }`: `sit { name, deck, sideboard?, seat? }`, `act { stop, index,
-attackers?, blockers? }`, `decide { stop, … }`, `turn`; back: `seated { seat,
-engineSeat, sideboardLeftOut, unknownPrintings }`, `seats`, `status`, `view { you, state, log }`,
-`refused`, `gone`. Over HTTP, before any room: `POST /engine/check`.
+`{ t: "engine", op }`: `sit { name, deck, sideboard?, seat?, deltas? }`,
+`act { stop, index, attackers?, blockers? }`, `decide { stop, … }`, `turn`,
+`resync`; back: `seated { seat, engineSeat, sideboardLeftOut, unknownPrintings }`,
+`seats`, `status`, `view { you, seq, state | delta, log }`, `refused`, `gone`.
+Over HTTP, before any room: `POST /engine/check`.
+
+M2 added `resync`, `deltas` on the sit, and the shape of a view. `deltas: true` on
+the sit asks for them; without it every view comes whole, which is what an
+older build in an open tab still gets. `seq` counts per seat from 1 and never
+resets. A view carrying `state` is the table whole and its `log` is that
+seat's whole log — *replace* both. A view carrying `delta` is Argentum's
+`StateDelta` against the view before it and its `log` is only the lines added
+since — *apply* and *append*. A delta is taken only where `seq` follows; on
+any gap the client sends `resync` and is answered whole with the next number,
+and asks again if enough deltas go by unanswered for the ask itself to look
+lost — `resync` is answered the same way however often it arrives. A room
+that fails to send a seat a view asks for that seat's next one whole, because
+the process has already moved that seat on by building the reply.
+`status` may now say `waiting: "engine"` with `actor` the engine's seat and no
+`actions` and no `decision`: that is a stop of the engine's own, one per play
+of its, arriving mid-turn. A room's pace is `POST /rooms { …, pace }` (`false`
+or `0` restores the one-jump turn, anything else is clamped to 10 s) or
+`createRelay({ pace })`, default 600 ms; `GET /rooms/<code>` reports `pace`
+and `paced`.
 
 Between the relay and the process, JSON lines: `hello`, `cards`, `new`,
-`turn`, `act`, `decide`, `view`, `quit`; M1 adds `check`, M2 `continue`, M7
-`snapshot` and `restore`. `engine/README.md` is the contract and is updated
-with every op added.
+`turn`, `act`, `decide`, `view`, `quit`; M1 added `check`, M2 `continue` and
+`pace` on `new`, M7 will add `snapshot` and `restore`. `engine/README.md` is
+the contract and is updated with every op added.
+
+`pace` on `new` is `true` or a number of milliseconds, and the reply says
+`paced: true` only where the engine took it. A paced table stops as soon as
+its own seat has made a play worth watching and answers `waiting: "engine"`;
+`{"op":"continue"}` takes the next step. The engine never sleeps: every wait in
+wall-clock time is the relay's. `PROTOCOL` is 3 and an engine at 2 has neither
+a pace nor a `continue`, so a relay reading 2 must ask for neither.
 
 The status shape, and what `meaningful`, `card`, `mana`, `autoPassed` and
 `decided` mean, is in `engine/README.md`. The board the screen draws is the

@@ -39,6 +39,21 @@ Added at M1 (2026-09-21), the deck the engine is given:
 | `src/features/game/useEngineCheck.js` | 109 | What the relay's engine says about each deck on the shelf, asked one deck at a time before anyone sits. |
 | `tests/engine-deck.test.js` | 116 | The deck module's tests. |
 
+Added at M2 (2026-09-22), watching the engine's turn arrive:
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/engine/stream.js` | 83 | `nothingHeld`, `receiveView`: the per-seat view numbering, and the rule that a delta is taken only where `seq` follows, that a gap asks for the table whole, and that the ask is made again if enough deltas go by unanswered for it to look lost. Out of the hook so the rule can be tested without a browser. Pure. |
+| `src/lib/engine/board.js` | 334 | Grew `applyDelta(view, delta, { log })` — Argentum's `StateDelta` in JavaScript, returning `null` for anything it will not guess at, and naming the two fields that DTO has no way to carry — and `THINKING` / `thinkingAt`, so the plate's words and the condition for them are one thing. |
+| `scripts/engine-capture.mjs` | 275 | Plays a paced game through a real engine and writes `tests/fixtures/engine-views.json`: at every stop the delta since the one before it and the whole state beside it, then the window holding the most of what M2 asked for. Kept, not thrown away this time. |
+| `tests/engine-delta.test.js` | 305 | The captured run walked delta by delta and held against the engine's own full views; the DTO's terms one at a time; the deltas `applyDelta` must refuse; the whole stream, gap and all. |
+| `tests/engine-room.test.jsx` | 223 | `useEngineRoom` driven through a socket the test holds both ends of, fed the captured run as the relay really sends it. |
+
+The fixture is 292 kB: a real game's real deltas — 20 views, the first whole
+and every later one a delta against the one before it, with the engine's own
+whole state kept beside four of them so the deltas can be held against it.
+`--views` is the dial if it grows again.
+
 ## `src/lib/board/` — the rules-free table
 
 | File | Lines | What it holds |
