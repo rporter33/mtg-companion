@@ -7,6 +7,22 @@ import { pinCards } from '../../lib/cache.js'
 import NotOutChip from '../../components/NotOutChip.jsx'
 
 /**
+ * What to say once the card is in: where it went, and what the deck's own
+ * rules make of it.
+ *
+ * The violation is said whole, as its own sentence. It used to be spliced in
+ * after "but", with everything up to the first colon cut off, which read
+ * "Added to Elves, but At most 4 copies of Llanowar Elves are allowed" — a
+ * capital letter mid-sentence — and for a commander cut away the card's name,
+ * which is the part that says which card the reason is about.
+ */
+export function addedMessage(deckName, problem, note) {
+  const said = problem ?? note
+  if (!said) return { tone: 'ok', text: `Added to ${deckName}.` }
+  return { tone: 'warn', text: `Added to ${deckName}. ${said.message}` }
+}
+
+/**
  * Adds a card to a deck from anywhere in the app, and says up front whether it
  * is actually legal there — telling someone *after* they have built 90 cards is
  * too late to be useful.
@@ -39,11 +55,7 @@ export default function AddToDeck({ card }) {
     const about = (v) => (v.cardIds ?? [v.cardId]).includes(card.id)
     const problem = result.violations.find((v) => v.severity === 'error' && about(v))
     const note = result.violations.find((v) => (NOT_OUT_CODES.has(v.code) || v.code === CATCHING_UP_CODE) && about(v))
-    setMessage(problem
-      ? { tone: 'warn', text: `Added to ${deck.name}, but ${problem.message.replace(/^.*?: /, '')}` }
-      : note
-        ? { tone: 'warn', text: `Added to ${deck.name}. ${note.message}` }
-        : { tone: 'ok', text: `Added to ${deck.name}.` })
+    setMessage(addedMessage(deck.name, problem, note))
   }
 
   return (

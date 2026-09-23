@@ -132,17 +132,21 @@ describe('retry behaviour', () => {
   }, 10000)
 
   it('backs off exponentially rather than hammering', async () => {
+    // The rule and the count, not the clock: this timed the gaps between
+    // requests and failed twice on a loaded machine while the rule it guards
+    // never moved. The wait doubles per attempt, and a Scryfall that keeps
+    // failing is asked a bounded number of times and then let alone.
     const previous = __internals.setBackoffBase(20)
-    const times = []
-    vi.stubGlobal('fetch', vi.fn(async () => { times.push(Date.now()); return fail(503) }))
+    const { backoffFor, MAX_RETRIES } = __internals
+    expect(backoffFor(0)).toBe(20)
+    expect(backoffFor(1)).toBe(40)
+    expect(backoffFor(2)).toBe(80)
+
+    const fetchMock = vi.fn(async () => fail(503))
+    vi.stubGlobal('fetch', fetchMock)
     await expect(searchCards('bears')).rejects.toThrow()
     __internals.setBackoffBase(previous)
-
-    const gaps = times.slice(1).map((t, i) => t - times[i])
-    // Each wait should be meaningfully longer than the one before it.
-    for (let i = 1; i < gaps.length; i++) {
-      expect(gaps[i]).toBeGreaterThan(gaps[i - 1])
-    }
+    expect(fetchMock).toHaveBeenCalledTimes(MAX_RETRIES + 1)
   }, 10000)
 
   it('does not retry a 400 — it is a real answer', async () => {

@@ -33,6 +33,15 @@ const API = 'https://api.scryfall.com'
 const MAX_RETRIES = 4
 let backoffBaseMs = 2000
 
+/**
+ * How long to wait before the attempt after this one: the base doubled per
+ * attempt, so a Scryfall having a bad minute is asked less and less often
+ * rather than at the same rate. One function because it is the rule, and a
+ * rule worth a test of its own — timing the waits by the clock instead made
+ * that test fail on a loaded machine while the rule sat still.
+ */
+const backoffFor = (attempt) => 2 ** attempt * backoffBaseMs
+
 // A 429 is not a wobble to back off from. Scryfall has shut this application
 // out for a fixed thirty seconds, so the first three exponential waits would
 // all land inside that window and be exactly the overage it asked us to stop.
@@ -211,7 +220,7 @@ async function request(path, { method = 'GET', body, signal, background = false 
             { status: response.status },
           )
           if (attempt < (lockedOut ? lockoutRetries : retries)) {
-            await sleep(lockedOut ? lockoutWait(response) : 2 ** attempt * backoffBaseMs)
+            await sleep(lockedOut ? lockoutWait(response) : backoffFor(attempt))
             continue
           }
           if (lockedOut && background) {
@@ -240,7 +249,7 @@ async function request(path, { method = 'GET', body, signal, background = false 
             const lockedOut = error.status === 429
             lastError = error
             if (attempt < (lockedOut ? lockoutRetries : retries)) {
-              await sleep(lockedOut ? lockoutMs : 2 ** attempt * backoffBaseMs)
+              await sleep(lockedOut ? lockoutMs : backoffFor(attempt))
               continue
             }
           }
@@ -249,7 +258,7 @@ async function request(path, { method = 'GET', body, signal, background = false 
         // Network-level failure: the fetch never landed.
         lastError = new OfflineError('Could not reach Scryfall. Showing cached cards only.')
         if (attempt < retries) {
-          await sleep(2 ** attempt * backoffBaseMs)
+          await sleep(backoffFor(attempt))
           continue
         }
         throw lastError
@@ -960,6 +969,7 @@ export const __internals = {
   MAX_RETRIES,
   MAX_LOCKOUT_RETRIES,
   LOCKOUT_MS,
+  backoffFor,
   /** Test seam: shrink the backoff so retry paths are testable in milliseconds. */
   setBackoffBase(ms) {
     const previous = backoffBaseMs
