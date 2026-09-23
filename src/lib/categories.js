@@ -14,6 +14,7 @@
 
 import { typeGroupOf, TYPE_LABELS } from './grouping.js'
 import { totalFor } from './prices.js'
+import { stampedNames } from './deck.js'
 
 export const COMMANDER_CATEGORY = 'Commander'
 
@@ -143,12 +144,19 @@ export function deckSections(deck, lookup, { marketId = 'usd', typeOrder = TYPE_
     buckets.get(name).entries.push(entry)
   }
 
+  // The name the deck stamped for each card, so a row whose card has not
+  // loaded — a printing Scryfall no longer has — still has something to show
+  // (see stampNames in deck.js). Entries carry their own; this also covers the
+  // command zone, and an older deck whose names are only in its snapshot.
+  const stamped = stampedNames(deck)
+
   for (const cardId of deck?.commanders ?? []) {
-    push(COMMANDER_CATEGORY, { cardId, quantity: 1, card: lookup(cardId), zone: 'main', isCommander: true })
+    push(COMMANDER_CATEGORY, { cardId, quantity: 1, card: lookup(cardId), name: stamped.get(cardId), zone: 'main', isCommander: true })
   }
   if (deck?.signatureSpell) {
     push(COMMANDER_CATEGORY, {
-      cardId: deck.signatureSpell, quantity: 1, card: lookup(deck.signatureSpell), zone: 'main', isCommander: true,
+      cardId: deck.signatureSpell, quantity: 1, card: lookup(deck.signatureSpell),
+      name: stamped.get(deck.signatureSpell), zone: 'main', isCommander: true,
     })
   }
 
@@ -156,7 +164,7 @@ export function deckSections(deck, lookup, { marketId = 'usd', typeOrder = TYPE_
     for (const entry of deck?.[zone] ?? []) {
       const card = lookup(entry.cardId)
       const name = zone === 'sideboard' ? 'Sideboard' : categoryOf(entry, card)
-      push(name, { ...entry, card, zone })
+      push(name, { ...entry, name: stamped.get(entry.cardId), card, zone })
       if (entry.category?.trim() && buckets.has(name)) buckets.get(name).chosen = true
     }
   }

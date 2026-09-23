@@ -934,6 +934,21 @@ describe('one of your own decks', () => {
     expect(swapped.updatedAt).toBeTruthy()
   })
 
+  it('merges in the sideboard too, where a foil and a plain copy sit side by side', () => {
+    // A sideboard holding two printings of one card is ordinary, and a merge
+    // Scryfall itself asked for can land on the one already there. Two entries
+    // under one id gave two rows on one React key, a stepper that added a copy
+    // to the wrong one, and a ✕ that deleted every copy.
+    const list = {
+      main: [{ cardId: 'forest', quantity: 2 }, { cardId: 'forest-nice', quantity: 1 }],
+      sideboard: [{ cardId: 'forest', quantity: 1 }, { cardId: 'forest-nice', quantity: 2 }],
+      commanders: [],
+    }
+    const swapped = swapPrinting(list, 'forest', 'forest-nice')
+    expect(swapped.main).toEqual([{ cardId: 'forest-nice', quantity: 3 }])
+    expect(swapped.sideboard).toEqual([{ cardId: 'forest-nice', quantity: 3 }])
+  })
+
   it('swaps a commander too, and leaves a deck it does not touch alone', () => {
     const list = { main: [{ cardId: 'forest', quantity: 1 }], commanders: ['big'], sideboard: [] }
     expect(swapPrinting(list, 'big', 'big-showcase').commanders).toEqual(['big-showcase'])

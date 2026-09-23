@@ -3,6 +3,8 @@
 // beside the component because it is pure, it is the part most likely to be
 // wrong about a real export, and both the app and the offline tooling need it.
 
+import { stampedNames } from './deck.js'
+
 /**
  * Archidekt writes a card's categories in trailing brackets, comma separated,
  * with modifiers in braces: "[Commander{top}]", "[Ramp,Removal]",
@@ -206,18 +208,24 @@ export function decklistLine(quantity, name, printing) {
  *
  * Names alone used to be written, so copying a deck and pasting it back, or
  * into another site, lost every printing the player had chosen and took
- * Scryfall's pick instead. `lookup` gives the card record for an id; a card
- * that has not loaded has no name to write and says so, as it always has.
- * The deck is read forgivingly, since it may have been saved by an older
- * build.
+ * Scryfall's pick instead. `lookup` gives the card record for an id.
+ *
+ * A card that has not loaded is written under the name the deck stamped for it
+ * (see stampNames in deck.js), with no printing beside it, because the deck
+ * knows what the card was and not which printing — so a deck holding a
+ * printing Scryfall no longer has still exports as a decklist somebody can
+ * read and re-import. Where no name was ever stamped there is nothing to write
+ * and the line says so, as it always has. The deck is read forgivingly, since
+ * it may have been saved by an older build.
  */
 export function deckToText(deck, lookup) {
   const lines = []
+  const stamped = stampedNames(deck)
   const line = (quantity, id) => {
     const card = lookup(id)
-    return card?.name
-      ? decklistLine(quantity, card.name, { set: card.set, number: card.collector_number })
-      : `${quantity} (unloaded ${String(id).slice(0, 8)})`
+    if (card?.name) return decklistLine(quantity, card.name, { set: card.set, number: card.collector_number })
+    const name = stamped.get(id)
+    return name ? `${quantity} ${name}` : `${quantity} (unloaded ${String(id).slice(0, 8)})`
   }
   const commanders = deck?.commanders ?? []
   const sideboard = deck?.sideboard ?? []

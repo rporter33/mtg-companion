@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { listDecks, getDeck, saveDeck } from '../../lib/storage.js'
 import { getCardRecordsByIds, refreshCards } from '../../lib/scryfall.js'
 import { getCardRecords } from '../../lib/cache.js'
-import { allCardIds } from '../../lib/deck.js'
+import { allCardIds, stampNames } from '../../lib/deck.js'
 import { captureSnapshot, diffAllDecks, summarise, oldestFetch } from '../../lib/snapshot.js'
 
 /**
@@ -102,8 +102,16 @@ export default function useLegalityWatch({ enabled = true } = {}) {
         if (!cards || !cards.size) continue
         const current = getDeck(deck.id)
         if (!current) continue
-        const snapshot = captureSnapshot(current, cards)
-        if (snapshot) saveDeck({ ...current, snapshot })
+        // The names the deck already holds are written onto its entries before
+        // the snapshot is replaced. A snapshot records only the cards that
+        // loaded, and for a deck saved before the stamp existed the snapshot is
+        // the only place a name lives — so re-baselining without this deleted,
+        // on the first online launch, the name of the very printing Scryfall no
+        // longer has (see stampNames). Nothing is fetched for it.
+        const named = stampNames(current, cards)
+        const snapshot = captureSnapshot(named, cards)
+        if (snapshot) saveDeck({ ...named, snapshot })
+        else if (named !== current) saveDeck(named)
       }
     })()
 

@@ -14,7 +14,7 @@ import { useCollection } from '../../lib/collection-store.js'
 import { ownedOf, missingFor, missingCost } from '../../lib/collection.js'
 import { formatPrice } from '../../lib/prices.js'
 import { searchCards, getCardsByNames } from '../../lib/scryfall.js'
-import { createDeck, addCard, setCommanders } from '../../lib/deck.js'
+import { createDeck, addCard, setCommanders, stampNames } from '../../lib/deck.js'
 import { saveDeck, getDeck, getPrefs, setPref } from '../../lib/storage.js'
 import { pinCards } from '../../lib/cache.js'
 import { navigate, useRoute, STEP_SLUGS } from '../../lib/router.js'
@@ -110,7 +110,19 @@ export default function FirstDeck({ onOpenCard }) {
     for (const card of list) next.set(card.id, card)
     return next
   })
-  const commit = (next) => { setDeck(next); saveDeck(next) }
+  /*
+   * Every save here has the cards in hand, so each card's name is written onto
+   * the deck with it (see stampNames). `held` is for cards fetched in this same
+   * turn: `remember` only reaches `lookup` on the next render, and a commander
+   * or a basic land chosen a moment ago would otherwise wait for the next save
+   * to have its name written down.
+   */
+  const commit = (next, held = null) => {
+    const hand = held instanceof Map ? held : held?.id ? new Map([[held.id, held]]) : null
+    const stamped = stampNames(next, (id) => hand?.get(id) ?? lookup(id))
+    setDeck(stamped)
+    saveDeck(stamped)
+  }
 
   const chooseDial = (value) => { setDial(Number(value)); setPicked(null) }
   const choosePair = (key) => {
@@ -133,9 +145,9 @@ export default function FirstDeck({ onOpenCard }) {
     if (deck?.commanders?.[0] === card.id) { go(3); return }
     const title = `${card.name.split(',')[0]} deck`
     if (deck && deck.main.length === 0 && deck.formatId === formatId) {
-      commit(setCommanders({ ...deck, name: title }, [card.id]))
+      commit(setCommanders({ ...deck, name: title }, [card.id]), card)
     } else {
-      commit(setCommanders(createDeck({ name: title, formatId }), [card.id]))
+      commit(setCommanders(createDeck({ name: title, formatId }), [card.id]), card)
     }
     go(3)
   }
@@ -670,7 +682,8 @@ function StaplesStep({
         next = addCard(next, card.id, item.quantity, 'main')
       }
       pinCards(next.main.map((e) => e.cardId))
-      onChange(next)
+      // The basics were fetched a moment ago, so they go along by hand.
+      onChange(next, new Map([...basics.values()].map((c) => [c.id, c])))
     } finally {
       setFilling(false)
     }

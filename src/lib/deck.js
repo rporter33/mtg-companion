@@ -11,10 +11,19 @@ import {
 import { notOutUntil, releaseLabel } from './release.js'
 import { today } from './season.js'
 
+/**
+ * A fresh deck id. Bookkeeping, not content: storage keys a deck by it, and a
+ * deck arriving from a file without one has to be given one or it cannot be
+ * written at all (see importAll in storage.js).
+ */
+export function newDeckId() {
+  return `deck_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
+}
+
 export function createDeck({ name = 'Untitled deck', formatId = 'commander' } = {}) {
   const now = new Date().toISOString()
   return {
-    id: `deck_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`,
+    id: newDeckId(),
     name,
     formatId,
     commanders: [],
@@ -24,6 +33,220 @@ export function createDeck({ name = 'Untitled deck', formatId = 'commander' } = 
     createdAt: now,
     updatedAt: now,
   }
+}
+
+/**
+ * A deck read back from storage, whatever build wrote it.
+ *
+ * A deck in somebody's phone was written by an older build — or by a newer
+ * one, if a stale service worker is serving this bundle — and has whatever
+ * shape it had then. So what is missing is filled in, what cannot be made
+ * sense of is dropped, and nothing here throws: `upgrade` in
+ * `lib/board/model.js` is the same job for a saved table. Every read in
+ * storage.js goes through this.
+ *
+ * Fields this build does not know are kept untouched, because state written by
+ * a newer build is left alone rather than forced backwards (see storage.js).
+ * No date is invented for a deck with none: saveDeck stamps `updatedAt` when
+ * it writes, and a made-up `createdAt` would reorder the shelf.
+ *
+ * Returns the very same object when there was nothing to do, so storage can go
+ * on deciding what to write by identity.
+ */
+export function upgradeDeck(deck) {
+  if (!deck || typeof deck !== 'object' || Array.isArray(deck)) return null
+
+  // An entry is { cardId, quantity } and may carry `name` (see stampNames),
+  // `category`, and whatever a later build adds. One with no card to point at,
+  // or a quantity that is not a whole number of copies, is not an entry any
+  // screen could draw, so it goes.
+  const entries = (list) => {
+    if (!Array.isArray(list)) return []
+    let changed = false
+    const out = []
+    for (const entry of list) {
+      if (!entry || typeof entry !== 'object' || typeof entry.cardId !== 'string' || !entry.cardId
+        || !Number.isInteger(entry.quantity) || entry.quantity <= 0) {
+        changed = true
+        continue
+      }
+      if ('name' in entry && typeof entry.name !== 'string') {
+        const { name: _drop, ...rest } = entry
+        changed = true
+        out.push(rest)
+      } else {
+        out.push(entry)
+      }
+    }
+    return changed ? out : list
+  }
+
+  const strings = (list) => {
+    if (!Array.isArray(list)) return []
+    const out = list.filter((item) => typeof item === 'string' && item)
+    return out.length === list.length ? list : out
+  }
+
+  const next = {
+    ...deck,
+    name: typeof deck.name === 'string' ? deck.name : 'Untitled deck',
+    formatId: typeof deck.formatId === 'string' && deck.formatId ? deck.formatId : 'commander',
+    commanders: strings(deck.commanders),
+    signatureSpell: typeof deck.signatureSpell === 'string' && deck.signatureSpell ? deck.signatureSpell : null,
+    main: entries(deck.main),
+    sideboard: entries(deck.sideboard),
+    categoryOrder: strings(deck.categoryOrder),
+    versions: Array.isArray(deck.versions) ? deck.versions : [],
+  }
+
+  // The names kept for the ids that have no entry to carry one (see
+  // stampNames). A name that is not a name would be drawn as one, so only
+  // strings survive; the key is left off a deck that has none.
+  const names = plainObject(deck.cardNames)
+  if (names) {
+    const kept = {}
+    for (const [id, name] of Object.entries(names)) if (typeof name === 'string' && name) kept[id] = name
+    if (sameNames(kept, names)) next.cardNames = deck.cardNames
+    else if (Object.keys(kept).length) next.cardNames = kept
+    else delete next.cardNames
+  } else if ('cardNames' in next) {
+    delete next.cardNames
+  }
+
+  const settled = UPGRADED_FIELDS.every((field) => next[field] === deck[field])
+    && next.cardNames === deck.cardNames && ('cardNames' in next) === ('cardNames' in deck)
+  return settled ? deck : next
+}
+
+const UPGRADED_FIELDS = [
+  'name', 'formatId', 'commanders', 'signatureSpell', 'main', 'sideboard', 'categoryOrder', 'versions',
+]
+
+const plainObject = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : null)
+
+const sameNames = (a, b) => {
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key])
+}
+
+/**
+ * The same store of names with one id's name copied to another, or null when it
+ * holds none. Copied rather than moved: a printing swap and a followed merge are
+ * both the same game card under a new id, so the name is true of both — and a
+ * stored version still holds the old id in its command zone, so dropping it
+ * there would bring the commander back nameless on a restore.
+ */
+const renameKey = (store, fromId, toId) => {
+  const names = plainObject(store)
+  if (!names || !(fromId in names)) return names
+  return { ...names, [toId]: names[fromId] }
+}
+
+const cardFrom = (lookup, id) => {
+  if (typeof id !== 'string' || !id) return null
+  if (typeof lookup === 'function') return lookup(id)
+  if (lookup instanceof Map) return lookup.get(id)
+  return lookup?.[id]
+}
+
+/**
+ * The name the deck has stamped for each card id it holds.
+ *
+ * A printing id can stop resolving: Scryfall merges or deletes ids, most often
+ * the preview printings a deck built during a spoiler season is full of. Once
+ * that happens the card can no longer be fetched, and a deck row, an export
+ * and the rules engine all had nothing to call it. So the name Scryfall gave
+ * is written down while the card is in hand (stampNames) and read from here
+ * wherever the card itself is missing. It is never a substitute for the
+ * record: a stamped name carries no set, no price and no legality, and
+ * nothing is ever guessed from it.
+ *
+ * Entries carry their own `name`; the ids with no entry — the commanders and
+ * the signature spell — are kept in `cardNames`. A deck saved before any of
+ * this also has a name for each of its cards in the legality snapshot, which
+ * has recorded one since snapshots existed, so that is read last and makes an
+ * older deck readable without waiting for it to be saved again.
+ */
+export function stampedNames(deck) {
+  const out = new Map()
+  const keep = (id, name) => {
+    if (typeof id === 'string' && id && typeof name === 'string' && name && !out.has(id)) out.set(id, name)
+  }
+  for (const entry of [...(deck?.main ?? []), ...(deck?.sideboard ?? [])]) keep(entry?.cardId, entry?.name)
+  for (const [id, name] of Object.entries(plainObject(deck?.cardNames) ?? {})) keep(id, name)
+  for (const [id, held] of Object.entries(plainObject(deck?.snapshot?.cards) ?? {})) keep(id, held?.name)
+  return out
+}
+
+/**
+ * Writes down each card's name, as Scryfall gave it, for the cards in hand.
+ *
+ * Called where a deck is already being saved with its cards loaded — the
+ * editor's commit, a card added from the card sheet, an import being applied —
+ * so it costs no save of its own. A card that has not loaded keeps whatever
+ * name was stamped before: nothing here invents one, and a name is never
+ * fetched for its own sake.
+ *
+ * "Whatever was stamped before" means anywhere the deck already keeps a name,
+ * stampedNames and all — including the legality snapshot of a deck saved before
+ * any of this, which is the only name such a deck has. That name is *promoted*
+ * here onto the entry, because the save this runs in front of replaces the
+ * snapshot with one built from the cards that loaded, and a printing Scryfall no
+ * longer has is not among them. Reading only `lookup` would therefore erase, on
+ * the first save after launch, the name of the one card that most needs it.
+ *
+ * Returns the very same deck when nothing changed, as stampFace does, because
+ * storage decides what to write by identity.
+ */
+export function stampNames(deck, lookup) {
+  if (!deck || typeof deck !== 'object') return deck
+  let stamped = null
+  const nameOf = (id) => {
+    const card = cardFrom(lookup, id)
+    if (typeof card?.name === 'string' && card.name) return card.name
+    stamped = stamped ?? stampedNames(deck)
+    return stamped.get(id) ?? null
+  }
+
+  const stampZone = (list) => {
+    if (!Array.isArray(list)) return list
+    let changed = false
+    const out = list.map((entry) => {
+      if (!entry || typeof entry !== 'object') return entry
+      const name = nameOf(entry.cardId)
+      if (!name || entry.name === name) return entry
+      changed = true
+      return { ...entry, name }
+    })
+    return changed ? out : list
+  }
+  const main = stampZone(deck.main)
+  const sideboard = stampZone(deck.sideboard)
+
+  // The command zone holds ids rather than entries, so its names are kept
+  // beside them. Kept, not rebuilt: a name already here stays, even for an id
+  // the command zone no longer holds. A main-deck entry keeps its name through
+  // any number of removals, because a version clones the entry whole; `cardNames`
+  // is in no version, so pruning it on the commit that takes a commander out
+  // threw away the only record of what it was called — and a restore then
+  // brought the commander back nameless. One short string per id is cheaper
+  // than that.
+  const held = plainObject(deck.cardNames) ?? {}
+  const names = {}
+  for (const [id, name] of Object.entries(held)) if (typeof name === 'string' && name) names[id] = name
+  for (const id of [...(deck.commanders ?? []), ...(deck.signatureSpell ? [deck.signatureSpell] : [])]) {
+    const name = nameOf(id)
+    if (name) names[id] = name
+  }
+  const namesSettled = sameNames(names, held) && (Object.keys(names).length > 0) === ('cardNames' in deck)
+
+  if (main === deck.main && sideboard === deck.sideboard && namesSettled) return deck
+  const next = { ...deck }
+  if (main !== deck.main) next.main = main
+  if (sideboard !== deck.sideboard) next.sideboard = sideboard
+  if (Object.keys(names).length) next.cardNames = namesSettled ? deck.cardNames : names
+  else delete next.cardNames
+  return next
 }
 
 const zoneOf = (deck, zone) => (zone === 'sideboard' ? deck.sideboard : deck.main)
@@ -67,7 +290,9 @@ export function deckFromSeed({ example, card } = {}) {
     name: example?.name ?? (card?.name ? `${card.name} deck` : 'Untitled deck'),
     formatId: example?.formatId ?? 'commander',
   })
-  return !example && card?.id ? setCommanders(deck, [card.id]) : deck
+  if (example || !card?.id) return deck
+  // The card is in hand, so its name is stamped with it (see stampNames).
+  return stampNames(setCommanders(deck, [card.id]), (id) => (id === card.id ? card : null))
 }
 
 /** Total card count, including commanders where the format counts them. */
@@ -392,31 +617,55 @@ export function isLandCard(card) {
  * if the deck already holds the printing being swapped to, the two entries
  * have to merge, or the deck would list the same card twice and every count
  * in the app would be wrong. Commanders are swapped the same way.
+ *
+ * Both zones merge, and for the same reason. A sideboard holding a foil and a
+ * non-foil of one card, or a preview printing and the released one, is ordinary;
+ * leaving two entries under one id there gave two rows on one React key, a
+ * stepper that added a copy to the wrong one, and a ✕ that deleted both.
  */
 export function swapPrinting(deck, fromId, toId) {
   if (!deck || !fromId || !toId || fromId === toId) return deck
-  const main = []
   let merged = false
-  for (const entry of deck.main ?? []) {
-    const id = entry.cardId === fromId ? toId : entry.cardId
-    const at = main.findIndex((e) => e.cardId === id)
-    if (at >= 0) {
-      main[at] = { ...main[at], quantity: main[at].quantity + entry.quantity }
-      merged = true
-    } else {
-      main.push(entry.cardId === fromId ? { ...entry, cardId: toId } : entry)
+  const swapZone = (list) => {
+    const out = []
+    for (const entry of list ?? []) {
+      const id = entry.cardId === fromId ? toId : entry.cardId
+      const at = out.findIndex((e) => e.cardId === id)
+      if (at >= 0) {
+        out[at] = { ...out[at], quantity: out[at].quantity + entry.quantity }
+        merged = true
+      } else {
+        out.push(entry.cardId === fromId ? { ...entry, cardId: toId } : entry)
+      }
     }
+    return out
   }
-  const sideboard = (deck.sideboard ?? []).map((e) => (e.cardId === fromId ? { ...e, cardId: toId } : e))
+  const main = swapZone(deck.main)
+  const sideboard = swapZone(deck.sideboard)
   const commanders = [...new Set((deck.commanders ?? []).map((id) => (id === fromId ? toId : id)))]
+  // The signature spell is an id like any other, and choosing a printing for it
+  // used to do nothing at all.
+  const signatureSpell = deck.signatureSpell === fromId ? toId : deck.signatureSpell
   const touched = merged
     || main.some((e, i) => e !== (deck.main ?? [])[i])
     || sideboard.some((e, i) => e !== (deck.sideboard ?? [])[i])
     || commanders.join() !== (deck.commanders ?? []).join()
+    || signatureSpell !== deck.signatureSpell
   if (!touched) return deck
   // The deck's own chosen art follows the card it was pointing at.
   const artCardId = deck.artCardId === fromId ? toId : deck.artCardId
-  return { ...deck, main, sideboard, commanders, artCardId, updatedAt: new Date().toISOString() }
+  // So does the name stamped for an id in the command zone: it is the same card.
+  const cardNames = renameKey(deck.cardNames, fromId, toId)
+  return {
+    ...deck,
+    main,
+    sideboard,
+    commanders,
+    signatureSpell,
+    artCardId,
+    ...(cardNames ? { cardNames } : {}),
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 export { isBasicLand, isModalLand, isTrueLand, frontTypeLine }

@@ -274,7 +274,10 @@ export default function DeckList({
             )}
           </SectionHeader>
           <div className={rowsClass}>
-            {(shown ?? entries).map(({ cardId, quantity, card, zone, isCommander }) => {
+            {/* `name` on an entry is the name the deck stamped for its card
+                (see stampNames), not this section's name, which is `name`
+                above — hence the rename. */}
+            {(shown ?? entries).map(({ cardId, quantity, card, zone, isCommander, name: stampedName = null }) => {
               const key = `${zone}:${cardId}`
               const picker = printingFor === cardId && card ? (
                 <Printings
@@ -297,6 +300,7 @@ export default function DeckList({
                     market={market}
                     owned={ownedOf(collection, card)}
                     isCommander={isCommander}
+                    stampedName={stampedName}
                     flagged={problemIds.has(cardId)}
                     marked={marked.includes(cardId)}
                     act={act}
@@ -315,6 +319,7 @@ export default function DeckList({
                     quantity={quantity}
                     zone={zone}
                     isCommander={isCommander}
+                    stampedName={stampedName}
                     flagged={problemIds.has(cardId)}
                     previewed={previewId === cardId}
                     marked={marked.includes(cardId)}
@@ -337,6 +342,7 @@ export default function DeckList({
                   quantity={quantity}
                   zone={zone}
                   isCommander={isCommander}
+                  stampedName={stampedName}
                   flagged={problemIds.has(cardId)}
                   marked={marked.includes(cardId)}
                   act={act}

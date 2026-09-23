@@ -4,7 +4,8 @@ import DeckAnalysis from './DeckAnalysis.jsx'
 import DeckCoach from './DeckCoach.jsx'
 import DeckSearch from './DeckSearch.jsx'
 import DeckList from './editor/DeckList.jsx'
-import { validateDeck, deckSize, deckVerdict } from '../../lib/deck.js'
+import { validateDeck, deckSize, deckVerdict, stampNames, swapPrinting } from '../../lib/deck.js'
+import { movedNote, goneNote } from '../../lib/card-migrations.js'
 import { getFormat } from '../../lib/formats.js'
 import { captureSnapshot } from '../../lib/snapshot.js'
 import { deckSections } from '../../lib/categories.js'
@@ -38,7 +39,7 @@ export default function DeckEditor({
   // link can point at a deck's analysis.
   const setTab = onTab
   const [coachQuery, setCoachQuery] = useState(null)
-  const { cards, loading, missing, lookup } = useDeckCards(deck)
+  const { cards, loading, missing, moved, gone, lookup } = useDeckCards(deck)
   const format = getFormat(deck.formatId)
 
   const validation = useMemo(() => validateDeck(deck, cards), [deck, cards])
@@ -47,10 +48,16 @@ export default function DeckEditor({
   // announcement is a *diff* against a known-good baseline rather than a silent
   // rewrite of what this deck used to be.
   const commit = (next) => {
-    const snapshot = cards.size ? captureSnapshot(next, cards) : next.snapshot
+    // Names first, and against the deck as it stands: a deck saved before the
+    // stamp existed has its only name in the snapshot below, and the snapshot
+    // this is about to write is built from the cards that loaded, which a
+    // printing Scryfall has dropped is not among. Stamping afterwards would
+    // read the new snapshot and lose the name for good (see stampNames).
+    const named = stampNames(next, lookup)
+    const snapshot = cards.size ? captureSnapshot(named, cards) : named.snapshot
     // The automatic face card is recorded alongside, so the Decks screen can
     // show the same art without loading the cards. Same object when unchanged.
-    onChange(stampFace(snapshot ? { ...next, snapshot } : next, lookup, market))
+    onChange(stampFace(snapshot ? { ...named, snapshot } : named, lookup, market))
   }
   const total = deckSize(deck, format)
   const target = format?.deck.max ?? format?.deck.min ?? 60
@@ -103,6 +110,45 @@ export default function DeckEditor({
     if (fresh.length) setArrived(fresh)
   }, [tab, deck])
 
+  /*
+   * A printing Scryfall has replaced.
+   *
+   * Nothing in a deck is rewritten behind the player's back — but a merge is
+   * not the app choosing a printing, it is Scryfall repairing its own record of
+   * the one the deck already holds, and leaving the old id in place would leave
+   * the row unreadable for good. So a merge is followed, only a merge, and the
+   * banner below says it happened. What was replaced is kept in state rather
+   * than read from the hook, because the swap changes the deck's ids and the
+   * hook's answer goes with them; the sentence has to outlive that.
+   */
+  const followed = useRef({ deckId: null, ids: new Set() })
+  const [replaced, setReplaced] = useState(NO_IDS)
+  useEffect(() => {
+    // Both are about this deck: another deck opened in the same editor starts
+    // again, or it would inherit a sentence about a card it does not hold.
+    if (followed.current.deckId !== deck.id) {
+      followed.current = { deckId: deck.id, ids: new Set() }
+      setReplaced(NO_IDS)
+    }
+    if (!moved.length) return
+    const held = new Set(idsIn(deck))
+    let next = deck
+    const said = []
+    for (const m of moved) {
+      if (!held.has(m.cardId) || followed.current.ids.has(m.cardId)) continue
+      followed.current.ids.add(m.cardId)
+      const after = swapPrinting(next, m.cardId, m.newId)
+      // Only what was really replaced is announced.
+      if (after === next) continue
+      next = after
+      said.push({ name: m.name, cardId: m.cardId, newId: m.newId })
+    }
+    if (!said.length) return
+    setReplaced((before) => [...before, ...said])
+    commit(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moved, deck])
+
   // The tab strip scrolls sideways on a phone; the open tab must be in view,
   // or a deck opened on Import / export shows a strip with nothing selected.
   const tabsRef = useRef(null)
@@ -121,7 +167,14 @@ export default function DeckEditor({
     [groups, market],
   )
   const errors = validation.violations.filter((v) => v.severity === 'error')
-  const warnings = validation.violations.filter((v) => v.severity === 'warning')
+  // "A card in this deck has not loaded yet" is true of a printing Scryfall no
+  // longer has, and useless beside the banner above that says what happened to
+  // it: "has not loaded yet" suggests waiting, and there is nothing to wait for.
+  // So the card_not_loaded warning is dropped for those ids only; every other
+  // unloaded card still raises it.
+  const goneIds = useMemo(() => new Set(gone.map((g) => g.cardId)), [gone])
+  const warnings = validation.violations.filter((v) => v.severity === 'warning'
+    && !(v.code === 'card_not_loaded' && goneIds.has(v.cardId)))
   // A deck whose only trouble is cards not out yet is not a plain "Legal".
   const verdict = deckVerdict(deck, validation, cards)
 
@@ -206,6 +259,24 @@ export default function DeckEditor({
         <div className="banner banner--warn">
           {missing.length} card{missing.length === 1 ? '' : 's'} could not be loaded
           {offline ? ' while offline' : ''}. The rest of the deck is checked normally.
+        </div>
+      )}
+
+      {/* What Scryfall has done with a printing this deck holds, and what the
+          app did about it. Its own banners: neither is a fault of the deck.
+          Both arrive after the page has painted — the collection call, then
+          /migrations — and the first of them reports an id the app has just
+          rewritten in the deck, so both are announced: a screen reader would
+          otherwise never hear that the deck had changed. Nothing in either
+          needs acting on, so status rather than alert. */}
+      {replaced.length > 0 && (
+        <div className="banner banner--info stack stack--snug" role="status">
+          {movedNote(replaced).map((line, i) => <span key={i}>{line}</span>)}
+        </div>
+      )}
+      {gone.length > 0 && (
+        <div className="banner banner--warn stack stack--snug" role="status">
+          {goneNote(gone).map((line, i) => <span key={i}>{line}</span>)}
         </div>
       )}
 

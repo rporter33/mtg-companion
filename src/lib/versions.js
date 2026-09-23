@@ -15,6 +15,8 @@
 // first, so the version you just left is one restore away. Undo needs nothing
 // special because it is the same operation.
 
+import { upgradeDeck } from './deck.js'
+
 export const MAX_VERSIONS = 30
 
 const LISTS = ['commanders', 'signatureSpell', 'main', 'sideboard', 'categoryOrder']
@@ -29,6 +31,14 @@ export function listsOf(deck) {
 }
 
 /**
+ * The entries of a stored list, read forgivingly. A version was written by
+ * whichever build took it, and a hand-edited file can hold anything; an entry
+ * that is not an object has no card and no count to read, and reading one threw
+ * where a version was compared, which took the editor down with it.
+ */
+const entriesOf = (list) => (Array.isArray(list) ? list.filter((e) => e && typeof e === 'object') : [])
+
+/**
  * Do two sets of lists hold the same cards in the same quantities?
  *
  * Order-insensitive on purpose: sorting a list is not a change to a deck, and
@@ -36,7 +46,7 @@ export function listsOf(deck) {
  * nobody asked for.
  */
 export function sameLists(a, b) {
-  const norm = (list) => [...(list ?? [])]
+  const norm = (list) => entriesOf(list)
     .map((e) => `${e.cardId}:${e.quantity ?? 1}`)
     .sort()
     .join('|')
@@ -108,14 +118,17 @@ export function restoreVersion(deck, versionId) {
   const version = (deck?.versions ?? []).find((v) => v.id === versionId)
   if (!version) return deck
   const checkpointed = captureVersion(deck, { label: 'Before restore', auto: true })
-  return {
+  // A version is state read back from storage as much as a deck is, and it may
+  // have been written by a build ago, so the restored deck goes through the same
+  // forgiving read (see upgradeDeck).
+  return upgradeDeck({
     ...checkpointed,
     ...listsOf(version),
     updatedAt: new Date().toISOString(),
-  }
+  })
 }
 
-const countOf = (list) => (list ?? []).reduce((n, e) => n + (e.quantity ?? 1), 0)
+const countOf = (list) => entriesOf(list).reduce((n, e) => n + (e.quantity ?? 1), 0)
 
 /** How many cards a version holds, main plus commanders. */
 export function versionSize(version) {
@@ -139,7 +152,7 @@ export function diffVersions(from, to, lookup = () => undefined, marketId = 'usd
   const tally = (lists) => {
     const m = new Map()
     for (const zone of ['main', 'sideboard']) {
-      for (const e of lists?.[zone] ?? []) m.set(`${zone}:${e.cardId}`, (m.get(`${zone}:${e.cardId}`) ?? 0) + (e.quantity ?? 1))
+      for (const e of entriesOf(lists?.[zone])) m.set(`${zone}:${e.cardId}`, (m.get(`${zone}:${e.cardId}`) ?? 0) + (e.quantity ?? 1))
     }
     return m
   }
@@ -171,7 +184,7 @@ export function diffVersions(from, to, lookup = () => undefined, marketId = 'usd
     const total = (lists) => {
       let sum = 0
       for (const zone of ['main', 'sideboard']) {
-        for (const e of lists?.[zone] ?? []) {
+        for (const e of entriesOf(lists?.[zone])) {
           const card = lookup(e.cardId)
           const { value } = card ? priceFor(card, marketId) : { value: null }
           if (value !== null) sum += value * (e.quantity ?? 1)

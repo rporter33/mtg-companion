@@ -4,6 +4,7 @@
 // sit itself cannot disagree about what the deck is: the check asks about
 // exactly the map the sit will send.
 import { FORMATS } from '../formats.js'
+import { stampedNames } from '../deck.js'
 
 /**
  * The name to send for a card: Scryfall's own, except for a reversible card.
@@ -14,6 +15,20 @@ import { FORMATS } from '../formats.js'
 export function engineName(card) {
   if (card?.layout === 'reversible_card' && card.card_faces?.[0]?.name) return card.card_faces[0].name
   return card?.name ?? null
+}
+
+/**
+ * The name a deck stamped for a card that has not loaded, as the engine takes
+ * it (see stampNames in deck.js). The stamp is Scryfall's name for the card and
+ * nothing else — no layout, so the reversible card's "X // X" cannot be told
+ * apart from a record; a stamp whose two halves are the same word is the one
+ * shape that can only be that, and the engine refuses it, so it goes by the
+ * single name as engineName sends it.
+ */
+function stampedEngineName(name) {
+  if (typeof name !== 'string' || !name) return null
+  const halves = name.split(' // ')
+  return halves.length === 2 && halves[0] === halves[1] ? halves[0] : name
 }
 
 /** How many copies a deck line holds: a count, a printing with a count, or a list of those. */
@@ -30,8 +45,15 @@ export function copiesOf(line) {
  * art when it has it: `{count, set, number}`, or a list of those when one card
  * is in the deck in several printings. A card with no printing to name goes
  * as a plain count, the shape an engine before printings reads.
+ *
+ * A card that has not loaded but whose name the deck stamped (`stamped`, see
+ * stampNames in deck.js) goes by that name, as a plain count: the engine knows
+ * cards by name, so a deck holding a printing Scryfall no longer has is still a
+ * deck it can deal. It is not counted as unloaded, because nothing is missing
+ * from what is sent — only the printing's art is, which the engine picks for
+ * itself.
  */
-function countNames(entries, lookup) {
+function countNames(entries, lookup, stamped) {
   const byName = new Map()
   let total = 0
   let unloaded = 0
@@ -39,7 +61,7 @@ function countNames(entries, lookup) {
     const copies = entry?.quantity ?? 1
     total += copies
     const card = lookup?.(entry?.cardId)
-    const name = engineName(card)
+    const name = engineName(card) ?? stampedEngineName(stamped?.get(entry?.cardId))
     if (!name) { unloaded += copies; continue }
     const set = card?.set || null
     const number = card?.collector_number || null
@@ -74,11 +96,16 @@ function countNames(entries, lookup) {
  * usually its maybeboard, not cards for the game. A sideboard card that has
  * not loaded is counted in `sideboardUnloaded` and left out, as a sideboard
  * card the engine does not know is (the owner's choice, 2026-09-21).
+ *
+ * A card whose record is gone but whose name the deck stamped still goes, by
+ * that name (see countNames), so a deck built in a preview season can be
+ * played after Scryfall discards one of its ids.
  */
 export function seatDeck(deck, lookup) {
-  const main = countNames(deck?.main, lookup)
+  const stamped = stampedNames(deck)
+  const main = countNames(deck?.main, lookup, stamped)
   const allowed = FORMATS[deck?.formatId]?.sideboard?.max > 0
-  const side = allowed ? countNames(deck?.sideboard, lookup) : { out: {}, unloaded: 0 }
+  const side = allowed ? countNames(deck?.sideboard, lookup, stamped) : { out: {}, unloaded: 0 }
   return { deck: main.out, sideboard: side.out, total: main.total, unloaded: main.unloaded, sideboardUnloaded: side.unloaded }
 }
 

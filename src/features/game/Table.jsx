@@ -7,6 +7,7 @@ import { untappedSources } from '../../lib/board/mana.js'
 import { openingActions, mulliganActions, swapPrinting, OPENING_HAND } from '../../lib/board/deck.js'
 import { treatmentOf, finishFor } from '../../lib/board/art.js'
 import { artUrl } from '../../lib/deck-art.js'
+import { stampNames } from '../../lib/deck.js'
 import { laneFor, zoneWhenPlayed, isPermanent } from '../../lib/board/placement.js'
 import { fan } from '../../lib/board/geometry.js'
 import { prefersReducedMotion } from '../../lib/table/motion.js'
@@ -14,6 +15,7 @@ import { STEPS } from '../../data/turn-structure.js'
 import { getCardsByIds } from '../../lib/scryfall.js'
 import { pinCards } from '../../lib/cache.js'
 import useDeckCards from '../decks/useDeckCards.js'
+import { goneTableNote, movedTableNote } from '../../lib/card-migrations.js'
 import { playFor } from '../../lib/board/sound.js'
 import useDrag from '../../components/table/useDrag.js'
 import Field from '../../components/table/Field.jsx'
@@ -79,7 +81,12 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   // The deck is kept here because choosing a printing rewrites it, and the
   // table should show the copy just chosen without a reload.
   const [deck, setDeck] = useState(initialDeck)
-  const { cards, loading, missing, lookup: deckLookup } = useDeckCards(deck)
+  // `moved` and `gone` are read as well as `missing`: a printing Scryfall has
+  // dropped or replaced is not in `missing`, and the table deals every copy the
+  // deck lists whether a record for it exists or not (see libraryOf). Without
+  // these two the cards were simply on the battlefield, nameless or under
+  // another printing, with nothing said about either.
+  const { cards, loading, missing, moved, gone, lookup: deckLookup } = useDeckCards(deck)
   // Cards on the table the deck has never heard of: a token, a printing
   // swapped in, or — at a shared table — everything the other seat plays.
   // Pinned, so they are still themselves after a reload.
@@ -118,7 +125,10 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   // belongs in is read off its type line, and at first paint there is none
   // to read. `loading` is false on the very first render, so readiness is
   // "something came back", true only once the fetch settled either way.
-  const ready = !deck.main?.length || cards.size > 0 || missing.length > 0
+  // `gone` counts too: an id moves out of `missing` into it when /migrations
+  // answers, and a readiness that fell back to false at that moment nulled the
+  // engine seat's deck and tore down a sit-down that had already happened.
+  const ready = !deck.main?.length || cards.size > 0 || missing.length > 0 || gone.length > 0
 
   const shared = useRoom({
     address: room ? relayAddress() : null,
@@ -522,7 +532,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     if (!from || !print?.id || from === print.id) return
     remember(print)
     doAction({ type: 'reprint', from, to: print.id, finish })
-    const next = swapPrinting(deck, from, print.id)
+    // The printing just chosen is in hand, so its name is stamped on the deck
+    // with it (see stampNames): the swap is a save of the deck either way.
+    const next = stampNames(swapPrinting(deck, from, print.id), (id) => (id === print.id ? print : null))
     if (next !== deck) { setDeck(next); saveDeck(next) }
   }
   const makeToken = ({ cardId = null, card = null, custom = null }) => {
@@ -651,6 +663,18 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
           <div className="banner banner--warn">
             {missing.length} card{missing.length === 1 ? '' : 's'} in this deck could not be loaded, so
             {missing.length === 1 ? ' it is' : ' they are'} on the table without a name or a painting.
+          </div>
+        )}
+        {/* What Scryfall has done with a printing this deck holds. Both arrive
+            after the deal, so both are announced. */}
+        {moved.length > 0 && (
+          <div className="banner banner--info stack stack--snug" role="status">
+            {movedTableNote(moved).map((line, i) => <span key={i}>{line}</span>)}
+          </div>
+        )}
+        {gone.length > 0 && (
+          <div className="banner banner--warn stack stack--snug" role="status">
+            {goneTableNote(gone).map((line, i) => <span key={i}>{line}</span>)}
           </div>
         )}
         {loading && <p className="faint tiny m0">Loading the paintings…</p>}

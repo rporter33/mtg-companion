@@ -4,7 +4,7 @@ import {
   looksLikeUrl, planForUrl, fetchFromSource, toDecklistText,
 } from '../../lib/deck-sources.js'
 import { toExampleEntry } from '../../data/example-decks.js'
-import { addCard, setCommanders } from '../../lib/deck.js'
+import { addCard, setCommanders, stampNames } from '../../lib/deck.js'
 import { getFormat, frontTypeLine } from '../../lib/formats.js'
 import { parseDecklist, deckToText } from '../../lib/decklist.js'
 import { describeChoice } from '../../lib/printing-choice.js'
@@ -115,7 +115,11 @@ export default function DeckImportExport({ deck, lookup, onChange, pending, onPe
         if (category) next = setCategory(next, card.id, category)
       }
     }
-    onChange(next)
+    // Every card in the import is in hand, so each one's name is written down
+    // with it (see stampNames): the printings a list from a spoiler season
+    // names are the ones Scryfall is most likely to merge or delete later.
+    const resolved = new Map(preview.resolved.map(({ card }) => [card.id, card]))
+    onChange(stampNames(next, (id) => resolved.get(id) ?? null))
     setPreview(null)
     setText('')
     setStatus({

@@ -117,6 +117,32 @@ describe('useLegalityWatch', () => {
     expect((await getCardRecords(['bolt'])).get('bolt').card.legalities.modern).toBe('banned')
   })
 
+  it('does not lose the only name a pre-stamp deck has when it re-baselines', async () => {
+    // A deck saved before entries carried names, holding a preview printing
+    // Scryfall has since dropped. Its only record of what that card is called is
+    // the legality snapshot — and the re-baseline replaces the snapshot with one
+    // built from the cards that loaded, which this printing is not among. So the
+    // watch writes the name onto the entry first; without that, the first online
+    // launch silently deleted it, and the deck then read "Card not loaded".
+    const GONE = legalEverywhere({ id: 'fra-preview', name: 'Fractured Scholar', released_at: '2020-06-01' })
+    const savedAt = Date.now() - 30 * DAY
+    await seed([FOREST], savedAt)
+    const deck = modernDeck('rift', [[FOREST, 56], [GONE, 4]], [FOREST, GONE], new Date(savedAt).toISOString())
+    // As an older build wrote it: a name in the snapshot, none on the entry.
+    saveDeck({ ...deck, main: deck.main.map(({ cardId, quantity }) => ({ cardId, quantity })) })
+    expect(getDeck('rift').main.every((e) => e.name === undefined)).toBe(true)
+    vi.stubGlobal('fetch', scryfall([FOREST]))
+
+    const latest = await watch()
+    await until(() => latest().dataFrom !== null)
+    await until(() => getDeck('rift').main.some((e) => e.name === 'Fractured Scholar'))
+    const after = getDeck('rift')
+    expect(after.main.find((e) => e.cardId === GONE.id).name).toBe('Fractured Scholar')
+    // The snapshot was re-baselined all the same, and no longer holds the card.
+    expect(after.snapshot.cards[GONE.id]).toBeUndefined()
+    expect(after.snapshot.cards[FOREST.id]).toBeTruthy()
+  })
+
   it('says nothing about a card simply coming out', async () => {
     // Saved while the card was a preview, not_legal as Scryfall lists every
     // card before release; fetched again, it is legal.

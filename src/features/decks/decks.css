@@ -36,7 +36,15 @@
 }
 .deck-row:hover { background: var(--bg-overlay); }
 .deck-row--flagged { border-color: #e06c5f55; background: #e06c5f10; }
-.deck-row--missing { opacity: 0.6; }
+/* A row whose card did not load — a printing Scryfall no longer has, or a
+   card that has not arrived yet. It used to be dimmed whole (opacity 0.6),
+   which put the faint grey of its text under 4.5:1 and axe rightly failed it.
+   Now that the row carries the card's NAME (see stampNames), the name is the
+   one thing on it worth reading, so the row is marked by its dashed edge and
+   the name keeps a contrast that passes. */
+.deck-row--missing { border-left-style: dashed; border-left-color: var(--border-strong); }
+.deck-row--missing .deck-row__name { color: var(--text-muted); }
+.deck-row--missing .deck-row__qty { color: var(--text-faint); }
 
 .deck-row__name {
   /* A name never gives up space until everything else has. 9rem is about
@@ -140,6 +148,9 @@ select.chip { width: auto; max-width: 8rem; }
 }
 .deck-tile--flagged { border-color: var(--error); }
 .deck-tile--missing { align-items: flex-start; gap: var(--space-2); padding: var(--space-3); }
+/* As in the list and the text view: the name a tile with no painting carries is
+   read, not decoration, so it is not left at the faintest text token. */
+.deck-tile--missing .deck-tile__name { color: var(--text-muted); }
 .deck-tile__art { position: relative; }
 .deck-tile__art .cardimage { width: 100%; }
 
@@ -287,7 +298,9 @@ select.chip { width: auto; max-width: 8rem; }
 }
 .text-row:hover, .text-row:focus-within, .text-row--previewed { background: var(--bg-overlay); }
 .text-row--flagged { background: #e06c5f10; }
-.text-row--missing { opacity: 0.6; }
+/* As in the list: marked by its edge, not by dimming the name. */
+.text-row--missing { border-left-style: dashed; border-left-color: var(--border-strong); }
+.text-row--missing .text-row__name { color: var(--text-muted); }
 .text-row__qty {
   min-width: 1.4rem;
   text-align: right;

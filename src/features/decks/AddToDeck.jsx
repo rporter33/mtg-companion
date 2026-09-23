@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { listDecks, saveDeck } from '../../lib/storage.js'
-import { addCard, setCommanders, validateDeck, NOT_OUT_CODES, CATCHING_UP_CODE } from '../../lib/deck.js'
+import { addCard, setCommanders, stampNames, validateDeck, NOT_OUT_CODES, CATCHING_UP_CODE } from '../../lib/deck.js'
 import { getFormat, canBeCommander, legalityStatus } from '../../lib/formats.js'
 import { releaseLabel } from '../../lib/release.js'
 import { pinCards } from '../../lib/cache.js'
@@ -47,7 +47,9 @@ export default function AddToDeck({ card }) {
     const next = asCommander
       ? setCommanders(deck, [...deck.commanders, card.id])
       : addCard(deck, card.id, 1)
-    saveDeck(next)
+    // The card is in hand here, so its name is written down with it: a printing
+    // Scryfall later merges or deletes still has something to be called.
+    saveDeck(stampNames(next, (id) => (id === card.id ? card : null)))
     pinCards([card.id])
     setDecks(listDecks())
 

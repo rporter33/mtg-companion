@@ -9,18 +9,30 @@ import CategoryPicker from './CategoryPicker.jsx'
 
 const DeckRow = memo(function DeckRow({
   card, cardId, quantity, isCommander, flagged, market, owned = 0, zone, section, sections,
-  act, onOpenCard, onPrinting = null, art = null, marked = false,
+  act, onOpenCard, onPrinting = null, art = null, marked = false, stampedName = null,
 }) {
   const onOpen = () => card && onOpenCard(card)
   const onSet = (n) => act('set', cardId, zone, n)
   const onRemove = () => act('remove', cardId, zone, isCommander)
   const onCategory = (to) => act('category', cardId, zone, to)
   if (!card) {
+    // The name the deck stamped while the card was last in hand, where there is
+    // one: a printing Scryfall has dropped is a card the player still knows by
+    // name (see stampNames), and a row that reads "Card not loaded (a1b2c3d4…)"
+    // told them nothing about what they are looking at.
     return (
       <div className="deck-row deck-row--missing">
         <span className="deck-row__qty">{quantity}</span>
-        <span className="deck-row__name faint">Card not loaded ({cardId.slice(0, 8)}…)</span>
-        <button className="btn btn--sm btn--ghost btn--danger" onClick={onRemove}>✕</button>
+        <span className="deck-row__name">
+          {stampedName ? `${stampedName} — not loaded` : `Card not loaded (${cardId.slice(0, 8)}…)`}
+        </span>
+        <button
+          className="btn btn--sm btn--ghost btn--danger"
+          onClick={onRemove}
+          aria-label={stampedName ? `Remove ${stampedName}` : 'Remove unloaded card'}
+        >
+          ✕
+        </button>
       </div>
     )
   }

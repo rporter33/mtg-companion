@@ -190,9 +190,43 @@ src/
   watch fetches each deck's missing cards, then refreshes every deck's cards
   in one pass, stops asking after a failure, and gives the date of the
   oldest data it compared.
+- **A printing that moved** (2026-09-23). Scryfall's database is almost all
+  additive, but not quite: it sometimes finds a card it listed does not exist,
+  or a digital card is deleted, and the id goes away — most often a preview
+  printing, which is what a deck built in a spoiler season holds. Such an id
+  comes back in a collection call's `not_found`, which
+  `getCardRecordsByIds` now reports as `notFound` (Scryfall's own word only: an
+  id whose request failed is not in it, and one it said so about lately enough
+  not to be re-sent is). For those ids alone — never on a schedule, never for an
+  id merely absent from the cache — `migrationsFor` reads Scryfall's
+  `/migrations` (`card-migrations.js`; page one, 350 records newest first, which
+  on 2026-09-23 reached back to 2025-02-28), in the background lane, kept in the
+  query store for a day. A `merge` names the id that replaces it: the card there
+  is fetched and pinned — in the background lane too, since nobody asked for this
+  repair and a foreground call gets four retries and thirty seconds of backoff
+  while holding the one request queue — `useDeckCards` serves it under the old id
+  as well, and the editor writes the new id into the deck with `swapPrinting` and
+  says so, in a `role="status"` banner: "Scryfall has replaced its record of X:
+  this deck now holds its new printing." Nothing in a deck is rewritten behind
+  the player's back, and this is the one exception the owner allowed, because a
+  merge is Scryfall repairing its own record of the printing the deck already
+  holds rather than the app choosing a printing. `migrationFor` walks a chain:
+  a preview merged into a second preview merged into the released printing gives
+  the id that still resolves, and a chain ending in a `delete` is a deletion.
+  A `delete`, an id with no migration, and a request that failed all leave the
+  deck exactly as it is and say the printing is no longer in Scryfall's records,
+  under the stamped name — Scryfall's own `not_found` is word enough for that.
+  A merge whose replacement card did *not* arrive is the one case where nothing
+  is said: the record proves the printing was not deleted, so the id keeps the
+  ordinary "could not be loaded" and the next open asks again. A replacement is
+  never guessed by name, and the migration's `metadata` is not read, because
+  Scryfall's documentation calls that field human-read only. The table reads
+  `moved` and `gone` as the editor does and says the same things in its own
+  words, because it deals every copy the deck lists whether a record exists or
+  not; it writes nothing, so it says the deck still holds the old printing.
 - `searchCards`, `getCardById`, `getCardByName`, `getCardsByIds` (chunked to
   75 per call), `getCardsByNames`, `getPrintings` (`oracleid:` +
-  `unique=prints`), `getRulings`, `getSets`, `randomCard`.
+  `unique=prints`), `getRulings`, `getSets`, `randomCard`, `migrationsFor`.
 - Errors are typed: `ScryfallError`, `OfflineError`. Partial results are
   returned rather than thrown — a deck with two unresolved cards still opens
   and says which two.
@@ -256,8 +290,9 @@ Rules that matter:
   id: 'deck_xxx', name, formatId,
   commanders: [cardId],           // Scryfall PRINTING ids, not oracle ids
   signatureSpell: null,           // Oathbreaker
-  main:      [{ cardId, quantity, category? }],
-  sideboard: [{ cardId, quantity }],
+  main:      [{ cardId, quantity, category?, name? }],
+  sideboard: [{ cardId, quantity, name? }],
+  cardNames?: { cardId: name },   // the command zone's stamped names
   categoryOrder: [], versions: [],
   artCardId?, faceCardId?,        // chosen and derived deck art
   createdAt, updatedAt,
@@ -266,7 +301,58 @@ Rules that matter:
 
 `cardId` is a *printing* id throughout, which is what makes choosing art
 possible. `swapPrinting(deck, fromId, toId)` swaps one for another and merges
-entries if the deck already held the target.
+entries if the deck already held the target — in both zones, since a sideboard
+holding a foil and a plain copy of one card is ordinary and two entries under one
+id there gave two rows on one React key, a stepper that added a copy to the wrong
+one and a ✕ that deleted every copy. It reaches every place an id sits:
+main, sideboard, commanders, the signature spell (which it used to miss, so
+choosing a printing for one did nothing), the chosen art and the stamped name
+below, which is *copied* to the new id rather than moved, since a stored version
+still holds the old one — the printings picker and a followed merge both go
+through it.
+
+**A deck is read forgivingly** (2026-09-23). `upgradeDeck(deck)` in `deck.js`
+runs on every deck storage reads — each per-deck document, each deck in the old
+single blob as it is split, every deck in an imported backup, and a version
+being restored (`restoreVersion`) — because a deck in somebody's phone was
+written by whatever build was there then. Missing
+`main`/`sideboard`/`commanders`/`categoryOrder`/`versions` become `[]`, a name
+or a format that is not a string is replaced, an entry with no string `cardId`
+or no positive whole `quantity` is dropped, and fields this build does not know
+are kept untouched, since state written by a newer build is left alone. No date
+is invented for a deck with none. It returns the very same object when there
+was nothing to do, so storage goes on deciding what to write by identity. A deck
+in an imported file with no `id` is given one (`newDeckId`), the way `load()`
+takes one from a document's key: storage keys a deck by its id, so without one
+every id-less deck in the file collapsed onto the same key, was never written,
+and the importer still reported success. `upgrade` in `lib/board/model.js` is the
+same job for a saved table; `tests/deck-restore.test.js` follows
+`tests/board-restore.test.js`.
+
+**Each card's name is stamped on the deck** (2026-09-23). A deck entry may
+carry `name`: the card's name as Scryfall gave it when the card was last in
+hand. `stampNames(deck, lookup)` writes it where a deck is already being saved
+with its cards loaded — the editor's commit, a card added from the card sheet,
+an import being applied, the first-deck flow, a printing chosen at the table —
+never as a save of its own and never invented. The command zone holds ids
+rather than entries, so its names sit in `cardNames`, which is *kept* rather
+than rebuilt: a version clones a main-deck entry whole, but no version records
+`cardNames`, so pruning it when a commander left the command zone threw away the
+only record of what that commander was called, and a restore brought it back
+nameless. `stampedNames(deck)` reads all of it, and falls back to the
+name in the deck's legality snapshot, which has recorded one since snapshots
+existed, so a deck saved before any of this is readable without being saved
+again. `stampNames` reads that fallback too, and *promotes* it onto the entry:
+the save it runs in front of replaces the snapshot with one built from the cards
+that loaded, and a printing Scryfall has dropped is not among them, so reading
+only `lookup` deleted the one name that mattered — on the editor's next commit,
+and on the launch legality watch's re-baseline before the deck was ever opened.
+Both now stamp before the snapshot is replaced. The stamp is read wherever a
+card has not loaded: the editor's rows in all
+three views, `deckToText` (by name, with no printing, since the deck knows the
+card and not the printing) and `countNames`/`seatDeck` for the rules engine,
+which knows cards by name — so a deck holding a printing Scryfall has dropped
+still plays. Where nothing is stamped, the older wording stands.
 
 Ten formats in `src/lib/formats.js`: Standard, Pioneer, Modern, Legacy,
 Vintage, Pauper, Commander, Duel Commander, Brawl, Oathbreaker — each with
@@ -427,8 +513,8 @@ it sits on the table, with foil and treatment), `useDrag` (pointer dragging),
 
 | Kind | Where | Count |
 | --- | --- | --- |
-| Unit | `tests/*.test.js`, vitest + jsdom + fake-indexeddb | 1073 in 50 files |
-| Browser | `tests/browser/*.spec.mjs`, Playwright against a built preview | 24 specs |
+| Unit | `tests/*.test.js`, vitest + jsdom + fake-indexeddb | 1643 in 82 files |
+| Browser | `tests/browser/*.spec.mjs`, Playwright against a built preview | 33 specs |
 | Accessibility | `tests/browser/a11y.spec.mjs` | axe-core over every view + ~20 interaction states |
 | Bundle | `tests/browser/bundle.spec.mjs` | code splitting, the offline prefetch, the build stamp |
 | Live | `scripts/*.mjs` | run by hand against the real Scryfall API |
@@ -618,10 +704,33 @@ Trek Commander marked incomplete, and The Hobbit, as the built engine's did
 on 2026-09-21) and the browser spec `game-engine.spec.mjs` where an engine is
 built.
 
+**Built (slice 2, a printing that goes away):** a deck is read forgivingly
+(`upgradeDeck`, see §5), each card's name is stamped on the deck while the card
+is in hand (`stampNames`, read by the editor's rows, the text export and the
+rules engine's names), and an id Scryfall says it has no card for is followed
+through its `/migrations` record: a merge is taken, the replacement fetched, the
+deck's entry rewritten and the change said on screen, attributed to Scryfall; a
+deletion, an id it has no record of, or a request that failed leave the deck
+exactly as it was, under the stamped name (see §5 for both). The table says the
+same two things in its own words, since it deals every copy the deck lists
+whether a record exists or not, and both banners are `role="status"` because both
+arrive long after the page has painted. A row whose card
+did not load no longer dims the whole row — axe failed the faint grey at 0.6
+opacity once the row carried a name worth reading — and is marked by a dashed
+edge instead; the grid tile gives the name the same treatment, and keeps `mono`
+for the truncated id rather than for the words "not loaded". Checked by
+`tests/deck-restore.test.js`, `tests/deck-names.test.js`,
+`tests/card-migrations.test.js`, `tests/deck-cards.test.jsx`,
+`tests/legality-watch.test.jsx`, `tests/board-model.test.js` and the browser spec
+`moved.spec.mjs`, which holds the page's clock on 2026-09-23 and opens one Modern
+deck three times over: with Scryfall having merged the preview printing it holds,
+having deleted it, and refusing the request for what became of it — where the
+deck is left alone, the failure is not kept as an answer, and the next open asks
+again — then puts the same deck on the table twice, merged and deleted, and
+sweeps both the list and the grid with axe.
+
 **Next (slice 2, the rest), before 2 October if it can be:** an optional
-"Find released printings" for decks imported before this; stamping names on
-deck entries so a preview id Scryfall later merges or deletes stays
-readable, with `/cards/migrations` followed on a 404; the Archidekt URL
+"Find released printings" for decks imported before this; the Archidekt URL
 fetch keeping printings; printings past the first 175.
 
 ### T4b-1 — the replication protocol and transport (built)
@@ -738,6 +847,21 @@ anything in the same area.
 - **A commander is not one of the ninety-nine.** Shuffling 100 instead of 99
   is off by one in every number the app produces, and it is the mistake every
   hand-rolled playtester makes first.
+- **A printing id is not for ever.** Scryfall merges and deletes ids, and the
+  ones it does that to are mostly previews — the printings a deck built this
+  week is made of. So a deck must be able to name a card it can no longer
+  fetch (`stampNames`), and anything that walks an id must reach every place
+  one sits: `swapPrinting` had never touched `signatureSpell`, so choosing a
+  printing for an Oathbreaker's spell did nothing at all.
+- **Stored lists are read forgivingly, versions included.** Comparing two
+  versions threw on an entry that was not an object, which takes the editor
+  down on a deck nobody can repair from inside the app. Anything walking a
+  stored list filters it first (`entriesOf` in `versions.js`, `upgradeDeck` in
+  `deck.js`).
+- **axe reads mid-animation colour as a contrast failure.** A row that has just
+  arrived is ringed for 2.4 seconds and its section folds in from `opacity: 0`;
+  a sweep landing inside that window failed the "Not out until …" chip in one
+  run and passed in the next. A sweep waits for the page to stop moving.
 - **A name alone is Scryfall's pick, and Scryfall lists sets before they are
   out.** Its collection endpoint answers a name with its own choice of
   printing, which is not always the newest and can be a preview: a bare

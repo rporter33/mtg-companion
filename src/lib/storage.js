@@ -16,6 +16,7 @@
 
 import { defaultBackend, memoryBackend } from './storage-backend.js'
 import { dropOldestCheckpoint } from './data-safety.js'
+import { upgradeDeck, newDeckId } from './deck.js'
 
 const KEY = 'mtg-companion:v1'
 const DECK_PREFIX = `${KEY}:deck:`
@@ -150,7 +151,7 @@ function load() {
   if (root && Array.isArray(root.decks)) {
     const legacy = root.decks
     const { decks: _drop, ...rest } = root
-    for (const deck of legacy) if (deck?.id) decks.set(deck.id, deck)
+    for (const deck of legacy) if (deck?.id) decks.set(deck.id, upgradeDeck(deck))
     let landed = true
     for (const deck of decks.values()) {
       if (!s.write(deckKey(deck.id), JSON.stringify(deck))) { landed = false; break }
@@ -163,8 +164,10 @@ function load() {
     const id = key.slice(DECK_PREFIX.length)
     if (decks.has(id)) continue
     const raw = s.read(key)
-    const deck = parseOr(raw, () => preserveCorrupt(key, raw))
-    if (deck && typeof deck === 'object') decks.set(id, { ...deck, id: deck.id ?? id })
+    // Read forgivingly: whatever build wrote this document, the deck opens or
+    // it is left out, never thrown at a screen (see upgradeDeck).
+    const deck = upgradeDeck(parseOr(raw, () => preserveCorrupt(key, raw)))
+    if (deck) decks.set(id, typeof deck.id === 'string' && deck.id ? deck : { ...deck, id })
   }
 
   cache = { root: root ?? null, decks, state: null }
@@ -600,8 +603,25 @@ export function importAll(json, { replace = false } = {}) {
 
   // A backup can be older than the build restoring it, so it goes through the
   // same migration as stored state. Pinning it to version 1 on replace, as this
-  // did, would have written the whole store back to an older schema.
-  const incoming = migrate(parsed)
+  // did, would have written the whole store back to an older schema. Each deck
+  // in it is read as forgivingly as one from this device's own storage: the
+  // file may have been hand-edited, or written by a build that does not exist
+  // here (see upgradeDeck).
+  // A deck in the file with no id of its own is given one, the way load() takes
+  // one from the key of a document that has none: without it every id-less deck
+  // in the file collapses onto the same `undefined` key below, and write() skips
+  // it, so the import reported success and the deck was never there. An id is
+  // bookkeeping, not content — nothing about the deck itself is invented.
+  const migrated = migrate(parsed)
+  const incoming = {
+    ...migrated,
+    decks: (migrated.decks ?? [])
+      .map((deck) => {
+        const read = upgradeDeck(deck)
+        return read && !(typeof read.id === 'string' && read.id) ? { ...read, id: newDeckId() } : read
+      })
+      .filter(Boolean),
+  }
 
   return update((state) => {
     if (replace) {

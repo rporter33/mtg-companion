@@ -17,18 +17,27 @@ import { notOutUntil } from '../../../lib/release.js'
  * focused, because this view is for reading a deck, not counting it.
  */
 const TextRow = memo(function TextRow({
-  card, cardId, quantity, zone, isCommander, flagged, previewed, act, onPreview, onOpenCard, marked = false,
+  card, cardId, quantity, zone, isCommander, flagged, previewed, act, onPreview, onOpenCard,
+  marked = false, stampedName = null,
 }) {
   const onOpen = () => card && onOpenCard(card)
   const onSet = (n) => act('set', cardId, zone, n)
   const onRemove = () => act('remove', cardId, zone, isCommander)
   const show = () => onPreview(cardId)
   if (!card) {
+    // Under the name the deck stamped, where there is one (see stampNames):
+    // this view is a decklist to read, and a line with no name is a hole in it.
     return (
       <div className="text-row text-row--missing">
         <span className="text-row__qty">{quantity}</span>
-        <span className="text-row__name faint">Card not loaded</span>
-        <button className="text-row__step" onClick={onRemove} aria-label="Remove unloaded card">✕</button>
+        <span className="text-row__name">{stampedName ? `${stampedName} — not loaded` : 'Card not loaded'}</span>
+        <button
+          className="text-row__step"
+          onClick={onRemove}
+          aria-label={stampedName ? `Remove ${stampedName}` : 'Remove unloaded card'}
+        >
+          ✕
+        </button>
       </div>
     )
   }

@@ -18,6 +18,7 @@ import {
   CARD_TTL_MS, QUERY_TTL_MS,
 } from './cache.js'
 import { LOCKOUT_MS, MIN_INTERVAL_MS, SLOW_INTERVAL_MS, spacingFor } from './scryfall-limits.js'
+import { MIGRATIONS_KEY, MIGRATIONS_PATH, indexMigrations, migrationFor } from './card-migrations.js'
 import { isReleasedPaper } from './release.js'
 import { refreshDue, dayOf } from './card-refresh.js'
 import { today } from './season.js'
@@ -433,15 +434,30 @@ export async function getCardsByIds(ids, options = {}) {
  * for an id, so a caller working through several decks can stop asking for
  * the rest of its run. The cache is read once, and the refresh works from
  * what was read.
+ *
+ * `notFound` is the ids Scryfall itself said it has no card for — the ones it
+ * listed in a collection call's `not_found`, and the ones it said so about
+ * lately enough that they were not sent again (see notFoundKey). It is not
+ * "the ids that did not load": an id whose request failed, or that was never
+ * asked about, is not in it, so a caller may treat it as Scryfall's word. That
+ * is the one thing migrationsFor may be asked about.
  */
 export async function getCardRecordsByIds(ids, { signal, refresh = false, background = false, now = Date.now() } = {}) {
   const unique = [...new Set((ids ?? []).filter(Boolean))]
   const records = await getCardRecords(unique)
   let missing = unique.filter((id) => !records.has(id))
-  if (!missing.length && !refresh) return { records, failed: false }
+  if (!missing.length && !refresh) return { records, failed: false, notFound: [] }
 
-  if (isOffline()) return { records, failed: false }
-  if (refresh || background) missing = await notKnownMissing(missing, now)
+  if (isOffline()) return { records, failed: false, notFound: [] }
+  const notFound = new Set()
+  if (refresh || background) {
+    const worth = await notKnownMissing(missing, now)
+    const asking = new Set(worth)
+    // An id left out here was left out because Scryfall has lately said it has
+    // no card for it. That is still Scryfall's word, so it counts.
+    for (const id of missing) if (!asking.has(id)) notFound.add(id)
+    missing = worth
+  }
 
   let failed = false
   for (let i = 0; i < missing.length; i += 75) {
@@ -456,7 +472,7 @@ export async function getCardRecordsByIds(ids, { signal, refresh = false, backgr
       const cards = payload.data ?? []
       await putCards(cards, { pinned: true, fetchedAt: now })
       for (const card of cards) records.set(card.id, { card, fetchedAt: now })
-      await rememberNotFound(payload, chunk, now)
+      for (const id of await rememberNotFound(payload, chunk, now)) notFound.add(id)
     } catch (error) {
       if (error.name === 'AbortError') throw error
       failed = failed || !isNotFound(error)
@@ -471,7 +487,73 @@ export async function getCardRecordsByIds(ids, { signal, refresh = false, backgr
     for (const [id, card] of result.fresh) records.set(id, { card, fetchedAt: now })
     failed = result.failed
   }
-  return { records, failed }
+  return { records, failed, notFound: [...notFound] }
+}
+
+/**
+ * What Scryfall has done with ids it no longer has, for the ids a collection
+ * call has just come back `not_found` for (see getCardRecordsByIds).
+ *
+ * Scryfall's /migrations says whether an id it discarded was merged into
+ * another record or simply deleted (see card-migrations.js). A merge is
+ * Scryfall repairing its own record of the same card, so it is followed: the
+ * card at the new id is fetched, and the caller is given it to put in front of
+ * the player and to write into the deck, saying so. A deletion has nothing to
+ * follow and is reported as itself. The list is asked for once a day at most,
+ * in the background lane, and only when there is an id to ask about — never on
+ * a schedule, and never for an id that is merely not in the cache yet.
+ *
+ * Returns a Map from the old id to `{ strategy, newId?, card?, at }`, holding
+ * only the ids Scryfall has a record for. Anything that goes wrong — offline, a
+ * request refused, a paused background lane — comes back as nothing for that
+ * id, so the deck is left exactly as it was and the question is asked again
+ * another time.
+ *
+ * A merge whose replacement card did not arrive keeps its record, with no
+ * `card` on it. It is deliberately not dropped: dropping it would be
+ * indistinguishable from Scryfall saying nothing about the id, and the caller
+ * would then tell the player the printing is gone for good while this Map holds
+ * Scryfall's word that it was merged. With the record in hand and no card, the
+ * caller can say nothing at all and ask again another time, which is the only
+ * honest answer.
+ */
+export async function migrationsFor(ids, { signal, now = Date.now() } = {}) {
+  const wanted = [...new Set((ids ?? []).filter((id) => typeof id === 'string' && id))]
+  const out = new Map()
+  if (!wanted.length || isOffline()) return out
+
+  let index = await getQuery(MIGRATIONS_KEY)
+  if (!index || typeof index !== 'object') {
+    try {
+      index = indexMigrations(await request(MIGRATIONS_PATH, { signal, background: true }))
+    } catch (error) {
+      if (error.name === 'AbortError') throw error
+      return out
+    }
+    await putQuery(MIGRATIONS_KEY, index)
+  }
+
+  for (const id of wanted) {
+    const found = migrationFor(index, id)
+    if (found) out.set(id, found)
+  }
+
+  // The cards the merges point at, fetched and pinned like any deck card, in
+  // the background lane with the /migrations read: this is a repair nobody
+  // asked for, and a foreground call gets four retries and thirty seconds of
+  // backoff while holding the one request queue, which would put every search
+  // and deck open behind it. One attempt is enough — a merge with no card is
+  // left for the next open, which is what the record without a `card` says.
+  const merges = [...out.values()].filter((m) => m.strategy === 'merge').map((m) => m.newId)
+  if (merges.length) {
+    const cards = await getCardsByIds(merges, { signal, now, background: true })
+    for (const [id, found] of [...out]) {
+      if (found.strategy !== 'merge') continue
+      const card = cards.get(found.newId)
+      if (card) out.set(id, { ...found, card })
+    }
+  }
+  return out
 }
 
 /**
@@ -577,8 +659,11 @@ function notFoundIn(payload, chunk) {
     .filter((id) => typeof id === 'string' && asked.has(id))
 }
 
+/** Notes the ids Scryfall said it has no card for, and gives them back. */
 async function rememberNotFound(payload, chunk, now) {
-  await Promise.all(notFoundIn(payload, chunk).map((id) => putQuery(notFoundKey(id), now)))
+  const gone = notFoundIn(payload, chunk)
+  await Promise.all(gone.map((id) => putQuery(notFoundKey(id), now)))
+  return gone
 }
 
 async function notKnownMissing(ids, now) {
