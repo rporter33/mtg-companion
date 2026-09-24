@@ -32,6 +32,11 @@ import { identityAttr } from '../../components/CardFace.jsx'
  * filtering; "Not in deck" and "Owned" are the two exceptions, and they are
  * applied here to what came back rather than sent to Scryfall, since Scryfall
  * does not know your deck.
+ *
+ * A deck in a format this build does not know has no format rules here (see
+ * getFormat): no format scope, no legality chips, no copy limit beyond a
+ * card's own, no commander button, and the rest of the search as usual. The
+ * editor above says why.
  */
 const TYPE_CHIPS = ['Creature', 'Instant', 'Sorcery', 'Artifact', 'Enchantment', 'Land', 'Planeswalker']
 const PRICE_CHIPS = [1, 4, 10]
@@ -82,7 +87,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
   const sort = getSort(sortId)
   const direction = dir ?? sort.defaultDir
   const lookup = useCallback((id) => cards?.get?.(id), [cards])
-  const needs = useMemo(() => (format.group === 'commander' ? roleCounts(deck, lookup, format) : null), [deck, lookup, format])
+  const needs = useMemo(() => (format?.group === 'commander' ? roleCounts(deck, lookup, format) : null), [deck, lookup, format])
   const total = deckSize(deck, format)
   const target = format?.deck.max ?? format?.deck.min ?? 60
 
@@ -93,7 +98,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
    * see is a filter you will blame the search for.
    */
   const commanderIdentity = useMemo(() => {
-    if (!format.commander?.colorIdentity || !deck.commanders.length) return null
+    if (!format?.commander?.colorIdentity || !deck.commanders.length) return null
     const commanderCards = deck.commanders.map((id) => cards?.get?.(id)).filter(Boolean)
     if (!commanderCards.length) return null
     const identity = unionColorIdentity(commanderCards)
@@ -114,7 +119,8 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
   const run = useCallback(async (raw, overrides = {}) => {
     const q = raw.trim()
     if (!q) return
-    const useFormatScope = overrides.scoped ?? scoped
+    // No pool is no scope: a format this build does not know has none.
+    const useFormatScope = Boolean(pool) && (overrides.scoped ?? scoped)
     const useIdentityScope = overrides.identityScoped ?? identityScoped
     const useSort = getSort(overrides.sortId ?? sortId)
     const useDir = overrides.dir ?? dir ?? useSort.defaultDir
@@ -221,7 +227,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder={`Search cards for ${format.name}`}
+          placeholder={format ? `Search cards for ${format.name}` : 'Search cards'}
           aria-label="Search cards to add"
           autoComplete="off"
           enterKeyHint="search"
@@ -237,23 +243,25 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
         >
           Filters{hasActiveFilters(filters) ? ' · on' : ''}
         </button>
-        <label
-          className="row tiny muted row--fit"
-          title={format.legalityKey === 'standard'
-            ? "Includes cards not out yet that Scryfall's Future Standard lists"
-            : undefined}
-        >
-          <input
-            type="checkbox"
-            checked={scoped}
-            onChange={(e) => {
-              setScoped(e.target.checked)
-              if (query.trim()) run(query, { scoped: e.target.checked })
-            }}
-            style={{ width: 'auto' }}
-          />
-          Legal in {format.name}
-        </label>
+        {format && (
+          <label
+            className="row tiny muted row--fit"
+            title={format.legalityKey === 'standard'
+              ? "Includes cards not out yet that Scryfall's Future Standard lists"
+              : undefined}
+          >
+            <input
+              type="checkbox"
+              checked={scoped}
+              onChange={(e) => {
+                setScoped(e.target.checked)
+                if (query.trim()) run(query, { scoped: e.target.checked })
+              }}
+              style={{ width: 'auto' }}
+            />
+            Legal in {format.name}
+          </label>
+        )}
         <span className="spacer" />
         <label className="row tiny muted row--fit row--tight">
           Sort
@@ -378,7 +386,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
           or thin (a set's reprints and none of its new cards), so it is asked
           rather than told: after an empty search, or one naming a set or a
           date, which is how someone looks for the next set. */}
-      {results && status === 'done' && ranScoped && format.legalityKey !== 'standard'
+      {results && status === 'done' && ranScoped && format && format.legalityKey !== 'standard'
         && (results.cards.length === 0 || ASKS_SET_OR_DATE.test(ranQuery)) && (
         <p className="faint tiny m0 not-out-hint">
           Looking for cards that are not out yet? Scryfall adds new cards to its {format.name} pool
@@ -396,7 +404,7 @@ export default function DeckSearch({ deck, onChange, onOpenCard, offline, cards,
           const legality = legalityStatus(card, format)
           const blocked = legality === 'banned' || legality === 'not_legal'
           const atLimit = inDeck >= limit
-          const commanderOk = format.commander?.required
+          const commanderOk = format?.commander?.required
             && deck.commanders.length < format.commander.max
             && canBeCommander(card, format).ok
           const artSrc = art ? artUrl(card) : null

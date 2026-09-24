@@ -30,7 +30,11 @@ export const SOURCES = [
     name: 'Archidekt',
     match: /^https?:\/\/(www\.)?archidekt\.com\/decks\/(\d+)/i,
     // Archidekt does publish an API. Whether it permits browser origins is
-    // something we find out at runtime rather than assert here.
+    // something we find out at runtime rather than assert here. On 2026-09-24
+    // it answered a request from the app's origin (rporter33.github.io) with
+    // "Access-Control-Allow-Origin: http://localhost:3000", which a browser
+    // there refuses, so the fetch ends in the Export instructions below. It
+    // is still tried, so the day Archidekt allows it the link just works.
     browserReadable: 'attempt',
     api: (id) => `https://archidekt.com/api/decks/${id}/`,
     parse: parseArchidekt,
@@ -154,9 +158,35 @@ export async function fetchFromSource({ source, id }, { signal } = {}) {
   return source.parse(payload)
 }
 
+// A field Archidekt sends as text, or as a plain number. Anything else counts
+// as absent rather than becoming "undefined" or "[object Object]" on a
+// decklist line.
+const textOf = (value) => (typeof value === 'string' || Number.isFinite(value) ? String(value).trim() : '')
+
+/**
+ * The printing an Archidekt card entry names, as { set, number }: the shape
+ * parseDecklist gives a line that names its printing. A number means nothing
+ * without its set, so it goes only with one; with neither, the card goes by
+ * its name alone.
+ */
+function archidektPrinting(card) {
+  const set = textOf(card?.edition?.editioncode).toLowerCase()
+  const number = textOf(card?.collectorNumber)
+  if (!set) return {}
+  return number ? { set, number } : { set }
+}
+
 /**
  * Archidekt's deck shape: a flat `cards` array where each entry carries the
  * card, a quantity, and the categories it was filed under.
+ *
+ * The card is a printing. Its set is `card.edition.editioncode` and its
+ * collector number `card.collectorNumber`, as the API sent them on 2026-09-24
+ * (tests/fixtures/archidekt-decks.json). Only the name used to be kept, so a
+ * fetched deck went through the name rule and every card was picked again,
+ * when the list had already said which printing. toDecklistText writes the
+ * printing as "(SET) NUM", and resolvePrintings then takes it as typed. A set
+ * or number the decklist cannot carry is left off the line there, not here.
  */
 export function parseArchidekt(payload) {
   const entries = payload?.cards ?? []
@@ -169,11 +199,12 @@ export function parseArchidekt(payload) {
     if (!name) continue
     const quantity = Number(entry.quantity) || 1
     const categories = (entry.categories ?? []).map((c) => String(c).toLowerCase())
+    const card = { name, quantity, ...archidektPrinting(entry.card) }
 
-    if (categories.includes('commander')) commanders.push({ name, quantity: 1 })
+    if (categories.includes('commander')) commanders.push({ ...card, quantity: 1 })
     else if (categories.includes('sideboard') || categories.includes('maybeboard')) {
-      sideboard.push({ name, quantity })
-    } else main.push({ name, quantity })
+      sideboard.push(card)
+    } else main.push(card)
   }
 
   return {

@@ -12,9 +12,12 @@
  * browser offers both however long after that the suite runs.
  */
 
+import { readFileSync } from 'node:fs'
 import { chromium } from 'playwright'
 
 const TARGET = process.argv[2] ?? 'http://localhost:4173/'
+// Archidekt's deck API as it answered on 2026-09-24, trimmed.
+const ARCHIDEKT = JSON.parse(readFileSync(new URL('../fixtures/archidekt-decks.json', import.meta.url), 'utf8'))
 let pass = 0
 let fail = 0
 const check = (label, ok, detail) => {
@@ -70,10 +73,12 @@ await page.route('**/api.scryfall.com/cards/named**', (route) => {
 // so the fuzzy fall-back and the failure reporting both get exercised.
 let collectionCalls = 0
 let namedCalls = 0
+let collectionAsked = []
 const printingNames = {}
 await page.route('**/api.scryfall.com/cards/collection', async (route) => {
   collectionCalls++
   const { identifiers } = JSON.parse(route.request().postData() ?? '{"identifiers":[]}')
+  collectionAsked.push(...identifiers)
   const data = []
   const not_found = []
   for (const id of identifiers) {
@@ -282,6 +287,74 @@ console.log('\nAn Archidekt export, pasted as it is')
   check('the marked card is the commander',
     /Import Legend/.test(await commanderSection.innerText().catch(() => '')),
     await commanderSection.innerText().catch(() => 'no commander section'))
+}
+
+console.log('\nAn Archidekt link')
+{
+  // Archidekt's answer for a public deck, as captured. Its API names each
+  // card's printing, and a fetched deck used to keep only the names, so every
+  // card went through the name rule instead. On 2026-09-24 the answer to a
+  // request from the app's own origin carried
+  // "Access-Control-Allow-Origin: http://localhost:3000", which the browser
+  // refuses, so the refusal is checked first, with those headers, and then the
+  // deck is served as it would be if Archidekt allowed the origin.
+  const deck = ARCHIDEKT.decks['5088559']
+  for (const { card } of deck.cards) {
+    printingNames[`${card.edition.editioncode}/${card.collectorNumber}`] = card.oracleCard.name
+  }
+  let allowed = false
+  let archidektCalls = 0
+  await page.route('https://archidekt.com/api/decks/5088559/', (route) => {
+    archidektCalls++
+    return route.fulfill({
+      status: 200, contentType: 'application/json',
+      headers: allowed
+        ? { 'access-control-allow-origin': '*' }
+        : { 'access-control-allow-origin': 'http://localhost:3000', 'access-control-allow-credentials': 'true', vary: 'Origin' },
+      body: JSON.stringify(deck),
+    })
+  })
+
+  await page.getByRole('tab', { name: 'Import / export' }).click()
+  await page.waitForTimeout(300)
+  const box = page.locator('textarea').first()
+  await box.fill('https://archidekt.com/decks/5088559/precon')
+  const fetchButton = page.getByRole('button', { name: 'Fetch this deck' })
+  await fetchButton.click()
+  const banner = page.locator('.banner', { hasText: 'Could not read the deck from Archidekt' })
+  await banner.waitFor({ timeout: 10000 }).catch(() => {})
+  check('Archidekt refusing the origin, as it does today, ends in the Export instructions',
+    archidektCalls === 1 && /Choose Export, and paste the text list below/i.test(await banner.innerText().catch(() => '')),
+    `${archidektCalls} requests; ${await page.locator('.banner').allInnerTexts().then((t) => t.join(' | '))}`)
+
+  allowed = true
+  collectionCalls = 0
+  namedCalls = 0
+  collectionAsked = []
+  await fetchButton.click()
+  await page.getByRole('button', { name: /Add \d+ cards/ }).waitFor({ timeout: 15000 })
+  const text = await page.locator('body').innerText()
+  const fetched = await box.inputValue()
+  check('the fetched list shows each card with the printing Archidekt named',
+    /^Commander\n1 Rukarumel, Biologist \(CMM\) 711\n/.test(fetched) && /^2 Plains \(CMM\) 787$/m.test(fetched),
+    JSON.stringify(fetched.slice(0, 120)))
+  check('every card is asked for by its printing, none by name',
+    collectionCalls === 1 && namedCalls === 0 && collectionAsked.length === deck.cards.length
+      && collectionAsked.every((id) => id.set === 'cmm' && id.collector_number && !id.name),
+    JSON.stringify(collectionAsked))
+  check('the review counts every line as its exact printing',
+    /6 cards found/.test(text) && /5 exact printings/.test(text),
+    text.match(/\d+ cards found[^\n]*/)?.[0])
+
+  await page.getByRole('button', { name: /Add \d+ cards/ }).click()
+  await page.waitForTimeout(600)
+  const exported = await page.getByLabel('This deck as a plain text list').inputValue()
+  const [commandZone, rest] = exported.split('\nDeck\n')
+  check('exporting the deck writes each printing as it came',
+    /^1 Rukarumel, Biologist \(CMM\) 711$/m.test(commandZone ?? '')
+      && ['1 Sliver Gravemother (CMM) 707', '1 Sol Ring (CMM) 410', '2 Plains (CMM) 787', '1 Farseek (CMM) 894']
+        .every((line) => (rest ?? '').split('\n').includes(line)),
+    exported.split('\n').filter((l) => /CMM/.test(l)).join(' | '))
 }
 
 console.log('\nEvery line names the printing it adds')

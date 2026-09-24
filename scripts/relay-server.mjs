@@ -460,9 +460,10 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
   })
 
   /**
-   * Going down on purpose. Every table is written first, then every socket
-   * is told 1012 — the code that means "back in a moment", which a client
-   * treats as a reason to reconnect rather than to give up.
+   * Going down on purpose. Every table is written first, no new socket is
+   * let in, then every socket is told 1012 — the code that means "back in a
+   * moment", which a client treats as a reason to reconnect rather than to
+   * give up — and any that has not answered within a second is cut.
    */
   const shutdown = async () => {
     clearInterval(heartbeat)
@@ -474,6 +475,14 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     // goodbyes and waited for last.
     for (const room of rooms.values()) flush(room)
     const engines = Promise.all([letCheckerGo(), ...[...rooms.values()].filter((r) => r.mode === 'enforced').map((r) => r.engine.close())])
+    // Nobody new from here on. A client told 1012 comes back a quarter of a
+    // second later, while this relay may still be waiting on a slow goodbye;
+    // one that found it listening would be seated at a table already written
+    // to disk, then dropped with no 1012 when the process ends. With the
+    // listener shut it is refused, and tries again until the relay that
+    // replaces this one answers. The sockets already open are kept for their
+    // goodbyes.
+    const stopped = new Promise((resolve) => server.close(() => resolve()))
     // The close frame has to reach the client before the connection under
     // it is torn down, or the client sees a dropped socket rather than a
     // 1012 and waits the long way. So: say goodbye, wait briefly for the
@@ -483,9 +492,17 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
       socket.close(SERVICE_RESTART, 'Service Restart')
     }))
     await Promise.race([Promise.all(goodbyes), new Promise((done) => setTimeout(done, 1000))])
+    // The plug is pulled here: ws closes no client when its server closes,
+    // and closeAllConnections does not reach a socket that has been
+    // upgraded, so without this a socket that never answers holds the server
+    // open for ws's own thirty-second close timeout. A terminated socket
+    // closes at once, and is waited for so that nothing is left open when
+    // this returns.
+    for (const socket of wss.clients) socket.terminate()
+    await Promise.all(goodbyes)
     wss.close()
     server.closeAllConnections?.()
-    await new Promise((resolve) => server.close(() => resolve()))
+    await stopped
     await engines
   }
 

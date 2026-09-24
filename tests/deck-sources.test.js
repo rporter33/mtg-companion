@@ -1,9 +1,14 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import {
   looksLikeUrl, identifySource, planForUrl, fetchFromSource,
   parseArchidekt, parseMoxfield, toDecklistText, SOURCES,
 } from '../src/lib/deck-sources.js'
 import { toExampleEntry, exampleToDecklist, exampleSize } from '../src/data/example-decks.js'
+import { parseDecklist, deckToText } from '../src/lib/decklist.js'
+import { resolvePrintings } from '../src/lib/scryfall.js'
+import { clearCache } from '../src/lib/cache.js'
+import { createDeck, addCard, setCommanders } from '../src/lib/deck.js'
+import ARCHIDEKT from './fixtures/archidekt-decks.json'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -128,6 +133,176 @@ describe('parseArchidekt', () => {
       cards: [{ quantity: 1, categories: ['Maybeboard'], card: { name: 'Thing' } }],
     })
     expect(deck.sideboard).toHaveLength(1)
+  })
+})
+
+/**
+ * Two public decks as Archidekt's API sent them on 2026-09-24, trimmed
+ * (tests/fixtures/archidekt-decks.json). "Precon" marks its commander;
+ * "Cloud Precon" has The List's "C14-249" and a promo's "116p" among its
+ * numbers. Every card in Archidekt's answer names its printing, and a fetched
+ * deck used to keep only the names, so the name rule picked every card again.
+ */
+describe('a deck fetched from Archidekt keeps its printings', () => {
+  const archidekt = SOURCES.find((s) => s.id === 'archidekt')
+  const precon = ARCHIDEKT.decks['5088559']
+  const cloud = ARCHIDEKT.decks['13109808']
+  const NOW = '2026-09-24'
+
+  // Each card as Archidekt named it, read straight from the fixture's fields.
+  const named = (payload) => payload.cards.map(({ quantity, card }) => ({
+    name: card.oracleCard.name, quantity, set: card.edition.editioncode, number: card.collectorNumber,
+  }))
+  const solRing = precon.cards.find((entry) => entry.card.oracleCard.name === 'Sol Ring')
+  // The captured Sol Ring with some of its card's fields replaced.
+  const solRingWith = (fields) => ({ ...solRing, card: { ...solRing.card, ...fields } })
+
+  it('reads the set and collector number each card carries', () => {
+    const deck = parseArchidekt(precon)
+    expect(deck.name).toBe('Precon')
+    expect(deck.commanders).toEqual([{ name: 'Rukarumel, Biologist', quantity: 1, set: 'cmm', number: '711' }])
+    expect(deck.main).toContainEqual({ name: 'Plains', quantity: 2, set: 'cmm', number: '787' })
+    expect(parseArchidekt(cloud).main).toEqual(expect.arrayContaining([
+      { name: 'Mask of Memory', quantity: 1, set: 'plst', number: 'C14-249' },
+      { name: 'Professional Face-Breaker', quantity: 1, set: 'psnc', number: '116p' },
+      { name: 'Mountain', quantity: 3, set: 'm20', number: '276' },
+    ]))
+  })
+
+  it('writes each printing into the decklist text, which reads back to the same printing', () => {
+    for (const payload of [precon, cloud]) {
+      const text = toDecklistText(parseArchidekt(payload))
+      const lines = parseDecklist(text).map(({ name, quantity, set, number }) => ({ name, quantity, set, number }))
+      expect(lines).toHaveLength(payload.cards.length)
+      expect(lines).toEqual(expect.arrayContaining(named(payload)))
+    }
+    const text = toDecklistText(parseArchidekt(precon))
+    expect(text).toMatch(/^Commander\n1 Rukarumel, Biologist \(CMM\) 711\n\nDeck\n/)
+    expect(toDecklistText(parseArchidekt(cloud))).toContain('1 Mask of Memory (PLST) C14-249\n1 Professional Face-Breaker (PSNC) 116p')
+  })
+
+  it('fetches a deck whose cards keep their printings', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => precon }))
+    const deck = await fetchFromSource({ source: archidekt, id: '5088559' })
+    expect(fetch).toHaveBeenCalledWith('https://archidekt.com/api/decks/5088559/', expect.anything())
+    expect(deck.commanders[0]).toEqual({ name: 'Rukarumel, Biologist', quantity: 1, set: 'cmm', number: '711' })
+    expect(deck.main.every((entry) => entry.set === 'cmm' && entry.number)).toBe(true)
+  })
+
+  it('keeps what it can make sense of and goes by the name for the rest', () => {
+    const deck = parseArchidekt({ cards: [
+      solRingWith({ edition: undefined }),
+      solRingWith({ edition: { editioncode: { code: 'cmm' } } }),
+      solRingWith({ edition: null }),
+      solRingWith({ collectorNumber: null }),
+      solRingWith({ collectorNumber: '' }),
+      solRingWith({ collectorNumber: 410 }),
+      solRingWith({ edition: { editioncode: ' CMM ' } }),
+    ] })
+    const sol = { name: 'Sol Ring', quantity: 1 }
+    expect(deck.main).toEqual([
+      // No set: a number means nothing on its own, so the name goes alone.
+      sol, sol, sol,
+      { ...sol, set: 'cmm' },
+      { ...sol, set: 'cmm' },
+      { ...sol, set: 'cmm', number: '410' },
+      { ...sol, set: 'cmm', number: '410' },
+    ])
+    // A code the decklist cannot carry is left off the line there.
+    expect(toDecklistText({ main: [{ ...sol, set: 'not a set', number: '410' }] })).toBe('Deck\n1 Sol Ring')
+  })
+
+  describe('through the import', () => {
+    beforeEach(async () => {
+      await clearCache()
+      vi.stubGlobal('navigator', { onLine: true })
+    })
+
+    /**
+     * A stand-in for Scryfall's collection endpoint that knows the fixture's
+     * printings, each written in Scryfall's shape from Archidekt's own fields.
+     * Anything else it is asked for, it has no card for, and any other
+     * request is noted among the identifiers and answered as Scryfall answers
+     * a name it has no card for, so a name looked up one at a time shows in
+     * `asked` rather than as a timeout.
+     */
+    function scryfall(...payloads) {
+      const known = payloads.flatMap((payload) => payload.cards).map(({ card }) => ({
+        object: 'card', id: `${card.edition.editioncode}-${card.collectorNumber}`,
+        name: card.oracleCard.name, set: card.edition.editioncode, set_name: card.edition.editionname,
+        collector_number: card.collectorNumber, released_at: card.releasedAt,
+        digital: false, games: ['paper'], lang: 'en',
+      }))
+      const asked = []
+      vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+        if (new URL(url).pathname !== '/cards/collection') {
+          asked.push({ url: String(url) })
+          return { ok: false, status: 404, json: async () => ({ object: 'error', status: 404, code: 'not_found' }) }
+        }
+        const { identifiers } = JSON.parse(options.body)
+        asked.push(...identifiers)
+        const data = []
+        const notFound = []
+        for (const id of identifiers) {
+          const card = known.find((c) => c.set === id.set
+            && (id.collector_number ? c.collector_number === id.collector_number : c.name === id.name))
+          if (card) data.push(card)
+          else notFound.push(id)
+        }
+        return { ok: true, status: 200, json: async () => ({ object: 'list', data, not_found: notFound }) }
+      }))
+      return asked
+    }
+
+    /** Applies resolved lines as the import does: commanders to the command zone, the rest to the deck. */
+    const applied = (results) => {
+      let deck = createDeck({ name: 'Fetched', formatId: 'commander' })
+      for (const { line, card } of results) {
+        deck = line.section === 'commander'
+          ? setCommanders(deck, [...deck.commanders, card.id])
+          : addCard(deck, card.id, line.quantity, line.section === 'sideboard' ? 'sideboard' : 'main')
+      }
+      const byId = new Map(results.map(({ card }) => [card.id, card]))
+      return deckToText(deck, (id) => byId.get(id))
+    }
+
+    it('lands on the printings the list named, and exports them as it found them', async () => {
+      const asked = scryfall(precon)
+      const results = await resolvePrintings(parseDecklist(toDecklistText(parseArchidekt(precon))), { now: NOW })
+      // Asked for by printing, every one of them, and none by name.
+      expect(asked).toEqual(named(precon).map(({ set, number }) => ({ set, collector_number: number })))
+      expect(results.map(({ how }) => how)).toEqual(precon.cards.map(() => 'exact'))
+      expect(applied(results)).toBe([
+        'Commander',
+        '1 Rukarumel, Biologist (CMM) 711',
+        '',
+        'Deck',
+        '1 Sliver Gravemother (CMM) 707',
+        '1 Sol Ring (CMM) 410',
+        '2 Plains (CMM) 787',
+        '1 Farseek (CMM) 894',
+      ].join('\n'))
+    })
+
+    it('keeps The List and promo numbers as they are', async () => {
+      const asked = scryfall(cloud)
+      const results = await resolvePrintings(parseDecklist(toDecklistText(parseArchidekt(cloud))), { now: NOW })
+      expect(asked).toEqual(named(cloud).map(({ set, number }) => ({ set, collector_number: number })))
+      expect(results.every(({ how }) => how === 'exact')).toBe(true)
+      const exported = applied(results)
+      expect(exported).toContain('1 Mask of Memory (PLST) C14-249')
+      expect(exported).toContain('1 Professional Face-Breaker (PSNC) 116p')
+      expect(exported).toContain('3 Mountain (M20) 276')
+    })
+
+    it('takes a set with no number as the card by its name within that set', async () => {
+      const asked = scryfall(precon)
+      const text = toDecklistText(parseArchidekt({ cards: [solRingWith({ collectorNumber: '' })] }))
+      expect(text).toBe('Deck\n1 Sol Ring (CMM)')
+      const [result] = await resolvePrintings(parseDecklist(text), { now: NOW })
+      expect(asked).toEqual([{ name: 'Sol Ring', set: 'cmm' }])
+      expect(result).toMatchObject({ how: 'set', card: { set: 'cmm', collector_number: '410' } })
+    })
   })
 })
 

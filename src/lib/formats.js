@@ -94,8 +94,31 @@ export const FORMATS = {
 
 export const FORMAT_IDS = Object.keys(FORMATS)
 
+/**
+ * The format with this id, or null for one this build does not know.
+ *
+ * A stored deck can name a format this build has never heard of: written by
+ * a newer build, or a hand-edited backup. Such a deck has no format rules
+ * here. It opens, lists, searches and takes cards like any other, with no
+ * legality scope and no legality chips, and validateDeck reports its format
+ * as unknown so the player can choose one. Its formatId is never rewritten
+ * behind the player's back. The rule helpers below take null to mean exactly
+ * that. Only the object's own keys count, so an id like "constructor" in a
+ * hand-edited file is unknown rather than Object's constructor. (hasOwnProperty
+ * by call rather than Object.hasOwn, which a phone on Safari before 15.4 lacks.)
+ */
 export function getFormat(id) {
-  return FORMATS[id] ?? null
+  return typeof id === 'string' && Object.prototype.hasOwnProperty.call(FORMATS, id) ? FORMATS[id] : null
+}
+
+/**
+ * What to call a deck's format on screen: its name, or for one this build
+ * does not know, the id the deck gives, as the deck tile has always shown it.
+ */
+export function formatLabel(formatId) {
+  const format = getFormat(formatId)
+  if (format) return format.name
+  return typeof formatId === 'string' && formatId.trim() ? formatId : 'Unknown format'
 }
 
 export function formatsInGroup(groupId) {
@@ -197,7 +220,11 @@ export function isBasicLand(card) {
   return /\bBasic\b/.test(front) && /\bLand\b/.test(front)
 }
 
-/** Basic lands are exempt from both the copy limit and singleton rules. */
+/**
+ * Basic lands are exempt from both the copy limit and singleton rules. A
+ * format this build does not know (null) sets no limit, though a card's own
+ * clause still holds.
+ */
 export function effectiveCopyLimit(card, format) {
   if (isBasicLand(card)) return Infinity
   const override = copyLimitOverride(card)
@@ -206,15 +233,17 @@ export function effectiveCopyLimit(card, format) {
     // Relentless Rats decks are legal in Commander.
     return override
   }
+  if (!format) return Infinity
   return format.singleton ? 1 : format.maxCopies
 }
 
 /**
  * Legality of a single card in a format, straight from Scryfall.
  * Returns 'legal' | 'not_legal' | 'banned' | 'restricted' | 'unknown'.
+ * In a format this build does not know (null) every card is 'unknown'.
  */
 export function cardLegality(card, format) {
-  const status = card?.legalities?.[format.legalityKey]
+  const status = format ? card?.legalities?.[format.legalityKey] : null
   if (!status) return 'unknown'
   return status
 }
@@ -257,7 +286,8 @@ export function cardLegality(card, format) {
  * before release. After the week every not_legal stands.
  *
  * Returns cardLegality's statuses plus 'future_legal' | 'pending' |
- * 'catching_up'.
+ * 'catching_up'. In a format this build does not know (null) it is
+ * cardLegality's 'unknown', and nothing below is read.
  */
 export function legalityStatus(card, format, now = today()) {
   const base = cardLegality(card, format)
@@ -302,15 +332,22 @@ export function listedInPaper(card) {
  * where Scryfall already names the previewed cards that will be legal, in its
  * Future Standard, so Standard's pool takes those in too, and they come back
  * as 'future_legal' above rather than as legal.
+ *
+ * A format this build does not know (null) has no pool to scope to: null.
  */
 export function poolQuery(format) {
+  if (!format) return null
   return format.legalityKey === 'standard'
     ? '(legal:standard or legal:future)'
     : `legal:${format.legalityKey}`
 }
 
-/** Can this card be the commander for this format? */
+/**
+ * Can this card be the commander for this format? Not in one this build does
+ * not know (null): it has no commander rules to check a card against.
+ */
 export function canBeCommander(card, format) {
+  if (!format) return { ok: false, reason: 'This version of the app does not know this format, so it has no commander rules.' }
   const rules = format.commander
   if (!rules) return { ok: false, reason: `${format.name} does not use a commander.` }
 

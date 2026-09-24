@@ -226,7 +226,8 @@ src/
   not; it writes nothing, so it says the deck still holds the old printing.
 - `searchCards`, `getCardById`, `getCardByName`, `getCardsByIds` (chunked to
   75 per call), `getCardsByNames`, `getPrintings` (`oracleid:` +
-  `unique=prints`), `getRulings`, `getSets`, `randomCard`, `migrationsFor`.
+  `unique=prints`, one page of 175 at a time; see §10, "printings past the
+  first 175"), `getRulings`, `getSets`, `randomCard`, `migrationsFor`.
 - Errors are typed: `ScryfallError`, `OfflineError`. Partial results are
   returned rather than thrown — a deck with two unresolved cards still opens
   and says which two.
@@ -241,6 +242,10 @@ src/
   and today's date each time it is shown (`src/lib/release.js`), never
   stored; the "Not out until …" chip (`NotOutChip`) and the legality wording
   (`legalityStatus` in `formats.js`) clear themselves on release day.
+  `findReleasedFor(cards)` is the same search for printings a deck already
+  holds, each treated as a pick the app made, and answers each card
+  `released`, `none`, `ahead`, `unchecked`, `unasked` or `out`; the editor's
+  offer to switch to released printings uses it (see §10).
 
 ### Storage (`src/lib/storage.js`)
 
@@ -357,6 +362,31 @@ still plays. Where nothing is stamped, the older wording stands.
 Ten formats in `src/lib/formats.js`: Standard, Pioneer, Modern, Legacy,
 Vintage, Pauper, Commander, Duel Commander, Brawl, Oathbreaker — each with
 deck size, singleton rules, commander rules and a Scryfall legality key.
+
+**A format this build does not know** (2026-09-24). A stored `formatId` can
+name a format a newer build added, or anything a hand-edited backup says.
+`upgradeDeck` keeps any non-empty string as it is, so such a deck is kept as it
+is. `getFormat` returns null for it — reading only its own keys, so
+"constructor" or "__proto__" is unknown rather than something every object
+inherits — and null means *no format rules*: `cardLegality`/`legalityStatus`
+say `unknown`, `poolQuery` gives no pool, `effectiveCopyLimit` no limit beyond a
+card's own clause, and `canBeCommander` no commander, so the deck opens, lists,
+searches and takes cards with no legality chips, no size target and no
+commander button. `formatLabel` names it on screen by the id it gives.
+`validateDeck` reports only `unknown_format`, and the editor shows it with a
+format to choose (a pick, then a press). Before the press it says that the
+choice replaces the id on the deck for good, because no History version records
+a format; after it, focus goes to a `role="status"` line naming the format
+chosen and the id it replaced, since the banner and button that had focus are
+gone. The card sheet's Add to a deck says "format not known" on its row; the
+coach says why it has nothing to judge. The snapshot, the legality watch and the
+coach skip such a deck, and the first-deck flow forgets one it was building
+rather than build it by Commander's rules. The lobby opens only on a format it
+knows and has no shelf for any other, so it lists no such deck: until a format
+is chosen, the deck is dealt only at `#/game/<deckId>` (whether the lobby should
+offer it is open, see §10). Nothing rewrites the formatId unless the player
+chooses one. Checked by `tests/unknown-format.test.js` and the browser spec
+`unknownformat.spec.mjs`.
 
 ### Routing (`src/lib/router.js`)
 
@@ -513,8 +543,8 @@ it sits on the table, with foil and treatment), `useDrag` (pointer dragging),
 
 | Kind | Where | Count |
 | --- | --- | --- |
-| Unit | `tests/*.test.js`, vitest + jsdom + fake-indexeddb | 1643 in 82 files |
-| Browser | `tests/browser/*.spec.mjs`, Playwright against a built preview | 33 specs |
+| Unit | `tests/*.test.js`, vitest + jsdom + fake-indexeddb | 1747 in 86 files |
+| Browser | `tests/browser/*.spec.mjs`, Playwright against a built preview | 34 specs |
 | Accessibility | `tests/browser/a11y.spec.mjs` | axe-core over every view + ~20 interaction states |
 | Bundle | `tests/browser/bundle.spec.mjs` | code splitting, the offline prefetch, the build stamp |
 | Live | `scripts/*.mjs` | run by hand against the real Scryfall API |
@@ -729,9 +759,142 @@ deck is left alone, the failure is not kept as an answer, and the next open asks
 again — then puts the same deck on the table twice, merged and deleted, and
 sweeps both the list and the grid with axe.
 
-**Next (slice 2, the rest), before 2 October if it can be:** an optional
-"Find released printings" for decks imported before this; the Archidekt URL
-fetch keeping printings; printings past the first 175.
+**Built (slice 2, an Archidekt link keeps its printings)** (2026-09-24):
+Archidekt's deck API gives each card's printing as `card.edition.editioncode`
+and `card.collectorNumber`. That is how it answered for two public decks that
+day, trimmed into `tests/fixtures/archidekt-decks.json`. `parseArchidekt` used
+to keep only the name, so a fetched deck went through the name rule and every
+card was picked again. Each entry now carries `{ set, number }`, the shape
+`parseDecklist` gives a line that names its printing. `toDecklistText` writes it
+as "(SET) NUM", and `resolvePrintings` takes it as typed: `exact` with a number,
+and `set` (the name within that set) without one. A set or number that is
+missing or not text is left off, and that card goes by its name as before. A deck
+imported this way exports the printings it came with. Checked by
+`tests/deck-sources.test.js` and the "An Archidekt link" section of
+`import.spec.mjs`. **A browser cannot read Archidekt from the live site yet.**
+The same answers came with `Access-Control-Allow-Origin: http://localhost:3000`
+to a request from `https://rporter33.github.io`, which the browser refuses, so
+there the link ends in the Export instructions; `import.spec` checks that with
+those headers. The fetch is still tried, so the printings arrive the day
+Archidekt allows the origin. A pasted Archidekt export has always kept them.
+
+**Built (slice 2, printings past the first 175)** (2026-09-24): Scryfall's
+search sends 175 cards a page, and `getPrintings` read the first page only, so
+the printings picker and a card's Printings tab stopped at a card's newest 175.
+On 2026-09-24 Scryfall's printings search for Island answered `total_cards` 917
+and `has_more` true, and its first page went back only to November 2022, so an
+older copy a player owned could not be picked. `getPrintings(card, { next })`
+now gives one page with Scryfall's `totalCards` (null when it gives none) and
+`next`, its own `next_page` address, followed only while `has_more` is true and
+only when it is Scryfall's API and its card search. Each page is cached for a
+day, the first under the card's oracle id and each later one under the
+address that reached it. A first page an older build cached as bare ids never
+said whether more followed, so it is read as a miss and asked for again. The
+first page is fetched when a list opens, as before. Each older page is fetched
+only when somebody presses "Older printings" (`usePrintings` and
+`OlderPrintings` in `src/components/PrintingPages.jsx`, used by both lists),
+through `request()` and the cache. Closing a list drops a page still waiting in
+the queue. The line beside the button says "Showing the newest 175 of 917
+printings.", and "Showing all 917 printings." once the last page is in. Every
+page that has arrived is put in one `orderPrintings` order. The card the list
+is for (the deck's copy, or the one on the card's page) leads it even before
+its page has come, since it is in hand; the line then says "Showing yours and
+the newest 175 of 917" ("this printing" on the card's page). Without that, a
+copy picked from the sixth page was missing when the picker was opened again.
+Focus moves to the first printing a page brought, or to the line when it brought
+none that was not listed already. `order=released` is not given a `dir`,
+because Scryfall's own direction for it is already newest first (see §11).
+Checked by `tests/printings-pages.test.jsx`, and in `unreleased.spec.mjs` by
+a section on 24 Sep 2026. It pages the real Island and 915 made-up older ones,
+917 in all as Scryfall counted them, and reaches all six pages at Scryfall's
+own addresses. It then picks the oldest, reopens the picker and the card's
+page from the kept pages, and sweeps both with axe.
+
+**Built (slice 2, an offer to move a deck off printings not out)**
+(2026-09-24): a deck imported before the rule can hold the app's old pick for
+a name, such as Star Trek's Island. Its rows say "Not out until …" and the
+labels go on release day, so this is a convenience, not a repair. The owner
+decided: nothing in a deck is rewritten behind the player's back; the offer
+keeps no state ("Not now" hides it until the deck is next opened, and nothing
+is stored); and a replacement follows the importer's rule. When the deck holds
+printings that are not out, the editor says how many and until when ("3
+printings in this deck are not out yet: 1 until 2 Oct 2026 and 2 until 13 Nov
+2026.") and offers "Find released printings" or "Not now"
+(`src/features/decks/ReleasedPrintings.jsx`). Pressed, it asks Scryfall about
+those printings only, through `findReleasedFor`, which puts each through
+`findReleasedPrintings` as if it were the app's own pick, so there is no second
+rule. It lists each switch ("Island: Star Trek #319 → The Hobbit #195"), notes
+where a switch's rows join others ("joins the copies already in the main
+deck", or "… another switch brings into the sideboard"; `joins` in
+`switchPlan`, zone by zone, because `swapPrinting` merges rows within the main
+deck and within the sideboard and never across them), and names each card with
+nothing to switch to with Scryfall's reason. It says the app chose them. Only "Switch these"
+("Switch this" for one) changes the deck: `applySwitches` in
+`src/lib/released-switch.js` takes a History checkpoint ("Before switching to
+released printings", automatic), makes each switch with `swapPrinting`, and
+stamps each new printing's name from the card in hand, since these decks
+predate stamped names. The editor's commit is given the new cards, so their
+names, legality snapshot and face art are saved with the switch. A printing
+the player typed is offered like any other, because the deck does not record
+who chose it. A search that fails changes nothing and offers "Try again". Since
+Scryfall is asked fifteen cards to a search and a failed search leaves its cards
+and every later one unasked, an answer can be partial: the cards Scryfall was
+not asked about are listed apart, under "Scryfall could not be asked about N of
+them just now", never counted among those with nothing to switch to, and "Try
+again" asks about them alone and adds the answers to the plan. It is offered
+beside "Switch these", and again after the switch, whose sentence counts them
+separately. The plan is worked out afresh from the deck as it stands and every
+answer so far. Checked by `tests/released-switch.test.js` (the count, the
+search, a second search that fails, the plan, where rows join, and the switch),
+`tests/released-printings.test.jsx` (the offer on its own, a partial answer
+before and after the switch) and two sections of `unreleased.spec.mjs`. On 24
+Sep 2026 a Standard deck is declined, stores nothing and is offered again on
+reopening, then shows its two switches from one search, switches main deck and
+sideboard, and is restored from History. The Island it switches to is not in
+the deck before, so the editor has not loaded it: the one save the switch makes
+is read as written, and must name the new printing and hold it in the snapshot
+from the card handed over with the switch. On 13 Nov 2026 nothing is offered.
+
+**Fixed (a card added from the card sheet was lost)** (2026-09-24). This fault
+was already on main. "Switch these" above and "Use <format>" (§5), both added
+the same day, gave it two more ways to happen.
+`DecksView` holds the decks in state and hands the open deck to the editor,
+which builds every save on it. The card sheet is an overlay, so the editor stays
+mounted underneath it. Add to a deck saves straight to storage, and nothing told
+`DecksView`. The editor's next save then wrote its old copy back and took the
+card out again. That save could be a keystroke in the name, "Switch these" or
+"Use Commander". Now `saveDeck` fires `DECK_SAVED_EVENT` in the tab.
+`DecksView` reads the decks again on that event, and on
+`STORAGE_CHANGED_EVENT` from another tab, so a save made anywhere reaches the
+open editor at once, the legality watch's included. `unknownformat.spec.mjs`
+used to reload the page to step around the fault. It now adds from the sheet
+with the editor open, sees the card in the editor, renames the deck and
+chooses a format, and checks that the card is stored each time
+(`tests/storage-documents.test.js` checks the event). Hearing every save
+uncovered a fault that the stale list had hidden. "Your data" read the
+set-aside unreadable file during render, and discarding it changes no state. It
+went from the screen only because `DecksView`'s stale list made the discard
+redraw everything. Once the list was never stale, "Discard it" did nothing
+visible (`data.spec`). The screen now keeps that file in state and reads it
+again on each refresh.
+
+**Open (found 2026-09-24):**
+
+- *Unknown-format decks in the lobby.* The lobby lists a deck only on its
+  format's shelf, and has no shelf for a format this build does not know, so
+  such a deck can be dealt only by its address, `#/game/<deckId>`. Should the
+  lobby offer it, on a shelf of its own or under "Other"? This is the owner's
+  decision.
+- *A format replaced is not kept.* Choosing a format for such a deck overwrites
+  the id, and no History version records a format. The editor says so before
+  the press. A `previousFormatId` kept on the deck would let it be put back.
+  That is a migration, not built.
+- *The same heartbeat race in two more specs.* `game-room.spec` and
+  `game-engine.spec` still start the relay with `pingMs: 300`. A stall in the
+  spec's process longer than that can cut a healthy browser. `relay.spec` now
+  uses a heartbeat that does not beat during the run (see §11).
+- *No test mounts `DeckEditor`.* Its commit, the arrived cards and the format
+  status line are checked only through the browser specs.
 
 ### T4b-1 — the replication protocol and transport (built)
 
@@ -870,6 +1033,47 @@ anything in the same area.
   a card enters a deck. And a test must never lean on today's date: every
   release check takes `now`, and a browser spec fixes the page's clock, or
   the suite changes its answer the day a set comes out.
+- **A Scryfall list is a page, not the list.** Its search sends 175 cards a
+  page and says whether there are more (`has_more`, `total_cards`,
+  `next_page`). `getPrintings` read one page and treated it as every
+  printing, so Island's 917 stopped at 175. Anything reading a list reads
+  those fields. And do not add `dir=desc` to make "newest first" certain:
+  Scryfall's documentation gives `order=released` as "Newest → Oldest" and says
+  `asc` is the direction of that arrow, so by its table `desc` is oldest first
+  (read, not tried). With no `dir` it is newest first: the Island search above
+  began at 13 Nov 2026 and ran back to 2022.
+- **The relay finishing is not the browser hearing.** `relay.spec` read a
+  page's status the instant the relay's `shutdown()` returned. Chromium hands
+  a close to the page a few milliseconds after the server has finished, so
+  under load the page still said "open", in two restarts of 450, and the
+  check failed a full-suite run on 2026-09-23. A spec waits for the page's own
+  word (`heard` there, `until` elsewhere), never a fixed sleep. The same
+  search found `shutdown()` still listening while it waited up to a second on
+  slow goodbyes. A browser told 1012 came back after 250 ms and was seated at
+  the old relay, then held until the process was killed. One socket that
+  never answered the close kept `shutdown()` waiting 30 seconds. The listener
+  now closes first, and whatever has not answered is terminated
+  (`tests/relay-server.test.js`, "lets nobody in once it is going down").
+- **A spec's heartbeat can cut a healthy browser.** The relay, vite and
+  Playwright share one Node process in a spec. With a 200 ms heartbeat, a pause
+  longer than one beat let the timer run before the pong waiting to be read, so
+  a live socket was terminated. A browser cut just before a restart is between
+  sockets when the 1012 goes out, and never hears it. `relay.spec` now starts
+  the relay with a heartbeat a minute apart, and the heartbeat has its own test
+  in `relay-server.test.js`.
+- **A copy in state does not hear a save made elsewhere.** The editor builds
+  each save on the deck `DecksView` hands it. The card sheet saved around it,
+  and the editor's next save undid the card (see §10, "a card added from the
+  card sheet was lost"). A screen that keeps stored data in state listens for
+  `DECK_SAVED_EVENT` and `STORAGE_CHANGED_EVENT`, or reads the data at the
+  moment it builds on it.
+- **Scryfall's spacing is half a second a search, in tests too.** A jsdom test
+  that pages through several searches spends seconds in `request()`'s spacing,
+  and failed as "Test timed out in 5000ms" rather than as what it waited for.
+  `__internals.setSpacingScale` shrinks the spacing, as `setBackoffBase`
+  shrinks the backoff, for a test that is not about the spacing itself. Reset
+  it after each test, and give a test that sends several searches its own time
+  limit.
 
 ---
 

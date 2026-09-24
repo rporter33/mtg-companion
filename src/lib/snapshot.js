@@ -12,7 +12,7 @@
 // schedule and nobody tells you that the change touched *your* deck. The full
 // snapshot is just how you compute the delta; the delta is the product.
 
-import { getFormat, cardLegality, listedInPaper } from './formats.js'
+import { getFormat, formatLabel, cardLegality, listedInPaper } from './formats.js'
 import { allCardIds } from './deck.js'
 import { releaseStart, releaseLabel } from './release.js'
 import { CARD_TTL_MS } from './cache.js'
@@ -84,7 +84,7 @@ export function diffSnapshot(snapshot, deck, cardsById) {
       from: snapshot.formatId,
       to: deck.formatId,
       severity: 'info',
-      message: `This deck moved from ${getFormat(snapshot.formatId)?.name ?? snapshot.formatId} to ${format.name}, so its legality was re-checked from scratch.`,
+      message: `This deck moved from ${formatLabel(snapshot.formatId)} to ${format.name}, so its legality was re-checked from scratch.`,
     }]
   }
 

@@ -17,7 +17,17 @@ export default function DeckCoach({ deck, lookup, cardCount, onSearch }) {
   const report = useMemo(() => coachDeck(deck, lookup), [deck, cardCount])
   const [openId, setOpenId] = useState(null)
 
-  if (!report) return null
+  // The coach judges a deck by its format's numbers, and a format this build
+  // does not know has none (see getFormat), so it says so rather than going
+  // blank.
+  if (!report) {
+    return (
+      <p className="faint tiny m0">
+        The coach judges a deck by its format, and this version of the app does not know this
+        deck&rsquo;s format. Choose a format above to see its advice.
+      </p>
+    )
+  }
 
   const { checks, headline, progress } = report
   const passed = checks.filter((c) => c.severity === 'ok').length

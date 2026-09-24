@@ -1,9 +1,9 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
-import { listDecks, saveDeck, deleteDeck, loadState } from '../../lib/storage.js'
+import { listDecks, saveDeck, deleteDeck, loadState, DECK_SAVED_EVENT, STORAGE_CHANGED_EVENT } from '../../lib/storage.js'
 import { backupStatus } from '../../lib/data-safety.js'
 import BackupNudge from './BackupNudge.jsx'
 import { createDeck, deckFromSeed } from '../../lib/deck.js'
-import { FORMAT_GROUPS, formatsInGroup, getFormat } from '../../lib/formats.js'
+import { FORMAT_GROUPS, formatsInGroup, getFormat, formatLabel } from '../../lib/formats.js'
 import DeckEditor from './DeckEditor.jsx'
 import LegalityChanges from './LegalityChanges.jsx'
 import useLegalityWatch from './useLegalityWatch.js'
@@ -70,6 +70,22 @@ export default function DecksView({ onOpenCard, offline, route, seed, onSeedCons
 
   const refresh = () => setDecks(listDecks())
   const backup = backupStatus(loadState())
+
+  // A deck saved from anywhere else is read again at once: the card sheet's
+  // Add to a deck and the legality watch both save while this screen, and
+  // perhaps the editor for that very deck, is mounted underneath. The editor
+  // builds every save on the deck it is given, so one it was never told about
+  // was undone by its next save, a rename included. Another tab's writes are
+  // followed for the same reason.
+  useEffect(() => {
+    window.addEventListener(DECK_SAVED_EVENT, refresh)
+    window.addEventListener(STORAGE_CHANGED_EVENT, refresh)
+    return () => {
+      window.removeEventListener(DECK_SAVED_EVENT, refresh)
+      window.removeEventListener(STORAGE_CHANGED_EVENT, refresh)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // The first-deck flow saves a deck of its own while this screen is still
   // mounted underneath it, so the list is re-read on the way back out.
@@ -228,7 +244,8 @@ function DeckCard({ deck, onOpen, onDelete }) {
   const format = getFormat(deck.formatId)
   const count = deck.main.reduce((n, e) => n + e.quantity, 0)
     + (format?.commanderCountsTowardDeck ? deck.commanders.length : 0)
-  const target = format?.deck.max ?? format?.deck.min ?? 60
+  // A format this build does not know sets no size, so none is shown.
+  const target = format ? format.deck.max ?? format.deck.min : null
   const identity = deck.identity ?? 'C'
   const art = useFaceArt(deck)
   const themeSet = useThemeSet()
@@ -241,9 +258,9 @@ function DeckCard({ deck, onOpen, onDelete }) {
       <button className="deck-card__open" onClick={onOpen}>
         <h3>{deck.name}</h3>
         <div className="row row--wrap mt2">
-          <span className="chip">{format?.name ?? deck.formatId}</span>
+          <span className="chip">{formatLabel(deck.formatId)}</span>
           <span className={`chip ${count === target ? 'chip--ok' : ''}`}>
-            {count}/{target} cards
+            {target ? `${count}/${target}` : count} cards
           </span>
         </div>
       </button>
@@ -320,12 +337,14 @@ function NewDeckForm({ onCreate, onCancel }) {
 /**
  * A first deck left unfinished is offered back, with where it stands. The
  * flow itself remembers the deck and the step; this only reads that memory,
- * and says nothing once the deck is deleted or the list is complete.
+ * and says nothing once the deck is deleted or the list is complete, or when
+ * the deck names a format this build does not know, which the flow forgets
+ * rather than build (see FirstDeck).
  */
 function ContinueBuilding({ decks }) {
   const saved = getPrefs().firstDeck
   const deck = saved?.deckId ? decks.find((d) => d.id === saved.deckId) : null
-  if (!deck) return null
+  if (!deck || !getFormat(deck.formatId)) return null
   const count = deck.main.reduce((n, e) => n + e.quantity, 0)
   if (count >= 99) return null
   return (

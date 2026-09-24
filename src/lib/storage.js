@@ -328,6 +328,14 @@ export const PERSIST_FAILED_EVENT = PERSIST_EVENT
 export const ROOM_MADE_EVENT = 'mtg:room-made'
 /** Fired when another tab changed this app's storage. */
 export const STORAGE_CHANGED_EVENT = 'mtg:storage-changed'
+/**
+ * Fired in this tab each time a deck is saved, with its id as `detail.id`. A
+ * screen that holds decks in state reads them again on it. The card sheet
+ * saves to a deck while that deck's editor is open underneath, and an editor
+ * that never heard of it kept building on the list it had read, so its next
+ * save, a rename included, took the card back out.
+ */
+export const DECK_SAVED_EVENT = 'mtg:deck-saved'
 
 /** How many automatic checkpoints the last save had to drop to fit. */
 export function checkpointsDroppedToFit() {
@@ -363,12 +371,16 @@ export function saveDeck(deck) {
   // this is the backstop for anything that did not, since a sync between
   // devices has nothing else to go on.
   const stamped = deck.updatedAt ? deck : { ...deck, updatedAt: new Date().toISOString() }
-  return update((state) => {
+  const next = update((state) => {
     const decks = state.decks.some((d) => d.id === stamped.id)
       ? state.decks.map((d) => (d.id === stamped.id ? stamped : d))
       : [...state.decks, stamped]
     return { ...state, decks }
   })
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(DECK_SAVED_EVENT, { detail: { id: stamped.id } }))
+  }
+  return next
 }
 
 export function deleteDeck(id) {

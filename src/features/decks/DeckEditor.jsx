@@ -4,9 +4,10 @@ import DeckAnalysis from './DeckAnalysis.jsx'
 import DeckCoach from './DeckCoach.jsx'
 import DeckSearch from './DeckSearch.jsx'
 import DeckList from './editor/DeckList.jsx'
+import ReleasedPrintings from './ReleasedPrintings.jsx'
 import { validateDeck, deckSize, deckVerdict, stampNames, swapPrinting } from '../../lib/deck.js'
 import { movedNote, goneNote } from '../../lib/card-migrations.js'
-import { getFormat } from '../../lib/formats.js'
+import { getFormat, formatLabel, FORMAT_GROUPS, formatsInGroup } from '../../lib/formats.js'
 import { captureSnapshot } from '../../lib/snapshot.js'
 import { deckSections } from '../../lib/categories.js'
 import { getPrefs, setPref } from '../../lib/storage.js'
@@ -47,20 +48,27 @@ export default function DeckEditor({
   // Capture the legality verdict alongside every edit, so a later ban
   // announcement is a *diff* against a known-good baseline rather than a silent
   // rewrite of what this deck used to be.
-  const commit = (next) => {
+  // `arrived` is cards the edit brings in that are in hand but not yet loaded
+  // here (the switch to released printings has them from Scryfall's answer),
+  // so their names, legality and art are recorded with this save rather than
+  // left out of it until the next.
+  const commit = (next, arrived = null) => {
+    const look = arrived?.size ? (id) => arrived.get(id) ?? lookup(id) : lookup
+    const known = arrived?.size ? new Map([...cards, ...arrived]) : cards
     // Names first, and against the deck as it stands: a deck saved before the
     // stamp existed has its only name in the snapshot below, and the snapshot
     // this is about to write is built from the cards that loaded, which a
     // printing Scryfall has dropped is not among. Stamping afterwards would
     // read the new snapshot and lose the name for good (see stampNames).
-    const named = stampNames(next, lookup)
-    const snapshot = cards.size ? captureSnapshot(named, cards) : named.snapshot
+    const named = stampNames(next, look)
+    const snapshot = known.size ? captureSnapshot(named, known) : named.snapshot
     // The automatic face card is recorded alongside, so the Decks screen can
     // show the same art without loading the cards. Same object when unchanged.
-    onChange(stampFace(snapshot ? { ...named, snapshot } : named, lookup, market))
+    onChange(stampFace(snapshot ? { ...named, snapshot } : named, look, market))
   }
   const total = deckSize(deck, format)
-  const target = format?.deck.max ?? format?.deck.min ?? 60
+  // A format this build does not know sets no size, so none is shown.
+  const target = format ? format.deck.max ?? format.deck.min : null
 
   // Which market to price in. Stored, because a player in Europe should not
   // have to re-pick dollars-or-euros every time they open a deck.
@@ -149,6 +157,20 @@ export default function DeckEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moved, deck])
 
+  /*
+   * A format chosen for a deck whose own format this build does not know, and
+   * the one it replaced (see UnknownFormat). Choosing it takes away the banner
+   * and the button that had focus, so focus goes to a line that says what
+   * happened; left alone it fell to the page, and nothing was announced. Kept
+   * with the deck's id, since another deck opened in this editor has not had
+   * its format chosen.
+   */
+  const [chosen, setChosen] = useState(null)
+  const chosenRef = useRef(null)
+  useEffect(() => {
+    if (chosen) chosenRef.current?.focus()
+  }, [chosen])
+
   // The tab strip scrolls sideways on a phone; the open tab must be in view,
   // or a deck opened on Import / export shows a strip with nothing selected.
   const tabsRef = useRef(null)
@@ -195,8 +217,13 @@ export default function DeckEditor({
           aria-label="Deck name"
         />
         <div className="row row--wrap mt2">
-          <span className="chip">{format?.name}</span>
-          <span className={`chip ${total === target ? 'chip--ok' : ''}`}>{total}/{target}</span>
+          <span
+            className={`chip ${format ? '' : 'chip--warn'}`}
+            title={format ? undefined : 'Not a format this version of the app knows'}
+          >
+            {formatLabel(deck.formatId)}
+          </span>
+          <span className={`chip ${total === target ? 'chip--ok' : ''}`}>{target ? `${total}/${target}` : `${total} cards`}</span>
           {deck.sideboard.length > 0 && (
             <span className="chip">{deck.sideboard.reduce((n, e) => n + e.quantity, 0)} sideboard</span>
           )}
@@ -280,9 +307,26 @@ export default function DeckEditor({
         </div>
       )}
 
-      {errors.length > 0 && (
+      {!format && (
+        <UnknownFormat
+          formatId={deck.formatId}
+          violation={errors.find((v) => v.code === 'unknown_format')}
+          onChoose={(formatId) => {
+            setChosen({ deckId: deck.id, from: deck.formatId, to: formatId })
+            commit({ ...deck, formatId, updatedAt: new Date().toISOString() })
+          }}
+        />
+      )}
+      {format && chosen?.deckId === deck.id && chosen.to === deck.formatId && (
+        <p className="banner banner--info m0" role="status" tabIndex={-1} ref={chosenRef}>
+          This deck is now checked against {format.name}.
+          {namedFormat(chosen.from) ? ` It named "${namedFormat(chosen.from)}" before.` : ''}
+        </p>
+      )}
+
+      {format && errors.length > 0 && (
         <div className="banner banner--error stack stack--snug">
-          <strong>This deck is not legal in {format?.name} yet.</strong>
+          <strong>This deck is not legal in {format.name} yet.</strong>
           <ul className="violation-list">
             {errors.slice(0, 8).map((v, i) => <li key={i}>{v.message}</li>)}
           </ul>
@@ -293,6 +337,15 @@ export default function DeckEditor({
       {warnings.length > 0 && errors.length === 0 && (
         <div className="banner banner--warn tiny">{warnings[0].message}</div>
       )}
+
+      {/* Printings not out yet, and the offer to move off them. Keyed by deck,
+          so another deck opened in the same editor gets the offer afresh. */}
+      <ReleasedPrintings
+        key={deck.id}
+        deck={deck} cards={cards} lookup={lookup} offline={offline}
+        onSwitch={commit}
+        onDismiss={() => tabsRef.current?.querySelector('[aria-selected="true"]')?.focus()}
+      />
 
       <nav className="row tabs" role="tablist" aria-label="Deck" ref={tabsRef}>
         {[['list', 'List'], ['add', 'Add cards'], ['coach', 'Coach'], ['analysis', 'Analysis'], ['hand', 'Playtest'], ['history', 'History'], ['io', 'Import / export']]
@@ -358,6 +411,52 @@ export default function DeckEditor({
         Card art is the property of Wizards of the Coast and the artists named on each card,
         shown under the Fan Content Policy. Unofficial, and not endorsed by Wizards.
       </p>
+    </div>
+  )
+}
+
+/** The format id a deck names, as it names it, or null when it names none. */
+const namedFormat = (formatId) => (typeof formatId === 'string' && formatId.trim() ? formatId : null)
+
+/**
+ * A deck naming a format this build does not know: written by a newer build,
+ * or a hand-edited backup. It has no format rules here (see getFormat), and
+ * its format is never rewritten for it. The player may choose one this build
+ * knows, deliberately: a choice, then a press, because the format the deck
+ * named is not kept anywhere once replaced — no version records a format — and
+ * the banner says so before the press, not after.
+ */
+function UnknownFormat({ formatId, violation, onChoose }) {
+  const [choice, setChoice] = useState('')
+  const named = namedFormat(formatId)
+  return (
+    <div className="banner banner--error stack stack--snug">
+      <strong>{violation?.message}</strong>
+      <span className="tiny">
+        This version of the app cannot check this deck against format rules, and card search is not
+        limited to a format. Nothing about the deck changes until you choose a format here.
+        {named
+          ? ` Choosing one replaces "${named}" on this deck for good: History keeps a deck's cards, not its format.`
+          : " Choosing one gives this deck that format. History keeps a deck's cards, not its format."}
+      </span>
+      <div className="row row--wrap">
+        <select
+          className="chip"
+          aria-label="Format for this deck"
+          value={choice}
+          onChange={(e) => setChoice(e.target.value)}
+        >
+          <option value="">Choose a format…</option>
+          {FORMAT_GROUPS.map((group) => (
+            <optgroup key={group.id} label={group.label}>
+              {formatsInGroup(group.id).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </optgroup>
+          ))}
+        </select>
+        <button className="btn btn--sm" disabled={!choice} onClick={() => onChoose(choice)}>
+          {choice ? `Use ${formatLabel(choice)}` : 'Use this format'}
+        </button>
+      </div>
     </div>
   )
 }

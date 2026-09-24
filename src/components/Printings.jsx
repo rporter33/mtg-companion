@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
-import { getPrintings } from '../lib/scryfall.js'
-import { artUrl, describePrinting, orderPrintings, treatmentName, treatmentOf, finishFor } from '../lib/board/art.js'
+import { artUrl, describePrinting, treatmentName, treatmentOf, finishFor } from '../lib/board/art.js'
 import NotOutChip from './NotOutChip.jsx'
+import { usePrintings, OlderPrintings } from './PrintingPages.jsx'
 import './card.css'
 
 /**
@@ -22,18 +21,8 @@ import './card.css'
  * and it deserves the same answer in both.
  */
 export default function Printings({ card, finish = 'normal', note = null, onChoose, onClose }) {
-  const [prints, setPrints] = useState(null)
-  const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    setPrints(null)
-    setFailed(false)
-    getPrintings(card)
-      .then((found) => { if (!cancelled) setPrints(orderPrintings(found, card.id)) })
-      .catch(() => { if (!cancelled) setFailed(true) })
-    return () => { cancelled = true }
-  }, [card.id, card.oracle_id])
+  const pages = usePrintings(card)
+  const { printings: prints, failed, arrivedId, arrivedRef } = pages
 
   return (
     <section className="printings" aria-label={`Printings of ${card.name}`}>
@@ -55,6 +44,7 @@ export default function Printings({ card, finish = 'normal', note = null, onChoo
             return (
               <li key={print.id}>
                 <button
+                  ref={print.id === arrivedId ? arrivedRef : undefined}
                   className={`printings__print${mine ? ' printings__print--mine' : ''}`}
                   onClick={() => onChoose(print, finishFor(print, finish))}
                   aria-current={mine ? 'true' : undefined}
@@ -84,6 +74,7 @@ export default function Printings({ card, finish = 'normal', note = null, onChoo
           })}
         </ul>
       )}
+      <OlderPrintings pages={pages} />
       <p className="faint tiny">
         {note ?? 'Choosing one changes the copies on this table and the card in the deck, so it is still that printing next game.'}
       </p>

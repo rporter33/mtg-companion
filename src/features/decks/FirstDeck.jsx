@@ -46,13 +46,16 @@ export default function FirstDeck({ onOpenCard }) {
   // the back button retraces the steps. The deck being built and the step
   // reached are remembered in prefs, so coming back later resumes rather
   // than starting a second deck; the deck itself stays the only copy of its
-  // cards. A remembered deck that has since been deleted is simply forgotten.
+  // cards. A remembered deck that has since been deleted is simply forgotten,
+  // and so is one in a format this build does not know (see getFormat): there
+  // is nothing here to build it by. It stays in the deck list as it is.
   const route = useRoute()
   const step = Math.max(0, STEP_SLUGS.indexOf(route.step))
   const go = (i) => navigate({ step: STEP_SLUGS[i] })
   const [restored] = useState(() => {
     const saved = getPrefs().firstDeck
-    return saved?.deckId ? getDeck(saved.deckId) : null
+    const deck = saved?.deckId ? getDeck(saved.deckId) : null
+    return deck && getFormat(deck.formatId) ? deck : null
   })
   // The bare address resumes: with a deck being built, it goes to the step
   // reached; without one, to the colours. Navigating to the same hash is a

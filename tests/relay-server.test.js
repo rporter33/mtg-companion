@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { createServer, request } from 'node:http'
+import { connect } from 'node:net'
 import { createRelay } from '../scripts/relay-server.mjs'
 import { createEngineRoom, PACE_MS } from '../scripts/relay-engine.mjs'
 import { guest, KIND, PROTOCOL } from '../src/lib/board/net.js'
@@ -236,6 +237,46 @@ describe('the wire', () => {
     await new Promise((resolve) => relayServer.server.listen(port, resolve))
     await until(() => ada.wire.status === 'open' && ada.player.ready, 4000)
     expect(ada.player.seat).toBe('p1')
+    ada.leave()
+  })
+
+  it('lets nobody in once it is going down, and does not wait on a socket that never answers', async () => {
+    // A heartbeat slow enough that it does not find the quiet socket first.
+    await relayServer.shutdown()
+    relayServer = createRelay({ roomsDir: dir, pingMs: 60 * 1000, engineCommand: FAKE_ENGINE })
+    await new Promise((resolve) => relayServer.server.listen(0, resolve))
+    base = `http://127.0.0.1:${relayServer.server.address().port}`
+    const { code } = await roomsApi(base).open()
+    const ada = await sit(code, 'Ada')
+    // A socket that finished its handshake and then went quiet, the way a
+    // phone does when its signal goes: it reads nothing more, so it never
+    // answers the close and the goodbye waits out its whole second.
+    const { port } = relayServer.server.address()
+    const quiet = connect(port, '127.0.0.1')
+    quiet.on('error', () => { /* a reset is as good as a close here */ })
+    quiet.write([
+      `GET /rooms/${code}/ws HTTP/1.1`, `Host: 127.0.0.1:${port}`, 'Upgrade: websocket', 'Connection: Upgrade',
+      'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', 'Sec-WebSocket-Version: 13', '', '',
+    ].join('\r\n'))
+    expect(String(await new Promise((resolve) => quiet.once('data', resolve)))).toMatch(/^HTTP\/1\.1 101/)
+    quiet.pause()
+    const from = ada.statuses.length
+    // Before, this waited thirty seconds on the quiet socket (ws's own close
+    // timeout), and for ever on Ada once she had been let back in: either
+    // is far past this test's time limit.
+    await relayServer.shutdown()
+    expect(relayServer.wss.clients.size).toBe(0)
+    // The quiet socket was hung up on, not left for the process to end.
+    quiet.resume()
+    await new Promise((resolve) => (quiet.readyState === 'closed' ? resolve() : quiet.once('close', resolve)))
+    // Ada, told 1012, came back a quarter of a second later, while the relay
+    // was still waiting on the quiet socket. She was refused, not seated at
+    // a table it had already written to disk.
+    const since = ada.statuses.slice(from)
+    expect(since[0]).toBe('reconnecting')
+    expect(since).toContain('connecting')
+    expect(since).not.toContain('open')
+    quiet.destroy()
     ada.leave()
   })
 })

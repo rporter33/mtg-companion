@@ -7,9 +7,16 @@
  * relay was built for: two real browsers reach the same board through it, a
  * browser whose socket is cut comes back on its own to the same seat with
  * the same table, and a server restart mid-game is a pause rather than an
- * end. The relay is started in this process on port 0, with a fast heartbeat
- * and a temporary rooms directory, so nothing here depends on anything
- * already running.
+ * end. The relay is started in this process on port 0, with a temporary rooms
+ * directory, so nothing here depends on anything already running.
+ *
+ * Its heartbeat is a minute apart, so it never beats during a run. Nothing here
+ * rests on it: the cut socket is cut by hand, and relay-server.test.js tests
+ * the heartbeat. A fast one did harm. The relay, vite and Playwright share this
+ * one process, and a pause in it longer than the beat let the timer run before
+ * a waiting pong was read, so a healthy browser was cut. A browser cut just
+ * before the restart is between sockets when the 1012 goes out, never hears
+ * it, and failed the restart check below.
  *
  *   node tests/browser/relay.spec.mjs
  */
@@ -31,7 +38,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 // --- the relay and a dev server to import the modules from -----------------
 
 const dir = mkdtempSync(join(tmpdir(), 'relay-spec-'))
-let relayServer = createRelay({ roomsDir: dir, pingMs: 200 })
+// A heartbeat that does not beat during the run (see above).
+const PING_MS = 60 * 1000
+let relayServer = createRelay({ roomsDir: dir, pingMs: PING_MS })
 await new Promise((resolve) => relayServer.server.listen(0, resolve))
 const PORT = relayServer.server.address().port
 const RELAY = `http://127.0.0.1:${PORT}`
@@ -63,8 +72,14 @@ const sit = (page, { code, name, seat = null }) => page.evaluate(async ({ RELAY,
   const b = window.board
   const api = b.rooms(RELAY)
   window.statuses = []
+  // Each time the relay said "back in a moment": the wire marks the
+  // reconnect it makes on a 1012 as a restart, and no other.
+  window.restarts = 0
   window.refusals = []
-  const wire = b.relay({ url: api.socketUrl(code), onStatus: (s) => window.statuses.push(s) })
+  const wire = b.relay({
+    url: api.socketUrl(code),
+    onStatus: (s, detail) => { window.statuses.push(s); if (detail?.restart) window.restarts++ },
+  })
   const guest = b.guest({ send: wire.send, name, seat, onRefused: (r) => window.refusals.push(r) })
   wire.onMessage((m) => guest.receive(m))
   wire.onOpen(() => guest.hello())
@@ -87,6 +102,13 @@ const settle = async (page, want) => {
   return -1
 }
 const boardOf = (page) => page.evaluate(() => JSON.stringify(window.guest.run.board))
+/**
+ * Waits for a page to say something, and gives what it said, or undefined
+ * if it never does. What happens on the relay reaches a page as a task of
+ * its own, a moment later, so a page is waited on for its own word rather
+ * than read the instant something here returns.
+ */
+const heard = (page, fn) => page.waitForFunction(fn, null, { timeout: 5000 }).then((h) => h.jsonValue(), () => undefined)
 
 const one = await open()
 const two = await open()
@@ -115,8 +137,7 @@ check('with each hand where it should be', hands.p1.hand.length === 2 && hands.p
 
 console.log('\nWhose turn it is')
 await two.evaluate(() => window.guest.do({ type: 'nextTurn', player: 'p2' }))
-await sleep(300)
-const refusal = await two.evaluate(() => window.refusals[0]?.code)
+const refusal = await heard(two, () => window.refusals[0]?.code)
 check('the second player cannot end the first player’s turn', refusal === 'notYourTurn', String(refusal))
 await one.evaluate(() => window.guest.do({ type: 'nextTurn' }))
 await settle(two, 5)
@@ -135,14 +156,22 @@ const back = await two.evaluate(async () => {
 check('comes back on its own', back.statuses.includes('reconnecting') && back.ready, JSON.stringify(back))
 check('to the same seat', back.seat === 'p2', String(back.seat))
 await one.evaluate(() => window.guest.do({ type: 'life', player: 'p1', delta: -3 }))
+// Both: the first browser's own change reaches it only when the relay says so.
+await settle(one, 6)
 await settle(two, 6)
 check('and is in step again', (await boardOf(one)) === (await boardOf(two)) && JSON.parse(await boardOf(two)).life.p1 === 17)
 
 console.log('\nThe server restarts mid-game')
 await relayServer.shutdown()
-const told = await one.evaluate(() => window.statuses[window.statuses.length - 1])
-check('every browser is told to come back', told === 'reconnecting', String(told))
-relayServer = createRelay({ roomsDir: dir, pingMs: 200 })
+// shutdown() returns once the relay's side of every goodbye is done, and a
+// browser can be a few milliseconds behind it: Chromium hands the close from
+// its network process to the page as a task of its own. Read at once, a
+// browser still said "open" in two restarts of 450 under load. The 1012 is
+// what is claimed, so it is what is waited for.
+const told = await Promise.all([one, two].map((page) => heard(page, () => window.restarts > 0)))
+check('every browser is told to come back', told.every(Boolean),
+  JSON.stringify(await Promise.all([one, two].map((page) => page.evaluate(() => ({ restarts: window.restarts, statuses: window.statuses }))))))
+relayServer = createRelay({ roomsDir: dir, pingMs: PING_MS })
 await new Promise((resolve) => relayServer.server.listen(PORT, resolve))
 check('the room is back from disk', relayServer.rooms.has(code))
 const resumed = await Promise.all([one, two].map((page) => page.evaluate(async () => {
@@ -156,6 +185,7 @@ check('both browsers are seated again where they were',
   resumed[0]?.seat === 'p1' && resumed[1]?.seat === 'p2' && resumed[0]?.seq === 6, JSON.stringify(resumed))
 await two.evaluate(() => window.guest.do({ type: 'draw', player: 'p2', count: 1 }))
 await settle(one, 7)
+await settle(two, 7)
 const after = [JSON.parse(await boardOf(one)), JSON.parse(await boardOf(two))]
 check('and the game carries on from where it was', (await boardOf(one)) === (await boardOf(two)) && after[0].zones.p2.hand.length === 4,
   `hands ${after.map((b) => b.zones.p2.hand.length).join('/')}, seqs ${await one.evaluate(() => window.guest.seq)}/${await two.evaluate(() => window.guest.seq)}, refusals ${await two.evaluate(() => JSON.stringify(window.refusals))}`)

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { FORMATS } from '../../lib/formats.js'
+import { FORMATS, getFormat } from '../../lib/formats.js'
 import { libraryOf } from '../../lib/board/deck.js'
 import { unionColorIdentity } from '../../lib/deck.js'
 import { artUrl, faceIdFor } from '../../lib/deck-art.js'
@@ -50,7 +50,7 @@ export default function Lobby({ decks, room = null, engine = null }) {
   const inFormat = useMemo(() => decks.filter((d) => d.formatId === format), [decks, format])
   const cards = useShelfCards(inFormat)
   const showImages = getPrefs().showCardImages !== false
-  const commanderFamily = FORMATS[format]?.group === 'commander'
+  const commanderFamily = getFormat(format)?.group === 'commander'
 
   // What the shelf knows about each deck, from the few cards it loaded.
   const info = useMemo(() => {
@@ -136,7 +136,7 @@ export default function Lobby({ decks, room = null, engine = null }) {
     <div className="lobby">
       <header className="lobby__head">
         <h1 className="lobby__title">
-          <span className="lobby__mode">{engine ? 'Rules enforced:' : room ? 'Together:' : 'Solo:'}</span> {FORMATS[format]?.name ?? format}
+          <span className="lobby__mode">{engine ? 'Rules enforced:' : room ? 'Together:' : 'Solo:'}</span> {getFormat(format)?.name ?? format}
         </h1>
         <p className="muted m0">{blurb(format)}</p>
       </header>
@@ -213,7 +213,7 @@ export default function Lobby({ decks, room = null, engine = null }) {
             </div>
           ) : !shown.length ? (
             <p className="faint" role="status">
-              {query.trim() || wanted.size ? 'No deck here matches.' : `You have no ${FORMATS[format]?.name ?? format} decks yet.`}
+              {query.trim() || wanted.size ? 'No deck here matches.' : `You have no ${getFormat(format)?.name ?? format} decks yet.`}
             </p>
           ) : (
             <ul className="lobby__shelf" role="list">
@@ -456,7 +456,7 @@ function FormatTab({ id, current, count = 0, onPick }) {
       aria-pressed={current === id}
       onClick={() => onPick(id)}
     >
-      {FORMATS[id]?.name ?? id}
+      {getFormat(id)?.name ?? id}
       {count > 0 && <span className="lobby__count">{count}</span>}
     </button>
   )
@@ -494,7 +494,7 @@ function blurb(format) {
     case 'commander': return '100-card singleton.'
     case 'pauper': return 'Sixty cards, commons only.'
     case 'brawl': return 'Sixty-card singleton with a commander.'
-    default: return FORMATS[format] ? 'Sixty cards.' : ''
+    default: return getFormat(format) ? 'Sixty cards.' : ''
   }
 }
 
@@ -524,7 +524,12 @@ function countBy(list, key) {
   return out
 }
 
-/** Open on the first front tab that has decks, so the shelf is never empty by default. */
+/**
+ * Open on the first front tab that has decks, so the shelf is never empty by
+ * default. A deck in a format this build does not know has no tab here (see
+ * getFormat), so its format is never the one opened on — an id such as
+ * "constructor" in a hand-edited backup included.
+ */
 function firstWithDecks(counts) {
-  return FRONT.find((id) => counts[id]) ?? Object.keys(counts).find((id) => FORMATS[id]) ?? 'commander'
+  return FRONT.find((id) => counts[id]) ?? Object.keys(counts).find((id) => getFormat(id)) ?? 'commander'
 }

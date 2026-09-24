@@ -395,7 +395,11 @@ export function validateDeck(deck, cardsById, { now = today() } = {}) {
   if (!format) {
     return {
       legal: false,
-      violations: [err('unknown_format', `Unknown format "${deck.formatId}".`)],
+      // The id the deck gives, when it gives one: a deck with none would
+      // otherwise read 'Unknown format "undefined"'.
+      violations: [err('unknown_format', typeof deck.formatId === 'string' && deck.formatId.trim()
+        ? `Unknown format "${deck.formatId}".`
+        : 'This deck names no format.')],
       counts: { main: 0, sideboard: 0, total: 0 },
       colorIdentity: [],
     }

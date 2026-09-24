@@ -6,14 +6,14 @@ import ManaCost, { OracleText } from '../../components/ManaCost.jsx'
 import Term from '../../components/Term.jsx'
 import AddToDeck from '../decks/AddToDeck.jsx'
 import ExplainCard from './ExplainCard.jsx'
-import { getRulings, getPrintings } from '../../lib/scryfall.js'
+import { getRulings } from '../../lib/scryfall.js'
 import { FORMATS, FORMAT_IDS, typeLineOf, oracleTextOf, legalityStatus } from '../../lib/formats.js'
 import { describeColors } from '../../lib/mana.js'
 import PriceRow from '../../components/PriceRow.jsx'
 import NotOutChip from '../../components/NotOutChip.jsx'
 import { MARKETS, priceLabel } from '../../lib/prices.js'
 import { notOutUntil, notOutText, releaseLabel } from '../../lib/release.js'
-import { orderPrintings } from '../../lib/board/art.js'
+import { usePrintings, OlderPrintings } from '../../components/PrintingPages.jsx'
 import { getPrefs } from '../../lib/storage.js'
 import { useCollection } from '../../lib/collection-store.js'
 import { ownedOf, setOwned } from '../../lib/collection.js'
@@ -267,50 +267,45 @@ function Rulings({ card }) {
 }
 
 function Printings({ card, onOpenCard, market = 'usd' }) {
-  const [printings, setPrintings] = useState(null)
-  const [error, setError] = useState(null)
+  const pages = usePrintings(card)
+  const { printings, failed, arrivedId, arrivedRef } = pages
 
-  useEffect(() => {
-    let cancelled = false
-    setPrintings(null)
-    setError(null)
-    getPrintings(card)
-      .then((data) => { if (!cancelled) setPrintings(data) })
-      .catch((err) => { if (!cancelled) setError(err) })
-    return () => { cancelled = true }
-  }, [card.id, card.oracle_id])
-
-  if (error) return <p className="faint">Printings are unavailable offline.</p>
+  if (failed) return <p className="faint">Printings are unavailable offline.</p>
   if (!printings) return <p className="faint">Loading printings…</p>
 
-  // The same order as the printing picker (orderPrintings): this printing,
-  // then paper printings that are out, newest first, then any Scryfall lists
-  // ahead of release, each marked, then digital-only ones, then any with no
-  // art to show.
+  // The same order as the printing picker (orderPrintings, by way of
+  // usePrintings): this printing, then paper printings that are out, newest
+  // first, then any Scryfall lists ahead of release, each marked, then
+  // digital-only ones, then any with no art to show. Older pages join that
+  // order as they arrive.
   return (
-    <div className="printing-list">
-      {orderPrintings(printings, card.id).map((print) => (
-        <button
-          key={print.id}
-          className="printing"
-          onClick={() => onOpenCard?.(print)}
-          aria-current={print.id === card.id ? 'true' : undefined}
-        >
-          <span className="printing__set">{print.set}</span>
-          <span className="printing__name">
-            {print.set_name}
-            <span className="faint printing__meta">
-              {print.collector_number ? `#${print.collector_number}` : ''}
-              {print.rarity ? ` · ${capitalise(print.rarity)}` : ''}
-              {print.released_at ? ` · ${print.released_at.slice(0, 4)}` : ''}
-              {print.finishes?.length && !print.finishes.includes('nonfoil') ? ' · foil only' : ''}
+    <div className="stack">
+      <div className="printing-list">
+        {printings.map((print) => (
+          <button
+            key={print.id}
+            ref={print.id === arrivedId ? arrivedRef : undefined}
+            className="printing"
+            onClick={() => onOpenCard?.(print)}
+            aria-current={print.id === card.id ? 'true' : undefined}
+          >
+            <span className="printing__set">{print.set}</span>
+            <span className="printing__name">
+              {print.set_name}
+              <span className="faint printing__meta">
+                {print.collector_number ? `#${print.collector_number}` : ''}
+                {print.rarity ? ` · ${capitalise(print.rarity)}` : ''}
+                {print.released_at ? ` · ${print.released_at.slice(0, 4)}` : ''}
+                {print.finishes?.length && !print.finishes.includes('nonfoil') ? ' · foil only' : ''}
+              </span>
+              {print.id === card.id && <span className="faint"> · showing</span>}
+              <NotOutChip card={print} />
             </span>
-            {print.id === card.id && <span className="faint"> · showing</span>}
-            <NotOutChip card={print} />
-          </span>
-          <span className="printing__price">{priceLabel(print, market)}</span>
-        </button>
-      ))}
+            <span className="printing__price">{priceLabel(print, market)}</span>
+          </button>
+        ))}
+      </div>
+      <OlderPrintings pages={pages} current="this printing" />
     </div>
   )
 }

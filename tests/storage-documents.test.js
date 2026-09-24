@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   useBackend, saveDeck, listDecks, deleteDeck, loadState, update, exportAll, importAll,
-  clearAll, corruptBackup, discardCorruptBackup, setPref, getPrefs, STORAGE_CHANGED_EVENT,
+  clearAll, corruptBackup, discardCorruptBackup, setPref, getPrefs, STORAGE_CHANGED_EVENT, DECK_SAVED_EVENT,
 } from '../src/lib/storage.js'
 import { memoryBackend } from '../src/lib/storage-backend.js'
 
@@ -204,5 +204,20 @@ describe('another tab', () => {
     const before = listDecks()[0]
     window.dispatchEvent(new StorageEvent('storage', { key: 'someone-else' }))
     expect(listDecks()[0]).toBe(before)
+  })
+})
+
+describe('this tab', () => {
+  it('says which deck was saved, once the save is in, so a screen holding decks can read them again', () => {
+    // The card sheet saves to a deck while that deck's editor is open beneath
+    // it; the editor's next save used to put the old list back.
+    useBackend(memoryBackend())
+    saveDeck(deck('d1'))
+    const heard = []
+    const listen = (e) => heard.push({ id: e.detail.id, name: listDecks()[0].name })
+    window.addEventListener(DECK_SAVED_EVENT, listen)
+    saveDeck({ ...deck('d1'), name: 'added from the card sheet' })
+    window.removeEventListener(DECK_SAVED_EVENT, listen)
+    expect(heard).toEqual([{ id: 'd1', name: 'added from the card sheet' }])
   })
 })

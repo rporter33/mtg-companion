@@ -17,7 +17,13 @@
  * scryfall-unreleased.json), so this means the same thing in 2030 as it did
  * the week it was written: first on 21 Sep 2026, with Reality Fracture and
  * Star Trek both still to come, then on 13 Nov 2026, the day Star Trek comes
- * out, when the same printing is simply out.
+ * out, when the same printing is simply out. Then, on 24 Sep 2026, the picker
+ * and the card's page reach every printing of a card with more than one page
+ * of them, the fault being the same one: the printing a player holds could not
+ * be chosen. Last, on the same day, a deck imported before the released-first
+ * rule is offered a switch to released printings, which changes nothing until
+ * the player says, stores nothing when declined, and is gone on the day Star
+ * Trek comes out.
  */
 
 import { chromium } from 'playwright'
@@ -94,7 +100,10 @@ function typedSearch(q) {
  * `searched` records the searches for a printing that is out, `typed` the
  * searches typed into the app.
  */
-async function mockScryfall(page, now, searched, typed = []) {
+async function mockScryfall(page, now, searched, typed = [], extra = []) {
+  // `extra` is made-up printings a section adds, found by id and by the
+  // search for a printing that is out, as Scryfall's own would be.
+  const ALL = [...CARDS, ...extra]
   // Registered first: Playwright tries the route added last first, so this
   // catch-all only answers what nothing below recognises.
   await page.route('**/api.scryfall.com/**', (route) => route.fulfill(list([])))
@@ -104,7 +113,7 @@ async function mockScryfall(page, now, searched, typed = []) {
     const data = []
     const not_found = []
     for (const id of identifiers) {
-      const card = id.id ? CARDS.find((c) => c.id === id.id)
+      const card = id.id ? ALL.find((c) => c.id === id.id)
         : id.collector_number ? print(id.set, id.collector_number)
           : id.set ? CARDS.find((c) => c.set === id.set && c.name.toLowerCase() === id.name?.toLowerCase())
             : PICK[id.name?.toLowerCase()]
@@ -147,7 +156,7 @@ async function mockScryfall(page, now, searched, typed = []) {
         .sort((a, b) => b.released_at.localeCompare(a.released_at))))
     }
     searched.push(q)
-    const data = ids.map((id) => CARDS
+    const data = ids.map((id) => ALL
       .filter((c) => c.oracle_id === id && c.released_at <= now && c.games.includes('paper') && !c.digital)
       .sort((a, b) => b.released_at.localeCompare(a.released_at))[0]).filter(Boolean)
     return data.length
@@ -164,10 +173,12 @@ const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PAT
 /**
  * A fresh browser profile whose clock reads `day`, 10:00 UTC, and moves on
  * from there, with a deck of Mountains already made, Standard unless
- * `formatId` says otherwise. Timers run as they would, so nothing in the app
- * waits on a clock that never moves.
+ * `formatId` says otherwise, or of `card` when one is given. `main` and
+ * `sideboard` add entries after it, and `extra` is made-up printings the
+ * mocked Scryfall knows besides the captured ones. Timers run as they would,
+ * so nothing in the app waits on a clock that never moves.
  */
-async function openDeck(day, mountains, formatId = 'standard') {
+async function openDeck(day, mountains, formatId = 'standard', card = HOB_MOUNTAIN, { main = [], sideboard = [], extra = [] } = {}) {
   const context = await browser.newContext({ viewport: { width: 420, height: 1000 } })
   await context.clock.install({ time: new Date(`${day}T10:00:00Z`) })
   const page = await context.newPage()
@@ -185,18 +196,18 @@ async function openDeck(day, mountains, formatId = 'standard') {
   })
   const searched = []
   const typed = []
-  await mockScryfall(page, day, searched, typed)
+  await mockScryfall(page, day, searched, typed, extra)
 
   await page.goto(TARGET, { waitUntil: 'networkidle' })
-  await page.evaluate(({ id, quantity, formatId }) => localStorage.setItem('mtg-companion:v1', JSON.stringify({
+  await page.evaluate(({ id, quantity, formatId, main, sideboard }) => localStorage.setItem('mtg-companion:v1', JSON.stringify({
     version: 4, collection: {},
     decks: [{
       id: 'not-out', name: 'Not Out Yet', formatId, commanders: [], signatureSpell: null,
-      categoryOrder: [], versions: [], main: [{ cardId: id, quantity }], sideboard: [],
+      categoryOrder: [], versions: [], main: [{ cardId: id, quantity }, ...main], sideboard,
       createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z',
     }],
     games: [], guide: { completedLessons: [], tutorialState: null, seenGlossary: [] }, prefs: { deckView: 'list' },
-  })), { id: HOB_MOUNTAIN.id, quantity: mountains, formatId })
+  })), { id: card.id, quantity: mountains, formatId, main, sideboard })
   await page.reload({ waitUntil: 'networkidle' })
   await page.getByRole('button', { name: 'Decks', exact: true }).click()
   await page.waitForTimeout(400)
@@ -640,6 +651,307 @@ console.log('\nOn 13 Nov 2026, the day Star Trek comes out')
   check('and none of its printings is labelled', prints.length === 2 && prints.every((p) => p.label === '')
     && (await trkPage.locator('.not-out').count()) === 0, JSON.stringify(prints))
   await closeSheet(page)
+  await context.close()
+}
+
+console.log("\nOn 24 Sep 2026, a card with more printings than one page of Scryfall's holds")
+{
+  // On 2026-09-24 Scryfall's printings search for Island answered
+  // total_cards 917 and has_more true, 175 cards a page, newest first, with a
+  // next_page address of the form nextPage() builds, and the first page went
+  // back only to November 2022. The two Islands above are real; the 915 older
+  // ones are made up from The Hobbit's, a week apart, so every page can be
+  // told from every other.
+  const DAY = 24 * 60 * 60 * 1000
+  const OLDER = Array.from({ length: 915 }, (_, i) => ({
+    ...HOB_ISLAND,
+    id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+    set: `mu${i + 1}`,
+    set_name: `Made-up set ${i + 1}`,
+    collector_number: String(i + 1),
+    released_at: new Date(Date.UTC(2026, 7, 14) - (i + 1) * 7 * DAY).toISOString().slice(0, 10),
+  }))
+  const ISLANDS = [TRK_ISLAND, HOB_ISLAND, ...OLDER]
+  const nextPage = (n) => `https://api.scryfall.com/cards/search?${new URLSearchParams({
+    format: 'json', include_extras: 'true', include_multilingual: 'false', include_variations: 'false',
+    order: 'released', page: String(n), q: `oracleid:${HOB_ISLAND.oracle_id}`, unique: 'prints',
+  })}`
+
+  const { context, page } = await openDeck('2026-09-24', 35, 'standard', HOB_ISLAND)
+  // Added last, so tried first; anything else goes on to the Scryfall above.
+  const pagesAsked = []
+  await page.route('**/api.scryfall.com/cards/search**', (route) => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('unique') !== 'prints' || url.searchParams.get('q') !== `oracleid:${HOB_ISLAND.oracle_id}`) return route.fallback()
+    pagesAsked.push(route.request().url())
+    const n = Number(url.searchParams.get('page') ?? 1)
+    const more = n * 175 < ISLANDS.length
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      object: 'list', total_cards: ISLANDS.length, has_more: more,
+      ...(more ? { next_page: nextPage(n + 1) } : {}), data: ISLANDS.slice((n - 1) * 175, n * 175),
+    }) })
+  })
+  await listTab(page)
+  check('no page of printings is asked for before the picker is opened', pagesAsked.length === 0, pagesAsked.join(' | '))
+
+  const islandRow = page.locator('.deck-row').filter({ has: page.locator('.deck-row__name', { hasText: /^Island$/ }) })
+  const picker = page.locator('section.printings')
+  const count = picker.locator('p[aria-live="polite"]')
+  const older = picker.getByRole('button', { name: 'Older printings', exact: true })
+  const rowsShown = () => picker.locator('.printings__print').count()
+  const focused = () => page.evaluate(() => document.activeElement?.querySelector('strong')?.textContent ?? document.activeElement?.tagName)
+  /** Presses for the next page and waits for the count to say it has come. */
+  const pressOlder = async (expected) => {
+    await older.click()
+    await picker.getByText(expected, { exact: true }).waitFor({ timeout: 15000 })
+    await page.waitForTimeout(100)
+  }
+
+  await islandRow.getByRole('button', { name: 'Choose which printing of Island is in this deck' }).click()
+  await count.waitFor({ timeout: 15000 })
+  check("the picker shows Scryfall's first page and says how many of its printings that is",
+    (await rowsShown()) === 175 && (await count.textContent()) === 'Showing the newest 175 of 917 printings.',
+    `${await rowsShown()} rows; ${await count.textContent()}`)
+  check('with a button for older ones, and nothing asked beyond the first page',
+    (await older.count()) === 1 && pagesAsked.length === 1, pagesAsked.join(' | '))
+  await page.waitForTimeout(600)
+  await axe(page, 'the printing picker with older printings to fetch')
+
+  await pressOlder('Showing the newest 350 of 917 printings.')
+  check('pressing it fetches the next page, at the address Scryfall gave, and adds it',
+    (await rowsShown()) === 350 && pagesAsked.length === 2 && pagesAsked[1] === nextPage(2),
+    `${await rowsShown()} rows; ${pagesAsked.join(' | ')}`)
+  check('focus goes to the first printing the page brought', (await focused()) === 'Made-up set 174', await focused())
+
+  for (const shown of [525, 700, 875]) await pressOlder(`Showing the newest ${shown} of 917 printings.`)
+  await pressOlder('Showing all 917 printings.')
+  check('every one of the 917 printings can be reached, a page at a time, and the button goes at the end',
+    (await rowsShown()) === 917 && (await older.count()) === 0
+      && pagesAsked.length === 6 && pagesAsked.slice(1).every((address, i) => address === nextPage(i + 2)),
+    `${await rowsShown()} rows; ${pagesAsked.length} pages asked`)
+  const offered = await picker.locator('.printings__print strong').allTextContents()
+  check("in one order: the deck's first, then paper printings that are out, newest to oldest, then Star Trek's, not out yet",
+    offered[0] === 'The Hobbit' && offered[1] === 'Made-up set 1' && offered[915] === 'Made-up set 915' && offered[916] === 'Star Trek',
+    `${offered.slice(0, 2).join(', ')} … ${offered.slice(-2).join(', ')}`)
+
+  await picker.locator('.printings__print', { hasText: 'Made-up set 915' }).click()
+  await page.waitForTimeout(600)
+  await islandRow.getByRole('button', { name: 'Choose which printing of Island is in this deck' }).click()
+  await count.waitFor({ timeout: 15000 })
+  const first = picker.locator('.printings__print').first()
+  check('the oldest printing can be chosen, and opening the picker again lists it first, as yours',
+    (await first.locator('strong').textContent()) === 'Made-up set 915' && (await first.getAttribute('aria-current')) === 'true'
+      && /yours/.test(await first.innerText()), await first.innerText())
+  check("and the count says so, from the page kept for the day, with nothing asked again",
+    (await count.textContent()) === 'Showing yours and the newest 175 of 917 printings.' && (await rowsShown()) === 176
+      && pagesAsked.length === 6, `${await count.textContent()} (${pagesAsked.length} pages asked)`)
+  await picker.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(300)
+
+  await page.getByRole('tab', { name: 'Import / export' }).click()
+  await page.waitForTimeout(300)
+  const exported = await page.getByLabel('This deck as a plain text list').inputValue()
+  check('the deck holds the printing chosen', /^35 Island \(MU915\) 915$/m.test(exported), exported.replace(/\n/g, ' | '))
+
+  await listTab(page)
+  const sheet = await openCard(page, islandRow.locator('.deck-row__name'), 'Island')
+  await sheetTab(sheet, 'Printings')
+  const sheetCount = sheet.locator('p[aria-live="polite"]')
+  await sheetCount.waitFor({ timeout: 15000 })
+  const firstRow = sheet.locator('.printing').first()
+  check("the card's page lists this printing first and says how many of Scryfall's it shows beside it",
+    (await sheetCount.textContent()) === 'Showing this printing and the newest 175 of 917 printings.'
+      && (await sheet.locator('.printing').count()) === 176
+      && (await firstRow.getAttribute('aria-current')) === 'true' && (await firstRow.locator('.printing__set').textContent()) === 'mu915',
+    `${await sheetCount.textContent()} (${await sheet.locator('.printing').count()} rows)`)
+  await sheet.getByRole('button', { name: 'Older printings', exact: true }).click()
+  await sheet.getByText('Showing this printing and the newest 350 of 917 printings.', { exact: true }).waitFor({ timeout: 15000 })
+  check('its Older printings button adds the next page, kept from the picker, with nothing asked again',
+    (await sheet.locator('.printing').count()) === 351 && pagesAsked.length === 6, `${pagesAsked.length} pages asked`)
+  await page.waitForTimeout(600)
+  await axe(page, "the card's Printings tab with older printings")
+  await closeSheet(page)
+  await context.close()
+}
+
+console.log('\nOn 24 Sep 2026, a deck imported before the released-first rule, and the offer to move it off printings not out')
+{
+  // Imported by name before 21 Sep: Scryfall's pick for Island, Star Trek's,
+  // in the main deck and the sideboard. The Hobbit's Island, which it is
+  // switched to, is nowhere in the deck, so the editor has not loaded it: the
+  // save that makes the switch has only the card Scryfall's answer brought to
+  // name it and snapshot it by. A second printing not out, a made-up one of
+  // Mountain, is switched to The Hobbit's Mountains beside it in the main
+  // deck, and Darklight Phoenix has no printing out at all. No entry carries a
+  // stamped name, as none did before 23 Sep.
+  const MADE_UP_MOUNTAIN = {
+    ...HOB_MOUNTAIN, id: '00000000-0000-4000-8000-00000000f001', set: 'zzz', set_name: 'Made-up future set',
+    collector_number: '1', released_at: '2026-11-13',
+  }
+  // Thirty-two Mountains, so the main deck is sixty and Standard's size is met.
+  const { context, page, searched } = await openDeck('2026-09-24', 32, 'standard', HOB_MOUNTAIN, {
+    main: [
+      { cardId: TRK_ISLAND.id, quantity: 20 },
+      { cardId: MADE_UP_MOUNTAIN.id, quantity: 4 }, { cardId: PHOENIX.id, quantity: 4 },
+    ],
+    sideboard: [{ cardId: TRK_ISLAND.id, quantity: 2 }],
+    extra: [MADE_UP_MOUNTAIN],
+  })
+  const offer = page.locator('section[aria-label="Printings not out yet"]')
+  const stored = () => page.evaluate(() => Object.fromEntries(Object.keys(localStorage).sort().map((k) => [k, localStorage.getItem(k)])))
+  const deckDoc = async () => JSON.parse((await stored())['mtg-companion:v1:deck:not-out'] ?? 'null')
+  const itemsOf = (label) => page.locator(`ul[aria-label="${label}"] li`).allInnerTexts()
+    .then((all) => all.map((t) => t.replace(/\s+/g, ' ').trim()))
+  const reopen = async () => {
+    await page.getByRole('button', { name: '← Decks' }).click()
+    await page.waitForTimeout(400)
+    await page.locator('.deck-card__open').first().click()
+    await page.waitForTimeout(900)
+  }
+
+  await offer.waitFor({ timeout: 15000 })
+  check('the editor says how many printings are not out, and until when',
+    (await offer.locator('strong').innerText()) === '3 printings in this deck are not out yet: 1 until 2 Oct 2026 and 2 until 13 Nov 2026.',
+    await offer.innerText())
+  check('with "Find released printings" and "Not now", and nothing asked of Scryfall yet',
+    (await offer.getByRole('button', { name: 'Find released printings' }).count()) === 1
+      && (await offer.getByRole('button', { name: 'Not now' }).count()) === 1 && searched.length === 0,
+    searched.join(' | '))
+  check('nothing on the page scrolls sideways at phone width', await page.evaluate(() => {
+    const main = document.querySelector('.app__main')
+    return main.scrollWidth <= main.clientWidth && document.documentElement.scrollWidth <= window.innerWidth
+  }))
+  await page.waitForTimeout(600)
+  await axe(page, 'the deck editor with the offer')
+
+  const before = await stored()
+  await offer.getByRole('button', { name: 'Not now' }).click()
+  await page.waitForTimeout(500)
+  check('"Not now" hides it, and focus goes to the open tab, not to nothing',
+    (await offer.count()) === 0 && (await page.evaluate(() => document.activeElement?.getAttribute('role'))) === 'tab')
+  check('and stores nothing: every key in storage is as it was', JSON.stringify(await stored()) === JSON.stringify(before))
+  await page.getByRole('tab', { name: 'Add cards' }).click()
+  await page.waitForTimeout(300)
+  await listTab(page)
+  check('it stays hidden while the deck is open', (await offer.count()) === 0)
+  await reopen()
+  await offer.waitFor({ timeout: 15000 })
+  check('and is back when the deck is next opened, having asked Scryfall nothing',
+    (await offer.getByRole('button', { name: 'Find released printings' }).count()) === 1 && searched.length === 0)
+
+  const untouched = await stored()
+  await offer.getByRole('button', { name: 'Find released printings' }).click()
+  await offer.getByRole('button', { name: 'Switch these' }).waitFor({ timeout: 15000 })
+  check('pressed, it asks one search, for those cards only, by oracle id, by the importer\'s rule',
+    searched.length === 1 && searched[0] === `(oracleid:${TRK_ISLAND.oracle_id} or oracleid:${HOB_MOUNTAIN.oracle_id} or oracleid:${PHOENIX.oracle_id}) date<=now game:paper lang:en prefer:newest`,
+    searched.join(' | '))
+  check('it lists each switch it would make, and says where rows join others',
+    JSON.stringify(await itemsOf('Switches the app would make')) === JSON.stringify([
+      'Island: Star Trek #319 → The Hobbit #195',
+      'Mountain: Made-up future set #1 → The Hobbit #197 (joins the copies already in the main deck)',
+    ]), JSON.stringify(await itemsOf('Switches the app would make')))
+  check('and names the card with no released printing, kept as it is, under words of its own',
+    /One has nothing to switch to:/.test(await offer.innerText())
+    && JSON.stringify(await itemsOf('Printings that stay as they are')) === JSON.stringify([
+      'Darklight Phoenix stays as Reality Fracture #53: Scryfall lists no paper printing of it that is out yet.',
+    ]), JSON.stringify(await itemsOf('Printings that stay as they are')))
+  check('it says the app chose them, and that nothing changes until the player says',
+    /The app chose each one: the newest paper printing of the same card that is out/.test(await offer.innerText())
+      && /nothing changes until you say/.test(await offer.innerText()))
+  check('focus is on the plan, where the pressed button was',
+    (await page.evaluate(() => document.activeElement?.textContent)) === 'The app would make these 2 switches:')
+  check('and the deck has not changed', JSON.stringify(await stored()) === JSON.stringify(untouched))
+  await page.waitForTimeout(600)
+  await axe(page, 'the offer showing its switches')
+
+  // Every write of the deck's document from here on, in order, so the save
+  // the switch makes is read as it was written, not as a later save left it.
+  await page.evaluate(() => {
+    const write = Storage.prototype.setItem
+    window.deckWrites = []
+    Storage.prototype.setItem = function setItem(key, value) {
+      if (key === 'mtg-companion:v1:deck:not-out') window.deckWrites.push(value)
+      return write.call(this, key, value)
+    }
+  })
+  await offer.getByRole('button', { name: 'Switch these' }).click()
+  const done = page.locator('.banner [role="status"]', { hasText: 'Switched' })
+  await done.waitFor({ timeout: 15000 })
+  check('"Switch these" switches them and says so, and where the deck as it was is kept',
+    (await done.innerText()) === 'Switched 2 printings. 1 printing with nothing to switch to stays as it is. The deck as it stood is in History, as “Before switching to released printings”.',
+    await done.innerText())
+  await page.waitForTimeout(900)
+  const islands = await rows(page, 'Island')
+  check("The Hobbit's Islands are a row of 20 in the deck and one of 2 in the sideboard, with no label",
+    islands.length === 2 && islands[0].quantity === 20 && islands[1].quantity === 2 && islands.every((r) => r.label === ''),
+    JSON.stringify(islands))
+  const [mountains] = await rows(page, 'Mountain')
+  check("the made-up Mountains join The Hobbit's, 36 with no label",
+    mountains?.quantity === 36 && mountains.label === '', JSON.stringify(await rows(page, 'Mountain')))
+  const [phoenix] = await rows(page, 'Darklight Phoenix')
+  check('Darklight Phoenix is kept as it was, still labelled', phoenix?.label === 'Not out until 2 Oct 2026', JSON.stringify(phoenix))
+  const [first] = await page.evaluate(() => window.deckWrites.map((text) => JSON.parse(text)))
+  check('the switch is one save', (await page.evaluate(() => window.deckWrites.length)) === 1, String(await page.evaluate(() => window.deckWrites.length)))
+  check('the save holds the released printings in every zone, each with its name stamped',
+    JSON.stringify(first?.main.map(({ cardId, quantity, name }) => [cardId, quantity, name])) === JSON.stringify([
+      [HOB_MOUNTAIN.id, 36, 'Mountain'], [HOB_ISLAND.id, 20, 'Island'], [PHOENIX.id, 4, 'Darklight Phoenix'],
+    ]) && JSON.stringify(first?.sideboard.map(({ cardId, quantity, name }) => [cardId, quantity, name])) === JSON.stringify([[HOB_ISLAND.id, 2, 'Island']]),
+    JSON.stringify({ main: first?.main, sideboard: first?.sideboard }))
+  check('with the deck as it stood kept first in History',
+    first?.versions[0]?.label === 'Before switching to released printings' && first.versions[0].auto === true
+      && first.versions[0].main.some((e) => e.cardId === TRK_ISLAND.id) && first.versions[0].sideboard[0]?.cardId === TRK_ISLAND.id,
+    JSON.stringify(first?.versions[0]))
+  // The Hobbit's Island had not loaded in the editor: only the card handed to
+  // the editor's save with the switch can have put it in the snapshot.
+  check('and a snapshot, in that same save, that knows the printing the deck did not hold before',
+    first?.snapshot?.cards?.[HOB_ISLAND.id]?.name === 'Island' && first.snapshot.cards[HOB_ISLAND.id].status === 'legal'
+      && !first.snapshot.cards[TRK_ISLAND.id], JSON.stringify(first?.snapshot?.cards ?? {}))
+  const saved = await deckDoc()
+  check('and the deck stored is that save', JSON.stringify(saved) === JSON.stringify(first))
+  check('nothing more was asked of Scryfall to make the switch', searched.length === 1, searched.join(' | '))
+  const v = await verdict(page)
+  check('the verdict counts only the Phoenixes now', v.text === '4 cards not out yet', v.text)
+  await page.waitForTimeout(600)
+  await axe(page, 'the deck after the switch')
+
+  await page.getByRole('tab', { name: 'Import / export' }).click()
+  await page.waitForTimeout(300)
+  const exported = await page.getByLabel('This deck as a plain text list').inputValue()
+  check('the copied list carries the printings switched to',
+    /^20 Island \(HOB\) 195$/m.test(exported) && /^36 Mountain \(HOB\) 197$/m.test(exported)
+      && /^4 Darklight Phoenix \(FRA\) 53$/m.test(exported) && /^2 Island \(HOB\) 195$/m.test(exported) && !/TRK|ZZZ/.test(exported),
+    exported.replace(/\n/g, ' | '))
+
+  await page.getByRole('tab', { name: 'History' }).click()
+  await page.waitForTimeout(400)
+  const checkpoint = page.locator('.version').filter({ has: page.locator('.version__label', { hasText: 'Before switching to released printings' }) })
+  check('History lists the checkpoint, marked automatic', (await checkpoint.count()) === 1
+    && (await checkpoint.locator('.chip', { hasText: 'auto' }).count()) === 1)
+  await checkpoint.getByRole('button', { name: 'Restore' }).click()
+  await page.waitForTimeout(600)
+  await page.getByRole('tab', { name: 'Import / export' }).click()
+  await page.waitForTimeout(300)
+  const restored = await page.getByLabel('This deck as a plain text list').inputValue()
+  check('and restoring it puts the Star Trek Islands back, one restore away',
+    /^20 Island \(TRK\) 319$/m.test(restored) && /^4 Mountain \(ZZZ\) 1$/m.test(restored) && /^2 Island \(TRK\) 319$/m.test(restored),
+    restored.replace(/\n/g, ' | '))
+
+  await reopen()
+  await offer.waitFor({ timeout: 15000 })
+  check('reopened, the restored deck is offered the switch again, as it holds the same printings',
+    (await offer.locator('strong').innerText()) === '3 printings in this deck are not out yet: 1 until 2 Oct 2026 and 2 until 13 Nov 2026.')
+  await context.close()
+}
+
+console.log('\nOn 13 Nov 2026, the same deck, the day Star Trek is out')
+{
+  const { context, page, searched } = await openDeck('2026-11-13', 36, 'standard', HOB_MOUNTAIN, {
+    main: [{ cardId: TRK_ISLAND.id, quantity: 24 }],
+  })
+  await page.waitForTimeout(600)
+  check('there is nothing to offer and nothing is asked',
+    (await page.locator('section[aria-label="Printings not out yet"]').count()) === 0
+      && !(await page.getByRole('button', { name: 'Find released printings' }).count()) && searched.length === 0)
   await context.close()
 }
 

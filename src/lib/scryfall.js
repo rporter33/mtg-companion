@@ -94,6 +94,10 @@ export class OfflineError extends Error {
 const lanes = { foreground: [], background: [] }
 let draining = false
 let lastRequestAt = 0
+// Every spacing is multiplied by this. It is 1 outside tests; a test that
+// pages through many searches shrinks it (see __internals), as it shrinks the
+// backoff, rather than wait half a second a request against its time limit.
+let spacingScale = 1
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -101,7 +105,7 @@ const nextInLine = () => lanes.foreground[0] ?? lanes.background[0]
 
 function enqueue(task, spacing = MIN_INTERVAL_MS, { background = false, signal } = {}) {
   return new Promise((resolve, reject) => {
-    lanes[background ? 'background' : 'foreground'].push({ task, spacing, signal, resolve, reject })
+    lanes[background ? 'background' : 'foreground'].push({ task, spacing: spacing * spacingScale, signal, resolve, reject })
     drain()
   })
 }
@@ -385,25 +389,95 @@ export async function getRulings(cardId, { signal } = {}) {
   return rulings
 }
 
-/** Every printing of a card, for the art-and-set picker and price comparison. */
-export async function getPrintings(card, { signal } = {}) {
-  if (!card?.oracle_id) return card ? [card] : []
-  const key = `printings:${card.oracle_id}`
-  const cached = await getQuery(key)
-  if (cached) {
-    const cards = await getCards(cached)
-    if (cards.size === cached.length) return cached.map((id) => cards.get(id))
+/**
+ * A card's printings, one page of Scryfall's list at a time, for the
+ * art-and-set picker and price comparison.
+ *
+ * Scryfall's search sends 175 cards a page. A card reprinted more often than
+ * that (on 2026-09-24 Island had 917 printings, and the first page went back
+ * only to November 2022) used to show its newest 175 and nothing more, and
+ * nobody could choose an older copy they owned. This gives one page and
+ * says what Scryfall said about the rest: `totalCards`, its count across every
+ * page (null when it gives none), and `next`, its own address for the page
+ * after this one (null when this is the last). A caller asks for that page by
+ * passing `next` back, and only when somebody asks, because a basic land's
+ * printings are six requests. Pages arrive newest first, as `order=released`
+ * sorts them.
+ *
+ * Each page is cached for a day like any other query, the first under the
+ * card's oracle id and each after it under the address that reached it.
+ */
+export async function getPrintings(card, { signal, next = null } = {}) {
+  if (!card?.oracle_id) return { cards: card ? [card] : [], totalCards: card ? 1 : 0, next: null }
+  let path
+  if (next == null) {
+    const params = new URLSearchParams({
+      q: `oracleid:${card.oracle_id}`,
+      unique: 'prints',
+      order: 'released',
+    })
+    path = `/cards/search?${params}`
+  } else {
+    path = searchPath(next)
+    // Not an address on Scryfall's search: there is no page to ask for.
+    if (!path) return { cards: [], totalCards: null, next: null }
   }
-  const params = new URLSearchParams({
-    q: `oracleid:${card.oracle_id}`,
-    unique: 'prints',
-    order: 'released',
-  })
-  const payload = await request(`/cards/search?${params}`, { signal })
-  const prints = payload.data ?? []
+  const key = next == null ? `printings:${card.oracle_id}` : `printings:${card.oracle_id}:${path}`
+  const cached = await cachedPrintings(key)
+  if (cached) return cached
+
+  const payload = await request(path, { signal })
+  const prints = (Array.isArray(payload?.data) ? payload.data : []).filter((c) => typeof c?.id === 'string')
+  const page = {
+    cards: prints,
+    totalCards: countOf(payload?.total_cards),
+    // Scryfall sends next_page only while has_more is true; both are read, and
+    // an address that is not its own search is not followed.
+    next: payload?.has_more && searchPath(payload?.next_page) ? payload.next_page : null,
+  }
   await putCards(prints)
-  await putQuery(key, prints.map((c) => c.id))
-  return prints
+  await putQuery(key, { ids: prints.map((c) => c.id), totalCards: page.totalCards, next: page.next })
+  return page
+}
+
+/**
+ * The path request() is to be given for one of Scryfall's own "next page"
+ * addresses, or null. Scryfall gives a full address; only one on its API
+ * and its card search is taken, since request() puts the API in front of
+ * the path, and the address may have come back from the cache.
+ */
+function searchPath(address) {
+  if (typeof address !== 'string') return null
+  let url
+  try {
+    url = new URL(address)
+  } catch {
+    return null
+  }
+  return url.origin === API && url.pathname === '/cards/search' ? `${url.pathname}${url.search}` : null
+}
+
+const countOf = (value) => (Number.isInteger(value) && value >= 0 ? value : null)
+
+/**
+ * A cached page of printings, read forgivingly. An older build kept the first
+ * page as its ids alone, with no word of whether more followed; that is read
+ * as a miss, so the page is asked for again rather than shown as the whole
+ * list, which was the fault. A page whose cards are not all still cached is a
+ * miss too.
+ */
+async function cachedPrintings(key) {
+  const value = await getQuery(key)
+  if (!value || typeof value !== 'object' || !Array.isArray(value.ids)) return null
+  const ids = value.ids.filter((id) => typeof id === 'string' && id)
+  if (ids.length !== value.ids.length) return null
+  const cards = await getCards(ids)
+  if (cards.size !== ids.length) return null
+  return {
+    cards: ids.map((id) => cards.get(id)),
+    totalCards: countOf(value.totalCards),
+    next: searchPath(value.next) ? value.next : null,
+  }
 }
 
 /**
@@ -878,6 +952,17 @@ const RELEASED_TERMS = 'date<=now game:paper lang:en prefer:newest'
 const releasedQuery = (ids) => `(${ids.map((id) => `oracleid:${id}`).join(' or ')}) ${RELEASED_TERMS}`
 
 /**
+ * The oracle id a printing is searched by, or null. With no id there is
+ * nothing to search by, and an id that is not an id is not put into a query.
+ * One function because findReleasedFor has to tell a card that was never asked
+ * about from one Scryfall answered.
+ */
+function searchIdOf(card) {
+  const id = oracleIdOf(card)
+  return typeof id === 'string' && /^[\w-]+$/.test(id) && releasedQuery([id]).length <= QUERY_MAX ? id : null
+}
+
+/**
  * Swaps each pick that is not out, or not on paper, for the newest printing
  * of the same card that is out on paper, and says which it did.
  *
@@ -906,10 +991,9 @@ async function findReleasedPrintings(lookups, { signal, onProgress, now }) {
   const byId = new Map()
   for (const l of lookups) {
     if (isReleasedPaper(l.card, now)) continue
-    const id = oracleIdOf(l.card)
-    // With no id there is nothing to search by, and the pick stays. An id
-    // that is not an id is not put into a query.
-    if (typeof id !== 'string' || !/^[\w-]+$/.test(id) || releasedQuery([id]).length > QUERY_MAX) continue
+    const id = searchIdOf(l.card)
+    // With nothing to search by, the pick stays.
+    if (!id) continue
     if (!byId.has(id)) byId.set(id, [])
     byId.get(id).push(l)
   }
@@ -963,6 +1047,44 @@ async function findReleasedPrintings(lookups, { signal, onProgress, now }) {
     checked += ids.length
   }
   onProgress?.(checked, byId.size, 'released')
+}
+
+/**
+ * The same search, for printings a deck already holds: "Find released
+ * printings" in the deck editor (ReleasedPrintings.jsx). A deck imported
+ * before the released-first rule can hold the app's old pick of a printing
+ * that is not out, such as Star Trek's Island. Each card given goes through
+ * findReleasedPrintings as if it were a pick the app had made, so the
+ * replacement is chosen by the one rule an import uses and there is no second
+ * rule to drift from it. That covers a printing the player typed, too: the
+ * deck does not record who chose a printing, so the player decides on screen.
+ *
+ * Nothing is written to a deck here. A printing found is cached and pinned as
+ * an import's is, because it is about to be offered and may be taken.
+ *
+ * Returns one answer per card given, in order: { card, released, answer },
+ * with `released` the printing found or null, and `answer` one of
+ *   released   the newest paper printing of the same card that is out
+ *   none       Scryfall lists no paper printing of it that is out
+ *   ahead      Scryfall's search, by its own clock, counts a printing of it
+ *              as out, and the app's day has not reached that release yet
+ *              (see findReleasedPrintings); nothing is claimed either way
+ *   unchecked  the search failed, or was not sent after one that failed
+ *   unasked    its record has no oracle id to search by
+ *   out        it is out on paper already, so nothing was asked
+ */
+export async function findReleasedFor(cards, { signal, onProgress, now = today() } = {}) {
+  const lookups = [...(cards ?? [])].map((card) => ({ card, how: 'newest' }))
+  await findReleasedPrintings(lookups, { signal, onProgress, now })
+  return lookups.map((l) => {
+    if (l.how === 'released') return { card: l.newest, released: l.card, answer: 'released' }
+    const answer = l.how === 'unreleased-only' ? 'none'
+      : l.unchecked ? 'unchecked'
+        : isReleasedPaper(l.card, now) ? 'out'
+          : !searchIdOf(l.card) ? 'unasked'
+            : 'ahead'
+    return { card: l.card, released: null, answer }
+  })
 }
 
 /**
@@ -1065,6 +1187,16 @@ export const __internals = {
   setLockoutMs(ms) {
     const previous = lockoutMs
     lockoutMs = ms
+    return previous
+  },
+  /**
+   * Test seam: scales every endpoint's spacing (1 is Scryfall's own). The
+   * rule itself is tested at 1; a test about something else that sends many
+   * searches need not spend half a second on each against its time limit.
+   */
+  setSpacingScale(factor) {
+    const previous = spacingScale
+    spacingScale = factor
     return previous
   },
   BACKGROUND_PAUSE_MS,

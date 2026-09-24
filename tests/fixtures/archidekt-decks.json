@@ -1,0 +1,514 @@
+{
+  "about": "Archidekt's deck API (GET https://archidekt.com/api/decks/<id>/) as it answered on 2026-09-24, for two public decks, for tests/deck-sources.test.js and tests/browser/import.spec.mjs. Trimmed, not edited: a few of each deck's cards, and of each only the fields kept here; the deck's owner, description, prices and the rest of each card record are left out. The same answers came with Access-Control-Allow-Origin: http://localhost:3000 to a request from https://rporter33.github.io.",
+  "decks": {
+    "5088559": {
+      "id": 5088559,
+      "name": "Precon",
+      "deckFormat": 3,
+      "private": false,
+      "unlisted": false,
+      "categories": [
+        {
+          "id": 44532113,
+          "name": "Commander",
+          "isPremier": true,
+          "includedInDeck": true
+        },
+        {
+          "id": 44532112,
+          "name": "Instant",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 44532111,
+          "name": "Enchantment",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 44532110,
+          "name": "Sorcery",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 44532109,
+          "name": "Creature",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 44532108,
+          "name": "Land",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 44532107,
+          "name": "Artifact",
+          "isPremier": false,
+          "includedInDeck": true
+        }
+      ],
+      "cards": [
+        {
+          "id": 1450769704,
+          "categories": [
+            "Commander"
+          ],
+          "companion": false,
+          "modifier": "Normal",
+          "quantity": 1,
+          "card": {
+            "id": 121982,
+            "uid": "0b2f7397-9d75-4667-8872-e58a39512583",
+            "collectorNumber": "711",
+            "displayName": null,
+            "releasedAt": "2023-08-04",
+            "edition": {
+              "editioncode": "cmm",
+              "editionname": "Commander Masters",
+              "editiondate": "2023-08-04",
+              "editiontype": "masters"
+            },
+            "oracleCard": {
+              "name": "Rukarumel, Biologist",
+              "layout": "normal",
+              "types": [
+                "Creature"
+              ],
+              "superTypes": [
+                "Legendary"
+              ]
+            }
+          }
+        },
+        {
+          "id": 1450769714,
+          "categories": [
+            "Creature"
+          ],
+          "companion": false,
+          "modifier": "Normal",
+          "quantity": 1,
+          "card": {
+            "id": 120277,
+            "uid": "9f5d253e-9eb2-423c-90ee-68f27ec6bf88",
+            "collectorNumber": "707",
+            "displayName": null,
+            "releasedAt": "2023-08-04",
+            "edition": {
+              "editioncode": "cmm",
+              "editionname": "Commander Masters",
+              "editiondate": "2023-08-04",
+              "editiontype": "masters"
+            },
+            "oracleCard": {
+              "name": "Sliver Gravemother",
+              "layout": "normal",
+              "types": [
+                "Creature"
+              ],
+              "superTypes": [
+                "Legendary"
+              ]
+            }
+          }
+        },
+        {
+          "id": 1450769717,
+          "categories": [
+            "Artifact"
+          ],
+          "companion": false,
+          "modifier": "Normal",
+          "quantity": 1,
+          "card": {
+            "id": 121621,
+            "uid": "46ca0b66-a000-4483-b916-f5b89e710244",
+            "collectorNumber": "410",
+            "displayName": null,
+            "releasedAt": "2023-08-04",
+            "edition": {
+              "editioncode": "cmm",
+              "editionname": "Commander Masters",
+              "editiondate": "2023-08-04",
+              "editiontype": "masters"
+            },
+            "oracleCard": {
+              "name": "Sol Ring",
+              "layout": "normal",
+              "types": [
+                "Artifact"
+              ],
+              "superTypes": []
+            }
+          }
+        },
+        {
+          "id": 1450769659,
+          "categories": [
+            "Land"
+          ],
+          "companion": false,
+          "modifier": "Normal",
+          "quantity": 2,
+          "card": {
+            "id": 122174,
+            "uid": "54b1c00c-c292-44c7-a6c9-0dcdb00581aa",
+            "collectorNumber": "787",
+            "displayName": null,
+            "releasedAt": "2023-08-04",
+            "edition": {
+              "editioncode": "cmm",
+              "editionname": "Commander Masters",
+              "editiondate": "2023-08-04",
+              "editiontype": "masters"
+            },
+            "oracleCard": {
+              "name": "Plains",
+              "layout": "normal",
+              "types": [
+                "Land"
+              ],
+              "superTypes": [
+                "Basic"
+              ]
+            }
+          }
+        },
+        {
+          "id": 1450769671,
+          "categories": [
+            "Sorcery"
+          ],
+          "companion": false,
+          "modifier": "Normal",
+          "quantity": 1,
+          "card": {
+            "id": 121902,
+            "uid": "14b7c0df-5af2-4a01-86b3-b2ed5d60e613",
+            "collectorNumber": "894",
+            "displayName": null,
+            "releasedAt": "2023-08-04",
+            "edition": {
+              "editioncode": "cmm",
+              "editionname": "Commander Masters",
+              "editiondate": "2023-08-04",
+              "editiontype": "masters"
+            },
+            "oracleCard": {
+              "name": "Farseek",
+              "layout": "normal",
+              "types": [
+                "Sorcery"
+              ],
+              "superTypes": []
+            }
+          }
+        }
+      ]
+    },
+    "13109808": {
+      "id": 13109808,
+      "name": "Cloud Precon",
+      "deckFormat": 3,
+      "private": false,
+      "unlisted": false,
+      "categories": [
+        {
+          "id": 146724293,
+          "name": "Commander",
+          "isPremier": true,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724292,
+          "name": "Maybeboard",
+          "isPremier": false,
+          "includedInDeck": false
+        },
+        {
+          "id": 146724291,
+          "name": "Sideboard",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724289,
+          "name": "Pump",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724288,
+          "name": "Evasion",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724287,
+          "name": "Land",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724286,
+          "name": "Finisher",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724285,
+          "name": "Ramp",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724284,
+          "name": "Recursion",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724283,
+          "name": "Draw",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724282,
+          "name": "Protection",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724281,
+          "name": "Removal",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724280,
+          "name": "Artifact",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724278,
+          "name": "Sorcery",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724277,
+          "name": "Enchantment",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724276,
+          "name": "Instant",
+          "isPremier": false,
+          "includedInDeck": true
+        },
+        {
+          "id": 146724275,
+          "name": "Creature",
+          "isPremier": false,
+          "includedInDeck": true
+        }
+      ],
+      "cards": [
+        {
+          "id": 2197449828,
+          "categories": [
+            "Creature"
+          ],
+          "companion": false,
+          "modifier": "Normal",
+          "quantity": 1,
+          "card": {
+            "id": 142299,
+            "uid": "07b4e4f8-6a31-4533-be51-668ce3ddc84f",
+            "collectorNumber": "2",
+            "displayName": null,
+            "releasedAt": "2025-06-13",
+            "edition": {
+              "editioncode": "fic",
+              "editionname": "Final Fantasy Commander",
+              "editiondate": "2025-06-13",
+              "editiontype": "commander"
+            },
+            "oracleCard": {
+              "name": "Cloud, Ex-SOLDIER",
+              "layout": "normal",
+              "types": [
+                "Creature"
+              ],
+              "superTypes": [
+                "Legendary"
+              ]
+            }
+          }
+        },
+        {
+          "id": 2197449839,
+          "categories": [
+            "Creature"
+          ],
+          "companion": false,
+          "modifier": "Normal",
+          "quantity": 1,
+          "card": {
+            "id": 144357,
+            "uid": "ba934866-efd0-4126-b1ff-9c7e82b73bd6",
+            "collectorNumber": "61",
+            "displayName": null,
+            "releasedAt": "2025-06-13",
+            "edition": {
+              "editioncode": "fic",
+              "editionname": "Final Fantasy Commander",
+              "editiondate": "2025-06-13",
+              "editiontype": "commander"
+            },
+            "oracleCard": {
+              "name": "Summon: Kujata",
+              "layout": "saga",
+              "types": [
+                "Creature",
+                "Enchantment"
+              ],
+              "superTypes": []
+            }
+          }
+        },
+        {
+          "id": 2197449890,
+          "categories": [
+            "Creature"
+          ],
+          "companion": false,
+          "modifier": "Normal",
+          "quantity": 1,
+          "card": {
+            "id": 144381,
+            "uid": "f21f9161-5945-40da-8da0-446f6a4a1c23",
+            "collectorNumber": "45",
+            "displayName": null,
+            "releasedAt": "2025-06-13",
+            "edition": {
+              "editioncode": "fin",
+              "editionname": "Final Fantasy",
+              "editiondate": "2025-06-13",
+              "editiontype": "expansion"
+            },
+            "oracleCard": {
+              "name": "Zack Fair",
+              "layout": "normal",
+              "types": [
+                "Creature"
+              ],
+              "superTypes": [
+                "Legendary"
+              ]
+            }
+          }
+        },
+        {
+          "id": 2197449907,
+          "categories": [
+            "Draw"
+          ],
+          "companion": false,
+          "modifier": "Normal",
+          "quantity": 1,
+          "card": {
+            "id": 81417,
+            "uid": "55466ae8-b2a7-44a6-89d6-5f51ef1fcab1",
+            "collectorNumber": "C14-249",
+            "displayName": null,
+            "releasedAt": "2019-11-07",
+            "edition": {
+              "editioncode": "plst",
+              "editionname": "The List",
+              "editiondate": "2020-09-26",
+              "editiontype": "masters"
+            },
+            "oracleCard": {
+              "name": "Mask of Memory",
+              "layout": "normal",
+              "types": [
+                "Artifact"
+              ],
+              "superTypes": []
+            }
+          }
+        },
+        {
+          "id": 2197449862,
+          "categories": [
+            "Ramp"
+          ],
+          "companion": false,
+          "modifier": "Normal",
+          "quantity": 1,
+          "card": {
+            "id": 103567,
+            "uid": "05bf07aa-1dda-4628-8a4b-c40d13145a49",
+            "collectorNumber": "116p",
+            "displayName": null,
+            "releasedAt": "2022-04-29",
+            "edition": {
+              "editioncode": "psnc",
+              "editionname": "Streets of New Capenna Promos",
+              "editiondate": "2022-04-29",
+              "editiontype": "promo"
+            },
+            "oracleCard": {
+              "name": "Professional Face-Breaker",
+              "layout": "normal",
+              "types": [
+                "Creature"
+              ],
+              "superTypes": []
+            }
+          }
+        },
+        {
+          "id": 2197449919,
+          "categories": [
+            "Land"
+          ],
+          "companion": false,
+          "modifier": "Normal",
+          "quantity": 3,
+          "card": {
+            "id": 78991,
+            "uid": "514f8188-3d9e-4937-bfcb-b73acd80878d",
+            "collectorNumber": "276",
+            "displayName": null,
+            "releasedAt": "2019-07-12",
+            "edition": {
+              "editioncode": "m20",
+              "editionname": "Core Set 2020",
+              "editiondate": "2019-07-12",
+              "editiontype": "core"
+            },
+            "oracleCard": {
+              "name": "Mountain",
+              "layout": "normal",
+              "types": [
+                "Land"
+              ],
+              "superTypes": [
+                "Basic"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

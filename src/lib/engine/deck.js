@@ -3,7 +3,7 @@
 // One function builds what a seat sends, so that the lobby's check and the
 // sit itself cannot disagree about what the deck is: the check asks about
 // exactly the map the sit will send.
-import { FORMATS } from '../formats.js'
+import { getFormat } from '../formats.js'
 import { stampedNames } from '../deck.js'
 
 /**
@@ -95,7 +95,8 @@ function countNames(entries, lookup, stamped) {
  * Commander family's is 0 cards, and what a Commander deck keeps there is
  * usually its maybeboard, not cards for the game. A sideboard card that has
  * not loaded is counted in `sideboardUnloaded` and left out, as a sideboard
- * card the engine does not know is (the owner's choice, 2026-09-21).
+ * card the engine does not know is (the owner's choice, 2026-09-21). A format
+ * this build does not know says nothing about a sideboard, so none is sent.
  *
  * A card whose record is gone but whose name the deck stamped still goes, by
  * that name (see countNames), so a deck built in a preview season can be
@@ -104,7 +105,7 @@ function countNames(entries, lookup, stamped) {
 export function seatDeck(deck, lookup) {
   const stamped = stampedNames(deck)
   const main = countNames(deck?.main, lookup, stamped)
-  const allowed = FORMATS[deck?.formatId]?.sideboard?.max > 0
+  const allowed = getFormat(deck?.formatId)?.sideboard?.max > 0
   const side = allowed ? countNames(deck?.sideboard, lookup, stamped) : { out: {}, unloaded: 0 }
   return { deck: main.out, sideboard: side.out, total: main.total, unloaded: main.unloaded, sideboardUnloaded: side.unloaded }
 }

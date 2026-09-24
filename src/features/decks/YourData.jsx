@@ -21,11 +21,15 @@ export default function YourData({ onClose, onChanged }) {
   const [estimate, setEstimate] = useState(null)
   const [status, setStatus] = useState(null)
   const [pendingFile, setPendingFile] = useState(null)
-  const corrupt = corruptBackup()
+  // Held in state and read again on every refresh. Discarding it changes no
+  // saved state, so read during render it went on showing until something
+  // else happened to redraw the screen, which was the Decks screen reading a
+  // list it had not yet seen. Once that screen heard every save, nothing did.
+  const [corrupt, setCorrupt] = useState(() => corruptBackup())
 
   const usage = storageUsage(state)
   const backup = backupStatus(state)
-  const refresh = () => { setState(loadState()); onChanged?.() }
+  const refresh = () => { setState(loadState()); setCorrupt(corruptBackup()); onChanged?.() }
 
   useEffect(() => {
     cacheStats().then(setCache).catch(() => setCache(null))
