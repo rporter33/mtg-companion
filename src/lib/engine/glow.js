@@ -11,16 +11,19 @@
  * offering or asking this seat at this moment, so a card glows exactly when a
  * tap on it does something the engine will take.
  *
- * Which is why an offer the table cannot yet carry out does not glow as
- * playable, for either of two reasons (`heldBack`). A spell or ability that
- * needs a target: the engine offers one, but `act` sends no targets with it
- * and Argentum refuses the cast before it would ask (PLAN.md, M2, "Not done").
- * And one whose cost has a choice in it — Flamecache Gecko's "Discard a card":
- * `act` carries no payment either, and Argentum refuses it with "Must choose 1
- * card(s) to discard" (PLAN.md, M3). A glow on either would be the table
- * promising a play it cannot make. When targets and costs can be chosen here
- * (HANDOFF.md, M4), these join the others. An engine from before the offer
- * named its cost sends no word of one, and there the Gecko glows as it did.
+ * Which is why an offer the table cannot carry out does not glow as playable,
+ * for either of two reasons (`heldBack`). A spell or ability that needs a
+ * target, where this seat's `act` cannot carry one: Argentum refuses such a
+ * cast before it would ask (PLAN.md, M2). And one whose cost has a choice in it
+ * — Flamecache Gecko's "Discard a card" — where this seat cannot pay that kind
+ * of cost with a choice: Argentum refuses it with "Must choose 1 card(s) to
+ * discard" (PLAN.md, M3). A glow on either would be the table promising a play
+ * it cannot make. Since M4 an engine at protocol 5 takes both with the play,
+ * and the room says so seat by seat (`choices`, src/lib/engine/choose.js): there
+ * such an offer glows like any other, and a tap on it begins choosing. A seat
+ * told nothing — an older relay, an older engine — holds them back as before.
+ * An engine from before the offer named its cost sends no word of one, and
+ * there the Gecko glows as it did.
  *
  * A glow is a picture, and a picture says nothing to somebody who cannot see
  * it, so every glow comes with its words: `says` is added to the card's spoken
@@ -31,40 +34,52 @@
  * glows nothing rather than throwing.
  */
 
+import { heldBackBy, NO_CHOICES, pickable, stepOf } from './choose.js'
+
 /** The words each glow adds to a card's spoken label. */
 export const GLOW_SAYS = {
   play: 'playable now',
   ability: 'an ability can be used now',
   target: 'a legal target',
+  targeted: 'chosen as a target',
   attacker: 'can attack',
   attacking: 'attacking',
   blocker: 'can block',
   blocking: 'blocking',
+  payable: 'can pay the cost',
+  paying: 'chosen to pay the cost',
+  choosable: 'can be chosen',
+  picked: 'chosen',
+  source: 'can pay mana',
+  sourcing: 'chosen to pay mana',
+  bottomable: 'can go on the bottom',
+  bottomed: 'chosen for the bottom',
+}
+
+/** What a card in each kind of step says it is: one that may be picked, and one that has been. */
+const STEP_SAYS = {
+  targets: [GLOW_SAYS.target, GLOW_SAYS.targeted],
+  cost: [GLOW_SAYS.payable, GLOW_SAYS.paying],
+  cards: [GLOW_SAYS.choosable, GLOW_SAYS.picked],
+  sources: [GLOW_SAYS.source, GLOW_SAYS.sourcing],
+  bottom: [GLOW_SAYS.bottomable, GLOW_SAYS.bottomed],
 }
 
 const lit = (kind, says) => ({ kind, says })
 const ids = (list) => (Array.isArray(list) ? list.filter((id) => typeof id === 'string') : [])
 
 /**
- * The costs Argentum pays with nothing to choose, read in its `CostHandler`:
- * sacrificing the source itself, and paying life. Every other kind it names
- * (`additionalCost`, Argentum's own `costType`) asks which card, which
- * creature or how many, and an offer sent bare with one is refused or has the
- * choice made by the engine's responder rather than the player.
+ * Why a tap cannot carry an offer out at this seat: `'target'` when it needs a
+ * target the seat cannot send, `'cost'` when its cost has a choice in it the
+ * seat cannot make, or null when nothing holds it back. `can` is what the room
+ * said this seat may choose (`choicesFrom`); left out, it is nothing, which is
+ * every table before M4. Sacrificing the source itself and paying life need
+ * nothing chosen (Argentum's `CostHandler`), and hold nothing back. Read
+ * forgivingly: an offer from an engine that names no cost is not held back for
+ * one.
  */
-const CHOICELESS_COSTS = new Set(['SacrificeSelf', 'PayLife'])
-
-/**
- * Why a tap cannot carry an offer out yet: `'target'` when it needs a target,
- * `'cost'` when its cost has a choice in it, or null when neither holds it
- * back. Read forgivingly: an offer from an engine that names no cost is not
- * held back for one.
- */
-export function heldBack(a) {
-  if (!a || typeof a !== 'object') return null
-  if (a.requiresTargets) return 'target'
-  if (a.requiresForage === true || (typeof a.additionalCost === 'string' && !CHOICELESS_COSTS.has(a.additionalCost))) return 'cost'
-  return null
+export function heldBack(a, can = NO_CHOICES) {
+  return heldBackBy(a, can)
 }
 
 /**
@@ -75,11 +90,27 @@ export function heldBack(a) {
  * @param {Set<string>} [options.chosen] attackers gathered so far
  * @param {Record<string, string[]>} [options.blocks] blocks declared so far, blocker to attackers
  * @param {string|null} [options.blocker] a blocker picked and waiting for its attacker
+ * @param {object} [options.can] what this seat may choose (`choicesFrom`)
+ * @param {object|null} [options.choosing] a choice in progress (`beginPlay`, `beginDecision`, `beginBottom`)
  * @returns {Map<string, {kind: 'playable'|'target'|'chosen', says: string}>} by card or player id
  */
-export function glowsAt({ status, me, zoneOf = () => undefined, chosen = new Set(), blocks = {}, blocker = null }) {
+export function glowsAt({ status, me, zoneOf = () => undefined, chosen = new Set(), blocks = {}, blocker = null, can = NO_CHOICES, choosing = null }) {
   const glows = new Map()
   if (!status || status.over || !me || status.actor !== me) return glows
+
+  // Something being chosen, a step at a time: what may be picked now glows,
+  // and what has been picked for this step or an earlier one stays lit, more
+  // heavily, saying what it was chosen for.
+  const step = stepOf(choosing)
+  if (step) {
+    for (const s of choosing.steps.slice(0, choosing.at + 1)) {
+      const says = STEP_SAYS[s.kind]
+      if (says) for (const id of s.picked ?? []) glows.set(id, lit('chosen', says[1]))
+    }
+    const says = STEP_SAYS[step.kind]
+    if (says) for (const id of pickable(choosing)) if (!glows.has(id)) glows.set(id, lit('target', says[0]))
+    return glows
+  }
 
   // A target being chosen: every legal one, card or player, across every
   // requirement the decision holds.
@@ -119,7 +150,7 @@ export function glowsAt({ status, me, zoneOf = () => undefined, chosen = new Set
   // other zone with an offer — a flashback in the graveyard — is played from
   // the actions panel, and the prompt says so (`offeredElsewhere`).
   for (const a of offers) {
-    if (typeof a.card !== 'string' || !a.affordable || a.mana || heldBack(a)) continue
+    if (typeof a.card !== 'string' || !a.affordable || a.mana || heldBack(a, can)) continue
     const zone = zoneOf(a.card)
     if (zone === 'hand' && a.meaningful) glows.set(a.card, lit('playable', GLOW_SAYS.play))
     else if (zone === 'battlefield' && a.type === 'ActivateAbility' && !glows.has(a.card)) glows.set(a.card, lit('playable', GLOW_SAYS.ability))
@@ -133,17 +164,34 @@ const worthStopping = (status) => (!status || status.waiting !== 'action' || !Ar
   : status.actions.filter((a) => a && typeof a === 'object' && a.meaningful && a.affordable && !a.mana))
 
 /**
- * The offers the engine stopped for that this table cannot carry out yet
- * because they need a target the table does not send. The prompt names their
- * cards, so a stop with nothing glowing still says why it is a stop.
+ * The offers the engine stopped for that this seat cannot carry out because
+ * they need a target it cannot send. The prompt names their cards, so a stop
+ * with nothing glowing still says why it is a stop.
  */
-export function unaimed(status) {
-  return worthStopping(status).filter((a) => heldBack(a) === 'target')
+export function unaimed(status, can = NO_CHOICES) {
+  return worthStopping(status).filter((a) => heldBack(a, can) === 'target')
 }
 
-/** The same, for offers whose cost has a choice in it the table cannot make yet. */
-export function unpaid(status) {
-  return worthStopping(status).filter((a) => heldBack(a) === 'cost')
+/** The same, for offers whose cost has a choice in it the seat cannot make. */
+export function unpaid(status, can = NO_CHOICES) {
+  return worthStopping(status).filter((a) => heldBack(a, can) === 'cost')
+}
+
+/**
+ * What a pile holds that is part of what the engine asks now, for its tile to
+ * wear and say, since the cards inside glow only once it is opened: `'target'`
+ * a legal target, `'choice'` a card something else being chosen can take — a
+ * cost exiling from the graveyard, cards to select — `'play'` or `'use'` a
+ * card with a play offered from the pile (`offeredElsewhere`), or null. A
+ * target is said as one only where it is one: the words differ, the edge not.
+ */
+export function pileHolding(ids, glows, elsewhere = []) {
+  const lit = ids.map((id) => glows.get(id)).filter((g) => g?.kind === 'target')
+  if (lit.some((g) => g.says === GLOW_SAYS.target)) return 'target'
+  if (lit.length) return 'choice'
+  const here = elsewhere.filter(({ offer }) => ids.includes(offer.card))
+  if (!here.length) return null
+  return here.some(({ offer }) => offer.type !== 'ActivateAbility') ? 'play' : 'use'
 }
 
 /**
@@ -153,11 +201,11 @@ export function unpaid(status) {
  * actions panel, and the prompt names them with where they are. `zone` is the
  * board's word for where the card is, or undefined where the board cannot say.
  */
-export function offeredElsewhere(status, zoneOf = () => undefined) {
+export function offeredElsewhere(status, zoneOf = () => undefined, can = NO_CHOICES) {
   const seen = new Set()
   const out = []
   for (const a of worthStopping(status)) {
-    if (typeof a.card !== 'string' || heldBack(a)) continue
+    if (typeof a.card !== 'string' || heldBack(a, can)) continue
     const zone = zoneOf(a.card)
     if (zone === 'hand' || zone === 'battlefield') continue
     const key = `${a.card}:${a.type === 'ActivateAbility' ? 'use' : 'play'}`

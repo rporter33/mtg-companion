@@ -10,7 +10,8 @@
  * ability whose cost needs a choice, a flashback in the graveyard, a trigger
  * aimed at a card in a pile, and a permanent's ability beside a card in hand.
  * The offers for the Gecko and the flashback are as the live engine sent them
- * on 2026-09-24.
+ * on 2026-09-24. Since M4's capture the run also holds the opening hand and a
+ * targets decision, and the prompt is rendered against those as sent.
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { act } from 'react'
@@ -169,5 +170,36 @@ describe('where a card is, in words', () => {
     expect(placeWords({ zone: 'exile', owner: THEM }, YOU, seat)).toBe('in exile')
     expect(placeWords({ zone: 'command', owner: YOU }, YOU, seat)).toBe('in the command zone')
     expect(placeWords({ zone: 'stack', owner: THEM }, YOU, seat)).toBe('on the stack')
+  })
+})
+
+describe('the captured run\'s opening hand and its targets decision (M4)', () => {
+  const inHand = (s) => (id) => (s.board.cards[id] ? { zone: s.board.cards[id].zone, owner: s.board.cards[id].owner ?? null } : null)
+
+  it('asks to keep the hand the engine dealt, in the engine\'s numbers, and sends the offer pressed', async () => {
+    const first = stops[0]
+    const hand = first.board.zones[YOU].hand.length
+    const sent = []
+    const el = await render({ status: first.status, handSize: hand, active: first.board.active, players: first.board.players, onAct: (index) => sent.push(index) })
+    expect(el.querySelector('.prompt').getAttribute('aria-label')).toBe('Your opening hand')
+    expect(el.querySelector('.prompt__sub').textContent).toBe(`${hand} cards. ${first.board.active === YOU ? 'You play first, so you skip your first draw (103.8a).' : 'The engine plays first.'} Or take a mulligan: the hand goes back, your library is shuffled and you draw 7, then put 1 on the bottom once you keep. This is the London mulligan (103.5).`)
+    const take = [...el.querySelectorAll('button')].find((b) => b.textContent.startsWith('Mulligan'))
+    await act(async () => { take.click() })
+    expect(sent).toEqual([first.status.actions.find((a) => a.type === 'TakeMulligan').index])
+  })
+
+  it('asks for the card to put on the bottom from the hand the view shows, counting down', async () => {
+    const at = stops.find((s) => s.status.actions?.some((a) => a.type === 'BottomCards'))
+    const el = await render({ status: at.status, placeOf: inHand(at), players: at.board.players })
+    expect(el.querySelector('.prompt__title').textContent).toBe('Put 1 card on the bottom of your library')
+    expect(el.querySelector('.prompt__sub').textContent).toBe('Tap the card to put on the bottom of your library, for the mulligan you took. The cards in your hand glow. 1 more to choose.')
+  })
+
+  it('asks where Sparkmage Apprentice is aimed, rendered from the status alone, the seats offered by name', async () => {
+    const at = stops.find((s) => s.status.waiting === 'decision' && s.status.decision?.type === 'ChooseTargets')
+    const el = await render({ status: at.status, placeOf: inHand(at), players: at.board.players, nameOf: (id) => at.view.cards?.[id]?.name ?? id })
+    expect(el.querySelector('.prompt__title').textContent).toBe('Choose targets for Sparkmage Apprentice')
+    expect(el.querySelector('.prompt__sub').textContent).toBe('Tap what Sparkmage Apprentice is aimed at: the legal targets glow.')
+    expect([...el.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Aim at yourself', 'Aim at the engine', 'Let the engine chooseIt will say what it chose'])
   })
 })

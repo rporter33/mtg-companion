@@ -200,3 +200,54 @@ describe('events between views', () => {
     expect(stepIdOf('SOMETHING_NEW')).toBe('untap')
   })
 })
+
+describe('the captured run (M4): the opening hand and declared blockers', () => {
+  // The run is a chain of deltas with the engine's own whole state beside the
+  // stops worth pinning (scripts/engine-capture.mjs); these read the whole ones.
+  const RUN = FIXTURE.run
+  const whole = (mark) => RUN.views.find((v) => v.state && (v.why ?? '').split(' ').includes(mark))
+
+  it('lays the table while the hands are still to keep: turn 1, the untap step, seven in hand and seven opposite', () => {
+    const first = RUN.views[0]
+    expect(first.status.actions.map((a) => a.type)).toEqual(['KeepHand', 'TakeMulligan'])
+    const board = boardFromView(first.state, { seats: FIXTURE.seats })
+    expect(invariants(board)).toEqual([])
+    expect(board.turn).toBe(1)
+    expect(board.step).toBe('untap')
+    expect(handOf(board, YOU)).toHaveLength(7)
+    expect(handOf(board, BOT)).toHaveLength(7)
+    expect(zoneOf(board, YOU, 'battlefield')).toHaveLength(0)
+  })
+
+  it('offers the cards to bottom from the hand the view shows, one owed for the one mulligan taken', () => {
+    const at = RUN.views.find((v) => v.state && v.status.actions?.some((a) => a.type === 'BottomCards'))
+    const offer = at.status.actions.find((a) => a.type === 'BottomCards')
+    expect(offer).toMatchObject({ bottom: 1, mulligans: 1 })
+    const board = boardFromView(at.state, { seats: FIXTURE.seats })
+    expect([...offer.candidates].sort()).toEqual(handOf(board, YOU).map((c) => c.id).sort())
+  })
+
+  it('draws the engine\'s declared blockers, each an arrow from the blocker to the attacker it blocks', () => {
+    const blocked = whole('blocks')
+    expect(blocked, 'the capture holds a stop with blockers declared').toBeTruthy()
+    // The engine's own stop, just after its blocks: a paced table stops there since M4.
+    expect(blocked.status).toMatchObject({ waiting: 'engine', actor: BOT, step: 'DECLARE_BLOCKERS' })
+    const board = boardFromView(blocked.state, { seats: FIXTURE.seats })
+    expect(invariants(board)).toEqual([])
+    const blocks = board.arrows.filter((a) => a.id.startsWith('block:'))
+    expect(blocks.map(({ from, to }) => ({ from, to }))).toEqual(blocked.state.combat.blockers.map((b) => ({ from: b.creatureId, to: b.blockingAttacker })))
+    expect(blocks.every((a) => a.kind === 'target')).toBe(true)
+    // Every attack is still drawn, the blocked one and the one let through.
+    expect(board.arrows.filter((a) => a.kind === 'attack')).toHaveLength(blocked.state.combat.attackers.length)
+    // Said in words in the log beside the picture.
+    expect(blocked.log.some((l) => /blocked/.test(l.description))).toBe(true)
+  })
+
+  it('reads blockers it cannot place as none, rather than drawing an arrow from nowhere', () => {
+    const blocked = whole('blocks')
+    const torn = { ...blocked.state, combat: { ...blocked.state.combat, blockers: [null, { creatureId: 7 }, { creatureId: 'e63' }, 'x'] } }
+    expect(boardFromView(torn, { seats: FIXTURE.seats }).arrows.filter((a) => a.id.startsWith('block:'))).toEqual([])
+    const none = { ...blocked.state, combat: { ...blocked.state.combat, blockers: 'none' } }
+    expect(() => boardFromView(none, { seats: FIXTURE.seats })).not.toThrow()
+  })
+})

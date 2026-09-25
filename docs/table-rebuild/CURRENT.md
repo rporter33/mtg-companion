@@ -54,6 +54,11 @@ and every later one a delta against the one before it, with the engine's own
 whole state kept beside four of them so the deltas can be held against it.
 `--views` is the dial if it grows again.
 
+*Re-captured at M4 (2026-09-24):* the capture script is 326 lines and the
+fixture 500 kB on disk — 30 views from the deal, ten of them whole, seed
+20260941 — because the window now also holds the opening hand, blockers
+declared on the board and a targets decision (PLAN.md, M4's second half).
+
 Added at M1b (2026-09-24), what the engine offers drawn on the cards, and a
 preview that keeps clear of the next press:
 
@@ -116,6 +121,68 @@ player in `seated`, and reports `dealt`; `levels.js` (95 lines) gains
 `roomLevel`, which `Seats.jsx` uses to say a table is still dealing; the
 stand-in engine holds an act, or its first hello, until released, in place of
 the slow `act`.
+
+Added at M4, its first half (2026-09-24), what a person chooses (PLAN.md, "M4,
+the first half: the decisions"):
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/engine/choose.js` | 294 | What a seat may choose (`choicesFrom`, `NO_CHOICES`), the decisions this build can show (`ANSWERS`, sent with the sit), what holds an offer back at a seat (`heldBackBy`), and a choice made a step at a time — X, what a cost takes, the targets, a division of damage; a trigger's targets, cards to select, lands to pay with — to the `act` or `decide` it becomes (`beginPlay`, `beginDecision`, `toggle`, `advance`, `answerOf` and the rest). Pure; reads the wire forgivingly. |
+| `src/features/game/EnginePrompt.jsx` | 553 | The prompt panel at the engine's table, out of `Table.jsx`: the stop, the attack and the block, a play or a decision being chosen on the table, and a prompt for each decision answered in the prompt itself — an order, a division, combat damage, a number, a colour, modes, one answer for several — each with "Let the engine choose". `stopLine` and `placeWords` came with it; `Table.jsx` re-exports all three. |
+| `scripts/engine-decisions.mjs` | 111 | Plays each game twice from a seed, a person's seat told nothing and one that can show every decision, and tallies what was answered for the person, what they were asked, whether it was the same game, and the stops where a play needed something chosen. PLAN.md's M4 table is its output. |
+| `tests/engine-choose.test.js` | 224 | `choose.js` against the offers and decisions the built engine sent at protocol 5: Volcanic Hammer, Arc Lightning's division, Blaze's X, Tormenting Voice's discard, a cleanup discard, a scry, mana to pay with. |
+| `tests/engine-choosing.test.jsx` | 232 | The prompt rendered and pressed for every kind: what each says, and the `act` or `decide` each button sends. |
+| `tests/browser/decisions.spec.mjs` | 350 | Eleven decisions put to a seat by the stand-in engine, one after another: each in the engine's words, axe clean, reached with Tab and answered with Enter or Space, and the answer read back off the stand-in. Runs everywhere. |
+
+Changed with them: `Server.kt` is protocol 5 — `act` takes `targets`, `x`,
+`damage`, `cost` and `auto`; an offer says `targetRequirements`, `x`, `divide`
+and `costChoice`; a person's player may carry `answers`, and the decisions
+among them are described in full and answered in `decide`; `hello.choices`.
+`relay-engine.mjs` passes `answers` to the deal, tells each seat its `choices`,
+and keeps a decision's hidden cards to the seat it asks. `glow.js` (214 lines)
+holds back only what the seat cannot send, glows a choice in progress, and
+gains `pileHolding`. `useEngineRoom.js` sits with `answers` and returns `can`.
+`Table.jsx` (1,670 lines, from 1,786 before M4) begins, picks and sends a
+choice and keeps Space from passing while a play is chosen. The stand-in engine
+speaks protocol 5, keeps the last act and decide it was sent, and asks
+decisions on request, one after another.
+
+Changed at M4, its second half (2026-09-24), the opening hand and the fixture
+M2 was left short on (PLAN.md, "M4, the second half"). No file is new; these
+grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `engine/src/main/kotlin/companion/Server.kt` | 1,514 | Protocol 6: `new` takes `mulligans`, and `drive` runs Argentum's mulligan phase beside the priority loop (`mulliganing`, `waitingOn`), offering `KeepHand`, `TakeMulligan` and `BottomCards` with Argentum's own numbers, and deciding the engine's seat by `EngineAiPlayerController`. The log says a mulligan once and a card bottomed to its owner. `worthWatching` matches the engine's filled-in choice to its offer, so its attacks, blocks and aimed plays are stops of a paced table. |
+| `scripts/relay-engine.mjs` | 567 | Keeps whether a seat's client can show a mulligan until the deal, asks for the phase where every person can and the engine is at 6, and reports `mulligans`. |
+| `src/lib/engine/choose.js` | 320 | `beginBottom`: the cards put on the bottom as a step of their own, picked on the table and sent as the offer's `cards`. |
+| `src/lib/engine/glow.js` | 217 | Says a card that can go on the bottom, and one chosen for it. |
+| `src/lib/engine/board.js` | 344 | Draws declared blockers, an arrow from each blocker to what it blocks. |
+| `src/features/game/EnginePrompt.jsx` | 619 | `OpeningHandPrompt` (keep or mulligan, the engine's numbers, 103.5 and 103.8a cited) and the bottoming as a choosing prompt that counts down. |
+| `src/features/game/Table.jsx` | 1,682 | Begins the bottoming from the stop, sends it as an act, says "Opening hand" on the plate, and says why a card cannot be played before the game begins. |
+| `src/features/game/useEngineRoom.js` | 337 | Sits with `mulligans: true`. |
+| `scripts/engine-capture.mjs` | 326 | Protocol 6, a deck with Sparkmage Apprentice for its targets decision, one mulligan taken, targets chosen plainly, and a window that must hold every mark the tests read. |
+| `tests/fixtures/fake-engine.mjs` | 378 | Protocol 6: a deal asked for mulligans opens with the first seat's hand to keep, in Server.kt's shapes. |
+
+`src/components/table/table.css` lost an opacity on the log's trail of passed
+steps, which axe found below contrast the first time a sweep met it.
+
+Changed in M4's review (PLAN.md, M4's second half, "Reviewed afterwards, and
+fixed"). No file is new:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `engine/src/main/kotlin/companion/Server.kt` | 1,564 | `bottomChosen` refuses a card named twice and a count other than the one owed; `targetsOf` walks the offer's own requirements and refuses one it has not got; a `ReorderLibrary` says `placement` and `library`, read off Argentum's continuation (`orderGoing`). |
+| `src/lib/engine/choose.js` | 329 | `pickable` leaves out only a spell's own card from its cost; an ability's source is taken where Argentum lists it. |
+| `src/features/game/Table.jsx` | 1,706 | `answerTap`: a tap, or a card dragged from hand, while something is chosen; a tap on the source lets the play go only where the step cannot take it. `keeping` for the words said before the hand is kept. |
+| `src/features/game/EnginePrompt.jsx` | 656 | The 103.8a line at two players only; an order says which end of whose library (`libraryOrder`); "Let the engine choose" on a play says it makes every choice; mana "sources"; the steppers' counted labels. |
+| `scripts/engine-capture.mjs` | 335 | Stamps the local day, or `--date`. |
+| `tests/fixtures/fake-engine.mjs` | 380 | Refuses a bottom as Server.kt now does. |
+
+`tests/engine-live.test.js` (1,091 lines) gains three tests — a card named
+twice for the bottom, the process's own refusals of `cost`, Prophetic Bolt's
+order to the bottom — and holds the combat split, the pacing count and the
+wrong-order targets (Boulder Dash) tighter.
 
 ## `src/lib/board/` — the rules-free table
 

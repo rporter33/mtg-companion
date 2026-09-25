@@ -1285,6 +1285,553 @@ one short game at each level among them; the token check clean. The test of
 the room's that proves one move at a time failed before the fix and passes
 after. No JVM and no preview left running.
 
+### M4, the first half: the decisions — 2026-09-24
+
+**The half, and not the other.** M4's brief is mulligans and the decisions the
+client could not answer. This is the second of those: a spell or an ability
+aimed on the table, and the decisions the engine's responder used to answer on
+the player's behalf, asked of the player instead. Mulligans are untouched and
+are the milestone's other half.
+
+**How Argentum's own client does it, read before anything was built.** Its web
+client sends a cast whole: a `CastSpell` or `ActivateAbility` with its targets,
+its X, its division of damage and its cost's payment already in it, gathered in
+that order — X, then what the cost takes, then the targets requirement by
+requirement, then the division (`web-client/…/pipelinePhases.ts`,
+`computePhases` and `mergeResult`). The targets go as one flat list, and
+Argentum's `TargetValidator` reads it by position. The cost's choice goes in
+`additionalCostPayment` (a spell) or `costPayment` (an ability), in the field
+for its kind — `discardedCards`, `sacrificedPermanents` and the rest — which is
+also how Argentum's own AI fills it (`Strategist.withAutomaticPayments`). A
+`CastSpell` sent without an X is cast at nought (`CastSpellHandler`); an
+ability sent without one is asked it as a `ChooseNumberDecision`. And a
+division of damage among more than one target has to come with the cast, or it
+is refused ("Damage distribution required …"). Each decision class in
+`PendingDecision.kt` was read for its fields and its validator for the answer
+it expects. One the brief named is gone: `AssignDamageDecision` is not raised
+by anything at the pin. Argentum's combat now asks the whole damage step as one
+`CombatResolutionDecision` (`CombatResolution.kt`): edges from each creature to
+what it may damage, the engine's own split already in each, and a validator
+that accepts any split legal under some damage-assignment order (510.1c).
+
+**What was built.**
+
+In the process (`Server.kt`), protocol 5. `act` takes `targets` (the shape
+`decide` already took, `{"0": [ids]}`, flattened in requirement order and each
+id made the kind of target its object is by Argentum's own
+`entityIdToChosenTarget`), `x`, `damage` and `cost`, or `auto` to have the
+person's own responder fill all of them in. An offer says what it needs:
+`targetRequirements` (every requirement, one described the same way as
+several), `x`, `divide` and `costChoice` (the candidates and how many, for the
+nine kinds of cost `act` can pay with chosen ids). A person's player in `new`
+may carry `answers`, the decisions its client can show, and those are asked
+rather than answered: `SelectCards`, `OrderObjects`, `ReorderLibrary`,
+`Distribute`, `CombatResolution`, `SelectManaSources`, `ChooseNumber`,
+`ChooseColor`, `ChooseMode` and `BatchYesNo`, each described in full and
+answered in `decide` with the response its validator expects; the reply's seat
+says `asked`. `hello` says all of it as `choices`. Targets that Argentum would
+read in the wrong order — a requirement given fewer than it could take, with
+targets for a later one — are refused in words rather than sent.
+
+In the room (`relay-engine.mjs`). A sit's `answers` are kept to the deal and
+passed for that seat alone, only to an engine at 5. Every `seated` after the
+deal tells a person's seat its `choices`: what its `act` may carry and which
+decisions it will be asked. A decision's `cards` — the faces of cards only the
+deciding seat may see, a library's top being looked at — are left out of every
+other seat's copy of the status, which goes to every seat.
+
+In the client. `src/lib/engine/choose.js` (new): what a seat may choose
+(`choicesFrom`), what holds an offer back at that seat (`heldBackBy`), and a
+choice made a step at a time — begun by the tap on a play (`beginPlay`) or by
+a decision picked on the table (`beginDecision`: a trigger's targets, cards to
+select, lands to pay with) — to the `act` or `decide` it becomes. `glow.js`
+holds back only what the seat cannot send, and while something is chosen glows
+what the step may take and lights, more heavily, what it took, each in words
+("a legal target", "can pay the cost", "can be chosen", "chosen as a target").
+The prompt panel moved out of `Table.jsx` into `EnginePrompt.jsx`: the choosing
+prompt (the play or the question, what the step is for, seats by name, cards
+the table cannot show by name, X and a division set with steppers, Done where
+more than one tap is needed, "Let the engine choose", and for a play "Never
+mind"), and a prompt for each decision answered in the prompt itself — an
+order with a button up and down for each, a division, combat damage from the
+engine's own split, a number, a colour, one mode or several, one answer for
+several questions at once — every one keeping "Let the engine choose".
+`useEngineRoom.js` sits with `answers` and reads `can` from the seated.
+`Table.jsx` begins a choice where a tap used to send, picks with the next taps,
+lets the play go when the card being cast is tapped again, and does not pass
+on Space while a play is being chosen.
+
+**M1b's and M3's measures, lifted exactly where a choice reaches the engine.**
+The glow, the tap's refusal and the actions panel held back an offer needing a
+target (M1b) or a choice in its cost (M3). They now hold it back only where
+the room said this seat's `act` cannot carry it: a relay or an engine older
+than protocol 5 says nothing, and there everything is as it was. A cost whose
+kind `act` cannot pay with a choice — a sum of mana values, a forage — is still
+held back, and says so, at every seat.
+
+**Measured.** `scripts/engine-decisions.mjs` (kept) plays each game twice from
+one seed against intermediate: once with a person's seat whose client said
+nothing, as every client before protocol 5, and once with one that can show
+every decision. The person is the plainest player — the first worthwhile play,
+targets and all chosen by the engine for them, else a pass — and answers every
+question with the engine's own choice, so the two games should be one game,
+and the script checks that they are. Twenty seeds a deck from 20260924, on the
+owner's machine:
+
+| Deck | Answered for a person told nothing | Asked of a person who can be | Still answered for them | Same game both ways | Stops where a play worth making needed a target or a chosen cost |
+| --- | --- | --- | --- | --- | --- |
+| Portal goblins | none | none | none | 20 of 20 | 94 |
+| Burn (Magma Jet, Arc Lightning, Blaze, Tormenting Voice, Hill Giants) | 27 × cards to select | 27 × cards to select | none | 20 of 20 | 127 |
+| Green (Colossal Dreadmaw, Crash of Rhinos, Giant Growth) | 10 × combat damage, 1 × cards to select | the same | none | 20 of 20 | 51 |
+
+So in those sixty games nothing the table can show was answered for the person
+any longer, the combat damage board reached a person ten times in the twenty
+games with tramplers in them, and asking changed no game. The last column is the size of
+the gap M1b and M3 held open: 272 stops over sixty games where a play worth
+making needed something chosen that the table could not send before this, which
+it can now. The goblins deck raises no decision a person is not already asked;
+it is the deck every earlier measurement used, and it is here to say so.
+
+**The run in a browser.** `game-engine.spec.mjs` against the real engine
+through the real relay, the spec's own seed: the room said the seat may choose
+targets and which decisions it will be asked; at a stop of the player's with
+Volcanic Hammer affordable in hand, the Hammer glowed; a tap began aiming it —
+the prompt "Cast Volcanic Hammer", "Tap what Volcanic Hammer is aimed at: the
+legal targets glow."; exactly the offer's legal targets glowed, each saying so,
+with the seats among them lit on their plates and offered as "Aim at yourself"
+and "Aim at the engine"; nothing had gone to the engine; Space did not pass; axe
+found nothing; "Never mind" let it go and it glowed again; the actions panel
+listed it as a play it would press and pressing it there began the same aiming;
+"Aim at the engine" cast it, and when it resolved the engine's life fell from
+19 to 16, and the log said "You cast Volcanic Hammer targeting opponent" and
+"Opponent lost 3 life". Sparkmage Apprentice's trigger, M1b's check of a targets
+decision, is answered the same way through the new choosing. The check that
+Space after a pointer press passes rather than pressing again, which used the
+refused Hammer, now uses a card in hand the engine offers nothing for.
+
+`decisions.spec.mjs` (new, the stand-in engine, so it runs everywhere) has the
+stand-in put eleven decisions to the seat one after another, in the shapes the
+built engine sent: a discard at cleanup (514.1), a scry's bottom and its order,
+a division, a Hill Giant's damage between two blockers, mana to pay with, a
+number, a colour, one mode, one answer for three at once, and a split into
+piles, which this table cannot show. For each: the prompt in the engine's own
+words, axe clean, every control reached with Tab from the prompt and pressed
+with Enter or Space, and the `decide` the room passed on read back off the
+stand-in — the card chosen, the order, the division, each edge's damage, "Let
+the engine pay", the number, `GREEN`, the mode, `all: true`, and for the piles
+only "Let the engine choose". Screenshots looked at: `engine-aim.png` and
+`engine-aimed.png` (the Hammer being aimed, and the engine at 16),
+`decisions-order.png` and `decisions-combat.png`, in the system's temporary
+folder.
+
+**Where it departs from the brief's letter, and why.**
+
+1. *Combat damage is `CombatResolutionDecision`, not `AssignDamageDecision`*:
+   the second is not raised at the pin. Its steppers are per edge, starting
+   from the engine's own split, rather than "per target summing to the total",
+   because the board's validator — not a sum — is what says a split is legal.
+2. *The live test's damage assignment is a double block, not first strike.*
+   Argentum raises the board only where there is a real division: trample,
+   more power than the blockers need, or banding (`CombatDamageManager`), and
+   first strike alone is none of them. A Hill Giant blocked by two Raging Goblins is.
+3. *The client says which decisions it can show; the process does not ask
+   every client everything.* A tab left open across a deploy is kept alive
+   here on purpose (M2), and one from before protocol 5 would have been put
+   questions it can only answer with "Let the engine choose". It now keeps the
+   engine answering for it, and says so, as before.
+4. *X, a division of damage and a cost's choice came with targets*, beyond the
+   three places M1b named: Blaze cast bare is cast at X = 0, Arc Lightning at
+   two targets is refused without its division, and M3's note put the costs
+   here. The division is the brief's "Fireball-style distribute": at the pin a
+   cast's division goes with the cast, and `DistributeDecision` is raised only
+   at resolution where none was given — by an ability or a trigger. It is asked,
+   and the decisions spec answers one through the stand-in; no seeded game here
+   raised one from the real engine.
+5. *"Let the engine choose" is on a play too* (`act` with `auto`), which the
+   brief asked only of decisions: so a play is never stuck either.
+6. *Paying mana begins from the engine's own choice of lands* (Argentum's
+   `autoPaySuggestion`), with "Let the engine pay" and, where the cost may be
+   declined, "Do not pay". No seeded game here raised one from the real engine.
+7. *Beyond the letter:* a trigger that takes several targets, or has several
+   requirements, is answered with all of them now (M1b's "not done"); a
+   decision's hidden cards are kept from the other seats; a tap on something a
+   step cannot take says why ("Mountain is not a legal target for Volcanic
+   Hammer.") rather than falling through to a play.
+
+**Gone over afterwards, and what the reading found.** Three things, fixed
+before the last run. A pile holding a card that could pay a cost, or be
+selected, said on its tile that it "holds a legal target": `pileHolding` in
+`glow.js` now tells a target from anything else being chosen, with a test. The
+process read a malformed number or id in the new fields strictly and answered
+with a Kotlin exception's name; it reads them forgivingly now, as the rest of
+the wire is read. And the prompt panel had grown `Table.jsx` from 1,786 lines
+to 2,202, most of it the prompt; it is a module of its own, and `Table.jsx`
+(1,670) still exports what its tests imported from it. One fault of process
+too, said because it cost a run: the app was rebuilt while the browser suite
+was running, the thing this document warns against; that run was stopped, its
+leftover browser and spec ended, and the suite run again from the start on the
+final build.
+
+**Not done, and where it goes.** Mulligans: the other half of M4. Still
+answered for the player, and said: splitting cards into piles, choosing a word
+to replace, a budget of modes (`SplitPiles`, `ChooseReplacement`,
+`BudgetModal`). A spell with modes chosen as it is cast (Spree, "choose one or
+more") is offered as the engine lists it and not looked at here: Argentum's
+client sends `chosenModes` with such a cast, and `act` does not. Convoke,
+delve, improvise and paying mana by hand at cast are the engine's, as they
+always were (`PaymentStrategy.AutoPay`). "It will say what it chose" under
+"Let the engine choose" is true of what happens next in the log, not of the
+choice itself; saying the choice in words is left, since the status goes to
+every seat and a choice can name hidden cards. A screen reader is not told
+when aiming begins: focus stays on the card tapped, and the prompt says it
+where it is, as it did for a trigger since M1b. No seeded game against the real
+engine here raises `Distribute`, `SelectManaSources`, `ChooseNumber`,
+`ChooseColor`, `ChooseMode` or `BatchYesNo`; each is held by unit tests and by
+the stand-in's run in a browser, not by a live game.
+
+The bar at the end: 1,877 unit tests across 92 files, 53 of them new; 36
+browser specs, 1,410 checks, none failed, in 838 s — the engine's own spec 133
+of them against the real engine through the real relay, and the new
+`decisions.spec.mjs` 60 — and those two run again, 133 and 60, on a build made
+after the last two edits, both to comments; the live engine suite 32 of 32, nine new;
+the token check clean. No JVM and no preview left running.
+
+### M4, the second half: mulligans, and the fixture M2 was short of — 2026-09-24
+
+**The half, and the item beside it.** M4's other half is the opening hand:
+the London mulligan as the engine implements it, reachable by keyboard, said
+in words, axe-clean, and working with the engine's own decision rather than a
+second rule set in the client. Beside it, the item M2 was left short on: a
+captured run whose window holds declared blockers and a decision as well as
+the engine's turn mid-flight. The second turned out to be a fault, not a gap.
+
+**How Argentum does a mulligan, read before anything was built.** The brief
+asked whether its actions arrive through `legalActions()` or as a
+`PendingDecision`. Neither. `LegalActionEnumerator` knows nothing of the phase:
+the initialiser holds the game at turn 1, `BEGINNING`, `UNTAP` with priority on
+the starting player, and asked there it offers what a player could do in an
+untap step. No decision is raised either; `MulliganHandler` has builders for
+two (`createMulliganDecision`, `createBottomCardsDecision`) that nothing at the
+pin calls. Argentum's game server drives the phase beside its priority loop,
+with messages of its own, putting `TakeMulligan`, `KeepHand` and `BottomCards`
+through the action processor and asking `EngineAiPlayerController` for its own
+seats' keep and bottom. The rule as it implements it: a hand sent back goes to
+the bottom of the library, the library is shuffled and seven drawn, always
+seven; once kept, as many on the bottom as mulligans taken
+(`MulliganStateComponent.cardsToBottom`), exactly that many, from the hand; a
+mulligan may be taken while keeping would still leave a card; then any
+opening-hand choice of CR 103.6 (a Leyline) as a yes or no; then turn 1.
+
+**What was built.**
+
+In the process (`Server.kt`), protocol 6. `new` takes `mulligans: true` and the
+game is dealt with Argentum's phase; unasked, every hand is kept as before. The
+process drives the phase as the game server does (`mulliganing`, in
+`MulliganHandler`'s own order: each hand kept or sent back in turn order, then
+the cards to bottom), naming the seat it waits on (`waitingOn`) and offering
+Argentum's own actions in the offer shape: `KeepHand` and `TakeMulligan`, with
+`mulligans` taken, `bottom` owed on keeping (and, on a mulligan, owed on keeping
+the next hand) and `draws`; then `BottomCards` with its `candidates`. Every
+number is read off `MulliganStateComponent`. `act` takes `cards` for the bottom,
+or `auto` for Argentum's responder's choice. The engine's seat decides at once
+by `EngineAiPlayerController`, alike at every level, and is not a stop. The log
+says "You took a mulligan" (or "Opponent took a mulligan") where Argentum says
+each card of the hand going into the library, and "You put … on the bottom of
+your library" to the card's owner alone.
+
+In the room (`relay-engine.mjs`). A sit says `mulligans: true` where its build
+can show a mulligan; the room keeps it to the deal, and asks for the phase only
+where every person at the table said so and the engine speaks 6, because a seat
+that cannot would hold the game up for good. `GET /rooms/<code>` says
+`mulligans` once dealt.
+
+In the client. `useEngineRoom.js` sits with `mulligans: true`. The prompt
+(`EnginePrompt.jsx`, `OpeningHandPrompt`) says the hand's size, the mulligans
+taken and what keeping costs, who plays first ("You play first, so you skip
+your first draw (103.8a)", from `docs/TURN_STRUCTURE.md`), and what a mulligan
+does, "the London mulligan (103.5)" — each number the engine's own — with
+Mulligan and Keep this hand. The cards to bottom are a choosing step of their
+own (`beginBottom` in `choose.js`): begun by the stop, the hand glowing and
+saying "can go on the bottom", the prompt counting down, one owed sent at the
+tap that picks it and several at "Put them on the bottom", with "Let the engine
+choose". The plate says "Opening hand"; a tap on a card says it cannot be played
+before the game begins. The stand-in engine speaks 6 and deals the phase when
+asked, so `decisions.spec.mjs` takes a mulligan everywhere, CI included.
+
+**The item M2 was short of, and the fault under it.** A first capture on the
+new protocol, 21 seeds, found declared blockers at no stop of any game; the same
+seeds, once blocks could be seen, show the engine blocking in twelve of the
+first thirteen. The engine's attacks and blocks were no
+stops at all: `drive()` asked whether the engine's choice was worth watching
+by finding it among the offers by equality, and its choice comes back filled in
+— attackers, blockers, targets — so never equals the bare offer. Over eight
+paced goblin games every one of the engine's stops fell in a main phase. Its
+choice is now matched to its offer by what it is (`worthWatching`: the same card
+cast, the same ability of the same source, and a declaration that declares
+something), and the same eight games stop 49 times more for its attacks, 10 for
+its blocks and 17 more in main phases — one for each of the 12 Volcanic Hammers
+and 5 Lava Axes it cast, which it aims. The view at its block carries the
+blockers, and `board.js` now draws each as an arrow from blocker to attacker,
+the shape the table already drew for a block being chosen; the log says each in
+words. That is the `blocks` M2 could not reach. The decision M2 expected from
+casting Volcanic Hammer no longer comes, since a spell's targets go with its
+cast; the capture's deck now holds Sparkmage Apprentice (four, for two Goblin
+Bullies and two Hulking Goblins), whose arrival asks its controller for a target,
+the same card the engine's spec aims.
+
+The capture (`scripts/engine-capture.mjs`) is protocol 6: it sits the person as
+this app's client does, takes one mulligan and keeps, aims plainly (the engine
+first), attacks with everything, and keeps the earliest window that holds every
+mark the tests read — the engine mid-flight, a combat, the offer to block,
+blocks on the board, a decision, windows passed, a stop for a spell that needs
+a target alone — and then as many of the opening hand's as it can. Seed
+20260941 holds all of them and both of the opening hand's in 27 stops from the
+deal, the shortest of 37 seeds tried by six; the fixture keeps 30 views, ten of
+them whole, and the first capture's `seats` and `shots` as they were. It is 500
+kB on disk where it was 292: half as many views again, and a whole state beside
+the first of each of the new marks.
+
+**Measured.**
+
+| | median | slowest |
+| --- | --- | --- |
+| `new` with every hand kept, to the first stop | 6.4 ms | 10.4 ms |
+| `new` with the hands to keep, to the person's first choice | 3.2 ms | 6.9 ms |
+| the same, with the engine first, deciding inside `new` | 5.8 ms | 9.5 ms |
+| take a mulligan | 0.7 ms | 2.7 ms |
+| keep | 3.6 ms | 21.4 ms |
+| put one on the bottom, to the first stop of the game | 3.6 ms | 6.6 ms |
+
+Twenty seeds of the goblin deck at intermediate, after a warm-up, on the owner's
+machine: nothing in the phase is anything a person waits on. The engine's own
+mulligans, over 60 deals of the goblin deck with it deciding first: 3, the three
+hands of no land or one; every hand of two to five lands kept, as its responder
+says it keeps them. With the person first, over 24 deals of the goblin and
+Sparks decks: none. And keeping changes nothing: seed 1 played with and
+without the phase, both keeping, is the same game stop for stop and the same
+winner (`tests/engine-live.test.js`), because keeping draws and shuffles
+nothing — which is why the engine's browser spec, keeping at its first stop,
+plays the very game it was written against.
+
+**The run in a browser.** `game-engine.spec.mjs` against the real engine
+through the real relay. Its first table now opens with the hand to keep, the
+rule named, and the room saying it dealt the phase; keeping it, the seeded game
+went on exactly as before, every earlier check passing. A fourth table, the
+goblins again, by the keyboard: seven cards, "You play first, so you skip your
+first draw (103.8a)", the plate saying "Opening hand", axe clean; Enter on
+Mulligan drew seven again and the prompt said "7 cards, after 1 mulligan:
+keeping them puts 1 on the bottom of your library"; the log said "You took a
+mulligan" once; Space on Keep brought "Put 1 card on the bottom of your
+library", all seven cards glowing and each saying it can go on the bottom, "1
+more to choose", axe clean; Enter on a card left six in hand without it, 28 in
+the library, "You put … on the bottom of your library" in the log, and the
+first stop of the game. Pictures looked at: `engine-mulligan.png`,
+`engine-bottom.png`, `engine-six.png` in the system's temporary folder. The
+stand-in's run (`decisions.spec.mjs`) takes a mulligan, keeps and bottoms by
+Tab, Enter and Space, reads each act back, and is axe clean at both prompts.
+
+**Found by the runs, and fixed.** Two, beside the fault above. The log's trail
+of passed steps was drawn in the faint tier and then dimmed again with an
+opacity, which took it under 4.5:1 (the tier alone clears it, `tokens.css`);
+axe found it the first time a sweep met the trail as a log's last line, a table
+at its opening hand. And going over the change, the opening-hand prompt called
+any seat that plays first "the engine", untrue at a table of several people
+(M11); it names the seat now. The first is held by the sweep that found it,
+which failed until it was fixed; the second by a test naming another seat. And
+one of the new relay tests failed in three of four runs of the whole suite,
+never alone: the room sends a move's status before its view and keeps its one-move
+guard (M3) up until the view is out, and the test sent its next move on the
+status, which beside a JVM landed inside the guard and was refused. The real
+client waits for the answer and never did this; the tests now wait for the view
+as well (`moved`), and so does the first half's test of the same shape, which
+could have met the same.
+
+**Found, and not fixed: nobody can respond to a spell.** Looking for why an aimed
+spell was never on the stack at the engine's stop: Argentum's
+`GameEnvironment.step`, which `drive()` uses, passes for every player while the
+stack holds anything, so a spell resolves inside the step that cast it. A
+person holding Shocks, stopped 26 times in a game where the engine cast Shocks
+too, never once had anything on the stack. That is a gap in priority (117.4,
+`docs/TURN_STRUCTURE.md`) at this table since it first played, not something
+M4 did; driving the table with Argentum's `stepExactlyOne` is where a fix would
+start. It is written in `engine/README.md` and is no milestone's yet.
+
+**Where it departs from the brief's letter, and why.**
+
+1. *The offers are made by the process, not found among the legal actions:*
+   there are none to find (above). They are Argentum's own actions, in the
+   shape every offer has, as its game server makes its own messages of them.
+2. *The engine's table has a prompt of its own, not the hand-played table's
+   `OpeningHand`,* which works out what is owed itself
+   (`Math.min(mulligans + 1, 7)`): a second rule set, and one that would be wrong
+   for a free first mulligan in a game of several. The new one reads every
+   number off the engine and looks the same.
+3. *Mulligans are dealt only where every person's client can show one.* A tab
+   left open across a deploy is kept alive on purpose (M2), and one from before
+   this would be offered a phase it has no prompt for; it is dealt every hand
+   kept instead.
+4. *Keeping or taking a mulligan has no "Let the engine choose"*: it is a choice
+   of two, and nobody is stuck at it. Putting cards on the bottom has one.
+5. *The capture is a different game from M2's:* a deck with Sparkmage
+   Apprentice, a mulligan taken, the engine's attacks now stops. The first
+   capture's `seats` and `shots` are kept, as the script always kept them.
+6. *Beyond the letter:* the pacing fault, the block arrows and the contrast
+   fault, above.
+
+**What the new capture moved in the tests that read it.** No exact value in any
+of them changed: the stop made for Volcanic Hammer alone
+(`engine-glow.test.js`, `engine-prompt.test.jsx`) is still that, word for word.
+One test changed its shape: `engine-room.test.jsx`'s "said under the view it
+belongs to" took the run's first stop with windows passed and sent it as the
+second view, true only while that stop was the run's second; it is its fourth
+now, behind the opening hand, so the views between are sent first. Beside them,
+the protocol's own numbers moved where tests name them: 6 in the stand-in's
+`hello` (`engine-bridge.test.js`) and the real one's (`engine-live.test.js`),
+and `cards` in `choices.act` (those two and `relay-server.test.js`). New tests
+read what the capture now holds: the opening hand laid on the board, the
+bottom's candidates, the engine's blocks drawn (`engine-board.test.js`); the
+run's own statement of what it holds (`engine-delta.test.js`); the real targets
+decision's glow (`engine-glow.test.js`); and the prompt at each
+(`engine-prompt.test.jsx`).
+
+**Not done, and where it goes.** Priority with a spell on the stack, above. The
+log files the mulligan's lines under "Your untap", since Argentum holds the game
+at turn 1's untap step while hands are kept; said, not changed. The stand-in's
+opening hand is its first shot's five cards and does not shrink when one is
+bottomed; the real engine's spec counts the six. A free first mulligan in a
+game of several (Argentum's `freeMulligan`, over two players) is Argentum's and
+untested here, as all of M11 is. A Leyline's yes or no after the phase is asked
+as any yes or no is, and no seeded game here deals one. From the first half,
+still: piles, a word to replace and a budget of modes answered for the player;
+modes chosen at cast; convoke, delve and improvise paid by the engine.
+
+The bar at the end: 1,909 unit tests across 92 files, 32 of them new, the whole
+suite run three times over after the last change; 36 browser specs, 1,443
+checks, none failed, in 891 s; the engine's own spec 150 checks
+against the real engine through the real relay, 17 of them new, and
+`decisions.spec.mjs` 76, 16 new; the live engine suite 37 of 37, five new; the
+token check clean. The pacing test was held against the code it guards —
+reverted, it fails; restored, it passes. No JVM and no preview left running.
+
+**Reviewed afterwards, and fixed.** A reading of both halves, each finding
+confirmed by a second reader, came to eighteen; three were the same fault
+found twice (the opening hand's 103.8a line, "Let the engine choose" on a
+play, a drag while bottoming), so fifteen faults. All fifteen are fixed, each
+with a test. Four of the tests — the bottom, the combat split, the pacing
+count, the drag — were held against the code they guard: with the fix taken
+out, each failed. The rest assert, by reading, what the old code did not do or
+say.
+
+In the process (`Server.kt`, rebuilt):
+
+1. *A card named twice for the bottom was taken.* Argentum counts the cards and
+   checks each is in hand, and no more: two owed and one card named twice
+   passed its count, moved once, and settled the mulligan with a card still
+   owed kept in hand. Each card once, and exactly as many as owed, are refused
+   here now, in this process's words (`bottomChosen`); a card not in hand is
+   still Argentum's to refuse. A live test takes two mulligans and names one
+   card twice; with the check taken out, it failed.
+2. *A requirement left out of `targets` altogether was not seen.* The order
+   check walked the keys sent, so `{"1": [...]}` for an offer whose first
+   requirement may take none went to Argentum flat and was read as the first's.
+   The offer's own requirements are walked now, one left out counts as given
+   none, and a key naming no requirement the offer has is refused by its name.
+   The live test is Boulder Dash, two requirements, whose lone "1" the old
+   check would have sent on.
+3. *Every order of cards going to a library said "the top of your library".*
+   Argentum asks `ReorderLibrary` for cards going to the bottom as well
+   (Prophetic Bolt's rest, `MoveCollectionExecutor`), and into another's
+   library, and the decision says neither. Its suspended continuation holds
+   both, and the process reads them there: `placement` ("top" or "bottom") and
+   `library`, the owner. The prompt says "The first is the top of your
+   library.", "The last is the bottom of the engine's library." and, from an
+   engine without them, "The first ends up highest in the library.", which is
+   true either way. Live: Magma Jet's order says top, Prophetic Bolt's bottom.
+   Added without a new protocol number, as M3's review added fields to offers.
+4. *Two comments were wrong:* `describe`'s said `act` carries no payment, a
+   protocol after it began to; the order's said the top.
+
+In the client:
+
+5. *An ability's own source could neither pay its cost nor be picked as its
+   target.* `pickable` left the source out of every cost of its own play, and a
+   tap on the source let the play go before asking whether the step could take
+   it. Argentum leaves the source out of an ability's candidates itself where
+   the card says "another" (`excludeSelf`), and lists the whole hand for a
+   spell's discard. So only a spell's own card is left out of its cost now,
+   and a tap on the source lets the play go only where the step cannot take it
+   (`answerTap`). Tested with a Bloodthrone Vampire sacrificing itself and a
+   Prodigal Pyromancer aimed at itself, in the shapes the process sends.
+6. *"Let the engine choose" on a play said "It chooses the rest for you"*, and
+   the engine makes the whole play again: `auto` reads nothing sent beside it.
+   It says "It makes every choice for this play" now, and ", redoing yours"
+   once something has been chosen. Keeping what was chosen would need
+   Argentum's Strategist to choose part of a play, which it does not do, and a
+   division it chose for its own targets would not fit the person's; said in
+   `engine/README.md` and in `act`.
+7. *The opening hand said the first player skips their first draw at tables of
+   three or more.* `docs/TURN_STRUCTURE.md` gives 103.8a for a two-player game
+   alone, and Argentum skips the draw only at two (`DrawPhaseManager`). It is
+   said at two now; at more, or where the seats are not known, only who plays
+   first.
+8. *A card dragged from hand while bottoming said "Keep this hand or take a
+   mulligan first"*, of a hand already kept, and was not chosen. A drag while
+   anything is being chosen now goes where a tap goes; the keep-or-mulligan
+   words are kept for before the hand is kept. The decisions spec drags a card
+   onto the table and checks it chosen; with the change taken out, it failed.
+9. *Paying mana spoke of lands*, and Argentum offers any untapped permanent with
+   a mana ability: "the sources chosen to pay with", "It picks what pays".
+10. *A division's steppers read "2 share to Raging Goblin" and "Less share to
+    the engine"* to a screen reader, which hears nothing else: they read "2 to
+    Raging Goblin", "One more to …" and "One fewer to …". "At least 0 each",
+    Argentum's own default, is left unsaid.
+11. *`choose.js` said every decision it lists has a prompt in `Table.jsx`
+    (`DecisionPrompt`)*; they are in `EnginePrompt.jsx`, two of them picked on
+    the table.
+12. *The capture stamped the UTC day*, a day after the evening it was taken:
+    it stamps the local day, or `--date`, and the fixture says 2026-09-24.
+
+In the tests:
+
+13. *The combat damage test passed whatever split was sent*: the engine's own
+    split killed both goblins too. It sends 3 and 0, and exactly the second
+    goblin lives; answered with `auto` instead, it failed.
+14. *The pacing test's count of aimed stops passed without them*: the last cast
+    before a stop was still the Hammer at the attack that followed it. A stop
+    counts now only where the Hammer's lines end it — it resolved, and nothing
+    the engine did came after. With the `CastSpell` line of `sameOffer` taken
+    out it failed, where the old count did not.
+15. *The engine spec's "the log says it was cast" matched the opening draw's
+    line.* It counts "You cast Volcanic Hammer targeting" and "Opponent lost 3
+    life" before the press and wants one more of each after. And the
+    Tormenting Voice test's second half, behind an `if`, tested Argentum's
+    refusal while its comment spoke of the process's: it checks Argentum's in
+    Argentum's words, unguarded, and the process's two refusals of `cost` have
+    a test of their own (Volcanic Hammer, which has no cost to choose for, and
+    Fire Bowman's `SacrificeSelf`, which `act` cannot pay). The refusals a tap
+    says while choosing and before keeping had no test: the engine spec taps a
+    Mountain while aiming the Hammer ("Mountain is not a legal target for
+    Volcanic Hammer.", the stop unchanged), and the decisions spec taps a card
+    before keeping.
+
+**Found by the runs, and not fixed: the choosing prompt covers the lands.** At
+the engine spec's 1280 by 900, the prompt floats over the bottom of the
+battlefield, which is its row of lands, so the Mountain the spec meant to tap
+was under it (the spec taps the Mountain in hand). A choice that is made by
+tapping a land — mana to pay with, a cost that taps a permanent — would meet
+the same; "Let the engine pay" and the prompt's own buttons are not covered.
+Where the prompt sits is M1b's (TARGET.md §8), and moving it is layout work of
+its own, not a fix to any of the above.
+
+The bar at the end: 1,916 unit tests across 92 files, 7 of them new, three of
+those in the live engine suite, 40 of 40; 36 browser specs, 1,450 checks, none
+failed, in 932 s — the engine's own spec 152 of them against the real engine
+through the real relay, two new, and `decisions.spec.mjs` 81, five new. One
+change came after that run, the words for a library whose owner the table has
+no name for ("their"); the unit suite, `decisions.spec.mjs` (81) and the axe
+sweep (25) were run again on a build with it. The token check clean. No JVM
+and no preview left running.
+
 ## Phase 3-alt — Writing the rules core ourselves
 
 Only if the owner wants the engine to be ours. `src/lib/engine/`, TypeScript,

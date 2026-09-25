@@ -32,13 +32,15 @@ import Printings from '../../components/Printings.jsx'
 import Confirm from '../../components/Confirm.jsx'
 import { nameList } from '../../lib/engine/deck.js'
 import { THINKING, thinkingAt } from '../../lib/engine/board.js'
-import { glowsAt, heldBack, offeredElsewhere, unaimed, unpaid, GLOW_SAYS } from '../../lib/engine/glow.js'
+import { glowsAt, heldBack, offeredElsewhere, pileHolding } from '../../lib/engine/glow.js'
+import { NO_CHOICES, advance, answerOf, beginBottom, beginDecision, beginPlay, complete, pickable, stepOf, toggle } from '../../lib/engine/choose.js'
 import { chosenLevel, LEVEL_NAMES, levelOf } from '../../lib/engine/levels.js'
 import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
 import useEngineRoom from './useEngineRoom.js'
 import useTravel from './useTravel.js'
 import Peek, { usePeek } from './Peek.jsx'
+import { EnginePrompt } from './EnginePrompt.jsx'
 import { relayAddress } from './relayAddress.js'
 import '../../components/table/table.css'
 
@@ -81,39 +83,45 @@ const COMBAT_STEPS = ['beginCombat', 'attackers', 'blockers', 'firstStrike', 'da
 /** The words a pile's tile adds to its label when something in it is part of what the engine asks now. */
 const PILE_SAYS = {
   target: 'holds a legal target',
+  choice: 'holds a card that can be chosen now',
   play: 'holds a card you can play, under Actions',
   use: 'holds a card whose ability you can use, under Actions',
 }
 /**
- * Said when a tap reaches an offer that needs a target. Sent as it is, the
- * engine would refuse it saying there are no valid targets, which is not so:
- * it is this table that sends none yet (lib/engine/glow.js; HANDOFF.md, M4).
+ * Said when a tap reaches an offer that needs a target this seat cannot send:
+ * a relay or an engine from before M4, whose `act` carries none. Sent as it
+ * is, the engine would refuse it saying there are no valid targets, which is
+ * not so: it is this table that can send none (lib/engine/glow.js).
  */
 const cannotAim = (name) => `${name} needs a target, and this table cannot choose one for it yet.`
 /**
- * Said when a tap reaches an offer whose cost has a choice in it: which card to
- * discard, which creature to sacrifice. Sent bare, the engine would refuse it
- * ("Must choose 1 card(s) to discard"), because `act` carries no payment yet
- * (lib/engine/glow.js; HANDOFF.md, M4). The cost is named in Argentum's words.
+ * Said when a tap reaches an offer whose cost has a choice in it this seat
+ * cannot make: which card to discard, which creature to sacrifice, from an
+ * engine whose `act` carries no payment, or a kind of cost it cannot pay with
+ * a choice. Sent bare, the engine would refuse it ("Must choose 1 card(s) to
+ * discard"). The cost is named in Argentum's words.
  */
 const cannotPay = (name, cost) => `${name} needs a choice made for its cost${typeof cost === 'string' && cost ? ` (${cost.charAt(0).toLowerCase()}${cost.slice(1)})` : ''}, and this table cannot make one for it yet.`
 /** Why a tap on this offer is not sent, in words, for whichever reason holds it back. */
-const cannotDo = (offer, name) => (heldBack(offer) === 'cost' ? cannotPay(name, offer.additionalCostText) : cannotAim(name))
+const cannotDo = (offer, name, can) => (heldBack(offer, can) === 'cost' ? cannotPay(name, offer.additionalCostText) : cannotAim(name))
+/** Said when a tap lands on something the step being chosen cannot take, rather than sending it to be refused. */
+const notPickable = (step, name, source) => {
+  const of = source ? ` for ${source}` : ''
+  if (step?.kind === 'targets') return `${name} is not a legal target${of}.`
+  if (step?.kind === 'cost') return `${name} cannot pay the cost${of}.`
+  if (step?.kind === 'sources') return `${name} cannot pay this mana.`
+  if (step?.kind === 'cards') return `${name} cannot be chosen here.`
+  if (step?.kind === 'bottom') return `Only a card in your hand can go on the bottom, and ${name} is not one.`
+  if (step?.kind === 'x') return `Choose X${of} in the prompt first.`
+  if (step?.kind === 'divide') return `Divide the damage${of} in the prompt first.`
+  return `${name} is not part of this choice.`
+}
 const NO_GLOW = new Map()
 
-/**
- * Where a card is, as the end of a sentence: "in your graveyard", "in exile",
- * "on the stack". Null for the hand and the battlefield, where a glowing card is
- * already in sight, and for a card the board cannot place.
- */
-export function placeWords(place, me, nameOfSeat = () => null) {
-  if (!place?.zone || place.zone === 'hand' || place.zone === 'battlefield') return null
-  const whose = place.owner === me ? 'your' : `${(nameOfSeat(place.owner) ?? 'their').replace(/^The engine$/, 'the engine')}'s`
-  if (place.zone === 'stack') return 'on the stack'
-  if (place.zone === 'exile') return 'in exile'
-  if (place.zone === 'command') return 'in the command zone'
-  return `in ${whose} ${ZONE_LABELS[place.zone]?.toLowerCase() ?? place.zone}`
-}
+// The prompt panel lives in its own file since M4; its tests and anything else
+// that imported it from here still can.
+export { EnginePrompt, placeWords, stopLine } from './EnginePrompt.jsx'
+
 
 export default function Table({ deck: initialDeck, onOpenCard, room = null, engine = null }) {
   // The deck is kept here because choosing a printing rewrites it, and the
@@ -359,18 +367,48 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   const status = engine ? held.status : null
   const myStop = Boolean(status && status.actor === me && !status.over)
   const offers = myStop && status.waiting === 'action' && Array.isArray(status.actions) ? status.actions : []
+  // The opening hand being kept (protocol 6): the game has not begun, and the
+  // plates and a tap on a card say so rather than speak of a turn. `keeping`
+  // is the part of it before the hand is kept, when the choice is to keep it or
+  // take a mulligan; after, only the cards owed to the bottom are left.
+  const keeping = offers.some((a) => a?.type === 'KeepHand' || a?.type === 'TakeMulligan')
+  const opening = keeping || offers.some((a) => a?.type === 'BottomCards')
+  // What this seat may choose, as the room said after the deal (HANDOFF.md,
+  // M4): nothing at a table the engine does not hold, and nothing where the
+  // relay or the engine is older than choosing.
+  const can = engine ? held.can ?? NO_CHOICES : NO_CHOICES
   // The offer a tap on this card acts: a meaningful one before any other, and
-  // one the table can carry out before one it cannot yet — needing a target it
+  // one the table can carry out before one it cannot — needing a target it
   // cannot send, or a choice in its cost it cannot make (lib/engine/glow.js) —
   // which is kept last so the tap can say why.
   const offerFor = (id) => {
     const mine = offers.filter((a) => a.card === id && a.affordable)
-    return mine.find((a) => a.meaningful && !heldBack(a)) ?? mine.find((a) => !heldBack(a)) ?? mine[0] ?? null
+    return mine.find((a) => a.meaningful && !heldBack(a, can)) ?? mine.find((a) => !heldBack(a, can)) ?? mine[0] ?? null
   }
+  /*
+   * Something being chosen before it is sent (lib/engine/choose.js): a play's
+   * X, what its cost takes, its targets and how its damage is divided, begun by
+   * the tap that found its offer; or a decision whose answer is picked on the
+   * table — a trigger's targets, cards to select, the mana sources to pay with, and the
+   * cards put on the bottom after a mulligan — which the stop that asks it
+   * begins. A choice belongs to the stop it was made at and is dropped the
+   * moment the table moves on, so a pick can never be sent against an offer the
+   * engine has since withdrawn.
+   */
+  const [picking, setPicking] = useState(null)
+  const asked = useMemo(() => {
+    const ch = engine ? beginDecision(status, me) ?? beginBottom(status, me) : null
+    return ch ? { ...ch, stop: status?.stop } : null
+    // The stop is what the decision belongs to.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine, status?.stop, me])
+  const choosing = (picking && picking.stop === status?.stop ? picking : null) ?? asked
+  const setChoosing = useCallback((ch) => setPicking(ch ? { ...ch, stop: status?.stop } : null), [status?.stop])
   // Space passes (HANDOFF.md, M1b): the pass on offer now, read by the key's
-  // handler below through a ref so that one listener serves every stop.
+  // handler below through a ref so that one listener serves every stop. Not
+  // while a play is being chosen: Space there would throw the choice away.
   const passOffer = useRef(null)
-  passOffer.current = engine ? offers.find((a) => a.type === 'PassPriority') ?? null : null
+  passOffer.current = engine && !choosing ? offers.find((a) => a.type === 'PassPriority') ?? null : null
   const actRef = useRef(null)
   actRef.current = held.act
   // Combat is declared by tapping: attackers gathered until "Attack", a
@@ -395,17 +433,42 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   }, [board, chosen, blocks, engine, declaring, me])
 
   /*
+   * Carrying out an offer the engine made, at its table: sent at once where
+   * it needs nothing chosen, or begun as a choice whose last step sends it —
+   * its X, what its cost takes, its targets, how its damage is divided
+   * (lib/engine/choose.js). Whatever was open in the side column is closed,
+   * since the choosing happens on the table and in the prompt.
+   */
+  const choose = (offer) => {
+    const ch = beginPlay(offer, can)
+    if (!ch) { held.act(offer.index); return }
+    setChoosing(ch)
+    setPanel(null)
+  }
+
+  /*
    * Playing a card from hand. A permanent goes to the battlefield, into its
    * row; anything else goes on the stack, because that is where a spell
    * goes. The one tap and the drag both end here.
+   *
+   * At the engine's table, while something is being chosen, a card dragged out
+   * of the hand is a pick for it, as a tap on it is (`answerTap`, below): a
+   * card to put on the bottom, a card to discard. Until M4's review a drag
+   * looked for a play instead, and in the bottoming step said to keep the hand
+   * or take a mulligan, a hand already kept. `answerTap` is defined with the
+   * other taps, after the table's early return, so it is reached by a ref.
    */
+  const answerTapRef = useRef(null)
   const play = useCallback((id, point = {}) => {
     const inst = board?.cards[id]
     if (!inst) return
     if (engine) {
+      if (choosing) { answerTapRef.current?.(id); return }
       const offer = offerFor(id)
-      if (offer && heldBack(offer)) held.refuse(cannotDo(offer, nameOf(board, id, lookup)))
-      else if (offer) held.act(offer.index)
+      if (offer && heldBack(offer, can)) held.refuse(cannotDo(offer, nameOf(board, id, lookup), can))
+      else if (offer) choose(offer)
+      else if (keeping) held.refuse('Keep this hand or take a mulligan first: nothing is played before the game begins.')
+      else if (opening) held.refuse('Choose the cards to put on the bottom first: nothing is played before the game begins.')
       else held.refuse(myStop ? 'The engine does not offer that card now.' : 'It is not your stop.')
       return
     }
@@ -415,7 +478,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
       ? { type: 'move', id, zone: 'stack' }
       : { type: 'move', id, zone: 'battlefield', ...point })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [board, deckLookup, doAction, engine, offers, myStop, held, lookup])
+  }, [board, deckLookup, doAction, engine, offers, myStop, held, lookup, can, opening, keeping, choosing])
 
   /*
    * A released card goes where the most specific thing under the pointer
@@ -580,29 +643,23 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   // What glows, and what each glow says (lib/engine/glow.js). Only the
   // engine's table has any: the table played by hand knows nothing of what a
   // card can do, and says so rather than guessing.
-  const glows = engine ? glowsAt({ status, me, zoneOf: (id) => board.cards[id]?.zone, chosen, blocks, blocker }) : NO_GLOW
+  const glows = engine ? glowsAt({ status, me, zoneOf: (id) => board.cards[id]?.zone, chosen, blocks, blocker, can, choosing }) : NO_GLOW
   const glowOf = (id) => glows.get(id) ?? null
   // Where a card is and whose it is, for the words that say where something is.
   const placeOf = (id) => { const inst = board.cards[id]; return inst ? { zone: inst.zone, owner: inst.owner ?? inst.controller ?? null } : null }
   // Plays the engine offers for a card in a pile rather than in hand or on the
   // battlefield: a flashback in the graveyard. No tap on the table reaches
   // them, so the prompt names them and the pile's tile says it holds one.
-  const elsewhere = engine ? offeredElsewhere(status, (id) => board.cards[id]?.zone) : []
+  const elsewhere = engine ? offeredElsewhere(status, (id) => board.cards[id]?.zone, can) : []
   /**
    * What a pile's tile says it holds, when something in it is part of what the
    * engine is asking now: a legal target (a trigger aimed at a card in a
-   * graveyard), or a card with a play on offer. The tile is where a player
-   * looks for a pile, and the cards inside glow only once it is opened, so the
-   * tile carries the edge and the words.
+   * graveyard), a card something else being chosen can take (a cost exiling
+   * from the graveyard), or a card with a play on offer. The tile is where a
+   * player looks for a pile, and the cards inside glow only once it is opened,
+   * so the tile carries the edge and the words.
    */
-  const pileHolds = (who, zone) => {
-    if (!engine) return null
-    const ids = board.zones[who]?.[zone] ?? []
-    if (ids.some((id) => glows.get(id)?.kind === 'target')) return 'target'
-    const here = elsewhere.filter(({ offer }) => ids.includes(offer.card))
-    if (!here.length) return null
-    return here.some(({ offer }) => offer.type !== 'ActivateAbility') ? 'play' : 'use'
-  }
+  const pileHolds = (who, zone) => (engine ? pileHolding(board.zones[who]?.[zone] ?? [], glows, elsewhere) : null)
 
   /*
    * One tap. In hand it plays the card; on the battlefield it taps it; in a
@@ -629,17 +686,14 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     else setPanel('actions')
   }
   /*
-   * One tap, at the engine's table. A target being asked for is answered
-   * by it; a card in hand is played through the offer the engine made for
-   * it; a creature is gathered into the attack or the block being
-   * declared; a permanent with an ability the engine offers activates it.
-   * Anything else picks the card up, as a hold does.
+   * One tap, at the engine's table. While something is being chosen, the tap
+   * answers it (`answerTap`); otherwise a card in hand is played through the
+   * offer the engine made for it; a creature is gathered into the attack or the
+   * block being declared; a permanent with an ability the engine offers
+   * activates it. Anything else picks the card up, as a hold does.
    */
   const touchHeld = (id, inst) => {
-    if (status?.waiting === 'decision' && status.actor === me && status.decision?.type === 'ChooseTargets') {
-      const req = status.decision.requirements?.find((r) => r.legal?.includes(id))
-      if (req) { held.decide({ targets: { [req.index]: [id] } }); return }
-    }
+    if (choosing) { answerTap(id); return }
     if (inst.zone === 'hand') { play(id); return }
     if (inst.zone === 'battlefield') {
       if (declaring?.validAttackers?.includes(id)) {
@@ -655,11 +709,58 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
         }
       }
       const abilities = offers.filter((a) => a.card === id && a.type === 'ActivateAbility' && !a.mana && a.affordable)
-      const ability = abilities.find((a) => !heldBack(a))
-      if (ability) { held.act(ability.index); return }
-      if (abilities.length) { held.refuse(cannotDo(abilities[0], nameOf(board, id, lookup))); return }
+      const ability = abilities.find((a) => !heldBack(a, can))
+      if (ability) { choose(ability); return }
+      if (abilities.length) { held.refuse(cannotDo(abilities[0], nameOf(board, id, lookup), can)); return }
     }
     setPanel('actions')
+  }
+  /*
+   * A pick for what is being chosen, from a tap on the table or a button in
+   * the prompt. A step that takes one thing and now has it goes straight on
+   * (`complete`), as a trigger's single target always has; the last step sends
+   * the whole choice, as a play's `act` or a decision's answer.
+   */
+  const pick = (id) => {
+    const next = toggle(choosing, id)
+    if (complete(next)) goOn(next)
+    else setChoosing(next)
+  }
+  /*
+   * A tap, or a card dragged from hand, while something is being chosen: it
+   * picks what the step can take — a target, a card to pay with, a card to
+   * select or to put on the bottom — and says why not where it cannot. A tap on
+   * the source of the play being chosen lets the play go, but only where the
+   * step cannot take it: an ability's source may pay its own cost or be its own
+   * target (`pickable`), and there the tap picks it (found in M4's review,
+   * where it let the play go and the only way on was the engine's choice).
+   */
+  const answerTap = (id) => {
+    if (pickable(choosing).includes(id)) { pick(id); return }
+    if (choosing.from === 'play' && id === choosing.source) { setChoosing(null); return }
+    held.refuse(notPickable(stepOf(choosing), nameOf(board, id, lookup), choosing.from === 'play' ? nameOf(board, choosing.source, lookup) : status?.decision?.source))
+  }
+  answerTapRef.current = answerTap
+  // A play and the cards put on the bottom are offers, sent as the offer's act;
+  // anything else being chosen is a decision's answer.
+  const offered = (ch) => ch?.from === 'play' || ch?.from === 'bottom'
+  const goOn = (ch = choosing) => {
+    const { ch: next, done } = advance(ch)
+    if (!done) { setChoosing(next); return }
+    setChoosing(null)
+    if (offered(next)) held.act(next.offer.index, answerOf(next))
+    else held.decide(answerOf(next))
+  }
+  // "Let the engine choose": the play's choices made by the engine for the
+  // player, every one of them, those already made here included, since the
+  // engine chooses a play whole and reads nothing sent beside `auto`; the cards
+  // to put on the bottom picked by it; or the decision answered by it
+  // (Server.kt, `auto`). The prompt says which.
+  const chooseForMe = () => {
+    const ch = choosing
+    setChoosing(null)
+    if (offered(ch)) held.act(ch.offer.index, { auto: true })
+    else held.decide({ auto: true })
   }
   // The long way in: pick the card up without doing anything to it.
   const hold = (id) => { setSelected(id); setAiming(null); setPanel('actions') }
@@ -730,7 +831,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
           <div className={`game__them game__them--seated${sitting?.here ? '' : ' game__them--away'}`} key={them} data-seat={them}>
             <Plate
               who="them"
-              status={thinking ? THINKING : !sitting ? 'Open seat' : !sitting.here ? 'Away' : board.active === them ? 'Their turn' : 'Waiting'}
+              status={thinking ? THINKING : !sitting ? 'Open seat' : !sitting.here ? 'Away' : opening ? 'Waiting' : board.active === them ? 'Their turn' : 'Waiting'}
               thinking={thinking}
               active={board.active === them}
               target={glows.get(them)?.kind === 'target'}
@@ -760,7 +861,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                     // picture of a pile with a count, and says so, or its
                     // label is thrown away (found by the axe sweep, 2026-09-22).
                     role={open ? undefined : 'img'}
-                    className={`ztile${open ? '' : ' ztile--closed'}${zoneOpen === zone && zoneWho === them ? ' ztile--open' : ''}${holds ? ` ztile--${holds === 'target' ? 'target' : 'playable'}` : ''}`}
+                    className={`ztile${open ? '' : ' ztile--closed'}${zoneOpen === zone && zoneWho === them ? ' ztile--open' : ''}${holds ? ` ztile--${holds === 'target' || holds === 'choice' ? 'target' : 'playable'}` : ''}`}
                     onClick={open ? () => openZone(zone, them) : undefined}
                     aria-expanded={open ? zoneOpen === zone && zoneWho === them : undefined}
                     aria-label={`${nameOfSeat(them)}'s ${ZONE_LABELS[zone].toLowerCase()}, ${n} card${n === 1 ? '' : 's'}${holds ? `, ${PILE_SAYS[holds]}` : ''}`}
@@ -878,6 +979,15 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             players={board.players}
             nameOf={(id) => nameOf(board, id, lookup)}
             nameOfSeat={nameOfSeat}
+            can={can}
+            choosing={choosing}
+            onPick={pick}
+            onChange={setChoosing}
+            onDone={() => goOn()}
+            onChooseForMe={chooseForMe}
+            onLetGo={() => setChoosing(null)}
+            handSize={hand.length}
+            active={board.active}
             onAct={(index, extra) => held.act(index, extra)}
             onDecide={(params) => held.decide(params)}
           />
@@ -889,7 +999,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
         <div className="game__seat">
           <Plate
             who="you"
-            status={myTurn ? step.name : 'Waiting'}
+            status={opening ? 'Opening hand' : myTurn ? step.name : 'Waiting'}
             active={myTurn}
             target={glows.get(me)?.kind === 'target'}
             name={away ? (prefs.playerName || 'You') : 'You'}
@@ -992,7 +1102,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
               <button
                 key={zone}
                 data-zone={zone}
-                className={`ztile${isOpen ? ' ztile--open' : ''}${holds ? ` ztile--${holds === 'target' ? 'target' : 'playable'}` : ''}`}
+                className={`ztile${isOpen ? ' ztile--open' : ''}${holds ? ` ztile--${holds === 'target' || holds === 'choice' ? 'target' : 'playable'}` : ''}`}
                 onClick={() => openZone(zone)}
                 aria-expanded={isOpen}
                 aria-label={`${ZONE_LABELS[zone]}, ${n} card${n === 1 ? '' : 's'}${holds ? `, ${PILE_SAYS[holds]}` : ''}`}
@@ -1072,7 +1182,8 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             name={selectedInst ? nameFor(selectedInst) : null}
             card={selectedInst ? cardFor(selectedInst) : null}
             myStop={myStop}
-            onAct={(index) => held.act(index)}
+            can={can}
+            onAct={(offer) => choose(offer)}
             onInspect={() => { const card = selectedInst ? cardFor(selectedInst) : null; if (card) onOpenCard(card) }}
             onClose={() => setPanel(null)}
           />
@@ -1243,230 +1354,27 @@ function Plate({ who, status, active = false, thinking = false, target = false, 
 }
 
 /**
- * The opening hand, floating on the battlefield the way Moxgate's does. Not
- * a modal: the hand is right there to look at while deciding.
- *
- * A London mulligan draws seven again and puts one more on the bottom each
- * time. Putting them there is the player's own job afterwards, as in paper;
- * the prompt says how many so it is not forgotten.
- */
-/**
- * The prompt panel at the engine's table, after Moxgate's (TARGET.md §8):
- * where the game stands and what is asked, with every button saying what
- * pressing it does. It appears only when there is something to answer or
- * a pass to make; the engine never stops the player where there is
- * nothing to do, so a quiet table is one where it is not their stop.
- *
- * A paced table stops after each of the engine's own plays, and those stops
- * name the engine's seat as the actor, so this says nothing through the whole
- * of the engine's turn — Moxgate's own behaviour. What is happening is on the
- * engine's plate, and what happened is in the log.
- *
- * Exported for its tests, which render it against statuses the engine sent.
- * `glows` is the table's (lib/engine/glow.js); `elsewhere` the plays offered
- * for cards in a pile (`offeredElsewhere`); `placeOf` says where a card is and
- * whose, so a sentence about a target or a play can say where to find it.
- */
-export function EnginePrompt({
-  status, me, step, chosen = new Set(), blocks = {}, blocker = null, declaring = null, blocking = null,
-  glows = NO_GLOW, elsewhere = [], placeOf = () => null, players = [], nameOf, nameOfSeat, onAct, onDecide,
-}) {
-  if (status.over) {
-    return (
-      <div className="prompt" role="status" aria-label="Game over">
-        <div className="prompt__lead">
-          <strong className="prompt__title">Game over</strong>
-          <span className="prompt__sub">{status.winner === me ? 'You won.' : status.winner ? 'The engine won.' : 'A draw.'}</span>
-        </div>
-      </div>
-    )
-  }
-  if (status.actor !== me) return null
-  if (status.waiting === 'decision' && status.decision) {
-    const d = status.decision
-    // A target being chosen: the legal cards glow, and are tapped; a seat that
-    // is a legal target is offered here by name, because a plate is not a card
-    // to tap. The first requirement a seat is legal for takes it, as a tapped
-    // card's does (touchHeld).
-    const aimed = d.type === 'ChooseTargets' && Array.isArray(d.requirements) ? d.requirements : []
-    const seats = players
-      .map((p) => ({ p, req: aimed.find((r) => Array.isArray(r?.legal) && r.legal.includes(p)) }))
-      .filter((s) => s.req)
-    // Where the legal cards are. On the battlefield and in hand they glow in
-    // sight; in a pile or on the stack they glow only once the pile is opened
-    // or the stack read, so the sentence says where they are rather than
-    // promising a glow nobody can see (found in M3's review: a trigger aimed at
-    // a card in a graveyard said "the legal targets glow" over a table where
-    // nothing did).
-    const legal = [...new Set(aimed.flatMap((r) => (Array.isArray(r?.legal) ? r.legal : [])).filter((id) => typeof id === 'string' && !players.includes(id)))]
-    const away = [...new Set(legal.map((id) => placeWords(placeOf(id), me, nameOfSeat)).filter(Boolean))]
-    const inSight = seats.length > 0 || legal.some((id) => !placeWords(placeOf(id), me, nameOfSeat))
-    const piles = away.filter((w) => w !== 'on the stack')
-    const reach = piles.length ? `open ${piles.length === 1 ? 'it' : 'them'} to tap one` : 'tap one there'
-    const aimLine = !away.length
-      ? `Tap what ${d.source || 'it'} is aimed at: the legal targets glow.`
-      : inSight
-        ? `Tap what ${d.source || 'it'} is aimed at: the legal targets glow, and some are ${nameList(away, Infinity)} — ${reach}.`
-        : `Tap what ${d.source || 'it'} is aimed at: the legal targets are ${nameList(away, Infinity)} — ${reach}.`
-    return (
-      <div className="prompt" role="group" aria-label="The engine asks">
-        <div className="prompt__lead">
-          <strong className="prompt__title">{d.prompt}</strong>
-          <span className="prompt__sub">
-            {d.type === 'ChooseTargets'
-              ? aimLine
-              : d.source ? `From ${d.source}.` : 'The engine is asking.'}
-          </span>
-        </div>
-        {seats.map(({ p, req }) => (
-          <button key={p} className="btn btn--sm prompt__btn" onClick={() => onDecide({ targets: { [req.index]: [p] } })}>
-            {p === me ? 'Aim at yourself' : `Aim at ${(nameOfSeat?.(p) ?? 'them').replace(/^The engine$/, 'the engine')}`}
-          </button>
-        ))}
-        {d.type === 'YesNo' && (
-          <>
-            <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onDecide({ yes: true })}>{d.yesText ?? 'Yes'}</button>
-            <button className="btn btn--sm prompt__btn" onClick={() => onDecide({ yes: false })}>{d.noText ?? 'No'}</button>
-          </>
-        )}
-        {d.type === 'ChooseOption' && (d.options ?? []).map((option, i) => (
-          <button key={option} className="btn btn--sm prompt__btn" onClick={() => onDecide({ option: i })}>{option}</button>
-        ))}
-        {d.type !== 'YesNo' && d.type !== 'ChooseOption' && (
-          <button className="btn btn--ghost btn--sm prompt__btn" onClick={() => onDecide({ auto: true })}>
-            Let the engine choose
-            <span className="prompt__hint">It will say what it chose</span>
-          </button>
-        )}
-      </div>
-    )
-  }
-  if (status.waiting !== 'action') return null
-  if (declaring) {
-    const target = declaring.validAttackTargets?.[0]
-    const attackers = Object.fromEntries([...chosen].map((id) => [id, target]))
-    return (
-      <div className="prompt" role="group" aria-label="Your attack">
-        <div className="prompt__lead">
-          <strong className="prompt__title">Your attack</strong>
-          <span className="prompt__sub">{chosen.size ? [...chosen].map(nameOf).join(', ') : 'Tap the creatures that attack.'}</span>
-        </div>
-        <button className="btn btn--primary btn--sm prompt__btn" disabled={!chosen.size} onClick={() => onAct(declaring.index, { attackers })}>
-          Attack with {chosen.size} →
-        </button>
-        <button className="btn btn--sm prompt__btn" onClick={() => onAct(declaring.index, { attackers: {} })}>No attack</button>
-      </div>
-    )
-  }
-  if (blocking) {
-    const n = Object.keys(blocks).length
-    return (
-      <div className="prompt" role="group" aria-label="Their attack">
-        <div className="prompt__lead">
-          <strong className="prompt__title">Their attack</strong>
-          <span className="prompt__sub">{blocker ? `${nameOf(blocker)} blocks — tap the attacker.` : n ? `${n} block${n === 1 ? '' : 's'} declared.` : 'Tap a blocker, then the attacker it blocks.'}</span>
-        </div>
-        <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onAct(blocking.index, { blockers: blocks })}>
-          {n ? `Block with ${n} →` : 'No blocks →'}
-        </button>
-      </div>
-    )
-  }
-  const pass = (status.actions ?? []).find((a) => a.type === 'PassPriority')
-  const sub = stopLine({ status, me, glows, elsewhere, placeOf, nameOf, nameOfSeat })
-  return (
-    <div className="prompt" role="group" aria-label="Your stop">
-      <div className="prompt__lead">
-        <strong className="prompt__title">{step.name}</strong>
-        <span className="prompt__sub">{sub}</span>
-      </div>
-      {pass && (
-        <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onAct(pass.index)} aria-keyshortcuts="Space">
-          Pass →
-          {/* Said once, here, rather than on every button that passes. */}
-          <span className="prompt__hint prompt__key">or press Space</span>
-        </button>
-      )}
-    </div>
-  )
-}
-
-/**
- * What a stop of the player's is for, in words, so the glow is not the only
- * thing saying it (HANDOFF.md, M1b). Every kind of reason the engine stopped
- * is said as what it is: a card in hand that can be played, and a permanent
- * whose ability can be used, which is not a card being played —
- * docs/TURN_STRUCTURE.md keeps casting a spell, playing a land and activating
- * an ability apart (117.4, 305.2, 505.6a–b); a play offered for a card in a
- * pile, which no tap on the table reaches and the actions panel does; and,
- * where nothing else is offered, the plays this table cannot carry out yet
- * with the reason for each, so a stop made for one of those alone still says
- * why it is a stop at all.
- *
- * Pure, and exported for its tests.
- */
-export function stopLine({ status, me, glows = NO_GLOW, elsewhere = [], placeOf = () => null, nameOf = (id) => id, nameOfSeat }) {
-  const lit = [...glows.values()].filter((g) => g?.kind === 'playable')
-  const plays = lit.filter((g) => g.says === GLOW_SAYS.play).length
-  const uses = lit.length - plays
-  const named = (list) => [...new Set(list.map((a) => (a.card ? nameOf(a.card) : a.description)).filter(Boolean))]
-  const lines = []
-
-  if (lit.length) {
-    const parts = []
-    if (plays) parts.push(plays === 1 ? 'the card you can play' : `the ${plays} cards you can play`)
-    if (uses) parts.push(uses === 1 ? 'the permanent with an ability you can use' : `the ${uses} permanents with abilities you can use`)
-    const said = parts.join(' and ')
-    lines.push(`${said.charAt(0).toUpperCase()}${said.slice(1)} ${lit.length === 1 ? 'glows' : 'glow'}. Tap ${lit.length === 1 ? 'it' : 'one'}, or pass.`)
-  }
-
-  if (elsewhere.length) {
-    const items = [...new Set(elsewhere.map(({ offer }) => {
-      const name = nameOf(offer.card)
-      const what = offer.type === 'ActivateAbility' ? `use an ability of ${name}` : `play ${name}`
-      const where = placeWords(placeOf(offer.card), me, nameOfSeat)
-      return where ? `${what} ${where.replace(/^(in|on) /, 'from ')}` : what
-    }))]
-    const them = elsewhere.length === 1 ? 'it' : 'them'
-    lines.push(lit.length
-      ? `You can also ${nameList(items, Infinity)}: find ${them} under Actions.`
-      : `You can ${nameList(items, Infinity)}: find ${them} under Actions, or pass.`)
-  }
-  if (lines.length) return lines.join(' ')
-
-  const aimless = named(unaimed(status))
-  const costly = named(unpaid(status))
-  if (aimless.length || costly.length) {
-    if (aimless.length) lines.push(`${nameList(aimless, Infinity)} ${aimless.length === 1 ? 'needs' : 'need'} a target, which this table cannot choose yet.`)
-    if (costly.length) lines.push(`${nameList(costly, Infinity)} ${costly.length === 1 ? 'needs a choice made for its cost' : 'need a choice made for their costs'}, which this table cannot make yet.`)
-    return `${lines.join(' ')} Pass to go on.`
-  }
-  // Anything else the engine counts as a play and no card carries.
-  const loose = (status?.actions ?? []).some((a) => a && a.meaningful && a.affordable && !a.mana && !a.card && !heldBack(a) && a.type !== 'PassPriority')
-  return loose ? 'Something is offered under Actions, or pass.' : 'Nothing to do here but pass.'
-}
-
-/**
  * What the engine offers, as a list: the actions panel at its table. The
  * card last touched comes first; mana abilities are counted rather than
  * listed, because the engine pays for spells itself.
  */
-function EngineActions({ offers, selected, name, card, myStop, onAct, onInspect, onClose }) {
+function EngineActions({ offers, selected, name, card, myStop, can = NO_CHOICES, onAct, onInspect, onClose }) {
   const listed = offers.filter((a) => !a.mana && a.type !== 'PassPriority')
   const mine = selected ? listed.filter((a) => a.card === selected.id) : []
   const rest = listed.filter((a) => !mine.includes(a))
   const mana = offers.filter((a) => a.mana).length
-  // An offer needing a target, or with a choice in its cost, is listed, so
-  // nothing the engine offers is hidden, but not pressable: this table sends
-  // neither yet, and the engine would refuse it (lib/engine/glow.js).
+  // An offer needing a target, or with a choice in its cost, that this seat
+  // cannot send is listed, so nothing the engine offers is hidden, but not
+  // pressable: the engine would refuse it (lib/engine/glow.js). One this seat
+  // can send begins choosing, as a tap on its card does.
   const row = (a) => {
-    const held = heldBack(a)
+    const held = heldBack(a, can)
     const why = !a.affordable ? 'Not affordable now'
       : held === 'target' ? 'Needs a target, which this table cannot choose yet'
         : held === 'cost' ? 'Needs a choice made for its cost, which this table cannot make yet'
           : undefined
     return (
-      <button key={a.index} className={`btn btn--sm ${a.meaningful && !why ? '' : 'btn--ghost'}`} disabled={Boolean(why)} onClick={() => onAct(a.index)} title={why}>
+      <button key={a.index} className={`btn btn--sm ${a.meaningful && !why ? '' : 'btn--ghost'}`} disabled={Boolean(why)} onClick={() => onAct(a)} title={why}>
         {a.description}{a.manaCost ? ` · ${a.manaCost}` : ''}
       </button>
     )
@@ -1483,17 +1391,29 @@ function EngineActions({ offers, selected, name, card, myStop, onAct, onInspect,
       {mine.length > 0 && <div className="row row--wrap">{mine.map(row)}</div>}
       {rest.length > 0 && <div className="row row--wrap">{rest.map(row)}</div>}
       {!listed.length && <p className="faint tiny m0">{myStop ? 'Nothing but passing is offered here.' : 'The engine is not waiting on you.'}</p>}
-      {listed.some((a) => a.affordable && heldBack(a) === 'target') && (
+      {listed.some((a) => a.affordable && heldBack(a, can) === 'target') && (
         <p className="faint tiny m0">What needs a target cannot be played here yet: this table does not choose targets for a spell or an ability.</p>
       )}
-      {listed.some((a) => a.affordable && heldBack(a) === 'cost') && (
-        <p className="faint tiny m0">What needs a choice made for its cost cannot be played here yet: this table does not choose what a cost takes, such as a card to discard or a creature to sacrifice.</p>
+      {listed.some((a) => a.affordable && heldBack(a, can) === 'cost') && (
+        <p className="faint tiny m0">
+          {can.act.has('cost')
+            ? 'What needs a choice made for its cost cannot be played here yet where it is a kind of cost the engine at this table cannot take a choice for.'
+            : 'What needs a choice made for its cost cannot be played here yet: this table does not choose what a cost takes, such as a card to discard or a creature to sacrifice.'}
+        </p>
       )}
       {mana > 0 && <p className="faint tiny m0">{mana} mana abilit{mana === 1 ? 'y' : 'ies'} the engine pays with itself.</p>}
     </section>
   )
 }
 
+/**
+ * The opening hand, floating on the battlefield the way Moxgate's does. Not
+ * a modal: the hand is right there to look at while deciding.
+ *
+ * A London mulligan draws seven again and puts one more on the bottom each
+ * time. Putting them there is the player's own job afterwards, as in paper;
+ * the prompt says how many so it is not forgotten.
+ */
 function OpeningHand({ count, mulligans, onMulligan, onKeep }) {
   const owed = Math.min(mulligans + 1, OPENING_HAND)
   return (

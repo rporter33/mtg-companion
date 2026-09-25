@@ -16,6 +16,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import useEngineRoom, { SLOW_MS } from '../src/features/game/useEngineRoom.js'
+import { ANSWERS, NO_CHOICES } from '../src/lib/engine/choose.js'
 // Imported rather than read off disk: this file runs in a browser-shaped
 // environment, where a path is not a thing there is.
 import FIXTURE from './fixtures/engine-views.json'
@@ -98,6 +99,54 @@ describe('sitting down at an enforced room', () => {
     const sit = socket.sent.find((m) => m.op === 'sit')
     expect(sit).toMatchObject({ t: 'engine', op: 'sit', name: 'You', deltas: true })
     expect(sit.deck).toEqual({ Mountain: { count: 14, set: 'por', number: '208' }, 'Raging Goblin': { count: 6, set: 'por', number: '134' } })
+  })
+
+  it('says it can show a mulligan, so a room deals the opening hands to keep (M4; the owner\'s "mulligans on")', async () => {
+    const socket = await mount()
+    expect(socket.sent.find((m) => m.op === 'sit').mulligans).toBe(true)
+  })
+
+  it('sends the cards put on the bottom with the offer\'s act, as a play\'s choices go', async () => {
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic' })
+    await deliver(socket, { op: 'status', status: { actor: YOU, waiting: 'action', stop: 1, turn: 1, actions: [{ index: 0, type: 'BottomCards', description: 'Put 1 card on the bottom of your library', affordable: true, meaningful: true, mulligans: 1, bottom: 1, candidates: ['e5', 'e6'] }] } })
+    await act(async () => { room.act(0, { cards: ['e6'] }) })
+    expect(socket.sent.find((m) => m.op === 'act')).toMatchObject({ t: 'engine', op: 'act', stop: 1, index: 0, cards: ['e6'] })
+  })
+})
+
+describe('what this seat may choose (M4)', () => {
+  it('says in its sit which decisions it can show, so the engine asks them rather than answers them', async () => {
+    const socket = await mount()
+    expect(socket.sent.find((m) => m.op === 'sit').answers).toEqual(ANSWERS)
+  })
+
+  it('may choose nothing until the room says after the deal, and then what the room said', async () => {
+    const socket = await mount()
+    expect(room.can).toBe(NO_CHOICES)
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: null })
+    expect(room.can).toBe(NO_CHOICES)
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic', choices: { act: ['targets', 'cost'], costs: ['DiscardCard'], decisions: ['ChooseTargets', 'SelectCards'] } })
+    expect([...room.can.act]).toEqual(['targets', 'cost'])
+    expect(room.can.decisions.has('SelectCards')).toBe(true)
+  })
+
+  it('reads a room that says nothing of choices, or something unreadable, as nothing to choose', async () => {
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null })
+    expect(room.can).toBe(NO_CHOICES)
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, choices: 'all of them' })
+    expect(room.can).toBe(NO_CHOICES)
+  })
+
+  it('sends what was chosen with the play, and a decision\'s answer as it was given', async () => {
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null }, ...stop(RUN.views[0], 1))
+    act(() => { room.act(1, { targets: { 0: ['e1'] }, x: 2 }) })
+    expect(socket.sent.at(-1)).toMatchObject({ t: 'engine', op: 'act', stop: 1, index: 1, targets: { 0: ['e1'] }, x: 2 })
+    await deliver(socket, { op: 'status', status: { ...RUN.views[1].status, stop: 2 } })
+    act(() => { room.decide({ order: ['e7', 'e37'] }) })
+    expect(socket.sent.at(-1)).toMatchObject({ t: 'engine', op: 'decide', stop: 2, order: ['e7', 'e37'] })
   })
 })
 
@@ -221,6 +270,11 @@ describe('what the engine did for you', () => {
 
     const entry = RUN.views.find((v, i) => i > 0 && v.status.autoPassed > 0 && v.log.some((l) => l.description))
     expect(entry, 'the capture holds a stop with passed windows and lines').toBeTruthy()
+    // The views before it arrive first, in order, as they would: a delta
+    // follows only the one before it, and one after a gap waits for the table
+    // whole. (Since M4's capture the run opens with the hand to keep, so the
+    // first such stop is no longer the run's second.)
+    for (const v of RUN.views.slice(1, entry.at)) await deliver(socket, ...stop(v, v.at + 1))
     const before = said().length
     await deliver(socket, ...stop(entry, entry.at + 1))
     const fresh = said().slice(before)

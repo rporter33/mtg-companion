@@ -350,6 +350,31 @@
 .btn--primary .prompt__hint { color: inherit; }
 /* A key to press means nothing on a screen with no keyboard to press it on. */
 @media (hover: none) and (pointer: coarse) { .prompt__key { display: none; } }
+/*
+ * What a decision or a choice sets in the prompt itself — an order, a
+ * division, combat damage, cards named because the table cannot show them —
+ * takes a line of its own under the words, so the buttons that answer stay
+ * together in a row below it. Long lists scroll inside the prompt rather than
+ * push it up over the battlefield it sits on.
+ */
+.prompt__body {
+  flex: 1 0 100%;
+  display: flex; flex-wrap: wrap; gap: var(--space-1); justify-content: center;
+  max-height: 11rem; overflow: auto;
+  margin: 0; padding: 0;
+}
+.prompt__rows { flex-direction: column; flex-wrap: nowrap; align-items: stretch; list-style: none; }
+.prompt__row, .prompt__group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+.prompt__group { flex-direction: column; align-items: stretch; padding: var(--space-1) 0; border-top: 1px solid var(--border); }
+.prompt__group:first-child { border-top: 0; }
+.prompt__rowname { flex: 1 1 auto; font-size: var(--text-sm); }
+.prompt .btn[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+/* A number with a button either side: the label is read from the buttons and the output, so it is not read twice. */
+.stepper { display: inline-flex; align-items: center; gap: var(--space-1); }
+.stepper__label { font-size: var(--text-sm); min-width: 0; }
+.prompt__rows .stepper__label { flex: 1 1 auto; }
+.stepper__btn { min-width: 2rem; justify-content: center; }
+.stepper__value { min-width: 1.6rem; text-align: center; font-variant-numeric: tabular-nums; font-weight: 700; }
 
 .game__aim { margin: 0; }
 /* The field's own "drag a card up" line would show through under the prompt. */

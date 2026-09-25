@@ -27,9 +27,15 @@ describe.skipIf(!command)('the engine on the wire', () => {
 
   it('says who it is, and knows the whole corpus rather than one set', async () => {
     expect(hello.engine).toBe('argentum')
-    expect(hello.protocol).toBe(4)
+    expect(hello.protocol).toBe(6)
     // The levels, weakest first, each Argentum's own profile (Server.kt, LEVELS).
     expect(hello.levels).toEqual({ easy: 'v0', intermediate: 'production-raceclock', hard: 'production-candidate-expiring' })
+    // What a person may choose (protocol 5): what `act` takes, the costs it can
+    // pay with a choice, and the decisions it can put to them; and since
+    // protocol 6, the cards put on the bottom after a mulligan.
+    expect(hello.choices.act).toEqual(['targets', 'x', 'damage', 'cost', 'auto', 'cards'])
+    expect(hello.choices.costs).toContain('DiscardCard')
+    expect(hello.choices.decisions).toEqual(expect.arrayContaining(['ChooseTargets', 'YesNo', 'ChooseOption', 'SelectCards', 'OrderObjects', 'ReorderLibrary', 'Distribute', 'CombatResolution', 'SelectManaSources', 'ChooseNumber', 'ChooseColor', 'ChooseMode', 'BatchYesNo']))
     expect(hello.cards).toBeGreaterThan(12_000)
     expect(hello.sets.length).toBeGreaterThan(100)
     expect(hello.sets.find((s) => s.code === 'POR')).toEqual({ code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false })
@@ -384,6 +390,66 @@ describe.skipIf(!command)('the engine on the wire', () => {
     expect(longestDelta).toBeLessThan(whole.log.length / 2)
   }, 300_000)
 
+  it('stops after the engine\'s attacks and its blocks, and after a spell it aims, which are plays as much as a land is', async () => {
+    // Until M4 the engine's choice was matched to its offer by equality, and a
+    // choice comes back filled in — its attackers, its blockers, its targets —
+    // so none of those was ever a stop: eight paced games measured on
+    // 2026-09-24 stopped only in main phases. The person here attacks with
+    // everything, so the engine has attacks to block.
+    let status = await engine.call('new', {
+      players: [{ name: 'You', deck, autoPass: true }, { name: 'Bot', deck, ai: 'heuristic', level: 'easy' }],
+      seed: 1,
+      pace: true,
+    })
+    const [you, bot] = status.seats.map((s) => s.id)
+    const seen = { attacks: 0, blocks: 0, aimed: 0, empty: 0 }
+    let heard = 0
+    for (let steps = 0; !status.over && steps < 400; steps++) {
+      // What was said since the stop before this one: at one of the engine's,
+      // what it did to earn the stop.
+      const { state, log } = await engine.call('view', { viewer: you })
+      const since = log.slice(heard).map((l) => l.description)
+      heard = log.length
+      if (status.waiting === 'engine') {
+        const combat = state.combat
+        // A spell resolves inside the step that casts it (the gym's step passes
+        // for both players while the stack holds anything), so an aimed spell
+        // is watched once it has landed. It is counted only where this stop is
+        // the Hammer's own: its lines end with the Hammer resolving and what that
+        // did, and nothing the engine did after it — an attack, a block, a land,
+        // another cast. Were the Hammer no stop, its lines would arrive with the
+        // next stop's, behind that stop's own action (found in M4's review: the
+        // last cast alone was still the Hammer's at the attack that followed it).
+        const cast = since.findLastIndex((d) => /^Opponent cast /.test(d))
+        const after = cast >= 0 && /^Opponent cast Volcanic Hammer targeting /.test(since[cast]) ? since.slice(cast + 1) : null
+        if (after && after.includes('Volcanic Hammer resolved') && !after.some((d) => / attacked$| blocked |entered the battlefield$/.test(d))) seen.aimed++
+        if (status.step === 'DECLARE_ATTACKERS') {
+          if (combat?.attackingPlayerId === bot && combat.attackers.length) seen.attacks++
+          else seen.empty++
+        }
+        if (status.step === 'DECLARE_BLOCKERS') {
+          if (combat?.blockers?.length) seen.blocks++
+          else seen.empty++
+        }
+        status = await engine.call('continue')
+        continue
+      }
+      if (status.waiting === 'decision') { status = await engine.call('decide', { auto: true }); continue }
+      if (status.waiting !== 'action') break
+      const attack = status.actions.find((a) => a.type === 'DeclareAttackers' && a.meaningful)
+      const block = status.actions.find((a) => a.type === 'DeclareBlockers')
+      if (attack) status = await engine.call('act', { index: attack.index, attackers: Object.fromEntries(attack.validAttackers.map((id) => [id, attack.validAttackTargets[0]])) })
+      else if (block) status = await engine.call('act', { index: block.index, blockers: {} })
+      else status = await engine.call('act', { index: plainest(status).index })
+    }
+    expect(seen.attacks).toBeGreaterThan(0)
+    expect(seen.blocks).toBeGreaterThan(0)
+    // Volcanic Hammer, cast by the engine at a target of its choosing, watched as a play of its own.
+    expect(seen.aimed).toBeGreaterThan(0)
+    // A declaration of nothing is still no play, and no stop.
+    expect(seen.empty).toBe(0)
+  }, 300_000)
+
   it('plays the same game paced and unpaced, so the stopping is all a pace changed', async () => {
     // The same seed, the same decks, the same player: the course is every stop
     // the player was given and what was done there, and then who won.
@@ -540,12 +606,12 @@ describe.skipIf(!command)('the engine on the wire', () => {
     }, 300_000)
   })
 
-  it('says when an offer\'s cost has a choice in it, which a bare act cannot make', async () => {
+  it('says when an offer\'s cost has a choice in it, which a bare act cannot make and a chosen one can', async () => {
     // Found by M3's measurement: Flamecache Gecko's "{1}{R}, Discard a card:
     // Draw a card" is offered as affordable and worth making, so the engine
-    // stops the player for it, and `act` has no way to say which card goes.
-    // The offer now says so, in Argentum's own words, and the table holds it
-    // back as it holds back one needing a target (lib/engine/glow.js).
+    // stops the player for it. The offer says so, in Argentum's own words; sent
+    // bare it is refused, and since protocol 5 `act` can say which card goes.
+    // A table told nothing of that holds it back (lib/engine/glow.js).
     const gecko = { Mountain: 20, 'Flamecache Gecko': 20 }
     let status = await engine.call('new', { players: [{ name: 'You', deck: gecko, autoPass: true }, { name: 'Bot', deck: gecko, ai: 'heuristic' }], seed: 1 })
     let offer = null
@@ -561,7 +627,453 @@ describe.skipIf(!command)('the engine on the wire', () => {
     await expect(engine.call('act', { index: offer.index })).rejects.toThrow(/Must choose 1 card\(s\) to discard/)
     // An offer with no such cost says nothing of one.
     expect(status.actions.filter((a) => a.type === 'PassPriority' || a.mana).every((a) => !('additionalCost' in a))).toBe(true)
+    // What it may take is listed, and the card chosen from them is the one discarded.
+    expect(offer.costChoice).toMatchObject({ min: 1, max: 1 })
+    const you = status.actor
+    const drop = offer.costChoice.candidates[0]
+    status = await engine.call('act', { index: offer.index, cost: [drop] })
+    const state = (await engine.call('view', { viewer: you })).state
+    expect(state.zones.find((z) => z.zoneId.zoneType === 'Graveyard' && z.zoneId.ownerId === you).cardIds).toContain(drop)
   }, 120_000)
+
+  describe('what a person chooses (protocol 5)', () => {
+    // Every decision this app's table can show, as the client says in its sit.
+    const ANSWERS = ['SelectCards', 'OrderObjects', 'ReorderLibrary', 'Distribute', 'CombatResolution', 'SelectManaSources', 'ChooseNumber', 'ChooseColor', 'ChooseMode', 'BatchYesNo']
+    const passOf = (s) => s.actions.find((a) => a.type === 'PassPriority') ?? s.actions.find((a) => /^Declare/.test(a.type))
+    const stateOf = async (who) => (await engine.call('view', { viewer: who })).state
+    const lives = async (who) => Object.fromEntries((await stateOf(who)).players.map((p) => [p.playerId, p.life]))
+    const zoneIds = (state, owner, type) => state.zones.find((z) => z.zoneId.zoneType === type && z.zoneId.ownerId === owner)?.cardIds ?? []
+    /** The first stop offering a play `wanted` finds, playing the plainest thing and passing on the way. */
+    const until = async (status, wanted, { steps = 300 } = {}) => {
+      for (let i = 0; i < steps && !status.over; i++) {
+        if (status.waiting === 'decision') { status = await engine.call('decide', { auto: true }); continue }
+        if (status.waiting !== 'action') break
+        const offer = wanted(status)
+        if (offer) return { status, offer }
+        status = await engine.call('act', { index: plainest(status).index })
+      }
+      return { status, offer: null }
+    }
+    /** Passes until the stack is empty again, so what was cast has resolved. */
+    const resolve = async (status, you) => {
+      for (let i = 0; i < 12 && status.waiting === 'action' && status.actor === you; i++) {
+        const stack = (await stateOf(you)).zones.find((z) => z.zoneId.zoneType === 'Stack')
+        if (!stack?.cardIds?.length && !stack?.size) break
+        status = await engine.call('act', { index: passOf(status).index })
+      }
+      return status
+    }
+
+    it('casts a spell at the target the person chose, and it resolves: Volcanic Hammer takes three from the engine', async () => {
+      // Until protocol 5 this was refused before the engine would ask, with "No
+      // valid targets available" (PLAN.md, M2): `act` sent none.
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck, autoPass: true, answers: ANSWERS }, { name: 'Bot', deck, ai: 'heuristic' }],
+        seed: 1,
+      })
+      const [you, bot] = status.seats.map((s) => s.id)
+      expect(status.seats[0].asked).toEqual(['ChooseTargets', 'YesNo', 'ChooseOption', ...ANSWERS])
+      const found = await until(status, (s) => s.actions.find((a) => a.description === 'Cast Volcanic Hammer' && a.affordable))
+      expect(found.offer).toBeTruthy()
+      // One requirement, said the same way whether Argentum listed it or not.
+      expect(found.offer.targetRequirements).toEqual([{ index: 0, description: 'any target', min: 1, max: 1, legal: found.offer.validTargets }])
+      expect(found.offer.validTargets).toContain(bot)
+      const before = await lives(you)
+      status = await engine.call('act', { index: found.offer.index, targets: { 0: [bot] } })
+      status = await resolve(status, you)
+      const after = await lives(you)
+      expect(after[bot]).toBe(before[bot] - 3)
+      expect(after[you]).toBe(before[you])
+      // And the Hammer is in its owner's graveyard, spent.
+      const state = await stateOf(you)
+      expect(zoneIds(state, you, 'Graveyard').map((id) => state.cards[id].name)).toContain('Volcanic Hammer')
+    }, 120_000)
+
+    it('refuses a target that is not a legal one, in the engine\'s words, and nothing is cast', async () => {
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck, autoPass: true, answers: ANSWERS }, { name: 'Bot', deck, ai: 'heuristic' }],
+        seed: 1,
+      })
+      const you = status.seats[0].id
+      const found = await until(status, (s) => s.actions.find((a) => a.description === 'Cast Volcanic Hammer' && a.affordable))
+      const land = zoneIds(await stateOf(you), you, 'Battlefield')[0]
+      expect(found.offer.validTargets).not.toContain(land)
+      await expect(engine.call('act', { index: found.offer.index, targets: { 0: [land] } })).rejects.toThrow(/The engine refused that/)
+      const hand = zoneIds(await stateOf(you), you, 'Hand')
+      expect(hand).toContain(found.offer.card)
+    }, 120_000)
+
+    it('divides a spell\'s damage as the person chose, and takes an X', async () => {
+      // Arc Lightning: 3 damage divided among one, two or three targets, the
+      // division announced with the targets; Blaze: X damage to any target.
+      const burn = { Mountain: 24, 'Arc Lightning': 8, Blaze: 8 }
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck: burn, autoPass: true, answers: ANSWERS }, { name: 'Bot', deck: { Mountain: 40 }, ai: 'heuristic' }],
+        seed: 2,
+      })
+      const [you, bot] = status.seats.map((s) => s.id)
+      let found = await until(status, (s) => s.actions.find((a) => a.description === 'Cast Arc Lightning' && a.affordable))
+      expect(found.offer.divide).toEqual({ total: 3, min: 1 })
+      expect(found.offer.targetRequirements[0]).toMatchObject({ min: 1, max: 3 })
+      let before = await lives(you)
+      status = await engine.call('act', { index: found.offer.index, targets: { 0: [bot, you] }, damage: { [bot]: 2, [you]: 1 } })
+      status = await resolve(status, you)
+      let after = await lives(you)
+      expect(after[bot]).toBe(before[bot] - 2)
+      expect(after[you]).toBe(before[you] - 1)
+      // A division that does not add up is refused, not rounded.
+      found = await until(status, (s) => s.actions.find((a) => a.description === 'Cast Arc Lightning' && a.affordable))
+      await expect(engine.call('act', { index: found.offer.index, targets: { 0: [bot, you] }, damage: { [bot]: 1, [you]: 1 } })).rejects.toThrow(/Total distributed damage/)
+
+      found = await until(found.status, (s) => s.actions.find((a) => a.description === 'Cast Blaze' && a.affordable && a.x?.max >= 2))
+      expect(found.offer.x).toMatchObject({ min: 0 })
+      before = await lives(you)
+      status = await engine.call('act', { index: found.offer.index, targets: { 0: [bot] }, x: 2 })
+      status = await resolve(status, you)
+      after = await lives(you)
+      expect(after[bot]).toBe(before[bot] - 2)
+    }, 180_000)
+
+    it('pays a cost with the card the person chose: Tormenting Voice discards it', async () => {
+      const voice = { Mountain: 24, 'Tormenting Voice': 16 }
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck: voice, autoPass: true, answers: ANSWERS }, { name: 'Bot', deck: { Mountain: 40 }, ai: 'heuristic' }],
+        seed: 2,
+      })
+      const you = status.seats[0].id
+      const found = await until(status, (s) => s.actions.find((a) => a.description === 'Cast Tormenting Voice' && a.affordable))
+      expect(found.offer).toMatchObject({ additionalCost: 'DiscardCard', costChoice: { min: 1, max: 1 } })
+      const drop = found.offer.costChoice.candidates.find((id) => id !== found.offer.card)
+      status = await engine.call('act', { index: found.offer.index, cost: [drop] })
+      status = await resolve(status, you)
+      expect(zoneIds(await stateOf(you), you, 'Graveyard')).toContain(drop)
+      // A discard with no card chosen is passed on, and Argentum refuses it in
+      // its own words; nothing is cast.
+      const bare = await until(status, (s) => s.actions.find((a) => a.description === 'Cast Tormenting Voice' && a.affordable))
+      expect(bare.offer).toBeTruthy()
+      await expect(engine.call('act', { index: bare.offer.index, cost: [] })).rejects.toThrow(/The engine refused that: You must discard 1 card\(s\) to cast this spell/)
+      expect(zoneIds(await stateOf(you), you, 'Hand')).toContain(bare.offer.card)
+    }, 120_000)
+
+    it('refuses in its own words a cost chosen for a play that has none, or of a kind it cannot pay with a choice', async () => {
+      // Server.kt's two refusals of `cost` (`paymentOf`), neither of which
+      // Argentum is ever shown: Volcanic Hammer has no cost beyond mana, and
+      // Fire Bowman's "Sacrifice this creature" is Argentum's `SacrificeSelf`,
+      // which it pays by itself and `act` has no field for.
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck: { Mountain: 20, 'Fire Bowman': 12, 'Volcanic Hammer': 8 }, autoPass: true, answers: ANSWERS }, { name: 'Bot', deck: { Mountain: 40 }, ai: 'heuristic' }],
+        seed: 2,
+      })
+      const you = status.seats[0].id
+      let found = await until(status, (s) => s.actions.find((a) => a.description === 'Cast Volcanic Hammer' && a.affordable))
+      expect(found.offer).toBeTruthy()
+      expect(found.offer).not.toHaveProperty('additionalCost')
+      const other = zoneIds(await stateOf(you), you, 'Hand').find((id) => id !== found.offer.card)
+      await expect(engine.call('act', { index: found.offer.index, cost: [other] })).rejects.toThrow(/That offer has no cost to choose anything for\./)
+      found = await until(found.status, (s) => s.actions.find((a) => a.type === 'ActivateAbility' && a.additionalCost === 'SacrificeSelf' && a.affordable))
+      expect(found.offer).toMatchObject({ additionalCostText: 'Sacrifice this permanent', requiresTargets: true })
+      expect(found.offer).not.toHaveProperty('costChoice')
+      await expect(engine.call('act', { index: found.offer.index, cost: [found.offer.card] })).rejects.toThrow(/This protocol cannot pay a SacrificeSelf cost with a choice; ask the engine to choose\./)
+      // And the Bowman is still on the battlefield: nothing was sent.
+      expect(zoneIds(await stateOf(you), you, 'Battlefield')).toContain(found.offer.card)
+    }, 180_000)
+
+    it('lets the engine choose a play\'s targets for the person, when asked to', async () => {
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck, autoPass: true, answers: ANSWERS }, { name: 'Bot', deck, ai: 'heuristic' }],
+        seed: 1,
+      })
+      const you = status.seats[0].id
+      const found = await until(status, (s) => s.actions.find((a) => a.description === 'Cast Volcanic Hammer' && a.affordable))
+      status = await engine.call('act', { index: found.offer.index, auto: true })
+      status = await resolve(status, you)
+      const state = await stateOf(you)
+      expect(zoneIds(state, you, 'Graveyard').map((id) => state.cards[id].name)).toContain('Volcanic Hammer')
+    }, 120_000)
+
+    it('asks the person which card to discard at cleanup when their client can show it, and answers it for them when not', async () => {
+      // 514.1: the active player discards down to their maximum hand size. A
+      // deck of Hill Giants and nothing to cast them with holds eight cards at
+      // the end of its second turn.
+      const giants = { 'Hill Giant': 40 }
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck: giants, autoPass: true, answers: ANSWERS }, { name: 'Bot', deck: { Mountain: 40 }, ai: 'heuristic' }],
+        seed: 1,
+      })
+      const you = status.seats[0].id
+      for (let i = 0; i < 20 && status.waiting === 'action'; i++) status = await engine.call('act', { index: passOf(status).index })
+      expect(status.waiting).toBe('decision')
+      expect(status.decision).toMatchObject({ type: 'SelectCards', player: you, min: 1, max: 1 })
+      expect(status.decision.prompt).toMatch(/Discard down to 7/)
+      const drop = status.decision.options[0]
+      status = await engine.call('decide', { cards: [drop] })
+      expect(zoneIds(await stateOf(you), you, 'Graveyard')).toEqual([drop])
+      expect(status.decided).toEqual([])
+
+      // The same seat whose client said nothing: the engine discards for them,
+      // and says so, as every engine before protocol 5 did.
+      status = await engine.call('new', {
+        players: [{ name: 'You', deck: giants, autoPass: true }, { name: 'Bot', deck: { Mountain: 40 }, ai: 'heuristic' }],
+        seed: 1,
+      })
+      expect(status.seats[0].asked).toEqual(['ChooseTargets', 'YesNo', 'ChooseOption'])
+      expect(status.decided.some((d) => d.type === 'SelectCards' && /Discard down to 7/.test(d.prompt))).toBe(true)
+    }, 120_000)
+
+    it('asks what to put on the bottom and then the order of the rest, for a scry', async () => {
+      // Magma Jet: 2 damage to any target, then scry 2 — Argentum asks which of
+      // the two go to the bottom, then the order of those left on top.
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck: { Mountain: 20, 'Magma Jet': 20 }, autoPass: true, answers: ANSWERS }, { name: 'Bot', deck: { Mountain: 40 }, ai: 'heuristic' }],
+        seed: 1,
+      })
+      const [you, bot] = status.seats.map((s) => s.id)
+      const found = await until(status, (s) => s.actions.find((a) => a.description === 'Cast Magma Jet' && a.affordable))
+      status = await engine.call('act', { index: found.offer.index, targets: { 0: [bot] } })
+      expect(status.decision).toMatchObject({ type: 'SelectCards', min: 0, max: 2, selectedLabel: 'Put on bottom', remainderLabel: 'Put on top' })
+      // The cards looked at have their names in the decision: the view does not show a library.
+      expect(Object.keys(status.decision.cards).sort()).toEqual([...status.decision.options].sort())
+      status = await engine.call('decide', { cards: [] })
+      // Going back on top of the person's own library, the first card first.
+      expect(status.decision).toMatchObject({ type: 'ReorderLibrary', placement: 'top', library: you })
+      expect(status.decision.objects).toHaveLength(2)
+      status = await engine.call('decide', { order: [...status.decision.objects].reverse() })
+      expect(status.waiting).not.toBe('decision')
+      expect(status.decided).toEqual([])
+    }, 120_000)
+
+    it('says when the cards being ordered go to the bottom of the library, which Argentum asks the same way as the top', async () => {
+      // Prophetic Bolt: 4 damage, then one of the top four into the hand and
+      // the rest on the bottom in any order (`lookAtTopAndKeep`). The order is
+      // a ReorderLibrary like a scry's, and its first card is not the top of
+      // anything (found in M4's review, where the prompt said it was).
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck: { Island: 12, Mountain: 12, 'Prophetic Bolt': 16 }, autoPass: true, answers: ANSWERS }, { name: 'Bot', deck: { Mountain: 40 }, ai: 'heuristic' }],
+        seed: 1,
+      })
+      const [you, bot] = status.seats.map((s) => s.id)
+      const found = await until(status, (s) => s.actions.find((a) => a.description === 'Cast Prophetic Bolt' && a.affordable), { steps: 600 })
+      expect(found.offer).toBeTruthy()
+      status = await engine.call('act', { index: found.offer.index, targets: { 0: [bot] } })
+      for (let i = 0; i < 4 && status.decision?.type === 'SelectCards'; i++) status = await engine.call('decide', { cards: status.decision.options.slice(0, status.decision.min || 1) })
+      expect(status.decision).toMatchObject({ type: 'ReorderLibrary', placement: 'bottom', library: you })
+      expect(status.decision.objects).toHaveLength(3)
+      status = await engine.call('decide', { order: status.decision.objects })
+      expect(status.waiting).not.toBe('decision')
+      expect(status.decided).toEqual([])
+    }, 180_000)
+
+    it('asks the attacking player how to divide combat damage among blockers, and deals it that way', async () => {
+      // Two people, neither the engine: a Hill Giant (3/3) attacks and is
+      // blocked by two Raging Goblins (1/1), so it has damage to divide
+      // (510.1c). Argentum asks it as one board for the step, its own split
+      // already in it; this seat gives all three to the first goblin and none
+      // to the second, which lives. A split that killed both would prove
+      // nothing: the engine's own kills both too, and so does any answer that
+      // was dropped for it (found in M4's review).
+      const ALL = { autoPass: true, answers: ANSWERS }
+      let status = await engine.call('new', {
+        players: [{ name: 'A', deck: { Mountain: 20, 'Hill Giant': 20 }, ...ALL }, { name: 'B', deck: { Mountain: 20, 'Raging Goblin': 20 }, ...ALL }],
+        seed: 1,
+      })
+      const [a, b] = status.seats.map((s) => s.id)
+      let board = null
+      for (let i = 0; i < 400 && !status.over && !board; i++) {
+        if (status.waiting === 'decision') {
+          if (status.decision.type === 'CombatResolution') { board = status.decision; break }
+          status = await engine.call('decide', { auto: true }); continue
+        }
+        if (status.waiting !== 'action') break
+        const land = status.actions.find((x) => x.type === 'PlayLand')
+        const cast = status.actions.find((x) => x.type === 'CastSpell' && x.affordable)
+        const attack = status.actions.find((x) => x.type === 'DeclareAttackers')
+        const block = status.actions.find((x) => x.type === 'DeclareBlockers')
+        if (land) status = await engine.call('act', { index: land.index })
+        else if (cast) status = await engine.call('act', { index: cast.index })
+        else if (attack) {
+          // B's goblins never attack; A's giant attacks once there are goblins to block it.
+          const giant = status.actor === a && status.turn >= 9 ? attack.validAttackers?.[0] : null
+          status = await engine.call('act', { index: attack.index, attackers: giant ? { [giant]: b } : {} })
+        } else if (block) {
+          const attacker = (await stateOf(b)).combat.attackers[0].creatureId
+          status = await engine.call('act', { index: block.index, blockers: Object.fromEntries(block.validBlockers.slice(0, 2).map((id) => [id, [attacker]])) })
+        } else status = await engine.call('act', { index: passOf(status).index })
+      }
+      expect(board).toBeTruthy()
+      expect(board.player).toBe(a)
+      const mine = board.edges.filter((e) => e.mine)
+      expect(mine).toHaveLength(2)
+      expect(board.attackers[0]).toMatchObject({ name: 'Hill Giant', power: 3 })
+      const blockers = mine.map((e) => e.target)
+      status = await engine.call('decide', { edges: { [mine[0].id]: 3, [mine[1].id]: 0 } })
+      const field = zoneIds(await stateOf(b), b, 'Battlefield')
+      expect(blockers.filter((id) => field.includes(id))).toEqual([mine[1].target])
+      // And nothing was answered for the seat on the way.
+      expect(status.decided).toEqual([])
+    }, 180_000)
+
+    it('refuses targets it would read in the wrong order, or for a requirement the play has not got, rather than cast at what nobody chose', async () => {
+      // Argentum reads a play's targets by position. A requirement given fewer
+      // than it could take, with a target for a later one, would be read wrong;
+      // the process says so. Boulder Dash has two requirements, two damage to
+      // one target and one to another. Left out altogether, the first counts as
+      // given none (found in M4's review: only the keys sent were walked, and a
+      // lone "1" went to Argentum flat, as the first requirement's).
+      let status = await engine.call('new', {
+        players: [{ name: 'You', deck: { Mountain: 24, 'Boulder Dash': 16 }, autoPass: true, answers: ANSWERS }, { name: 'Bot', deck: { Mountain: 40 }, ai: 'heuristic' }],
+        seed: 2,
+      })
+      const [you, bot] = status.seats.map((s) => s.id)
+      const found = await until(status, (s) => s.actions.find((a) => a.description === 'Cast Boulder Dash' && a.affordable))
+      expect(found.offer.targetRequirements.map((r) => [r.index, r.min, r.max])).toEqual([[0, 1, 1], [1, 1, 1]])
+      await expect(engine.call('act', { index: found.offer.index, targets: { 1: [you] } })).rejects.toThrow(/reads a play's targets in order/)
+      await expect(engine.call('act', { index: found.offer.index, targets: { 0: [], 1: [you] } })).rejects.toThrow(/reads a play's targets in order/)
+      // A requirement the play has not got is refused by its number, not read as another's.
+      await expect(engine.call('act', { index: found.offer.index, targets: { 0: [bot], 2: [you] } })).rejects.toThrow(/This play has no target requirement "2"; it has "0", "1"\./)
+      await expect(engine.call('act', { index: found.offer.index, targets: { 0: [bot], first: [you] } })).rejects.toThrow(/no target requirement "first"/)
+      // Given in order, each target takes what its requirement deals.
+      const before = await lives(you)
+      status = await engine.call('act', { index: found.offer.index, targets: { 0: [bot], 1: [you] } })
+      status = await resolve(status, you)
+      const after = await lives(you)
+      expect(after[bot]).toBe(before[bot] - 2)
+      expect(after[you]).toBe(before[you] - 1)
+    }, 120_000)
+  })
+
+  describe('the opening hand (protocol 6)', () => {
+    const view = (who) => engine.call('view', { viewer: who })
+    const zoneOf = (state, owner, type) => state.zones.find((z) => z.zoneId.zoneType === type && z.zoneId.ownerId === owner)
+    const offer = (status, type) => status.actions?.find((a) => a.type === type) ?? null
+    const players = [{ name: 'You', deck, autoPass: true }, { name: 'Bot', deck, ai: 'heuristic', level: 'easy' }]
+
+    it('opens with the hand to keep, where asked, and deals a mulligan as Argentum does: seven again, one on the bottom, six kept', async () => {
+      let status = await engine.call('new', { players, seed: 1, mulligans: true })
+      expect(status.mulligans).toBe(true)
+      const [you, bot] = status.seats.map((s) => s.id)
+      // Before the first turn, and nothing on offer but the hand: Argentum's
+      // legal actions know nothing of the mulligan phase, and asked, would
+      // offer a spell in the untap step.
+      expect(status).toMatchObject({ waiting: 'action', actor: you, turn: 1, phase: 'BEGINNING', step: 'UNTAP' })
+      expect(status.actions.map((a) => a.type)).toEqual(['KeepHand', 'TakeMulligan'])
+      expect(offer(status, 'KeepHand')).toMatchObject({ mulligans: 0, bottom: 0, affordable: true, meaningful: true })
+      expect(offer(status, 'TakeMulligan')).toMatchObject({ mulligans: 0, draws: 7, bottom: 1 })
+      expect(zoneOf((await view(you)).state, you, 'Hand').cardIds).toHaveLength(7)
+
+      status = await engine.call('act', { index: offer(status, 'TakeMulligan').index })
+      expect(offer(status, 'KeepHand')).toMatchObject({ mulligans: 1, bottom: 1 })
+      expect(offer(status, 'TakeMulligan')).toMatchObject({ mulligans: 1, draws: 7, bottom: 2 })
+      // Seven again, not six: the London mulligan bottoms after keeping (Argentum's MulliganHandler).
+      const before = (await view(you)).state
+      const drawn = zoneOf(before, you, 'Hand').cardIds
+      expect(drawn).toHaveLength(7)
+
+      status = await engine.call('act', { index: offer(status, 'KeepHand').index })
+      expect(status.actions.map((a) => a.type)).toEqual(['BottomCards'])
+      const bottom = offer(status, 'BottomCards')
+      expect(bottom).toMatchObject({ mulligans: 1, bottom: 1, description: 'Put 1 card on the bottom of your library' })
+      expect([...bottom.candidates].sort()).toEqual([...drawn].sort())
+      // Sent bare, or short, it is refused in words and the table stays where it was.
+      await expect(engine.call('act', { index: bottom.index })).rejects.toThrow(/needs "cards"/)
+      await expect(engine.call('act', { index: bottom.index, cards: [] })).rejects.toThrow(/Put exactly 1 on the bottom: 0 were chosen\./)
+      const card = bottom.candidates[0]
+      const name = before.cards[card].name
+      status = await engine.call('act', { index: bottom.index, cards: [card] })
+
+      // The game has begun, at the person's first stop, with six in hand.
+      expect(status.waiting).toBe('action')
+      expect(status.actions.some((a) => ['KeepHand', 'TakeMulligan', 'BottomCards'].includes(a.type))).toBe(false)
+      const { state, log } = await view(you)
+      expect(zoneOf(state, you, 'Hand').cardIds).toHaveLength(6)
+      expect(zoneOf(state, you, 'Hand').cardIds).not.toContain(card)
+      expect(zoneOf(state, you, 'Library').size).toBe(Object.values(deck).reduce((a, b) => a + b, 0) - 6)
+      // Said once as the mulligan it was, not as seven cards put away, and the
+      // card bottomed named to its owner alone.
+      const said = log.map((l) => l.description)
+      expect(said.filter((d) => d === 'You took a mulligan')).toHaveLength(1)
+      expect(said).toContain(`You put ${name} on the bottom of your library`)
+      expect(said.some((d) => /went to library/.test(d))).toBe(false)
+      const theirs = (await view(bot)).log.map((l) => l.description)
+      expect(theirs).toContain('Opponent took a mulligan')
+      expect(theirs.some((d) => /bottom/.test(d))).toBe(false)
+    }, 120_000)
+
+    it('takes each card on the bottom once, and exactly as many as are owed, or none of them', async () => {
+      // Argentum counts the cards and checks each is in hand, and no more: two
+      // owed and one card named twice passed, moved one card, and settled the
+      // mulligan with a card kept that was owed (found in M4's review).
+      let status = await engine.call('new', { players, seed: 1, mulligans: true })
+      const you = status.seats[0].id
+      status = await engine.call('act', { index: offer(status, 'TakeMulligan').index })
+      status = await engine.call('act', { index: offer(status, 'TakeMulligan').index })
+      status = await engine.call('act', { index: offer(status, 'KeepHand').index })
+      const bottom = offer(status, 'BottomCards')
+      expect(bottom).toMatchObject({ mulligans: 2, bottom: 2 })
+      const [first, second] = bottom.candidates
+      await expect(engine.call('act', { index: bottom.index, cards: [first, first] })).rejects.toThrow(/Each card goes on the bottom once/)
+      await expect(engine.call('act', { index: bottom.index, cards: [first] })).rejects.toThrow(/Put exactly 2 on the bottom: 1 was chosen\./)
+      await expect(engine.call('act', { index: bottom.index, cards: [first, second, bottom.candidates[2]] })).rejects.toThrow(/Put exactly 2 on the bottom: 3 were chosen\./)
+      // Refused, the hand is as it was and the same offer is still there.
+      expect(zoneOf((await view(you)).state, you, 'Hand').cardIds).toHaveLength(7)
+      status = await engine.call('turn')
+      expect(offer(status, 'BottomCards')).toMatchObject({ bottom: 2 })
+      status = await engine.call('act', { index: bottom.index, cards: [first, second] })
+      const hand = zoneOf((await view(you)).state, you, 'Hand').cardIds
+      expect(hand).toHaveLength(5)
+      expect(hand).not.toContain(first)
+      expect(hand).not.toContain(second)
+    }, 120_000)
+
+    it('puts on the bottom what the engine picks, when the person asks it to choose', async () => {
+      let status = await engine.call('new', { players, seed: 1, mulligans: true })
+      const you = status.seats[0].id
+      status = await engine.call('act', { index: offer(status, 'TakeMulligan').index })
+      status = await engine.call('act', { index: offer(status, 'KeepHand').index })
+      status = await engine.call('act', { index: offer(status, 'BottomCards').index, auto: true })
+      const { state, log } = await view(you)
+      expect(zoneOf(state, you, 'Hand').cardIds).toHaveLength(6)
+      expect(log.filter((l) => /^You put .+ on the bottom of your library$/.test(l.description))).toHaveLength(1)
+    }, 120_000)
+
+    it('mulligans the engine\'s own seat by Argentum\'s responder, and tells the person so without naming what it bottoms', async () => {
+      // Seed 25 with the engine first deals it a hand of one land, which
+      // Argentum's responder (EngineAiPlayerController) sends back; its next
+      // seven it keeps, and bottoms one (measured 2026-09-24).
+      let status = await engine.call('new', { players, seed: 25, mulligans: true, startingPlayer: 1 })
+      const [you, bot] = status.seats.map((s) => s.id)
+      expect(status.actor).toBe(you)
+      expect((await view(you)).log.map((l) => l.description)).toContain('Opponent took a mulligan')
+      status = await engine.call('act', { index: offer(status, 'KeepHand').index })
+      const theirs = (await view(bot)).log.map((l) => l.description)
+      expect(theirs).toContain('You took a mulligan')
+      expect(theirs.filter((d) => /^You put .+ on the bottom of your library$/.test(d))).toHaveLength(1)
+      expect((await view(you)).log.some((l) => /bottom/.test(l.description))).toBe(false)
+    }, 120_000)
+
+    it('deals every hand kept where not asked, and everyone keeping plays the very game that would have been played', async () => {
+      // What the engine's browser spec leans on: a seeded game is the same game
+      // whether it opened with the hands to keep or not, so long as both keep.
+      const playOut = async (mulligans) => {
+        let status = await engine.call('new', { players, seed: 1, ...(mulligans ? { mulligans: true } : {}) })
+        const course = []
+        for (let stops = 0; !status.over && stops < 300; stops++) {
+          if (status.waiting === 'decision') { status = await engine.call('decide', { auto: true }); continue }
+          if (status.waiting !== 'action') { status = await engine.call('turn'); continue }
+          const keep = offer(status, 'KeepHand')
+          if (keep) { status = await engine.call('act', { index: keep.index }); continue }
+          const pick = plainest(status)
+          course.push(`${status.turn} ${status.step}: ${pick.description}`)
+          status = await engine.call('act', { index: pick.index })
+        }
+        return { course, winner: status.winner }
+      }
+      const plain = await playOut(false)
+      expect(plain.course[0]).not.toMatch(/Keep/)
+      const kept = await playOut(true)
+      expect(kept.course).toEqual(plain.course)
+      expect(kept.winner).toBe(plain.winner)
+    }, 300_000)
+  })
 
   it('refuses to be continued at a table that was never paced', async () => {
     await engine.call('new', {

@@ -725,8 +725,11 @@
   color: var(--text-faint);
   font-size: 0.65rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
 }
+/* The faint tier clears 4.5:1 on its own (tokens.css). Dimmed further with an
+   opacity it did not, which axe found at M4, the first time a sweep met the
+   trail as a log's last line: a table dealt with the hands still to keep. */
 .gamelog__passed {
-  color: var(--text-faint); opacity: 0.7;
+  color: var(--text-faint);
   font-size: 0.65rem; letter-spacing: 0.04em; text-align: center;
 }
 .gamelog__passed--tail { display: block; padding: var(--space-1) 0; }

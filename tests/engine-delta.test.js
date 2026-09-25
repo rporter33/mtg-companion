@@ -47,6 +47,19 @@ describe('the captured run', () => {
     expect(RUN.views[0].delta).toBeUndefined()
     expect(RUN.views.slice(1).every((v) => v.delta)).toBe(true)
   })
+
+  it('and, since M4, blockers declared on the board, a decision put to the person, and the opening hand', () => {
+    // M2's item left short (PLAN.md): no view a client was sent carried either.
+    expect(RUN.views.some((v) => v.state?.combat?.attackers?.some((a) => a.blockedBy?.length))).toBe(true)
+    expect(RUN.views.some((v) => v.status.waiting === 'decision' && v.status.decision?.type === 'ChooseTargets')).toBe(true)
+    // The engine's attack is a stop of its own too, not only the offer to block it.
+    expect(RUN.views.some((v) => v.status.waiting === 'engine' && v.status.step === 'DECLARE_ATTACKERS')).toBe(true)
+    expect(RUN.views[0].status.actions.map((a) => a.type)).toEqual(['KeepHand', 'TakeMulligan'])
+    expect(RUN.views.some((v) => (v.status.actions ?? []).some((a) => a.type === 'BottomCards'))).toBe(true)
+    // What the capture says it holds is what it holds (scripts/engine-capture.mjs, `marks`).
+    expect(RUN.held).toEqual(expect.arrayContaining(['aimed only', 'blockable', 'blocks', 'bottom', 'combat', 'decision', 'engine', 'mulligan', 'passed']))
+    expect(RUN.protocol).toBe(6)
+  })
 })
 
 describe('applyDelta, against the engine\'s own diffs', () => {
@@ -298,8 +311,9 @@ describe('while the engine is thinking', () => {
   it('is what the captured run stops at, twice a turn of the engine\'s', () => {
     const paused = RUN.views.filter((v) => thinkingAt(v.status, RUN.views[0].state.players.map((p) => p.playerId).find((id) => id !== RUN.you)))
     expect(paused.length).toBeGreaterThan(1)
-    // Never in a turn of the player's: the engine passes priority in those and
-    // passing is not a play worth watching (engine/README.md).
+    // Never a stop of the player's: the engine passes priority in the player's
+    // windows, and passing is not a play worth watching (engine/README.md). Its
+    // blocks, made in a turn of the player's, are, since M4.
     expect(paused.every((v) => v.status.actor !== RUN.you)).toBe(true)
   })
 })

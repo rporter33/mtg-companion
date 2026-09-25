@@ -205,6 +205,26 @@ These are settled. Do not reopen them; build on them.
 13. **Decided at M3, 2026-09-24.** A first game against the engine is played
     at intermediate, with easy and hard a choice away in the lobby. The
     choice is remembered with the player's other table preferences.
+14. **Taken as defaults at M4, and the owner's to overturn:** a play is chosen
+    in the order Argentum's own client asks it — X, then what its cost takes,
+    then its targets, then the division of its damage; a step that takes one
+    thing is finished by the tap that picks it, and one that takes several
+    waits for Done; X starts at the most that can be paid, as Argentum's
+    client starts it; paying mana starts from the engine's own choice of lands;
+    every decision this table can show is asked, with no setting to have the
+    engine answer them as it used to, and "Let the engine choose" on each.
+15. **Taken as defaults at M4's second half, and the owner's to overturn:**
+    mulligans are on at every engine table whose people's clients can show one,
+    with no setting to turn them off; the order is Argentum's own — each hand
+    kept or sent back in turn order, then the cards put on the bottom — and the
+    engine's seat decides by the responder Argentum's game server uses, alike at
+    every level; keeping or taking a mulligan is a choice of two with no "Let
+    the engine choose", while putting cards on the bottom has one; one card owed
+    goes on the bottom at the tap that picks it, as item 14's steps do, and
+    several wait for the press. Not a default but a fix with a feel to it: the
+    engine's attacks and blocks, and each spell it aims, are now stops of a
+    paced table, so its turn plays a little slower and it pauses in yours when
+    it blocks.
 
 ---
 
@@ -391,6 +411,15 @@ and `run.held` names the offer to block `blockable`, not `blocks`. Closing the
 first is a `when` branch in `act` beside the two that are there, and a
 target-picking step in the client before the act: M4's ground, live now.
 
+*Closed at M4 (2026-09-24).* Both are in the capture now (`PLAN.md`, "M4, the
+second half"). The first was never combat resolving between two stops: the
+engine's attacks and blocks were no stops at all, because `drive()` matched its
+filled-in choice to the bare offer by equality, and a declaration with its
+creatures in it never equals one without. Matched by what it is, the engine's
+blocks are a stop, and the view there carries them. The second needed a trigger:
+since protocol 5 a spell's targets go with its cast and raise no decision, so the
+capture's deck holds Sparkmage Apprentice, whose arrival asks for its target.
+
 The rest of this section is the brief it was built to, kept as written.
 
 Today `drive()` in `Server.kt` runs every AI action synchronously until the
@@ -500,6 +529,48 @@ and the log names the one chosen.
 
 *Size: medium.*
 
+**Done, 2026-09-24: the decisions, and then the mulligans.** What was built,
+what was measured, where it departs from the letter below and why, and what is
+left are in `PLAN.md`, "M4, the first half: the decisions" and "M4, the second
+half: mulligans, and the fixture M2 was short of". The owner's defaults taken
+along the way are §3 item 14 and 15. Its review found fifteen faults, all
+fixed, listed at the end of the second half's section: among them a card named
+twice for the bottom taken as one, an ability's own source that could neither
+pay its cost nor be its target, and an order of cards going to the bottom of
+a library said to be the top (a `ReorderLibrary` now says `placement` and
+`library`, engine/README.md).
+
+The second half, in short: protocol 6. Argentum's mulligan phase is neither a
+legal action nor a decision — `legalActions()` knows nothing of it, and its
+game server drives it beside the priority loop — so the process does the same:
+the game opens, where the room asks, with the hand to keep; the prompt offers
+Mulligan and Keep with the engine's own numbers and the rule cited (103.5), and
+after keeping with mulligans taken, the hand glows and a tap puts a card on the
+bottom, the prompt counting down. The engine's seat mulligans by Argentum's own
+responder. Keeping is the same game the seed dealt before. And the item M2 was
+short of is closed: the capture now holds declared blockers and a real targets
+decision, because the engine's attacks and blocks were never stops of a paced
+table — its filled-in choice was matched to the bare offer by equality — which
+is fixed.
+
+The first half, in short: protocol 5.
+A spell or an ability that needs a target is chosen on the table — it glows, a
+tap begins aiming it, the legal targets glow, the seats are offered by name —
+and `act` carries the targets, and with them an X, a division of damage and
+what a cost takes (discarding, sacrificing and the other kinds Argentum's own
+client pays with a chosen card). M1b's three measures and M3's for costs are
+lifted exactly where the room says the seat's `act` can carry the choice
+(`seated.choices`); a seat told nothing keeps them. The client says in its sit
+which decisions it can show (`answers`), and those are asked instead of
+answered: cards to select, an order, a division, the combat damage step, mana
+sources, a number, a colour, modes, and one yes or no for several. Every one
+keeps "Let the engine choose". The brief's `AssignDamageDecision` is not raised
+by Argentum at the pin; its combat asks the whole step as a
+`CombatResolutionDecision`, and that is what is asked. Still answered for the
+player, and said: piles, a word to replace, a budget of modes.
+
+The rest of this section is the brief, kept as written.
+
 Today `new` sets `skipMulligans: true`, and the process answers ordering,
 damage assignment, mana-source and card-selection decisions with the
 engine's own responder and reports them under `decided`. Both are honest
@@ -568,6 +639,14 @@ held back. What is left for this milestone is asking: the candidates are in
 `additionalCostInfo`, and the answer goes in the action's `costPayment`
 (`discardedCards` and its siblings), which `act` would have to fill as it fills
 `attackers`.
+
+*Done at M4 (2026-09-24).* The places both notes name hold an offer back now
+only where the room says this seat's `act` cannot carry the choice — `heldBack`
+and `glowsAt` take what the seat may choose (`can`, `src/lib/engine/choose.js`),
+`cannotAim` and `cannotPay` are said only then, and `EngineActions` presses such
+an offer where it can be chosen. A cost's candidates are the offer's
+`costChoice`, and `act` fills `additionalCostPayment` or `costPayment` with them
+as Argentum's own client does.
 
 ### M5 — The engine's own deck
 
@@ -797,11 +876,38 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 ## 7. Appendix — the wire, in one place
 
 Between the browser and the relay, over the room's socket, all
-`{ t: "engine", op }`: `sit { name, deck, sideboard?, seat?, deltas?, level? }`,
-`act { stop, index, attackers?, blockers? }`, `decide { stop, … }`, `turn`,
-`resync`; back: `seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, level?, ai? }`,
+`{ t: "engine", op }`: `sit { name, deck, sideboard?, seat?, deltas?, level?, answers?, mulligans? }`,
+`act { stop, index, attackers?, blockers?, targets?, x?, damage?, cost?, auto?, cards? }`, `decide { stop, … }`, `turn`,
+`resync`; back: `seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, level?, ai?, choices? }`,
 `seats`, `status`, `view { you, seq, state | delta, log }`, `refused { error, stale?, answering? }`, `gone`.
 Over HTTP, before any room: `POST /engine/check`.
+
+M4's second half added the opening hand (protocol 6 on the process's side). A
+sit says `mulligans: true` where that build can show a mulligan; the room keeps
+it until the deal, and asks the engine for a mulligan phase only where every
+person at the table said so and the engine speaks 6. The first statuses then
+offer `KeepHand` and `TakeMulligan`, and after keeping with mulligans taken,
+`BottomCards`, each with the engine's own numbers (`mulligans`, `bottom`,
+`draws`, `candidates`); `act` carries the cards put on the bottom as `cards`,
+passed through untouched. `GET /rooms/<code>` says `mulligans` once dealt. A room
+that asked for none, or an engine at 5, deals every hand kept, as before.
+M4's review added, without a new number, `placement` and `library` on a
+`ReorderLibrary` decision: which end of a library the cards go to, and whose;
+a client reading an engine without them says only that the first ends up
+highest.
+
+M4 added choosing (protocol 5 on the process's side). A sit says `answers`,
+the decisions that build can show; the room keeps them until the deal and
+passes them for that seat alone, and only to an engine at protocol 5. Every
+`seated` after the deal to a person's seat then says `choices: { act, costs,
+decisions }` — what that seat's `act` may carry, the costs it can pay with a
+choice, and the decisions it will be asked, all in the engine's words. A
+`seated` without `choices` — an older relay, or an engine at 4 — means the seat
+may choose nothing, and the client holds back what it cannot send, as before.
+`act` passes `targets`, `x`, `damage`, `cost` and `auto` through, and `decide`
+its new shapes, untouched. The status still goes to every seat, but a
+decision's `cards` — the faces of cards only the deciding seat may see, a
+library's top looked at — are left out of every other seat's copy.
 
 M3's review added three small things, each read forgivingly where it is
 missing. `seated` after the deal says `ai`, the kind of player the engine
@@ -845,10 +951,17 @@ and `paced`.
 Between the relay and the process, JSON lines: `hello`, `cards`, `new`,
 `turn`, `act`, `decide`, `view`, `quit`; M1 added `check`, M2 `continue` and
 `pace` on `new`, M3 `level` on a player in `new` (and `profile`, for
-measurement), `levels` in `hello` and `clock`; M7 will add `snapshot` and
-`restore`. `engine/README.md` is the contract and is updated with every op
-added. `PROTOCOL` is 4 since M3; an engine at 3 has no levels and ignores the
-key, so a relay reading 3 asks for none and says the engine plays its one way.
+measurement), `levels` in `hello` and `clock`; M4 `answers` on a player in
+`new` and `asked` on its seat in the reply, `choices` in `hello`, `targets`,
+`x`, `damage`, `cost` and `auto` on `act`, and a `decide` shape for each
+decision it can ask; M4's second half `mulligans` on `new` and in its reply,
+and `cards` on `act`; M7 will add `snapshot` and `restore`. `engine/README.md`
+is the contract and is updated with every op added. `PROTOCOL` is 6 since M4's
+second half; an engine at 5 ignores `mulligans`, so a relay reading 5 asks for
+none. An engine at 4 ignores every key choosing travels in, so a relay reading 4
+sends no `answers` and tells no seat it may choose. An engine at 3 has no
+levels and ignores the key, so a relay reading 3 asks for none and says the
+engine plays its one way.
 
 `pace` on `new` is `true` or a number of milliseconds, and the reply says
 `paced: true` only where the engine took it. A paced table stops as soon as
@@ -858,6 +971,7 @@ wall-clock time is the relay's. The pace came with protocol 3, and an engine at
 2 has neither a pace nor a `continue`, so a relay reading 2 must ask for neither.
 
 The status shape, and what `meaningful`, `card`, `mana`, `additionalCost`,
-`autoPassed` and `decided` mean, is in `engine/README.md`. The board the screen draws is the
+`targetRequirements`, `x`, `divide`, `costChoice`, `autoPassed` and `decided`
+mean, and how each decision is described and answered, is in `engine/README.md`. The board the screen draws is the
 one in `src/lib/board/model.js`, unchanged by any of this; `board.engine`
 carries what the model has no word for (priority, phase, over, winner).

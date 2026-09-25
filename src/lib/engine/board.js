@@ -288,6 +288,16 @@ export function boardFromView(view, { prev = null, seats = null } = {}) {
       const to = a.attackingTarget?.playerId ?? a.attackingTarget?.permanentId ?? a.attackingTarget?.id ?? view.combat.defendingPlayerId
       board.arrows.push({ id: `attack:${a.creatureId}`, from: a.creatureId, to, kind: 'attack' })
     }
+    // And from each blocker to the attacker it blocks, drawn as a block being
+    // declared at this table is drawn (Table.jsx). No view carried declared
+    // blockers until M4, when the engine's own blocks became a stop of a paced
+    // table; the log says each one in words ("… blocked …"), and this is the
+    // picture beside it. Read forgivingly: a blocker naming no creature, or no
+    // attacker, is left undrawn rather than drawn from nowhere.
+    for (const b of Array.isArray(view.combat.blockers) ? view.combat.blockers : []) {
+      if (typeof b?.creatureId !== 'string' || typeof b.blockingAttacker !== 'string') continue
+      board.arrows.push({ id: `block:${b.creatureId}:${b.blockingAttacker}`, from: b.creatureId, to: b.blockingAttacker, kind: 'target' })
+    }
   }
   return board
 }

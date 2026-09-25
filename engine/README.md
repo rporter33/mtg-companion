@@ -56,15 +56,17 @@ One request per line, one reply per line, correlated by `id`:
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"engine":"argentum","protocol":4,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"levels":{"easy":"v0","intermediate":"production-raceclock","hard":"production-candidate-expiring"},"load":{"ms":15207,"heapMb":110,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order; `levels` are the strengths an engine seat may play at, weakest first, each with the Argentum profile behind it |
+| `{"op":"hello"}` | `{"engine":"argentum","protocol":6,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"levels":{"easy":"v0","intermediate":"production-raceclock","hard":"production-candidate-expiring"},"choices":{"act":["targets","x","damage","cost","auto","cards"],"costs":["DiscardCard",…],"decisions":["ChooseTargets","YesNo","ChooseOption","SelectCards",…]},"load":{"ms":15207,"heapMb":110,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order; `levels` are the strengths an engine seat may play at, weakest first, each with the Argentum profile behind it; `choices` is what a person may choose over this protocol (below) |
 | `{"op":"cards"}` | `{"names":[…]}` — every name a deck may hold: no tokens and no back faces, though the engine knows both |
 | `{"op":"check","deck":{"Delver of Secrets // Insectile Aberration":4,"Made-Up Card":2},"sideboard":{…}}` | `{"known":4,"total":6,"unknown":["Made-Up Card"],"unknownSideboard":[]}` — which of a deck's cards the engine knows, before any game; unknown names come back exactly as sent |
-| `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic","level":"intermediate"}],"seed":20260921,"pace":true}` | the table's status (below) plus `seats` and the `seed` it was dealt from, and `paced` when the table was paced; each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got; a seat the engine plays with its own judgement also says the `level` it took (null for none) and the Argentum `profile` it plays with |
+| `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true,"answers":["SelectCards","CombatResolution"]},{"name":"Bot","deck":{…},"ai":"heuristic","level":"intermediate"}],"seed":20260921,"pace":true,"mulligans":true}` | the table's status (below) plus `seats` and the `seed` it was dealt from, `paced` when the table was paced, and `mulligans` when it was dealt with the hands to keep (protocol 6, below); each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got; a seat the engine plays with its own judgement also says the `level` it took (null for none) and the Argentum `profile` it plays with; a person's seat says `asked`, the decisions it will be put rather than have answered for it |
 | `{"op":"turn"}` | the table's status |
 | `{"op":"continue"}` | the next step of a paced table: the status once the engine's seat has made its next play |
 | `{"op":"act","index":3}` | the status after that action and everything that followed it |
 | `{"op":"act","index":0,"attackers":{"e16":"e1"}}` / `{"blockers":{"e20":["e16"]}}` | a declare-attackers or declare-blockers offer, filled in: which creatures, at whom |
-| `{"op":"decide","targets":{"0":["e12"]}}` / `{"yes":true}` / `{"option":1}` / `{"auto":true}` | likewise |
+| `{"op":"act","index":1,"targets":{"0":["e1"]},"x":2,"damage":{"e1":2,"e0":1},"cost":["e22"]}` / `{"auto":true}` | a spell or an ability, filled in with what the person chose — its targets requirement by requirement, its X, how its damage is divided, what its cost takes — or with the engine's choice of all of them (protocol 5) |
+| `{"op":"act","index":0,"cards":["e31"]}` / `{"auto":true}` | the cards put on the bottom after keeping a hand with mulligans taken, or the engine's choice of them (protocol 6) |
+| `{"op":"decide","targets":{"0":["e12"]}}` / `{"yes":true}` / `{"option":1}` / `{"auto":true}` | likewise; since protocol 5 also `{"cards":[…]}`, `{"order":[…]}`, `{"distribution":{"e1":2}}`, `{"edges":{"e27->e71":2}}`, `{"sources":[…]}` / `{"autoPay":true}` / `{"decline":true}`, `{"number":2}`, `{"color":"RED"}`, `{"modes":[0]}`, `{"yes":true,"all":true}` (below) |
 | `{"op":"view","viewer":"<seat id>","delta":true}` | `{"state":ClientGameState,"log":[ClientEvent…]}` first, `{"delta":StateDelta,"log":[…]}` after; a full view's `log` is everything that seat has been told so far, a delta's only what is new since its last view |
 | `{"op":"clock"}` | `{"seats":[{"id":"e1","ai":"heuristic","level":"hard","profile":"production-candidate-expiring","choices":[{"ms":88.4,"meaningful":true},{"ms":0.1,"meaningful":false},{"ms":12.0,"decision":true,"meaningful":true}]}]}` — how long each of the engine's seats took over every choice since the last `clock`, which starts the record again; for measuring, and never sent by the relay |
 | `{"op":"quit"}` | `{"ok":true}` and the process ends |
@@ -90,16 +92,149 @@ An offer whose cost has more in it than mana says so: `additionalCost` is
 Argentum's own kind for it (`DiscardCard`, `SacrificePermanent`,
 `SacrificeSelf`, `PayLife` and so on, from `LegalAction.additionalCostInfo`)
 and `additionalCostText` its words, and a forage cost adds `requiresForage`.
-`act` carries no payment, so an offer whose cost is a choice is refused when
-sent bare — Flamecache Gecko's `{"additionalCost":"DiscardCard",
-"additionalCostText":"Discard a card"}` comes back "Must choose 1 card(s) to
-discard", which `tests/engine-live.test.js` checks — and the table holds such
-an offer back as it holds back one with `requiresTargets`
-(`src/lib/engine/glow.js`, `heldBack`). Sacrificing the source itself and
-paying life need nothing chosen, and are not held back. The keys are said only
-where there is such a cost, so an older client reads every offer as before;
-they came after M3, in its review, without a new protocol number, because
-nothing that reads the status is asked to do anything new.
+Sent bare, an offer whose cost is a choice is refused — Flamecache Gecko's
+`{"additionalCost":"DiscardCard","additionalCostText":"Discard a card"}` comes
+back "Must choose 1 card(s) to discard", which `tests/engine-live.test.js`
+checks. Sacrificing the source itself and paying life need nothing chosen. The
+keys are said only where there is such a cost, so an older client reads every
+offer as before; they came after M3, in its review, without a new protocol
+number, because nothing that reads the status is asked to do anything new.
+
+**What a person chooses (protocol 5, M4).** Argentum's own client sends a
+spell or an ability whole: a `CastSpell` or `ActivateAbility` with its targets,
+its X, its division of damage and its cost's payment filled in (web-client
+`pipelinePhases.ts`), and the engine refuses one that needed any of them and
+came without. So `act` now carries them, and an offer says what it needs:
+
+- `targetRequirements`, beside the flat `validTargets` an offer needing targets
+  always had: every requirement in order, `{index, description, min, max,
+  legal, distinct?}`. Argentum lists them itself only where there are several;
+  one is said the same way so a client reads one shape. `act`'s `targets` is
+  `{"0": [ids], "1": [ids]}`, the shape `decide` already took, and each id
+  becomes the kind of target its object is where it stands — a player, a
+  permanent, a spell on the stack, a card in a zone — by Argentum's own
+  `entityIdToChosenTarget`. Argentum reads a play's targets by position, each
+  requirement from where the ones before it could have ended, so a requirement
+  given fewer than it could take with targets chosen for a later one is refused
+  here in words rather than read as something nobody chose. A requirement left
+  out of `targets` counts as given none, and a key naming no requirement the
+  offer has is refused by its name.
+- `x: {min, max}` on a spell with an X in its cost: `act`'s `x`. A `CastSpell`
+  sent without one is cast at X = 0, which is what every table before this sent.
+  An ability's X is not described: Argentum asks it as a `ChooseNumber` once
+  the ability is activated bare.
+- `divide: {total, min}` on a spell that divides its damage among its targets:
+  `act`'s `damage`, `{"e1": 2, "e0": 1}`. Argentum requires it at more than one
+  target, and refuses a division that does not add up to the total.
+- `costChoice: {min, max, candidates}` where the cost is one `act`'s `cost` can
+  pay with the ids chosen: discarding, sacrificing, tapping, returning,
+  exiling from a graveyard or a hand, beholding, revealing, blighting
+  (`PAYABLE` in `Server.kt`, the same mapping Argentum's own client and AI use
+  onto `AdditionalCostPayment`). A kind not among them — a sum of mana values,
+  a forage — has no `costChoice`, and a client holds it back as before; `cost`
+  sent for one is refused in words.
+- `act`'s `auto: true` hands the lot to the engine: the person's own responder
+  (Argentum's `Strategist`, given that one offer) fills in X, targets and the
+  automatic payments, as it does for the engine's seat. It chooses the play
+  whole, so anything sent beside `auto` is not read: a client that has had
+  some of it chosen already says those choices go.
+
+And `new` takes, on a person's player, `answers`: the decisions their client
+can put on screen. Those are asked rather than answered for them, as targets, a
+yes or no and an option always were; the reply's seat says `asked`, the whole
+list that seat will be put. The decisions this process can ask, each described
+in full in the status and answered in `decide` with the response Argentum's own
+validator expects:
+
+| Decision | Described with | `decide` |
+| --- | --- | --- |
+| `SelectCards` | `min`, `max`, `options`, `shown`, `selectedLabel`, `remainderLabel`, `ordered`, `cards` | `{"cards":[…]}` |
+| `OrderObjects`, `ReorderLibrary` | `objects` (first first), `cards`; for a library, `placement` and `library` (below) | `{"order":[…]}` |
+| `Distribute` | `total`, `minPer`, `maxPer`, `targets`, `allowPartial` | `{"distribution":{id:n}}` |
+| `CombatResolution` | `firstStrike`, `edges` (`id`, `source`, `target`, `amount` — the engine's own split — `maximum`, `lethal`, `trample`, `mine`), `attackers`, `blockers`, `defenders` | `{"edges":{edgeId:n}}`, this seat's edges only |
+| `SelectManaSources` | `cost`, `canDecline`, `sources`, `suggested` | `{"sources":[…]}`, `{"autoPay":true}` or `{"decline":true}` |
+| `ChooseNumber` | `min`, `max` | `{"number":n}` |
+| `ChooseColor` | `colors` (Argentum's names, `"RED"`) | `{"color":"RED"}` |
+| `ChooseMode` | `min`, `max`, `modes` (`index`, `text`, `available`) | `{"modes":[…]}` |
+| `BatchYesNo` | `count`, `yesText`, `noText` | `{"yes":true,"all":true}` |
+
+`cards` carries the name, cost and type of cards the view does not show — the
+top of a library, looked at — and the relay keeps it from every seat but the
+one deciding. Argentum asks `ReorderLibrary` for cards going to the bottom of a
+library as well as the top (Prophetic Bolt's rest), and to another player's
+library as well as the decider's, and the decision says neither; the
+continuation it waits with holds both, and the process reads them there:
+`placement` is `"top"`, the first card becoming the library's top, or
+`"bottom"`, the cards going under it in the order given and the last the very
+bottom; `library` is the library's owner. Added after M4's review without a new
+protocol number, as the status's other late fields were; a client reading an
+engine without them says only that the first ends up highest. `AssignDamageDecision`, which the brief for M4 named, is not
+raised by Argentum at the pin: its combat asks the whole damage step as one
+`CombatResolutionDecision`, and that is what is asked here. A client that
+sends no `answers` — every one before protocol 5 — is asked what it always was.
+
+An engine at 4 ignores all of these keys: it would take a play's targets
+nowhere and refuse the cast, and answer every decision itself. So a relay
+reading 4 sends no `answers` and tells no client that it may choose
+(`seated.choices`, `scripts/relay-engine.mjs`), and the client holds back what
+it cannot send, as it did before.
+
+**The opening hand (protocol 6, M4).** `new` with `mulligans: true` deals the
+game in Argentum's own mulligan phase — the London mulligan, CR 103.5, as
+Argentum implements it (`MulliganHandler`): a hand sent back is shuffled into
+the library and seven drawn again, and once a player keeps with mulligans
+taken they put that many on the bottom. Without the key every hand is kept, as
+every engine before this dealt (`skipMulligans`, Argentum's own name for it, is
+read too). The reply says `mulligans: true` where the phase was dealt.
+
+The phase is neither a priority window nor a decision. Argentum's
+`legalActions()` knows nothing of it — asked, it offers the first player a
+spell in the untap step — and no `PendingDecision` is raised for it; its own
+game server drives it beside the priority loop with messages of its own, and so
+does this process. While it lasts, the status names the seat it waits on, in
+Argentum's order (the first in turn order still to keep, then, once every hand
+is kept, the first still to put cards on the bottom), at turn 1, `BEGINNING`,
+`UNTAP`, which is where Argentum holds the game, and offers Argentum's own
+actions in the shape every offer has:
+
+```json
+{"index":0,"type":"KeepHand","description":"Keep this hand","affordable":true,"meaningful":true,"mulligans":0,"bottom":0}
+{"index":1,"type":"TakeMulligan","description":"Take a mulligan","affordable":true,"meaningful":true,"mulligans":0,"draws":7,"bottom":1}
+{"index":0,"type":"BottomCards","description":"Put 1 card on the bottom of your library","affordable":true,"meaningful":true,"mulligans":1,"bottom":1,"candidates":["e31",…]}
+```
+
+Every number is read off Argentum's `MulliganStateComponent`: `mulligans` the
+ones taken; on keeping, `bottom` how many keeping this hand puts on the
+bottom; on a mulligan, `draws` the hand drawn again and `bottom` how many
+keeping that one would; `TakeMulligan` is offered only while one may still be
+taken. `act` takes keeping and a mulligan by index alone, and the cards put on
+the bottom as `cards` (in the order given, each below the last) or `auto`,
+Argentum's own responder's choice. A card named twice ("Each card goes on the
+bottom once") and a count other than the one owed ("Put exactly 1 on the
+bottom: 0 were chosen.") are refused here, in this process's words: Argentum
+counts the cards and checks each is in hand, and no more, so a card named
+twice passed its count, moved once, and settled the mulligan with a card still
+owed kept in hand (found in M4's review). A card not in hand is refused in
+Argentum's words. The engine's seat decides by `EngineAiPlayerController`, the
+mulligan responder Argentum's game server plays with — it keeps a hand of two
+to five lands, and any hand once two mulligans are taken — so every level
+mulligans alike. It decides at once, and is not a stop of a paced table: the
+opening hands are part of the deal. Once the last hand is kept Argentum asks
+any opening-hand choices of CR 103.6 (a Leyline) as a yes or no, which every
+client can answer, and the first turn begins. When everybody keeps, the game is
+the one the same seed deals without the phase: keeping draws nothing and
+shuffles nothing (`tests/engine-live.test.js` holds it to that).
+
+The log says a mulligan once, as "You took a mulligan" or "Opponent took a
+mulligan", where Argentum says each card of the hand going into the library;
+and the cards put on the bottom as "You put … on the bottom of your library",
+to their owner alone.
+
+An engine at 5 ignores `mulligans` and deals every hand kept, so a relay reading
+5 must not tell a client a mulligan is coming. The relay asks for the phase only
+where every person at the table said in their sit that their client can show
+one (`mulligans: true`), since a seat that cannot would be offered keeping and
+bottoming it has no prompt for, and the game would wait on it for good.
 
 `waiting` is `"action"` with `actions`, `"decision"` with `decision`,
 `"engine"` on a paced table that has stopped after one of the engine's own
@@ -108,9 +243,10 @@ it), or null when the game is over or nobody is to act. `autoPassed` is how
 many priority windows the server passed on the human's behalf since the last
 stop, because nothing meaningful was affordable there (FRICTION.md Law 1,
 asked with the engine's own `MeaningfulActionFilter`). `decided` lists the
-decisions the engine's responder answered for a human seat because this
-protocol cannot yet ask them (ordering, damage assignment, mana sources), so
-the table can say so.
+decisions the engine's responder answered for a human seat because they were
+not put to it, so the table can say so: since protocol 5, splitting cards into
+piles, choosing a word to replace, a budget of modes, and anything a client did
+not say it can show.
 
 `seed` decides the shuffle and every other "at random" (Argentum's
 `GameConfig.seed`), so the same seed with the same decks plays the same game,
@@ -144,6 +280,22 @@ only watching. What is left is what a person would call a play — a land, a
 spell, an ability, a real attack or block — and a turn the engine does nothing
 in arrives whole, as it does without a pace, because there was nothing in it
 to see.
+
+Until M4 the attack, the block and every play the engine aimed were no stops
+at all. The engine's choice comes back filled in — its attackers, its
+blockers, its targets — and was matched to the bare offer by equality, which
+it never is. Over eight paced games of the goblin deck (2026-09-24) every one
+of the engine's stops fell in a main phase. Matched by what it is instead —
+the same card cast, the same ability of the same source, and a declaration
+that declares something (`worthWatching` in `Server.kt`) — the same eight
+games stop 49 times more for its attacks, 10 for its blocks and 17 in main
+phases, one for each Volcanic Hammer and Lava Axe it cast. A block is made in
+the attacker's turn, so the engine's blocks are the one stop of its own that
+falls in a turn of yours. A spell has resolved by the time its stop is seen:
+Argentum's `GameEnvironment.step` passes for every player while the stack
+holds anything, so no view is ever sent with a spell waiting on it — which also
+means nobody at this table is given priority with a spell on the stack (below,
+"What is deliberately not here").
 
 The stopping is all a pace changes. The same seed plays the same game with one
 and without — the same actions, in the same order, to the same end — which
@@ -180,8 +332,9 @@ reason to refuse a game: the seat plays as heuristic seats always have
 `profile`, naming an Argentum profile by its id, is for measurement
 (`scripts/engine-levels.mjs`), and an id the process does not list is refused,
 so a measurement never quietly plays a different agent. The relay sends only a
-level. A person's seat has no level: the decisions this protocol cannot yet
-ask of them are answered with `current`'s responder, as before.
+level. A person's seat has no level: the decisions it is not put, and a play
+it asks the engine to choose for it, are answered with `current`'s responder,
+as before.
 
 A seat's `level` and `profile` are this process's echo of what was asked, so
 `tests/engine-live.test.js` holds the levels to what they play as well: from
@@ -207,6 +360,7 @@ to choose between. The relay never asks for it.
 Neither levels nor `clock` exist before protocol 4. An engine at 3 ignores
 `level`, as it ignores every key it does not know, and plays its one way, so a
 relay reading 3 must not ask for one and must not say the engine plays at one.
+What a person chooses came with protocol 5, above.
 
 **The log.** Each seat's log is Argentum's `ClientEvent`s for that seat, with
 three changes, all found in M1's run in a browser. Every line carries its
@@ -286,14 +440,19 @@ the delta since the one before it, and, at the moments worth pinning, the
 whole state the engine would have sent instead. `tests/engine-delta.test.js`
 walks that run and holds the applied deltas against those full views, which is
 what says `applyDelta` agrees with `StateDiffCalculator` rather than with this
-app's reading of it. It takes about 40 s, needs a built engine, and keeps the
-first capture's `shots` unless asked for `--shots`, because the adapter's older
-tests hold those to exact life totals and card ids. Its header says what the
-window holds and what it could not reach, and a run that reached neither a
-decision nor declared blockers says so on the way out rather than reporting
-success with the gap in. The mark for a stop where blockers may be declared is
-`blockable`; `blocks` is blockers actually on the board, which no view a client
-is sent has ever carried.
+app's reading of it. It takes about 25 s, needs a built engine at protocol 6,
+and keeps the first capture's `shots` unless asked for `--shots`, because the
+adapter's older tests hold those to exact life totals and card ids. Since M4
+(2026-09-24, seed 20260941) the run starts at the deal and holds, within 30
+stops: the opening hand's three offers, one mulligan taken; the engine's turn
+mid-flight, its attack a stop of its own; the offer to block; a stop made for
+Volcanic Hammer alone; Sparkmage Apprentice's arrival asking the person for its
+target, a real `ChooseTargets` decision; and blockers the engine declared, on
+the board. Its header says how each is reached, and a run that misses any of
+them says so on the way out rather than reporting success with the gap in. The
+mark for a stop where blockers may be declared is `blockable`; `blocks` is
+blockers actually on the board, which no view carried until the engine's
+blocks became a stop of a paced table (above).
 
 ## What is deliberately not here
 
@@ -303,3 +462,13 @@ is sent has ever carried.
 - **A warm engine.** Each room starts its own process and waits out the 15 s
   load. Keeping one loaded and ready is a question for hosting (M8), once the
   cost of an idle JVM is measured against the wait.
+- **Priority with a spell on the stack.** Not a choice made here but a fact
+  found at M4 (2026-09-24): `GameEnvironment.step`, through Argentum's
+  `GameSimulator`, passes for every player while the stack holds anything, so a
+  spell resolves inside the step that cast it. A person holding Shocks, stopped
+  26 times in a game where the engine cast Shocks too, never had anything on
+  the stack at a stop: nobody here can respond to a spell, where the top of
+  the stack resolves only once all players pass in succession (117.4,
+  `docs/TURN_STRUCTURE.md`). Driving
+  the table with Argentum's `stepExactlyOne`, which runs no automatic
+  resolution, is where a fix would start; it is not in any milestone yet.

@@ -7,14 +7,15 @@
  * board each one belongs to rebuilt by walking the run's deltas, so the zones
  * the glow reads are the engine's and not a guess. The run holds plays, a
  * declaration of attackers, the offer to block, the engine's own stops and a
- * stop where the only play is a spell that needs a target — every kind of
- * status the glow has to read but a targets decision, which no capture has
- * reached (PLAN.md, M2), so that one is built in Server.kt's own shape.
+ * stop where the only play is a spell that needs a target; and since M4's
+ * capture, the opening hand and a targets decision, which M2's could not reach.
+ * What no capture holds is built in Server.kt's own shape.
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { applyDelta, boardFromView } from '../src/lib/engine/board.js'
-import { glowsAt, heldBack, offeredElsewhere, unaimed, unpaid, GLOW_SAYS } from '../src/lib/engine/glow.js'
+import { glowsAt, heldBack, offeredElsewhere, pileHolding, unaimed, unpaid, GLOW_SAYS } from '../src/lib/engine/glow.js'
+import { ANSWERS, beginBottom, beginDecision, beginPlay, choicesFrom, toggle } from '../src/lib/engine/choose.js'
 
 const FIXTURE = JSON.parse(readFileSync(new URL('./fixtures/engine-views.json', import.meta.url), 'utf8'))
 const RUN = FIXTURE.run
@@ -53,7 +54,7 @@ describe('a play: the cards in hand the engine will take', () => {
     }
   })
 
-  it('never glows a spell that needs a target, since this table cannot send one', () => {
+  it('never glows a spell that needs a target at a seat told it cannot send one', () => {
     const aimed = plays.filter((s) => s.status.actions.some((a) => a.requiresTargets && a.affordable))
     expect(aimed.length).toBeGreaterThan(0)
     for (const { at, status, board } of aimed) {
@@ -97,7 +98,7 @@ describe('a cost with a choice in it', () => {
   const pass = { index: 0, type: 'PassPriority', description: 'Pass priority', affordable: true, meaningful: false }
   const status = { actor: YOU, waiting: 'action', actions: [pass, gecko] }
 
-  it('is held back, and does not glow, since act carries no payment and Argentum refuses it', () => {
+  it('is held back, and does not glow, at a seat whose act carries no payment, since Argentum refuses it bare', () => {
     expect(heldBack(gecko)).toBe('cost')
     expect(glowsAt({ status, me: YOU, zoneOf: () => 'battlefield' }).size).toBe(0)
     expect(unpaid(status).map((a) => a.card)).toEqual(['e27'])
@@ -201,6 +202,108 @@ describe('a target being chosen', () => {
   it('glows nothing for another seat\'s decision, or one of another kind', () => {
     expect(glowsAt({ status: { ...asking, actor: 'e1' }, me: YOU }).size).toBe(0)
     expect(glowsAt({ status: { ...asking, decision: { ...asking.decision, type: 'YesNo' } }, me: YOU }).size).toBe(0)
+  })
+
+  it('and at the captured run\'s own: Sparkmage Apprentice\'s arrival, every legal id on the board it was asked on', () => {
+    // Since M4's capture the run holds a real one (PLAN.md, M2 left it short).
+    const at = stops.find((s) => s.status.waiting === 'decision' && s.status.decision?.type === 'ChooseTargets')
+    expect(at, 'the run holds a targets decision').toBeTruthy()
+    expect(at.status.decision.source).toBe('Sparkmage Apprentice')
+    const legal = at.status.decision.requirements.flatMap((r) => r.legal)
+    const glows = glowsAt({ status: at.status, me: YOU, zoneOf: zoneIn(at.board) })
+    expect(new Set(glows.keys())).toEqual(new Set(legal))
+    // The cards among them are on the battlefield the view shows, and both seats are among them.
+    for (const id of legal.filter((x) => !at.board.players.includes(x))) expect(at.board.cards[id]?.zone, id).toBe('battlefield')
+    expect(at.board.players.every((p) => legal.includes(p))).toBe(true)
+    // The choosing begun from it glows the same, each saying it is a legal target.
+    const choosing = beginDecision(at.status, YOU)
+    expect([...glowsAt({ status: at.status, me: YOU, zoneOf: zoneIn(at.board), choosing }).values()].every((g) => g.says === GLOW_SAYS.target)).toBe(true)
+  })
+})
+
+describe('at a seat that can choose (M4)', () => {
+  // What the room says after the deal where the relay and the engine both choose.
+  const can = choicesFrom({ choices: { act: ['targets', 'x', 'damage', 'cost', 'auto'], costs: ['DiscardCard'], decisions: ANSWERS } })
+
+  it('glows a spell that needs a target like any other play, and names none as held back', () => {
+    const only = stops.find((s) => s.status.waiting === 'action'
+      && s.status.actions.filter((a) => a.meaningful && a.affordable).every((a) => a.requiresTargets)
+      && s.status.actions.some((a) => a.requiresTargets && a.affordable))
+    const hammer = only.status.actions.find((a) => a.requiresTargets && a.affordable)
+    const glows = glowsAt({ status: only.status, me: YOU, zoneOf: zoneIn(only.board), can })
+    expect(glows.get(hammer.card)).toEqual({ kind: 'playable', says: GLOW_SAYS.play })
+    expect(unaimed(only.status, can)).toEqual([])
+    // The same stop at a seat told nothing is M1b's, unchanged.
+    expect(glowsAt({ status: only.status, me: YOU, zoneOf: zoneIn(only.board) }).has(hammer.card)).toBe(false)
+  })
+
+  it('glows an ability whose cost it can pay with a choice, and holds back one whose candidates were not named', () => {
+    const gecko = { index: 3, type: 'ActivateAbility', description: '{1}{R}, Discard a card: Draw a card', card: 'e27', affordable: true, meaningful: true, requiresTargets: false, additionalCost: 'DiscardCard', additionalCostText: 'Discard a card', costChoice: { min: 1, max: 1, candidates: ['e27', 'e31'] } }
+    const status = { actor: YOU, waiting: 'action', actions: [gecko] }
+    expect(kinds(glowsAt({ status, me: YOU, zoneOf: () => 'battlefield', can }))).toEqual({ e27: 'playable' })
+    expect(unpaid(status, can)).toEqual([])
+    const { costChoice, ...unnamed } = gecko
+    expect(unpaid({ ...status, actions: [unnamed] }, can).map((a) => a.card)).toEqual(['e27'])
+  })
+
+  it('while a play is being chosen, glows what the step may take and lights what it took, in words', () => {
+    const arc = { index: 1, type: 'CastSpell', card: 'e29', affordable: true, meaningful: true, requiresTargets: true, targetRequirements: [{ index: 0, description: '3 targets', min: 1, max: 3, legal: ['e0', 'e1', 'e21'] }], divide: { total: 3, min: 1 } }
+    const status = { actor: YOU, waiting: 'action', actions: [arc] }
+    let ch = beginPlay(arc, can)
+    expect(kinds(glowsAt({ status, me: YOU, can, choosing: ch }))).toEqual({ e0: 'target', e1: 'target', e21: 'target' })
+    ch = toggle(ch, 'e1')
+    const glows = glowsAt({ status, me: YOU, can, choosing: ch })
+    expect(glows.get('e1')).toEqual({ kind: 'chosen', says: GLOW_SAYS.targeted })
+    expect(glows.get('e21')).toEqual({ kind: 'target', says: GLOW_SAYS.target })
+    // Nothing plays while something is being chosen: the Arc in hand does not glow as playable.
+    expect(glows.has('e29')).toBe(false)
+  })
+
+  it('glows the cards that can pay a cost, never the one being cast, and says what each is for', () => {
+    const voice = { index: 2, type: 'CastSpell', card: 'e39', affordable: true, meaningful: true, requiresTargets: false, additionalCost: 'DiscardCard', additionalCostText: 'Discard a card', costChoice: { min: 1, max: 1, candidates: ['e22', 'e39'] } }
+    const glows = glowsAt({ status: { actor: YOU, waiting: 'action', actions: [voice] }, me: YOU, can, choosing: beginPlay(voice, can) })
+    expect(glows.get('e22')).toEqual({ kind: 'target', says: GLOW_SAYS.payable })
+    expect(glows.has('e39')).toBe(false)
+  })
+
+  it('marks a pile holding a card a cost can take as holding one that can be chosen, not a target', () => {
+    // A graveyard's tile is where a player looks for it, and the words were
+    // "holds a legal target" for anything lit inside it, which a card that can
+    // pay a cost is not (found reading the M4 diff).
+    const glows = new Map([['e40', { kind: 'target', says: GLOW_SAYS.payable }], ['e41', { kind: 'chosen', says: GLOW_SAYS.paying }]])
+    expect(pileHolding(['e40', 'e41'], glows)).toBe('choice')
+    expect(pileHolding(['e40', 'e42'], new Map([...glows, ['e42', { kind: 'target', says: GLOW_SAYS.target }]]))).toBe('target')
+    expect(pileHolding(['e43'], glows, [{ offer: { card: 'e43', type: 'CastWithFlashback' } }])).toBe('play')
+    expect(pileHolding(['e43'], glows, [{ offer: { card: 'e43', type: 'ActivateAbility' } }])).toBe('use')
+    expect(pileHolding([], glows)).toBeNull()
+  })
+
+  it('glows the cards a decision may select, saying they can be chosen', () => {
+    const status = { actor: YOU, waiting: 'decision', decision: { id: 'r0', type: 'SelectCards', prompt: 'Discard down to 7 cards (choose 1 to discard)', min: 1, max: 1, options: ['e15', 'e27'] } }
+    const glows = glowsAt({ status, me: YOU, can, choosing: beginDecision(status, YOU) })
+    expect([...glows.values()]).toEqual([{ kind: 'target', says: GLOW_SAYS.choosable }, { kind: 'target', says: GLOW_SAYS.choosable }])
+  })
+})
+
+describe('the opening hand (protocol 6)', () => {
+  // Server.kt's offers, as the built engine sent them on 2026-09-24.
+  const KEEP = { index: 0, type: 'KeepHand', description: 'Keep this hand', affordable: true, meaningful: true, mulligans: 0, bottom: 0 }
+  const TAKE = { index: 1, type: 'TakeMulligan', description: 'Take a mulligan', affordable: true, meaningful: true, mulligans: 0, draws: 7, bottom: 1 }
+  const BOTTOM = { index: 0, type: 'BottomCards', description: 'Put 1 card on the bottom of your library', affordable: true, meaningful: true, mulligans: 1, bottom: 1, candidates: ['e31', 'e16', 'e10'] }
+  const inHand = () => 'hand'
+
+  it('glows nothing while the hand is being kept or sent back: no card is played before the game begins', () => {
+    expect(glowsAt({ status: { actor: YOU, waiting: 'action', actions: [KEEP, TAKE] }, me: YOU, zoneOf: inHand }).size).toBe(0)
+  })
+
+  it('glows the hand while the cards for the bottom are chosen, and lights one picked, in words', () => {
+    const status = { actor: YOU, waiting: 'action', actions: [BOTTOM] }
+    const ch = beginBottom(status, YOU)
+    expect(kinds(glowsAt({ status, me: YOU, zoneOf: inHand, choosing: ch }))).toEqual({ e31: 'target', e16: 'target', e10: 'target' })
+    expect(glowsAt({ status, me: YOU, zoneOf: inHand, choosing: ch }).get('e31').says).toBe(GLOW_SAYS.bottomable)
+    const picked = glowsAt({ status, me: YOU, zoneOf: inHand, choosing: toggle({ ...ch, steps: [{ ...ch.steps[0], max: 2, min: 2 }] }, 'e16') })
+    expect(picked.get('e16')).toEqual({ kind: 'chosen', says: GLOW_SAYS.bottomed })
+    expect(picked.get('e31')).toEqual({ kind: 'target', says: GLOW_SAYS.bottomable })
   })
 })
 

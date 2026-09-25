@@ -352,15 +352,27 @@ describe('an enforced room', () => {
   const DECK = { Mountain: 14, 'Raging Goblin': 6 }
 
   /** A client at an enforced room: the raw messages, kept. */
-  async function join(code, name, { deck = DECK, seat = null, sideboard = null, deltas = false, level = null } = {}) {
+  async function join(code, name, { deck = DECK, seat = null, sideboard = null, deltas = false, level = null, answers = null, mulligans = false } = {}) {
     const api = roomsApi(base)
     const got = []
     const wire = relay({ url: api.socketUrl(code), WebSocket })
     wire.onMessage((m) => got.push(m))
-    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat, ...(sideboard ? { sideboard } : {}), ...(deltas ? { deltas: true } : {}), ...(level ? { level } : {}) }))
+    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat, ...(sideboard ? { sideboard } : {}), ...(deltas ? { deltas: true } : {}), ...(level ? { level } : {}), ...(answers ? { answers } : {}), ...(mulligans ? { mulligans: true } : {}) }))
     const last = (op) => [...got].reverse().find((m) => m.t === 'engine' && m.op === op) ?? null
     await until(() => last('seated'))
     return { got, wire, last, send: (m) => wire.send({ t: 'engine', ...m }), leave: () => wire.close() }
+  }
+
+  /**
+   * A move, and the room's whole answer to it: the status, and then the view it
+   * sends after the status. The room keeps its one-move guard up until that view
+   * is out (M3), so a next move sent on the status alone can land inside the
+   * guard and be refused — which, beside a JVM, it did (found at M4).
+   */
+  async function moved(who, message) {
+    const views = who.got.filter((m) => m.op === 'view').length
+    who.send(message)
+    await until(() => who.last('status')?.status.stop === message.stop + 1 && who.got.filter((m) => m.op === 'view').length > views, 5000)
   }
 
   it('is opened on request, and says so', async () => {
@@ -568,6 +580,163 @@ describe('an enforced room', () => {
         you.leave()
       } finally {
         delete process.env.FAKE_HOLD_HELLO
+      }
+    })
+  })
+
+  /**
+   * What a person may choose (HANDOFF.md, M4). The client says in its sit which
+   * decisions it can show; the room passes that to the deal for that seat, and
+   * after the deal tells the seat what its `act` may carry and which decisions
+   * it will be asked — only where the engine said, so a client told nothing
+   * holds back what it cannot send.
+   */
+  describe('what a person may choose', () => {
+    const dealtSeat = (who) => [...who.got].reverse().find((m) => m.op === 'seated' && m.engineSeat) ?? null
+    const engineAt = (code) => relayServer.rooms.get(code).engine.engine
+    const ANSWERS = ['SelectCards', 'OrderObjects', 'Distribute', 'CombatResolution']
+
+    it('passes the decisions a client can show to the deal for its seat alone, and says after it what the seat may choose', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { answers: [...ANSWERS, 42, 'x'.repeat(80)] })
+      await until(() => dealtSeat(you), 5000)
+      const sent = (await engineAt(code).call('lastNew')).request
+      // Read forgivingly: what is not a short word is dropped on the way.
+      expect(sent.players[0].answers).toEqual(ANSWERS)
+      expect(sent.players[1]).not.toHaveProperty('answers')
+      const { choices } = dealtSeat(you)
+      // `cards` since protocol 6: the cards put on the bottom after a mulligan.
+      expect(choices.act).toEqual(['targets', 'x', 'damage', 'cost', 'auto', 'cards'])
+      expect(choices.costs).toContain('DiscardCard')
+      // The decisions are the ones the engine said it will ask this seat.
+      expect(choices.decisions).toEqual(['ChooseTargets', 'YesNo', 'ChooseOption', ...ANSWERS])
+      // The seated that answers the sit, before any deal, says nothing of it.
+      expect(you.got.find((m) => m.op === 'seated')).not.toHaveProperty('choices')
+      you.leave()
+    })
+
+    it('sends a client that said nothing no answers, and tells it only what every engine asks', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => dealtSeat(you), 5000)
+      expect((await engineAt(code).call('lastNew')).request.players[0]).not.toHaveProperty('answers')
+      expect(dealtSeat(you).choices.decisions).toEqual(['ChooseTargets', 'YesNo', 'ChooseOption'])
+      you.leave()
+    })
+
+    it('never tells a seat it may choose where the engine is older than choosing, nor sends it answers', async () => {
+      // An engine at 4 would drop a target sent with a play and refuse the cast.
+      process.env.FAKE_PROTOCOL = '4'
+      try {
+        const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+        const you = await join(code, 'Robin', { answers: ANSWERS })
+        await until(() => dealtSeat(you), 5000)
+        expect((await engineAt(code).call('lastNew')).request.players[0]).not.toHaveProperty('answers')
+        expect(dealtSeat(you)).not.toHaveProperty('choices')
+        you.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
+    })
+
+    it('carries what the person chose to the engine, with the play and with an answer', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { answers: ANSWERS })
+      await until(() => you.last('view'), 5000)
+      const { stop } = you.last('status').status
+      const chosen = { targets: { 0: ['e1'] }, x: 2, damage: { e1: 2, e0: 1 }, cost: ['e30'] }
+      await moved(you, { op: 'act', stop, index: 0, ...chosen })
+      expect((await engineAt(code).call('lastAct')).request).toMatchObject({ op: 'act', index: 0, ...chosen })
+      await moved(you, { op: 'decide', stop: stop + 1, edges: { 'e27->e71': 2 } })
+      expect((await engineAt(code).call('lastDecide')).request).toMatchObject({ op: 'decide', edges: { 'e27->e71': 2 } })
+      you.leave()
+    })
+
+    it('sends the faces of cards a decision shows only to the seat it asks', async () => {
+      // Two people and the engine: a scry shows the deciding seat the top of
+      // its library, and the other person is sent the same question without it.
+      const { code } = await roomsApi(base).open({ seats: 3, enforced: true })
+      const you = await join(code, 'Robin', { answers: ANSWERS })
+      const them = await join(code, 'Sam', { answers: ANSWERS })
+      await until(() => you.last('view') && them.last('view'), 5000)
+      const decision = { id: 'r0', type: 'SelectCards', player: 'e0', prompt: 'Choose up to 2 cards', source: 'Magma Jet', min: 0, max: 2, options: ['e37', 'e7'], cards: { e37: { name: 'Magma Jet' }, e7: { name: 'Mountain' } } }
+      await engineAt(code).call('ask', { decision })
+      const { stop } = you.last('status').status
+      you.send({ op: 'act', stop, index: 0 })
+      await until(() => you.last('status').status.stop === stop + 1 && them.last('status').status.stop === stop + 1, 5000)
+      expect(you.last('status').status.decision).toEqual(decision)
+      const { cards, ...question } = decision
+      expect(them.last('status').status.decision).toEqual(question)
+      // And the same when that seat asks for the table again.
+      const statuses = them.got.filter((m) => m.op === 'status').length
+      them.send({ op: 'turn' })
+      await until(() => them.got.filter((m) => m.op === 'status').length > statuses, 5000)
+      expect(them.last('status').status.decision).toEqual(question)
+      you.leave(); them.leave()
+    })
+  })
+
+  describe('the opening hand', () => {
+    const engineAt = (code) => relayServer.rooms.get(code).engine.engine
+    const offered = (who) => (who.last('status')?.status.actions ?? []).map((a) => a.type)
+
+    it('is dealt to keep where the client can show a mulligan, and what the person chose goes to the engine', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { mulligans: true })
+      await until(() => you.last('view'), 5000)
+      expect((await engineAt(code).call('lastNew')).request.mulligans).toBe(true)
+      expect(await api.peek(code)).toMatchObject({ dealt: true, mulligans: true })
+      expect(offered(you)).toEqual(['KeepHand', 'TakeMulligan'])
+      let { stop } = you.last('status').status
+      await moved(you, { op: 'act', stop, index: 1 })
+      expect(you.last('status').status.actions[0]).toMatchObject({ type: 'KeepHand', mulligans: 1, bottom: 1 })
+      await moved(you, { op: 'act', stop: ++stop, index: 0 })
+      const bottom = you.last('status').status.actions[0]
+      expect(bottom).toMatchObject({ type: 'BottomCards', bottom: 1 })
+      // The cards chosen travel with the act, untouched, as a play's targets do.
+      await moved(you, { op: 'act', stop: ++stop, index: 0, cards: [bottom.candidates[0]] })
+      expect((await engineAt(code).call('lastAct')).request).toMatchObject({ op: 'act', index: 0, cards: [bottom.candidates[0]] })
+      // And the game begins where it would have.
+      expect(offered(you)).not.toContain('KeepHand')
+      expect(offered(you)).not.toContain('BottomCards')
+      you.leave()
+    })
+
+    it('keeps every hand where the client did not say it can show a mulligan, as every room before did', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      expect((await engineAt(code).call('lastNew')).request).not.toHaveProperty('mulligans')
+      expect(await api.peek(code)).toMatchObject({ dealt: true, mulligans: false })
+      expect(offered(you)).not.toContain('KeepHand')
+      you.leave()
+    })
+
+    it('keeps every hand where one person at the table cannot be shown a mulligan, since the game would wait on them for good', async () => {
+      const { code } = await roomsApi(base).open({ seats: 3, enforced: true })
+      const you = await join(code, 'Robin', { mulligans: true })
+      const them = await join(code, 'Sam')
+      await until(() => you.last('view') && them.last('view'), 5000)
+      expect((await engineAt(code).call('lastNew')).request).not.toHaveProperty('mulligans')
+      you.leave(); them.leave()
+    })
+
+    it('never asks an engine older than mulligans for one', async () => {
+      // An engine at 5 ignores the key and deals every hand kept; the room reads its reply rather than assume.
+      process.env.FAKE_PROTOCOL = '5'
+      try {
+        const api = roomsApi(base)
+        const { code } = await api.open({ seats: 2, enforced: true })
+        const you = await join(code, 'Robin', { mulligans: true })
+        await until(() => you.last('view'), 5000)
+        expect((await engineAt(code).call('lastNew')).request).not.toHaveProperty('mulligans')
+        expect(await api.peek(code)).toMatchObject({ mulligans: false })
+        expect(offered(you)).not.toContain('KeepHand')
+        you.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
       }
     })
   })

@@ -13,6 +13,20 @@
 // And it has levels (protocol 4): an engine seat dealt with `level` says in the
 // reply's seats which it took. FAKE_PROTOCOL=3 plays an engine from before them.
 //
+// And choices (protocol 5): its hello says what a person may choose, a person's
+// seat dealt with `answers` says in the reply which decisions it will be asked,
+// and it keeps the last `act` and `decide` it was sent, so a test can see what
+// the room passed on. FAKE_PROTOCOL=4 plays an engine from before them.
+//
+// And mulligans (protocol 6): dealt with `mulligans: true`, it opens with the
+// first seat's opening hand to keep, in Server.kt's shapes — keep or take a
+// mulligan, and after keeping with mulligans taken, the cards to put on the
+// bottom, refused in Server.kt's words where one is named twice or they are not
+// as many as owed, and in Argentum's where one is not in the hand —
+// before its first captured stop. Its hand is the first shot's; it draws no new
+// one, since the captured views hold one hand. FAKE_PROTOCOL=5 plays an engine
+// from before them.
+//
 // It can be made to hold a request until the test lets it go (`holdActs`,
 // `release`, FAKE_HOLD_HELLO), which is how a test waits on "the engine is
 // still answering" without waiting on a clock.
@@ -63,9 +77,23 @@ let held = null
 let waitingLines = []
 let helloHeld = Boolean(process.env.FAKE_HOLD_HELLO)
 let acts = 0
-// The last deal asked for, so a test can see exactly what the relay sent.
+// The last deal asked for, so a test can see exactly what the relay sent; and
+// the last act and decide, for the same reason.
 let lastNew = null
-const protocol = () => Number(process.env.FAKE_PROTOCOL) || 4
+let lastAct = null
+let lastDecide = null
+const protocol = () => Number(process.env.FAKE_PROTOCOL) || 6
+// Protocol 5's choices, as the real engine names them in hello (Server.kt);
+// protocol 6 adds the cards put on the bottom after a mulligan to what act takes.
+const ALWAYS_ASKED = ['ChooseTargets', 'YesNo', 'ChooseOption']
+const choices = () => ({ ...CHOICES, act: protocol() >= 6 ? [...CHOICES.act, 'cards'] : CHOICES.act })
+const CHOICES = {
+  act: ['targets', 'x', 'damage', 'cost', 'auto'],
+  costs: ['DiscardCard', 'SacrificePermanent', 'TapPermanents', 'BouncePermanent', 'ExileFromGraveyard', 'ExileFromHand', 'Behold', 'RevealCard', 'Blight'],
+  decisions: [...ALWAYS_ASKED, 'SelectCards', 'OrderObjects', 'ReorderLibrary', 'Distribute', 'CombatResolution', 'SelectManaSources', 'ChooseNumber', 'ChooseColor', 'ChooseMode', 'BatchYesNo'],
+}
+/** What a person's seat will be asked: every engine's three, and those of its client's it can ask. */
+const asked = (p) => (p?.ai || protocol() < 5 ? {} : { asked: CHOICES.decisions.filter((d) => ALWAYS_ASKED.includes(d) || (Array.isArray(p?.answers) && p.answers.includes(d))) })
 // Protocol 4's levels, as the real engine names them in hello. An engine seat
 // asked for one of these takes it and says so; asked for anything else, or by a
 // fake playing an older engine, it plays its one way and names no level.
@@ -104,8 +132,34 @@ const paused = () => ({
   ok: true, over: false, winner: null, turn: shot().status.turn, phase: shot().status.phase, step: shot().status.step,
   actor: engineSeat(), waiting: 'engine', autoPassed: 0, decided: [],
 })
+// Test-only: decisions the next stops put to the first seat, one at a time,
+// each until it is decided (`ask`), for a test of what each seat is sent of
+// one and of what a client sends back. Answering one moves the table on to the
+// next asked, not to the next captured shot: the captured run has only two.
+let asking = []
+// The opening hand being kept (protocol 6), or null once the game has begun or
+// where the deal did not ask for one: how many mulligans the first seat has
+// taken, and whether it has kept.
+let mulligan = null
+/** The first seat's hand in the first shot: what it keeps, and what it puts on the bottom from. */
+const openingHand = () => shots[0].view.zones.find((z) => z.zoneId?.zoneType === 'Hand' && z.zoneId?.ownerId === FIXTURE.seats[0].id)?.cardIds ?? []
+/** Server.kt's offers for the mulligan phase, numbers and all, for a two-player game. */
+const mulliganOffers = () => (mulligan.kept
+  ? [{ index: 0, type: 'BottomCards', description: `Put ${mulligan.taken} ${mulligan.taken === 1 ? 'card' : 'cards'} on the bottom of your library`, affordable: true, meaningful: true, mulligans: mulligan.taken, bottom: mulligan.taken, candidates: openingHand() }]
+  : [
+      { index: 0, type: 'KeepHand', description: 'Keep this hand', affordable: true, meaningful: true, mulligans: mulligan.taken, bottom: mulligan.taken },
+      ...(mulligan.taken < 7 ? [{ index: 1, type: 'TakeMulligan', description: 'Take a mulligan', affordable: true, meaningful: true, mulligans: mulligan.taken, draws: 7, bottom: mulligan.taken + 1 }] : []),
+    ])
 const status = () => {
+  if (mulligan) {
+    const { actions, ...rest } = shots[0].status
+    return { ...rest, ok: true, turn: 1, phase: 'BEGINNING', step: 'UNTAP', actor: FIXTURE.seats[0].id, waiting: 'action', actions: mulliganOffers(), autoPassed: 0, decided: [] }
+  }
   if (pending > 0) return paused()
+  if (asking.length && at >= 0 && at < shots.length) {
+    const { actions, ...rest } = shots[at].status
+    return { ...rest, ok: true, waiting: 'decision', actor: FIXTURE.seats[0].id, decision: asking[0] }
+  }
   return at >= shots.length ? ended() : { ...shots[at].status, ok: true }
 }
 /** The log so far: one line a step, each carrying its words and its step, as M1 left them. */
@@ -169,6 +223,7 @@ function handle(req) {
       say({
         id, ok: true, engine: 'fake', protocol: protocol(), cards: 3,
         ...(protocol() >= 4 ? { levels: LEVELS } : {}),
+        ...(protocol() >= 5 ? { choices: choices() } : {}),
         ...(process.env.FAKE_NO_SETS ? {} : { sets: [
           { code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false },
           { code: 'TRC', name: 'Star Trek Commander', released: '2026-01-23', incomplete: true },
@@ -201,17 +256,23 @@ function handle(req) {
       // A pace is read only as a yes, and only by an engine that has one: an
       // older one has never heard of the key and ignores it, as the real one does.
       paced = protocol() >= 3 && (req.pace === true || (typeof req.pace === 'number' && req.pace > 0))
+      // So is a mulligan phase, from protocol 6.
+      mulligan = protocol() >= 6 && req.mulligans === true ? { taken: 0, kept: false } : null
       // A sideboard card it does not know is left out and named, as the real engine does.
       say({
         id,
         ...status(),
         ...(paced ? { paced: true } : {}),
-        seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(req.players?.[i]?.deck), ...played(req.players?.[i]) })),
+        ...(mulligan ? { mulligans: true } : {}),
+        seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(req.players?.[i]?.deck), ...played(req.players?.[i]), ...asked(req.players?.[i]) })),
       })
       break
     }
     case 'turn': say({ id, ...status() }); break
     case 'lastNew': say({ id, ok: true, request: lastNew }); break
+    case 'lastAct': say({ id, ok: true, request: lastAct }); break
+    case 'ask': if (req.decision) asking.push(req.decision); else asking = []; say({ id, ok: true, asking: asking.length }); break
+    case 'lastDecide': say({ id, ok: true, request: lastDecide }); break
     // Test-only: how many plays this engine makes after each of the player's,
     // on a paced table. Nothing the real protocol has — the captured shots hold
     // the player's stops alone, so what it does between them is said here.
@@ -237,7 +298,28 @@ function handle(req) {
     case 'sulk': sulking = true; say({ id, ok: true }); break
     case 'act': {
       if (!req.released) acts++
+      lastAct = req
       if (holding && !req.released) { holding = false; held = req; return }
+      if (mulligan) {
+        // The opening hand, as Server.kt takes it: keeping and a mulligan need
+        // nothing more, and the cards put on the bottom are exactly as many as
+        // are owed, from the hand, or the engine's own with `auto`.
+        const offer = mulliganOffers()[req.index]
+        if (!offer) { say({ id, ok: false, error: `No action ${req.index}; ${mulliganOffers().length} were offered.` }); break }
+        if (offer.type === 'TakeMulligan') mulligan.taken++
+        else if (offer.type === 'KeepHand' && mulligan.taken > 0) mulligan.kept = true
+        else if (offer.type === 'BottomCards') {
+          const cards = req.auto === true ? offer.candidates.slice(0, offer.bottom) : req.cards
+          if (!Array.isArray(cards)) { say({ id, ok: false, error: `Putting cards on the bottom needs "cards", the ${offer.bottom} chosen from your hand, or "auto": true.` }); break }
+          if (new Set(cards).size !== cards.length) { say({ id, ok: false, error: 'Each card goes on the bottom once; the same card was named twice.' }); break }
+          if (cards.length !== offer.bottom) { say({ id, ok: false, error: `Put exactly ${offer.bottom} on the bottom: ${cards.length} ${cards.length === 1 ? 'was' : 'were'} chosen.` }); break }
+          if (cards.some((c) => !offer.candidates.includes(c))) { say({ id, ok: false, error: `The engine refused that: Cards not in hand: [${cards.filter((c) => !offer.candidates.includes(c)).join(', ')}]` }); break }
+          mulligan = null
+        } else mulligan = null
+        steps++
+        say({ id, ...status() })
+        break
+      }
       if (pending > 0) { say({ id, ok: false, error: 'The game is not waiting on anyone.' }); break }
       if (at < 0 || at >= shots.length) { say({ id, ok: false, error: 'The game is not waiting on anyone.' }); break }
       const offered = shots[at].status.actions ?? []
@@ -250,6 +332,8 @@ function handle(req) {
       break
     }
     case 'decide': {
+      lastDecide = req
+      if (asking.length) { asking.shift(); steps++; say({ id, ...status() }); break }
       if (at < 0) { say({ id, ok: false, error: 'There is no decision to make.' }); break }
       at++; steps++
       if (paced && plays > 0) { pending = plays; steps++ }

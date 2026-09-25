@@ -4,6 +4,7 @@ import { boardFromView, eventsBetween, standIn } from '../../lib/engine/board.js
 import { nothingHeld, receiveView } from '../../lib/engine/stream.js'
 import { leaveOut, nameList, seatDeck } from '../../lib/engine/deck.js'
 import { levelLine, levelOf } from '../../lib/engine/levels.js'
+import { ANSWERS, NO_CHOICES, choicesFrom } from '../../lib/engine/choose.js'
 
 /**
  * A seat at a table the engine holds.
@@ -39,6 +40,17 @@ import { levelLine, levelOf } from '../../lib/engine/levels.js'
  * says after the deal what the engine is really playing at. The log says that
  * once, in the room's words rather than the lobby's: the level taken, or that
  * this engine or this relay is older than levels and plays its one way.
+ *
+ * So do the decisions this build can put on screen (`answers`,
+ * src/lib/engine/choose.js), and after the deal the room says what this seat
+ * may choose (`can`): what its `act` may carry — targets, an X, a division of
+ * damage, what a cost takes — and which decisions it will be asked. Until the
+ * room says, and where it never does, the table holds back what it cannot send.
+ *
+ * And that this build can show a mulligan (`mulligans`), so a room whose
+ * engine deals one opens the game with the opening hands to keep (the owner's
+ * "mulligans on", HANDOFF.md §3 item 3). A room that never says so deals every
+ * hand kept, and the first status is simply the first stop of the game.
  */
 /**
  * How long a press may go unanswered before the table says the engine is
@@ -123,6 +135,9 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   // where it plays its one way; undefined until the deal.
   const [level, setLevel] = useState(undefined)
   const levelNoted = useRef(false)
+  // What this seat may choose, once the room has said after the deal; nothing
+  // until then, and nothing from a relay or an engine that never says.
+  const [can, setCan] = useState(NO_CHOICES)
   const sat = useRef(false)
   const sideNoted = useRef(false)
   const printingsNoted = useRef(false)
@@ -159,7 +174,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
     // The level rides along each time: before the deal it is the room's to
     // take, and after it the room keeps the one the game was dealt with.
     const asked = levelOf(chosen)
-    line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, deltas: true, ...side, ...(asked ? { level: asked } : {}) }))
+    line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, deltas: true, answers: ANSWERS, mulligans: true, ...side, ...(asked ? { level: asked } : {}) }))
     line.onMessage((m) => {
       if (m?.t !== 'engine') return
       switch (m.op) {
@@ -206,7 +221,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
             if (sideboardUnloaded) note(`${sideboardUnloaded === 1 ? 'One sideboard card' : `${sideboardUnloaded} sideboard cards`} did not load, so ${sideboardUnloaded === 1 ? 'it is' : 'they are'} left out.`)
           }
           sat.current = true
-          if (m.engineSeat) setSeat(m.engineSeat)
+          if (m.engineSeat) { setSeat(m.engineSeat); setCan(choicesFrom(m)) }
           if (m.seat && memory.seat !== m.seat) { memory.seat = m.seat; remember(code, memory) }
           break
         }
@@ -314,7 +329,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   }, [])
 
   return {
-    run, seat, seats, status, refusal, gone, wireStatus, unloaded, leftOut, sideboardLeftOut, level, answering, slow,
+    run, seat, seats, status, refusal, gone, wireStatus, unloaded, leftOut, sideboardLeftOut, level, answering, slow, can,
     act, decide, cardFor, moveCard,
     refuse: (message) => setRefusal({ message }),
     clearRefusal: () => setRefusal(null),
