@@ -56,7 +56,7 @@ One request per line, one reply per line, correlated by `id`:
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"engine":"argentum","protocol":8,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"levels":{"easy":"v0","intermediate":"production-raceclock","hard":"production-candidate-expiring"},"choices":{"act":["targets","x","damage","cost","auto","cards"],"costs":["DiscardCard",…],"decisions":["ChooseTargets","YesNo","ChooseOption","SelectCards",…]},"formats":["standard","commander"],"decks":{"formats":["standard","pioneer","modern","legacy","vintage","pauper","premodern","commander"]},"load":{"ms":27342,"legalitiesMs":601,"heapMb":127,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order; `levels` are the strengths an engine seat may play at, weakest first, each with the Argentum profile behind it; `choices` is what a person may choose over this protocol (below); `formats` the games it deals (protocol 8, below); `decks.formats` the formats an engine's seat can be dealt a deck of its own in (protocol 7, below; Commander's only at a Commander table); `load.legalitiesMs` what stamping every card with the formats it is legal in took, of `load.ms` |
+| `{"op":"hello"}` | `{"engine":"argentum","protocol":9,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"levels":{"easy":"v0","intermediate":"production-raceclock","hard":"production-candidate-expiring"},"choices":{"act":["targets","x","damage","cost","auto","cards"],"costs":["DiscardCard",…],"decisions":["ChooseTargets","YesNo","ChooseOption","SelectCards",…]},"formats":["standard","commander"],"decks":{"formats":["standard","pioneer","modern","legacy","vintage","pauper","premodern","commander"]},"load":{"ms":27342,"legalitiesMs":601,"heapMb":127,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order; `levels` are the strengths an engine seat may play at, weakest first, each with the Argentum profile behind it; `choices` is what a person may choose over this protocol (below); `formats` the games it deals (protocol 8, below); `decks.formats` the formats an engine's seat can be dealt a deck of its own in (protocol 7, below; Commander's only at a Commander table); `load.legalitiesMs` what stamping every card with the formats it is legal in took, of `load.ms` |
 | `{"op":"cards"}` | `{"names":[…]}` — every name a deck may hold: no tokens and no back faces, though the engine knows both |
 | `{"op":"check","deck":{"Delver of Secrets // Insectile Aberration":4,"Made-Up Card":2},"sideboard":{…}}` | `{"known":4,"total":6,"unknown":["Made-Up Card"],"unknownSideboard":[]}` — which of a deck's cards the engine knows, before any game; unknown names come back exactly as sent |
 | `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true,"answers":["SelectCards","CombatResolution"]},{"name":"Bot","deck":{…},"ai":"heuristic","level":"intermediate"}],"seed":20260921,"pace":true,"mulligans":true}` | the table's status (below) plus `seats` and the `seed` it was dealt from, `paced` when the table was paced, and `mulligans` when it was dealt with the hands to keep (protocol 6, below); each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got; a seat the engine plays with its own judgement also says the `level` it took (null for none) and the Argentum `profile` it plays with; a person's seat says `asked`, the decisions it will be put rather than have answered for it |
@@ -71,6 +71,8 @@ One request per line, one reply per line, correlated by `id`:
 | `{"op":"act","index":0,"cards":["e31"]}` / `{"auto":true}` | the cards put on the bottom after keeping a hand with mulligans taken, or the engine's choice of them (protocol 6) |
 | `{"op":"decide","targets":{"0":["e12"]}}` / `{"yes":true}` / `{"option":1}` / `{"auto":true}` | likewise; since protocol 5 also `{"cards":[…]}`, `{"order":[…]}`, `{"distribution":{"e1":2}}`, `{"edges":{"e27->e71":2}}`, `{"sources":[…]}` / `{"autoPay":true}` / `{"decline":true}`, `{"number":2}`, `{"color":"RED"}`, `{"modes":[0]}`, `{"yes":true,"all":true}` (below) |
 | `{"op":"view","viewer":"<seat id>","delta":true}` | `{"state":ClientGameState,"log":[ClientEvent…]}` first, `{"delta":StateDelta,"log":[…]}` after; a full view's `log` is everything that seat has been told so far, a delta's only what is new since its last view |
+| `{"op":"snapshot"}` | `{"snapshot":"{\"kind\":\"companion-game\",\"version\":1,…}","bytes":130067}` — the game as it stands, as text: Argentum's `GameState` and what this process keeps beside it (protocol 9, below); `bytes` its length in UTF-8 |
+| `{"op":"restore","snapshot":"…"}` | the reply `new` gives, at the stop the game was kept at, and `"restored":true` — a kept game taken back by a process that holds none yet; `"replace":true` takes it into one that does, for measuring and tests, and the relay never sends it (protocol 9) |
 | `{"op":"clock"}` | `{"seats":[{"id":"e1","ai":"heuristic","level":"hard","profile":"production-candidate-expiring","choices":[{"ms":88.4,"meaningful":true},{"ms":0.1,"meaningful":false},{"ms":12.0,"decision":true,"meaningful":true}]}]}` — how long each of the engine's seats took over every choice since the last `clock`, which starts the record again; for measuring, and never sent by the relay |
 | `{"op":"quit"}` | `{"ok":true}` and the process ends |
 
@@ -377,6 +379,78 @@ the ordinary rules, so a relay reading 7 must not tell anybody a Commander game
 is coming (`scripts/relay-engine.mjs` deals it without the commanders, as every
 room before M6 did, and says why).
 
+**Keeping a game (protocol 9, M7).** `snapshot` answers the game as it stands,
+and `restore` takes it back into another process at the same stop, so a room
+the relay holds outlives the relay and its own engine (`scripts/relay-engine.mjs`
+keeps one after every stop, and `scripts/relay-server.mjs` writes it to disk).
+
+What Argentum offers for this was read first. Its `SnapshotCodec`
+(`gym/…/service/SnapshotCodec.kt`) keeps a game in the process's memory by
+reference, for search, and cannot write one down at all. What can be written is
+`GameState` itself, which is `@Serializable` and which Argentum's own game server
+persists as JSON (`game-server/…/persistence`, `persistenceJson`); this process
+writes it with the same settings, less the log types that server registers for
+itself. `GameEnvironment.restore(state, playerIds, stepCount)` installs one, as
+the deal already does. The game's random number generator is in the state
+(`GameState.rng`, a SplitMix64 state of one 64-bit number), and so is every
+question waiting on an answer, with what follows it (Argentum's suspended
+continuations), so a game taken back shuffles, flips and asks as the one kept
+would have.
+
+Beside the state the text holds what this process keeps that Argentum does not:
+the seats — who plays each, at which level and profile, what each person is
+asked, what each was dealt and what the engine's deck was said to be — each
+seat's log in its own words, the step the next line is filed under, and a paced
+table's pause after one of the engine's plays, which `continue` then takes on.
+The offers of the stop are not kept: they are the engine's own legal actions at
+that position, and are found again when the game is taken back, without the game
+moving on. Nor are the views each seat was last sent: a process taken back sends
+each seat the table whole, log and all.
+
+Two things do not travel, both Argentum's own memory outside the state. The
+engine's players are built again, and Argentum's search seeds itself from the
+position alone (`RolloutCandidateEvaluator.rootSeedFor`,
+`Determinizer.sampleForSearch`), so they choose as the old ones would — except
+that a `Strategist` remembers the last 32 positions it acted from, each marked
+with its turn and step, so as not to go round in circles, and a new one
+remembers none. That can matter only inside the step the game was kept in. And a
+random seat (`ai: "random"`, a test opponent) starts its own sequence again.
+Measured on the owner's machine (PLAN.md, M7): sixteen games kept at the opening
+hand, at one of the engine's paced stops, at a question put to the person and at
+an ordinary stop, sixty-card and Commander, each taken back into another process
+and played on to turn 14 beside the game that was not — every status on the way
+the same, and every seat's view the same at the stop kept and at the end, in all
+sixteen. (`scripts/engine-restore.mjs` compares the status's own terms at every
+stop, and the views at those two; M7's review found this said more.)
+
+**The text is a string on the wire, not JSON inside the reply.** The generator's
+state is a 64-bit number, and a relay reading the reply as JavaScript would hold
+it as a double: at one stop measured it was `-3869328946740255321`, which comes
+back from `JSON.parse` as another number, and so as another game. The relay keeps
+the text as it came and gives it back as it came. `tests/engine-live.test.js`
+holds the text's digits against what `JSON.parse` makes of them.
+
+`restore` refuses in words, and holds what the process had as it was: into a
+process that holds a game already ("This engine already holds a game; a kept
+game is taken back by a fresh one.", unless `replace`); a text that is not JSON
+("That snapshot could not be read: …"); one that is not a game this process
+kept; one of another shape (`version`, bumped when the shape changes: "That game
+was kept in the shape of version 2, and this engine reads version 1."); a game
+whose players or seats do not add up; and a profile this engine does not have.
+Measured over two runs of `scripts/engine-restore.mjs` (PLAN.md, M7): a snapshot
+takes 6 ms at the median (12–13 for Commander), its first in a process 171–186 ms;
+it is 130 kB at the median for sixty cards and 320 kB for Commander, 7.6 and 33 kB
+gzipped; a restore into a loaded process takes 18–19 ms at the median, its first
+407–450 ms. An engine at 8 refuses both as unknown ops, so a relay reading 8 keeps
+no game and says so when it comes back.
+
+A request that fails in a way this process did not foresee — anything thrown but
+its own refusals — is answered `{ "ok": false, "error": "<the class thrown>: <its
+message>" }` (`Server.kt`, the request loop), as it has been since M1. The room
+passes such a reason on after its own words with the class name's capital kept
+("…could not keep it: IllegalStateException: …"), where it lowers the first
+letter of a sentence (M7's review, `clause` in `scripts/relay-engine.mjs`).
+
 `waiting` is `"action"` with `actions`, `"decision"` with `decision`,
 `"engine"` on a paced table that has stopped after one of the engine's own
 plays (nothing on offer, nothing to decide, and `actor` the seat that made
@@ -599,7 +673,9 @@ blocks became a stop of a paced table (above).
 
 - **Several games in one process.** One process per room keeps a crash to
   one table and the code to a page.
-- **Persistence.** A room's engine state lives only in the process for now.
+- **Persistence of its own.** The process writes nothing to disk. It answers
+  `snapshot` with the game as text and takes one back with `restore`; keeping
+  the text, and deciding when to ask, is the relay's (above, "Keeping a game").
 - **A warm engine.** Each room starts its own process and waits out the 15 s
   load. Keeping one loaded and ready is a question for hosting (M8), once the
   cost of an idle JVM is measured against the wait.

@@ -259,6 +259,51 @@ These are settled. Do not reopen them; build on them.
     commander damage is said on the plate under the life total once any is dealt,
     903.10a cited; and the 903.9a question is asked of the player in Argentum's own
     words, a yes or no with no "Let the engine choose", as every yes or no has had.
+19. **Decided by the owner 2026-09-25, to be built after M7.** When the engine does
+    not know a Commander deck's commander, one of that deck's own legendary
+    creatures the engine knows may lead it as a stand-in, clearly labelled as not
+    the deck's real commander — for example Narset, Enlightened Master for the
+    Commodore Guff deck. This answers the first of M6's questions (§6), and once
+    built it widens item 18's gate for such a deck, which today offers only the rest
+    by the ordinary rules or the whole deck alone. Beside it, the owner's note of the same day,
+    checked the same day against GitHub's API: even upstream Argentum's newest
+    commit, `7cc9af8` (2026-09-22), has neither Final Fantasy Commander (`fic`) nor
+    Commander Masters (`cmm`) among its sets, so moving the pin (item 12) would not
+    bring the example decks' commanders; the stand-in is how those decks come to be
+    played as Commander games. Not built in M7.
+20. **Decided by the owner 2026-09-25, to be built after M7.** Duel Commander and
+    Brawl are to be dealt as real Commander games at their own life totals and card
+    rules, where Argentum supports them, measured and tested as M6 was. This
+    answers the second of M6's questions (§6), and once built it replaces item 18's
+    default that only the Commander format is dealt as a Commander game, which
+    stands until then; Oathbreaker is not named
+    in the decision and stays as item 18 has it until the owner says otherwise. Not
+    built in M7.
+21. **Taken as defaults at M7, and the owner's to overturn:** a room the engine holds
+    is written to disk from the moment it opens, and its game after every stop, the
+    engine's own text of it gzipped; a relay that comes back starts an engine for
+    every such room at once, rather than when somebody sits, so the corpus loads
+    while their clients find their way back — one JVM per room at start-up, which
+    M8 sizes; an engine that stops mid-game is started again from the last stop
+    kept, and again only once the game has gone on since, so a crash that waits at
+    the same place ends the game in words rather than in a loop; a move being
+    answered when the relay or the engine went is let go of, and its person told,
+    rather than sent again by the room — the game is at the stop before it, so they
+    can make it again or not; the brief's line "The engine restarted; the table is
+    as it was at your last stop." is said as "…at the last stop.", since the last
+    stop may be one of the engine's own paced plays; while a game comes back the
+    table offers nothing to press and says why, and the lobby says so of a table
+    coming back and gives the reason for one whose game did not; and a relay started
+    with no engine leaves such a room's file where it is, for one that has. Taken at
+    M7's second review, the same day, and the owner's to overturn: a game that had
+    ended is not taken back as a relay comes up, but when somebody sits down to look
+    at it; a game the room ended for good (a crash waiting at one place, a turn the
+    engine would not take) stays ended through every restart; a game that could not
+    be taken back is tried again at every restart, and its reason says so; a move
+    lost because the engine stopped is said as that, with the warning that the same
+    move may stop it again and end the game, where one lost to a relay restart is
+    simply the person's to make again; and a lobby asking a relay with no engine
+    about such a table says the relay has none, not that the table has gone.
 
 ---
 
@@ -797,6 +842,37 @@ commander in the command zone, cast from it, tax paid, damage tallied.
 
 *Size: medium.*
 
+**Done, 2026-09-25.** What was built, measured and found, where it departs from
+the letter below and why, and what is left are in `PLAN.md`, "M7: a room that
+survives the relay"; the defaults taken are §3 item 21. In short: protocol 9.
+Argentum's `SnapshotCodec` keeps a game in memory by reference and cannot write
+one down, so the process writes `GameState` itself as Argentum's own game server
+persists it, with what it keeps beside it — seats, logs, a paced table's pause —
+and the random number generator travels inside the state. `snapshot` answers it
+as text, because that generator is a 64-bit number a relay reading JSON would
+round to another game; `restore` takes it into a fresh process at the same stop.
+The room keeps the latest after every stop and the relay writes it to disk,
+gzipped, with any move in flight; a relay that comes back starts an engine for
+each room and takes its game back, and an engine that stops is started again
+from the last stop. The table says the game is coming back and offers nothing
+meanwhile, then says what came back in the log, and tells the person whose move
+was lost. Sixteen games kept at the four kinds of stop — the opening hand, the
+engine's paced play, a question to the person, an ordinary stop — sixty-card and
+Commander, came back as the same game to turn 14; in the browser, against the
+real engine, the relay restarted mid-game and a seat had a play offered again
+16.2–16.5 s after the relay was listening, and 16.3–16.8 s after the engine was
+killed, over four runs, nearly all of it the corpus loading.
+
+**Reviewed again, 2026-09-25.** A second review found eighteen faults, every one
+fixed (PLAN.md, M7, "What the second review found"): the worst, that a restart
+made every room the engine holds look freshly played, so none was ever dropped,
+and brought back games that had ended or been ended for good; and that a relay
+killed rather than stopped could come back behind what people had seen without
+saying so. Rooms are now written whole beside their files and then over them, a
+stop is on disk before anybody is sent it, and `restored` carries `at` (§7).
+
+The rest of this section is the brief it was built to, kept as written.
+
 An enforced room dies with the relay today, and says so. Argentum has
 `gym/src/main/kotlin/com/wingedsheep/gym/service/SnapshotCodec.kt` and
 `GameEnvironment.restore(state, playerIds, stepCount)`, so the game state
@@ -946,6 +1022,13 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 - **A relay's ping and a proxy's idle timeout**: 30 s against 60 s; keep it.
 - **Never rebuild during the browser suite; never run two browser jobs at
   once.** Both produce timeouts that look like real failures.
+- **A kept game is text, never JSON, anywhere outside the engine.** Its random
+  number generator is a 64-bit number; `JSON.parse` rounds it, and the game taken
+  back is another game (M7). The relay tests' stand-in refuses a rounded one.
+- **After a restart, wait for a status sent after it.** The last status from
+  before is still the page's until the room says otherwise, so "a play is offered"
+  is true at once and a time measured on it measures nothing (M7's first run of
+  its spec: 827 ms that was really 16 s).
 
 ---
 
@@ -958,6 +1041,15 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 - M5: answered on 2026-09-25. A copy, one of your decks, or one the engine
   builds, from your deck's sets by default and the whole format by a switch
   (§3, item 16). The defaults the answer left open are item 17.
+- M6, answered in part on 2026-09-25, both as future work after M7: a Commander
+  deck whose commander the engine does not know may be led by a legendary creature
+  of its own the engine knows, labelled as a stand-in (§3 item 19); and Duel
+  Commander and Brawl are to be dealt as Commander games at their own life totals
+  and card rules, where Argentum supports them, measured and tested as M6 was
+  (§3 item 20). The pin question below is overtaken: M7 came first, and upstream's
+  newest commit has neither set either (item 19). Still open: Oathbreaker, which
+  neither decision names, and whether section 903 should be transcribed into
+  `docs/` (the last part of the bullet below). The bullet as it was asked:
 - M6: three things the defaults in §3 item 18 leave open. Whether a Commander
   deck whose commander the engine does not know should be offered with another
   legendary creature from it leading instead — the Commodore Guff example holds
@@ -974,6 +1066,13 @@ names), and leave it out of the lobby's copy, per the owner's rule.
   `tests/turn-structure.test.js`) so the table cites it from there, is the
   owner's; until then the lines say it from the rules directly, and PLAN.md's M6
   records the departure.
+- M7: nothing asked. The defaults taken are §3 item 21, the owner's to overturn;
+  the one with a cost M8 must size is that a relay coming back starts an engine,
+  a JVM holding the corpus, for every room it kept at once.
+- After M7: build §3 items 19 and 20, the owner's decisions of 2026-09-25 — the
+  stand-in commander, and Duel Commander and Brawl as Commander games — each
+  measured and tested as M6 was. Where they fall against M8 and the rest is the
+  owner's to say.
 - M8: which provider, once `HOSTING.md` has verified notes for three.
 - M10: which desktop platform first (the owner's own), and whether a
   signed build matters yet.
@@ -986,8 +1085,42 @@ Between the browser and the relay, over the room's socket, all
 `{ t: "engine", op }`: `sit { name, deck, sideboard?, seat?, deltas?, level?, answers?, mulligans?, engineDeck?, format?, commander? }`,
 `act { stop, index, attackers?, blockers?, targets?, x?, damage?, cost?, auto?, cards? }`, `decide { stop, … }`, `turn`,
 `resync`; back: `seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, level?, ai?, choices?, engineDeck?, format? }`,
-`seats`, `status`, `view { you, seq, state | delta, log }`, `refused { error, stale?, answering? }`, `gone`.
+`seats`, `status`, `view { you, seq, state | delta, log }`, `refused { error, stale?, answering?, restoring? }`, `gone`,
+`restoring { reason }`, `restored { reason, behind, lost?, at }`.
 Over HTTP, before any room: `POST /engine/check`.
+
+M7 added keeping a game (protocol 9 on the process's side). After every stop the
+room asks an engine at 9 for `snapshot` — the game as text, which the room never
+parses, since its random number generator is a 64-bit number — and keeps the
+latest with the number of the stop it was taken at; the relay writes it beside the
+room, gzipped (`kept: { stop, bytes, gzip }` in the room's file), with any move
+still being answered (`inFlight: { seat, op }`). A relay that comes back reads the
+room back, starts an engine for it and sends `restore` with the text; an engine
+that stops mid-game is started again the same way. Meanwhile every seat, and every
+seat that sits, is sent `restoring { reason }` — `relay` or `engine` — and a press
+is refused with `restoring: true`; once back, each person is sent `restored {
+reason, behind, lost?, at }` — `behind` the stops between the last they saw and
+the last kept, which is 0 but where the last stop published was never kept: the
+relay went down, or the engine stopped, between publishing a stop and keeping it,
+or a snapshot failed and the one before it stands; `lost` (`act` or `decide`)
+only to the person whose move was let go of; `at` the number the stop taken back
+is published as — then `seated`, and the table whole. Since M7's review a stop is
+written to disk before it is sent to anybody, and a move before the engine is
+asked it, so a relay that dies however it dies comes back no further on than what
+people saw, `behind` says how far, and stop numbers only count up across restarts:
+`at` names one coming back, and a `restored` said on a socket that has not spoken
+since is said again on the one that takes its place, which a client that heard
+the first says once. A room sends no `status` while its game is coming back, so a
+client takes any status as the game back, `restored` or not.
+`GET /rooms/<code>` says `restoring` while it comes back, and `gone` with the
+reason where a room's game could not; a game that could not be taken back says
+the relay tries again each time it restarts, and does. The room's file says
+`over: true` of a game that ended, which a relay coming up does not take back
+until somebody sits, and `gone` of one the room ended for good (the same crash
+waiting, a turn the engine would not take), which it never takes back; neither
+moves the room's week (`touchedAt`), which only people's messages do. A client
+from before M7 ignores both new ops and is sent the table whole as on any
+reconnect. An engine at 8 keeps no game: its room comes back saying so, as gone.
 
 M6 added Commander (protocol 8 on the process's side). A sit with a Commander
 deck says `format: "commander"` and brings its commander apart from its library,
@@ -1110,8 +1243,10 @@ an engine's player in `new` and `deck` on its seat in the reply, `decks` and
 `new` and `commander` on a player, `format` in the reply and `commander` on each
 seat and in the engine's `deck`, `formats` in `hello`, `from` and `commanderTax`
 on an offer, `commanderZone` on a yes or no, and `commander` and `identity` in
-`decklist`; M7 will add `snapshot` and `restore`. `engine/README.md` is the
-contract and is updated with every op added. `PROTOCOL` is 8 since M6; an engine
+`decklist`; M7 `snapshot` and `restore` (with `replace`, for measuring). `engine/README.md` is the
+contract and is updated with every op added. `PROTOCOL` is 9 since M7; an engine
+at 8 answers neither op, so a relay reading 8 keeps no game and says so if it
+restarts; an engine
 at 7 ignores `format` and `commander` and deals the ordinary game, so a relay
 reading 7 sends the decks without their commanders and says why. An engine at 6
 refuses a `deck` that is not a list as no deck, so a relay reading 6 sends names. An engine at 5 ignores

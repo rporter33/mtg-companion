@@ -24,7 +24,8 @@ const MAX_SEATS = 6
 
 export default function Seats({ room, engine = null, engineDeck = null }) {
   const [address, setAddress] = useState(() => relayAddress())
-  const [hasEngine, setHasEngine] = useState(false)
+  // Whether the relay has an engine: null until it has said.
+  const [hasEngine, setHasEngine] = useState(null)
   const [draft, setDraft] = useState(address ?? '')
   const [name, setName] = useState(() => getPrefs().playerName ?? '')
   // How strongly the engine plays, remembered with the player's other table
@@ -124,8 +125,20 @@ export default function Seats({ room, engine = null, engineDeck = null }) {
     return (
       <aside className="lobby__seats" aria-label="Table">
         <h2 className="lobby__label">Table · {seated.filter((s) => s.here || s.ai).length} / {seated.length || 2} <span className="chip tiny">{engine}</span></h2>
-        {gone ? (
-          <p className="lobby__notice tiny"><strong>That table has gone.</strong> A table the engine holds ends when the relay restarts.</p>
+        {gone && typeof peek?.gone !== 'string' && hasEngine === false ? (
+          // A relay started with no engine leaves a table the engine holds on its
+          // disk, unopened, for a relay that has one (HANDOFF.md §3 item 21): the
+          // table may be whole, so it is not said to have gone (M7's review).
+          <p className="lobby__notice tiny" role="status">
+            <strong>That table is not open on this relay.</strong>{' '}
+            This relay is running without an engine. A table the engine holds opens only on a relay with one, and waits on the relay&apos;s disk until it has one again, for a week after its last move.
+          </p>
+        ) : gone || typeof peek?.gone === 'string' ? (
+          <p className="lobby__notice tiny">
+            <strong>That table has gone.</strong>{' '}
+            {/* A room still on the relay whose game did not come back says why (M7). */}
+            {typeof peek?.gone === 'string' ? peek.gone : 'A table the engine holds is kept for a week after the last move, through a restart of its relay.'}
+          </p>
         ) : (
           <>
             <ul className="lobby__seatlist" role="list">
@@ -150,11 +163,21 @@ export default function Seats({ room, engine = null, engineDeck = null }) {
                   : <>The engine is dealing this table&apos;s game.</>}
               </p>
             ) : stage === 'dealt' ? (
-              <p className="lobby__notice tiny">
-                {roomAt
-                  ? <>This table&apos;s game is under way at the <strong>{roomAt}</strong> level. A table you open next can be played at another.</>
-                  : <>This table&apos;s game is under way, and its engine plays one way only.</>}
-              </p>
+              <>
+                <p className="lobby__notice tiny">
+                  {roomAt
+                    ? <>This table&apos;s game is under way at the <strong>{roomAt}</strong> level. A table you open next can be played at another.</>
+                    : <>This table&apos;s game is under way, and its engine plays one way only.</>}
+                </p>
+                {/* Said by the room while an engine takes the game back (M7). */}
+                {peek?.restoring && (
+                  <p className="lobby__notice tiny" role="status">
+                    {peek.restoring === 'engine'
+                      ? 'Its engine stopped, and is starting again with the game as it was at the last stop.'
+                      : 'Its relay restarted, and the game is coming back as it was at the last stop.'}
+                  </p>
+                )}
+              </>
             ) : (
               <fieldset className="lobby__levels">
                 <legend className="lobby__label">How the engine plays</legend>

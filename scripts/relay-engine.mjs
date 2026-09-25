@@ -14,8 +14,9 @@
  *                        act { stop, index, attackers?, blockers?, targets?, x?, damage?, cost?, auto?, cards? }
  *                        decide { stop, … }        turn                    resync
  *   to every client      seats [ … ]               status { … }            gone { reason }
+ *                        restoring { reason }      restored { reason, behind, lost?, at }
  *   to one client        seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, level?, ai?, choices?, engineDeck?, format? }
- *                        view { you, seq, state | delta, log }             refused { error, stale?, answering? }
+ *                        view { you, seq, state | delta, log }             refused { error, stale?, answering?, restoring? }
  *
  * `stop` is the number of the status a client is answering: an act sent
  * against a stale status is refused rather than landing on a different
@@ -97,6 +98,30 @@
  * `seated` after the deal says which game it was and why (`format`). A commander
  * is no secret, since it begins the game face up in the command zone (CR 903.6),
  * so what the engine's seat plays says its commander by name.
+ *
+ * A game outlives its relay and its engine (HANDOFF.md, M7). After every stop
+ * the room asks an engine that can keep a game (protocol 9) for a snapshot, and
+ * holds the latest with the number of the stop it was taken at; the relay writes
+ * it to disk beside the room (`record`), with any move still being answered. A
+ * relay that comes back reads the room back and starts an engine for it at once
+ * (`comeBack`), which takes the game back (`restore`) at the stop it was kept
+ * at; an engine that stops mid-game is started again the same way. Meanwhile a
+ * seat is told the table is coming back (`restoring`), nothing it presses is
+ * sent, and once it is back each person is told what came back (`restored`):
+ * which of the two restarted, whether the table is a stop or more behind what
+ * they last saw, and to the person whose move was still being answered, that it
+ * did not happen. A game that cannot come back — an engine too old to keep one,
+ * a text it cannot read, or a restart that finds the same crash waiting — is
+ * said to have gone, and why, never left to look like a table that froze.
+ *
+ * What the room decides of itself is written down with it (M7's review): a game
+ * that ended, which comes back only when somebody sits down to look at it, and a
+ * game the room ended for good — the same crash waiting, a turn the engine would
+ * not take — which a relay that restarts does not start again. A game that could
+ * not be taken back is tried again by the next relay, whose engine may be able to,
+ * and says so. The stop a room publishes is on disk before anybody is sent it, as
+ * is a move being answered, so a relay that dies however it dies comes back no
+ * further on than what people saw, and says how far behind it is.
  */
 import { startEngine } from './engine-bridge.mjs'
 import { levelOf } from '../src/lib/engine/levels.js'
@@ -104,7 +129,22 @@ import { levelOf } from '../src/lib/engine/levels.js'
 export const OP = {
   sit: 'sit', act: 'act', decide: 'decide', turn: 'turn', resync: 'resync',
   seated: 'seated', seats: 'seats', status: 'status', view: 'view', refused: 'refused', gone: 'gone',
+  restoring: 'restoring', restored: 'restored',
 }
+
+/**
+ * What a seat is told a press cannot do while the game is coming back. The
+ * client clears its offers when it hears `restoring`, so this is for a press
+ * that crossed that message on the wire.
+ */
+export const RESTORING = 'The table is coming back; nothing can be played until it is.'
+
+/**
+ * Said after why a game could not be taken back: it is not written down as
+ * ended, so the next relay to start tries again (M7's review), and a person
+ * reading the reason in the lobby should know that it is worth coming back.
+ */
+export const TRIED_AGAIN = 'The relay tries again each time it restarts.'
 
 // How long an engine's first answer may take. It loads the whole card corpus
 // before it reads a line, which is far slower than any answer after it. An
@@ -133,6 +173,8 @@ const MULLIGAN_PROTOCOL = 6
 const DECKS_PROTOCOL = 7
 /** The protocol that first dealt a Commander game, commanders and all. */
 const COMMANDER_PROTOCOL = 8
+/** The protocol that first kept a game (`snapshot`) and took one back (`restore`). */
+const KEEPING_PROTOCOL = 9
 
 /** A list of short words from the wire, read forgivingly: anything else in it is dropped. */
 const words = (list, most = 32) => (Array.isArray(list) ? list.filter((w) => typeof w === 'string' && w.length > 0 && w.length <= 40).slice(0, most) : [])
@@ -240,7 +282,67 @@ const copiesOf = (v) => {
 // counts: the printings are lost, but the game is dealt rather than refused.
 const forProtocol = (protocol, lines) => (!lines || protocol >= 2 ? lines : Object.fromEntries(Object.entries(lines).map(([name, v]) => [name, copiesOf(v)])))
 
-export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', level: askedLevel = null, engineCommand, seed = null, deliver, onStderr = null, paceMs = PACE_MS, wait = null }) {
+/**
+ * Another's sentence as a clause after the room's own words ("…could not come
+ * back: that snapshot could not be read"): its first letter lowered, nothing
+ * else changed. Most reasons are sentences of this repo's own, or the bridge's,
+ * but one the engine did not expect it answers as the name of what was thrown
+ * ("IllegalStateException: …", Server.kt), and a name keeps its capital (found
+ * in M7's review, where one came out as "illegalStateException"): a first word
+ * with a capital after its first letter is a name, and is left as it is.
+ */
+export const clause = (m) => {
+  if (typeof m !== 'string' || !m) return 'no reason was given.'
+  const first = m.match(/^\S+/)?.[0] ?? ''
+  return /[A-Z]/.test(first.slice(1)) ? m : m[0].toLowerCase() + m.slice(1)
+}
+
+/** A reason ended as a sentence, so another can follow it: an engine's own words may stop short of a full stop. */
+const ended = (s) => (/[.!?]$/.test(s) ? s : `${s}.`)
+
+/** A whole number from storage at or above a floor, or the fallback. */
+const count = (n, fallback = 0) => (Number.isInteger(n) && n >= 0 ? n : fallback)
+
+/**
+ * A room as the relay kept it (`record`), read back forgivingly: it was written
+ * by whatever build was running, and a file on a disk can hold anything. What
+ * cannot be made sense of is dropped, and what is missing is taken as a room
+ * that never dealt — so the worst a strange record does is bring back a table
+ * waiting for its seats, or one that says its game could not come back, never a
+ * thrown error. The kept game itself is the engine's text, passed back to it
+ * untouched: its random number generator is a number JavaScript cannot hold.
+ *
+ * `over` is a game that ended, and `gone` why a game the room ended for good
+ * went (M7's review): a record from before either has neither, and is read as a
+ * game that was still being played, as it was then.
+ */
+export function savedRoomOf(v) {
+  const r = v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+  const kept = r.kept && typeof r.kept === 'object' && typeof r.kept.text === 'string' && r.kept.text ? { text: r.kept.text, stop: count(r.kept.stop) } : null
+  const seated = (Array.isArray(r.seated) ? r.seated : []).filter((s) => s && typeof s === 'object' && word(s.seat)).map((s) => ({
+    seat: s.seat, name: text(s.name, 80), engineSeat: word(s.engineSeat),
+    sideboardLeftOut: words(s.sideboardLeftOut, 200), unknownPrintings: words(s.unknownPrintings, 200),
+    asked: Array.isArray(s.asked) ? words(s.asked) : null, seq: count(s.seq),
+  }))
+  const inFlight = r.inFlight && typeof r.inFlight === 'object' && word(r.inFlight.seat) && ['act', 'decide'].includes(r.inFlight.op) ? { seat: r.inFlight.seat, op: r.inFlight.op } : null
+  const format = r.format && typeof r.format === 'object' && ['commander', 'standard'].includes(r.format.played)
+    ? { asked: r.format.asked === 'commander' ? 'commander' : 'standard', played: r.format.played, ...(word(r.format.fellBack) ? { fellBack: r.format.fellBack } : {}) }
+    : null
+  const deck = reportOf(r.engineDeck)
+  return {
+    dealt: r.dealt === true, stop: count(r.stop), kept, inFlight, seated,
+    level: levelOf(r.level), played: levelOf(r.played), profile: text(r.profile, 80),
+    paced: r.paced === true, mulliganed: r.mulliganed === true,
+    choices: choicesOf({ choices: r.choices }),
+    engineDeck: deck ? { ...deck, ...(text(r.engineDeck?.name, 80) ? { name: text(r.engineDeck.name, 80) } : {}) } : null,
+    format,
+    unkept: text(r.unkept),
+    over: r.over === true,
+    gone: text(r.gone, 1000),
+  }
+}
+
+export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', level: askedLevel = null, engineCommand, seed = null, deliver, onStderr = null, paceMs = PACE_MS, wait = null, saved = null, onChange = null }) {
   const humanSeats = Math.max(1, ai ? seatCount - 1 : seatCount)
   const seats = Array.from({ length: seatCount }, (_, i) => ({
     seat: `p${i + 1}`, name: null, here: false, ready: false, socket: null, deck: null, sideboard: null, commander: null, format: 'standard',
@@ -254,6 +356,15 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
     answers: [], asked: null,
     // Whether the client at this seat said it can show a mulligan, until the deal.
     mulligans: false,
+    // What this seat is still to be told of a game that came back (`restored`),
+    // until a socket of theirs has heard it: a person away while the relay
+    // restarted comes back to a table that says what happened. `said` is the
+    // message, and `to` the socket it was last said to. Said to a socket that
+    // has not spoken since, it may not have been heard — one left open by a
+    // phone that changed networks stays open until the heartbeat finds it
+    // (found in M7's review) — so it is kept until that socket speaks, or the
+    // person sits again and is told it on a socket that just has.
+    untold: null,
   }))
   // The level the room was asked for, until the deal; a word this build does
   // not know is no level. After the deal, `played` is the engine's own word
@@ -304,6 +415,15 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   let stop = 0
   let starting = false
   let gone = null
+  // Whether `gone` is for good: the room ended the game itself — the same crash
+  // waiting, a turn the engine would not take — and a relay that restarts must
+  // not start it again. A game that could not be taken back is not: the next
+  // relay's engine may be able to, and it says so (M7's review).
+  let final = false
+  // Whether the game has ended, in the engine's own word: written down, so a
+  // relay that restarts does not load the corpus for a game nobody can play on,
+  // and takes it back only when somebody sits down to look at it (M7's review).
+  let finished = false
   // What the engine said it is: whether it took the pace, and whether it is new
   // enough to be asked for a delta. Both are the engine's word rather than this
   // room's assumption, because an older one answers neither and must not be
@@ -315,6 +435,81 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   // Whether the engine dealt the game with a mulligan phase, in its own word (protocol 6).
   let mulliganed = false
   let closed = false
+
+  // Keeping the game (M7). `kept` is the engine's latest snapshot, its own text,
+  // and the number of the stop it was taken at; `unkept` why the engine could
+  // not keep this game, where it could not. `dealt` is whether a stop was ever
+  // published, which is what makes a game worth keeping at all. `inFlight` is a
+  // person's move sent to the engine, until a stop after it has been kept: kept
+  // with the game, because a room written in the meantime comes back to the stop
+  // before it, and the person who made it is told it did not happen.
+  // `inFlightFrom` is the stop it answered, held here and never written: any
+  // stop kept after it holds the move, and takes the mark down in one write.
+  let kept = null
+  let unkept = null
+  let dealt = false
+  let inFlight = null
+  let inFlightFrom = null
+  let keeping = null
+  // Coming back: 'relay' or 'engine' while a game is being taken back, and null
+  // otherwise. `generation` counts the engine processes this room has started,
+  // so an answer from one that has since been replaced is recognised and let
+  // go rather than applied to the game the new one holds. `crashes` counts the
+  // times the engine itself stopped since the game last went on: one is started
+  // again, and a second is not, since the same crash is most likely waiting at
+  // the same place. A relay restart is not the engine stopping, and counts none.
+  // The game has gone on once a stop after the one it came back at has been
+  // kept (`restoredAt`), not merely once the engine has answered: an engine that
+  // answers and then stops building that stop's views would otherwise be started
+  // again at the same place for as long as it kept doing so (M7's review).
+  let restoring = null
+  let generation = 0
+  let crashes = 0
+  let restoredAt = 0
+
+  // A room read back from disk: the game as it was dealt and where it stood.
+  // Its seats keep their places and their numbering; what the engine's seat
+  // plays and which game it is are as the room last said them.
+  const from = saved ? savedRoomOf(saved) : null
+  if (from) {
+    dealt = from.dealt
+    stop = from.stop
+    kept = from.kept
+    unkept = from.unkept
+    inFlight = from.inFlight
+    level = from.level ?? level
+    if (from.dealt) {
+      played = from.played
+      profile = from.profile
+      paced = from.paced
+      mulliganed = from.mulliganed
+      choices = from.choices
+      dealtDeck = from.engineDeck
+      dealtFormat = from.format
+      for (const s of from.seated) {
+        const seat = seats.find((x) => x.seat === s.seat)
+        if (!seat) continue
+        seat.engineSeat = s.engineSeat
+        seat.name = s.name ?? seat.name
+        seat.sideboardLeftOut = s.sideboardLeftOut
+        seat.unknownPrintings = s.unknownPrintings
+        seat.asked = s.asked
+        seat.seq = s.seq
+        if (!seat.ai) seat.ready = true
+      }
+      finished = from.over
+    }
+    // Ended for good by the room before the relay went: still ended, and said as it was.
+    if (from.dealt && from.gone) {
+      gone = from.gone
+      final = true
+    } else if (from.dealt && !from.kept) {
+      // Dealt and never kept: nothing this room could give an engine to take back.
+      gone = from.unkept
+        ? `The relay restarted, and this game could not come back: ${from.unkept}`
+        : 'The relay restarted before this game had been kept, so it could not come back.'
+    }
+  }
 
   const say = (socket, op, body = {}) => deliver(socket, { t: 'engine', op, ...body })
   const tell = (op, body = {}) => { for (const s of sockets.values()) say(s, op, body) }
@@ -333,11 +528,18 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
    * pace asked for, the exit itself — and a room that told each of them would
    * say the same thing three times to every seat. The first word is kept,
    * because it is the one that says what happened rather than what followed.
+   *
+   * Written down, so a relay that restarts does not start again a game the room
+   * ended for good (M7's review: one that did loaded the corpus for it at every
+   * restart, and said it had come back). `final: false` is a game that could not
+   * be taken back, which the next relay tries again.
    */
-  const lost = (reason) => {
+  const lost = (reason, { final: forGood = true } = {}) => {
     if (gone) return
     gone = reason
+    final = forGood
     tell(OP.gone, { reason })
+    onChange?.()
   }
 
   /**
@@ -370,11 +572,80 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
     } catch { seat.whole = false }
   }
 
+  /**
+   * The game written down at the stop just published (M7), by an engine that can
+   * (protocol 9). Asked after the views, so nobody waits on it to see the table:
+   * a snapshot took 6 ms at the median when measured, and its first in a process
+   * over 170 (PLAN.md, M7). One that fails leaves the last one kept standing,
+   * and the room says, when it comes back to that, that it is behind.
+   *
+   * The request is written to the engine before this first waits, and the engine
+   * answers its lines in order, so a move or a step asked for after `keep` is
+   * called is answered after the snapshot: what is kept is the stop published.
+   *
+   * A stop kept is the game having gone on: past the stop it last came back at,
+   * the engine's crashes are forgiven, and a move in flight from before it is in
+   * it, so its mark comes down with the same write — a relay going down between
+   * the two would otherwise tell its person a move was lost that was kept.
+   */
+  const keep = async () => {
+    if (!engine || closed) return
+    if (protocol < KEEPING_PROTOCOL) {
+      if (unkept) return
+      unkept = `the engine it was played on keeps no game (protocol ${protocol}; keeping one came with ${KEEPING_PROTOCOL}).`
+      onChange?.()
+      return
+    }
+    const gen = generation
+    const at = stop
+    const asked = (async () => {
+      try {
+        const r = await engine.call('snapshot')
+        // Closed, or its engine replaced: the answer is about a game this room
+        // no longer holds, and nothing is written of it.
+        if (gen !== generation || closed) return
+        if (typeof r?.snapshot !== 'string' || !r.snapshot) throw new Error('It answered with no snapshot.')
+        kept = { text: r.snapshot, stop: at }
+        unkept = null
+        if (at > restoredAt) crashes = 0
+        if (inFlight && inFlightFrom !== null && at > inFlightFrom) { inFlight = null; inFlightFrom = null }
+      } catch (e) {
+        if (gen !== generation || closed) return
+        unkept = `the engine could not keep it: ${clause(e.message)}`
+        onStderr?.(`could not keep the game at stop ${at}: ${e.message}`)
+      }
+      onChange?.()
+    })()
+    keeping = asked
+    await asked
+    if (keeping === asked) keeping = null
+  }
+
+  /**
+   * A stop, published: its status to every seat, then each seat's view. The
+   * callers keep it (`keep`) once it is out; a move's is kept after the one-move
+   * guard is down, since the guard is there to keep two moves from being
+   * answered at once, and a snapshot is not an answer anybody waits on.
+   *
+   * The stop's number is written to disk at once, before anybody is sent it
+   * (`now`), rather than at the relay's next write a moment later: a relay killed
+   * in that moment came back with the stop before, told everybody it was "as it
+   * was at the last stop", and numbered the position it went back to as one the
+   * clients had already seen for another (M7's review). Written first, what came
+   * back is at worst a stop behind what people saw, and says so.
+   */
   const publish = async () => {
     if (!engine || !status) return
+    const gen = generation
     stop++
+    dealt = true
+    if (status.over) finished = true
+    onChange?.({ now: true })
     for (const s of sockets.values()) sayStatus(s)
-    for (const seat of seats) await sendView(seat)
+    for (const seat of seats) {
+      if (gen !== generation) return
+      await sendView(seat)
+    }
   }
 
   // The room's own wait between the engine's steps. Held as a wake so that a
@@ -416,27 +687,42 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   const drive = async () => {
     if (driving || !watching()) return
     driving = true
+    // The engine this turn is being watched on. One that stops mid-turn is
+    // replaced by a game taken back (M7), and that one's turn is watched by a
+    // loop of its own once it is back; this one lets go.
+    const gen = generation
     let failed = 0
     try {
       // The try is inside the loop, so a step that failed and was recovered
       // from is one step lost rather than the whole of the engine's turn: the
       // loop looks again at whether there is anything to watch and carries on.
-      while (watching()) {
+      while (watching() && gen === generation) {
         try {
           await pause(paceMs)
-          if (!watching()) break
-          status = await engine.call('continue')
+          if (!watching() || gen !== generation) break
+          const next = await engine.call('continue')
+          if (gen !== generation) break
+          status = next
           await publish()
+          if (gen !== generation) break
+          await keep()
           failed = 0
         } catch (e) {
-          // An engine that has gone is said by its exit, and there is no turn
-          // left to take.
-          if (engine?.exited) break
+          // An engine that has gone is said by its exit, or taken back from the
+          // last stop kept, and there is no turn left to take on this one.
+          if (gen !== generation || engine?.exited) break
           failed++
           // A continue the engine refused: it is not waiting on itself after all.
           // Its word for where the table stands is worth more than this room's,
           // so the room asks rather than keep asking for a step that is not there.
-          try { status = await engine.call('turn'); await publish() } catch { /* an engine that cannot say has gone, and its exit says so */ }
+          try {
+            const now = await engine.call('turn')
+            if (gen !== generation) break
+            status = now
+            await publish()
+            if (gen !== generation) break
+            await keep()
+          } catch { /* an engine that cannot say has gone, and its exit says so */ }
           // Still the engine's to play, and still not playing it. A room left
           // saying "The engine is thinking…" about a turn nobody is taking is
           // a screen saying something untrue, so this is the end of the turn
@@ -446,6 +732,11 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       }
     } finally {
       driving = false
+      // A loop that let go because its engine was replaced hands the turn on:
+      // the game taken back may be waiting on the engine too, and only one loop
+      // may watch it. While it is still coming back there is nothing to watch,
+      // and the room starts the loop itself once it is.
+      if (gen !== generation) drive()
     }
   }
 
@@ -462,10 +753,11 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       const started = startEngine({
         command: engineCommand,
         onStderr,
-        onExit: (why) => { if (!closed && engine === started) lost(why) },
+        onExit: (why) => { if (!closed && engine === started) died(why) },
       })
       engine = started
       lastStarted = engine
+      generation++
       // Asked first and given the long allowance, so that the corpus loading
       // is waited for once, here, and every later call keeps the usual wait.
       const hello = await engine.call('hello', {}, { timeoutMs: STARTUP_MS })
@@ -587,6 +879,9 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       tell(OP.seats, { seats: seatList() })
       for (const seat of seats) if (seat.socket) say(seat.socket, OP.seated, seated(seat))
       await publish()
+      // The deal kept before the engine's turn is watched, so a game that goes
+      // down from its first stop comes back to it (M7).
+      await keep()
       drive()
     } catch (e) {
       lost(e.message)
@@ -604,6 +899,143 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   const maybeStart = () => {
     const ready = seats.filter((s) => !s.ai && s.ready).length
     if (ready >= humanSeats) start()
+  }
+
+  /**
+   * What a seat is told once its game is back, if it has a socket to hear it;
+   * kept for it until then. `heard` is a socket that has just spoken, and so is
+   * there: told on it, the seat has been told. Told on one that has not, it is
+   * kept until that socket speaks (`receive`), and said again to a socket that
+   * takes its place; `at` lets a client that did hear it the first time say it
+   * once.
+   */
+  const tellRestored = (seat, { heard = false } = {}) => {
+    if (!seat.untold || !seat.socket) return
+    say(seat.socket, OP.restored, seat.untold.said)
+    if (heard) seat.untold = null
+    else seat.untold.to = seat.socket
+  }
+
+  /**
+   * The engine stopped while the room still held it. A game that has been kept
+   * is taken back from the last stop kept, by an engine started again, and the
+   * table says so (M7): "The engine restarted; the table is as it was at the
+   * last stop." Once, and again only after the game has gone on from there — an
+   * engine that stops before it has would most likely stop at the same place
+   * again, so the third start is not tried and the room says why. Anything else
+   * — no game kept, an engine that keeps none — is the room gone, as before.
+   */
+  const died = (why) => {
+    if (closed || gone) return
+    // The restore under way hears of it from its own call, and says why.
+    if (restoring) return
+    if (kept && crashes === 0) { crashes++; resume('engine'); return }
+    lost(kept ? `The engine stopped again before the game could go on, so it was not started a third time: ${clause(why)}` : why)
+  }
+
+  /**
+   * The game taken back, by a new engine, from the last stop kept (M7): after
+   * the relay restarted (`relay`), or after the engine stopped (`engine`).
+   *
+   * Every seat is told at once that the table is coming back, and the status is
+   * let go of, so nothing anybody presses reaches an engine that is not there;
+   * the move a person was waiting on, if there was one, is let go of too, and
+   * that person is told it did not happen. The engine loads the corpus (about
+   * 15 s, engine/README.md) and takes the kept game back; the room then holds
+   * it to the seats it saved — a game with other seats in it is not this one —
+   * and publishes it whole to every seat, with what each is to be told first.
+   * A paced turn that was being watched goes on being watched.
+   *
+   * A game that cannot be taken back is gone, but not for good: what refused it
+   * was this engine, and the next relay's may not (an engine too old to keep a
+   * game, one that could not start), so it is not written down as ended, the next
+   * relay tries again, and the reason says so.
+   */
+  const resume = async (reason) => {
+    if (closed || !kept || restoring) return
+    restoring = reason
+    starting = true
+    // Answers the old engine may still give are not this game's any more.
+    const gen = ++generation
+    // The move a person was waiting on, told to them once the game is back. The
+    // mark stays on the room until then, so a relay that goes down again while
+    // this one is loading still has it to tell.
+    const lostMove = inFlight
+    answering = false
+    status = null
+    // Behind what the people at the table last saw, in stops, where the last
+    // stop published was never kept: said, so a table a stop behind does not
+    // read as the table they left.
+    const behind = Math.max(0, stop - kept.stop)
+    wakeNap()
+    const old = engine
+    engine = null
+    if (old && !old.exited) old.close().catch(() => {})
+    tell(OP.restoring, { reason })
+    try {
+      const started = startEngine({
+        command: engineCommand,
+        onStderr,
+        onExit: (why) => { if (!closed && engine === started) died(why) },
+      })
+      engine = started
+      lastStarted = started
+      const hello = await started.call('hello', {}, { timeoutMs: STARTUP_MS })
+      if (gen !== generation || closed) return
+      const p = Number(hello?.protocol) || 0
+      if (p < KEEPING_PROTOCOL) throw new Error(`Its engine takes no game back (protocol ${p}; that came with ${KEEPING_PROTOCOL}).`)
+      // The corpus is loaded by now, which is most of the wait; taking the game
+      // back is milliseconds (PLAN.md, M7), but is given the long allowance too.
+      const reply = await started.call('restore', { snapshot: kept.text }, { timeoutMs: STARTUP_MS })
+      if (gen !== generation || closed) return
+      // The engine's seats, in order, must be the ones this room recorded at the deal.
+      const ids = Array.isArray(reply?.seats) ? reply.seats.map((s) => s?.id) : []
+      const recorded = seats.map((s) => s.engineSeat).filter(Boolean)
+      if (!ids.length || ids.length !== recorded.length || ids.some((id, i) => id !== recorded[i])) throw new Error('The game the engine took back is not the one this table was playing.')
+      protocol = p
+      // A pace the engine took back is one this room can go on driving; the
+      // engine says whether it did, as it says so at a deal.
+      paced = paced && reply.paced === true
+      status = reply
+      restoring = null
+      inFlight = null
+      inFlightFrom = null
+      // The number the stop taken back is about to be published as, which
+      // says which coming back this was: stops only ever count up, across
+      // restarts too, since each is on disk before anybody sees it.
+      const at = stop + 1
+      for (const seat of seats) {
+        // Every seat is sent the table whole: its client may hold a view the
+        // game has since gone back from.
+        seat.whole = false
+        if (seat.ai) continue
+        seat.untold = { said: { reason, behind, ...(lostMove?.seat === seat.seat ? { lost: lostMove.op } : {}), at }, to: null }
+      }
+      tell(OP.seats, { seats: seatList() })
+      for (const seat of seats) {
+        if (!seat.socket) continue
+        tellRestored(seat)
+        say(seat.socket, OP.seated, seated(seat))
+      }
+      await publish()
+      if (gen !== generation || closed) return
+      // What is kept is the game just taken back, now at the stop it was
+      // published as: the engine holds nothing else, so it is not asked again.
+      // It is also the stop past which the game has gone on (`crashes`).
+      kept = { text: kept.text, stop }
+      restoredAt = stop
+      onChange?.()
+      drive()
+    } catch (e) {
+      if (gen !== generation || closed) return
+      restoring = null
+      const dead = engine
+      engine = null
+      dead?.close().catch(() => {})
+      lost(`${reason === 'engine' ? 'The engine stopped' : 'The relay restarted'}, and the game could not come back: ${ended(clause(e.message))} ${TRIED_AGAIN}`, { final: false })
+    } finally {
+      if (gen === generation) starting = false
+    }
   }
 
   const sit = (socket, { name, seat: wanted, deck, sideboard, deltas, level: wantedLevel, answers, mulligans, engineDeck, format, commander }) => {
@@ -645,11 +1077,23 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
     say(socket, OP.seated, seated(seat))
     tell(OP.seats, { seats: seatList() })
     if (gone) { say(socket, OP.gone, { reason: gone }); return }
+    // Coming back (M7): said, and nothing more until it is back, when the room
+    // publishes the table whole to every seat.
+    if (restoring) { say(socket, OP.restoring, { reason: restoring }); return }
+    // Back while this person was away: what came back is said before the table,
+    // on a socket that has just spoken and so is there to hear it.
+    tellRestored(seat, { heard: true })
     if (engine && status) {
       sayStatus(socket)
       // Whole, and then the engine's turn goes on being watched: somebody who
       // came back mid-turn is who the pace was waiting for.
       sendView(seat, { whole: true }).then(drive)
+    } else if (dealt) {
+      // A game that had ended when the relay last went is taken back only now,
+      // for somebody who has sat down to look at it (`comeBack`). It is never
+      // dealt again: a dealt room with no engine has a game to take back, or has
+      // gone, and said so above.
+      if (kept) resume('relay')
     } else maybeStart()
   }
 
@@ -662,6 +1106,8 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   const resync = (socket) => {
     const seat = seats.find((s) => s.socket === socket)
     if (!seat) { say(socket, OP.refused, { error: 'Sit down first.' }); return }
+    // Coming back: the whole table is sent to every seat once it is.
+    if (restoring) { say(socket, OP.refused, { error: RESTORING, restoring: true }); return }
     if (!engine || !status) { say(socket, OP.refused, { error: gone ?? 'The game has not started.' }); return }
     sendView(seat, { whole: true })
   }
@@ -678,6 +1124,8 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   const forward = async (socket, op, message) => {
     const seat = seats.find((s) => s.socket === socket)
     if (!seat) { say(socket, OP.refused, { error: 'Sit down first.' }); return }
+    // A press that crossed `restoring` on the wire: there is no engine to take it.
+    if (restoring) { say(socket, OP.refused, { error: RESTORING, stale: true, restoring: true }); return }
     if (!engine || !status) { say(socket, OP.refused, { error: gone ?? 'The game has not started.' }); return }
     if (status.actor !== seat.engineSeat) { say(socket, OP.refused, { error: 'It is not you the game is waiting on.' }); return }
     if (message.stop !== undefined && message.stop !== stop) { say(socket, OP.refused, { error: 'The table moved on; look again.', stale: true }); return }
@@ -686,16 +1134,49 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
     // any other refusal standing through the engine's turn.
     if (answering) { say(socket, OP.refused, { error: 'The engine is still answering your last move.', stale: true, answering: true }); return }
     const { t, op: _op, stop: _stop, ...params } = message
-    answering = true
+    // This move's own marks, taken down by this move alone: once its guard is
+    // down another move can begin, and must not have its marks taken down by
+    // this one finishing after it.
+    const guard = {}
+    answering = guard
+    // The move is in flight until a stop after it has been kept (M7, and `keep`,
+    // which takes the mark down): a room written in the meantime comes back to
+    // the stop before it, and this person is told the move did not happen.
+    // Written now, on disk before the engine is asked, rather than at the relay's
+    // next write: against a level that searches the answer can be seconds away,
+    // and a relay killed before a later write would forget the move was ever
+    // made (M7's review). Only where the game is kept at all: an engine that
+    // keeps none has no stop to come back to, and no move to tell of.
+    const gen = generation
+    const mine = { seat: seat.seat, op }
+    if (protocol >= KEEPING_PROTOCOL) {
+      inFlight = mine
+      inFlightFrom = stop
+      onChange?.({ now: true })
+    }
     try {
-      status = await engine.call(op, params)
+      const next = await engine.call(op, params)
+      // An engine replaced while this was answered: the game taken back is at
+      // the stop before this move, and the person is told so by `restored`.
+      // A room closed meanwhile keeps the move as in flight, as it was written.
+      if (gen !== generation || closed) return
+      status = next
       await publish()
+      if (gen !== generation || closed) return
+      // Answered and published: the next move may be taken, and is answered
+      // after the snapshot asked for here, so what is kept is this stop.
+      if (answering === guard) answering = false
+      const written = keep()
       drive()
+      await written
     } catch (e) {
+      if (gen !== generation || closed) return
+      // Refused: the game did not move, so there is nothing to lose.
+      if (inFlight === mine) { inFlight = null; inFlightFrom = null; onChange?.() }
       say(socket, OP.refused, { error: e.message })
       if (engine?.exited) lost(e.message)
     } finally {
-      answering = false
+      if (gen === generation && answering === guard) answering = false
     }
   }
 
@@ -716,11 +1197,14 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
     },
     receive(message, socket) {
       if (message?.t !== 'engine') return
+      // A socket told what came back that has spoken since was there to hear it (`tellRestored`).
+      const told = seats.find((s) => s.socket === socket && s.untold?.to === socket)
+      if (told) told.untold = null
       switch (message.op) {
         case OP.sit: sit(socket, message); break
         case OP.act: forward(socket, 'act', message); break
         case OP.decide: forward(socket, 'decide', message); break
-        case OP.turn: if (status) sayStatus(socket); break
+        case OP.turn: if (restoring) say(socket, OP.restoring, { reason: restoring }); else if (status) sayStatus(socket); break
         case OP.resync: resync(socket); break
         default: say(socket, OP.refused, { error: `Unknown op "${message.op}".` })
       }
@@ -739,16 +1223,63 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       // `format` is the game asked for until the deal, and the game dealt after it, as a seated says it.
       // A deck of its own is said with the format it was asked to be built to, so
       // a lobby can say the copy while the engine deals where it builds none.
-      const dealt = Boolean(engine && status)
+      // A game coming back (M7) was dealt, and is said as dealt, with `restoring`
+      // saying why it cannot be played this minute; so is one that had ended when
+      // the relay last went, which has no engine until somebody sits to look at
+      // it, and is said as begun and over rather than as a table to be dealt.
+      const isDealt = Boolean(engine && status) || dealt
       const own = wantedDeck?.kind === 'own' ? { pool: wantedDeck.sets ? 'sets' : 'format', ...(wantedDeck.format ? { format: wantedDeck.format } : {}) } : {}
       const asked = wantedDeck ? { asked: wantedDeck.kind, ...(wantedDeck.name ? { name: wantedDeck.name } : {}), ...own } : null
       return {
-        mode: 'enforced', ai, seats: seatList(), started: Boolean(engine), dealt, over: Boolean(status?.over), pace: paceMs, paced,
-        level, ...(dealt ? { played, profile, mulligans: mulliganed } : {}),
-        ...(ai && (dealt ? dealtDeck : asked) ? { engineDeck: dealt ? dealtDeck : asked } : {}),
-        format: dealt && dealtFormat ? dealtFormat : { asked: wantedFormat() },
+        mode: 'enforced', ai, seats: seatList(), started: Boolean(engine) || dealt, dealt: isDealt, over: Boolean(status?.over) || finished, pace: paceMs, paced,
+        level, ...(isDealt ? { played, profile, mulligans: mulliganed } : {}),
+        ...(ai && (isDealt ? dealtDeck : asked) ? { engineDeck: isDealt ? dealtDeck : asked } : {}),
+        format: isDealt && dealtFormat ? dealtFormat : { asked: wantedFormat() },
+        ...(restoring ? { restoring } : {}),
+        // Why the game has gone, where it has: since M7 a room can outlive its
+        // game, when the game could not come back after a restart, and a lobby
+        // that asks should not offer it as a table waiting to be dealt.
+        ...(gone ? { gone } : {}),
       }
     },
+    /**
+     * What the relay writes to disk for this room (M7), for `savedRoomOf` to
+     * read back: the room's settings, and once it has dealt, the game as the
+     * room holds it — its seats and their numbering, what the engine's seat
+     * plays and which game it is, the last stop published, and the engine's own
+     * text of the game at the last stop kept, with any move still in flight;
+     * and whether the game ended, and why it went where the room ended it for
+     * good (M7's review), so the next relay neither loads an engine for it nor
+     * says it came back.
+     * Never the decks: a room that has dealt has them in the engine's text, and
+     * one that has not is sat at again by clients that bring them.
+     */
+    record() {
+      return {
+        seats: seats.length, ai, pace: paceMs, level,
+        ...(dealt ? {
+          dealt: true, stop, played, profile, paced, mulliganed, choices, engineDeck: dealtDeck, format: dealtFormat,
+          seated: seats.map((s) => ({ seat: s.seat, name: s.name, engineSeat: s.engineSeat, sideboardLeftOut: s.sideboardLeftOut, unknownPrintings: s.unknownPrintings, asked: s.asked, seq: s.seq })),
+          ...(finished ? { over: true } : {}),
+          ...(gone && final ? { gone } : {}),
+        } : {}),
+        ...(kept ? { kept: { text: kept.text, stop: kept.stop } } : {}),
+        ...(inFlight ? { inFlight } : {}),
+        ...(unkept ? { unkept } : {}),
+      }
+    },
+    /**
+     * A room read back from disk comes back (M7): a game kept is taken back by
+     * an engine started for it now, rather than when somebody sits, so the
+     * corpus is loading while their clients find their way back. A room that
+     * never dealt is a table waiting for its seats, as it was. A game that had
+     * ended, or that the room ended for good, is not taken back now (M7's
+     * review): nobody is waiting to play on, and the first is taken back when
+     * somebody sits down to look at it (`sit`).
+     */
+    comeBack() { if (kept && dealt && !gone && !finished) resume('relay') },
+    /** Once the snapshot being taken now, if one is, has been kept: the relay waits on this, briefly, before it goes down. */
+    settled() { return keeping ?? Promise.resolve() },
     async close() {
       // The loop is told the room has gone before the engine is: a step asked
       // for after this would be a call on a closing process, and a pace waited

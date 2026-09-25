@@ -562,8 +562,8 @@ describe('the status on the way through', () => {
   })
 
   it('stops saying the engine is thinking when the wire drops under an unanswered press', async () => {
-    // An enforced room does not outlive its relay, so the answer to a press
-    // outstanding when the wire went will never come on it.
+    // The answer to a press outstanding when the wire went never comes on that
+    // wire: a room that comes back is at the stop it last saved, and says so (M7).
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       const socket = await mount()
@@ -610,5 +610,132 @@ describe('the status on the way through', () => {
     await deliver(socket, ...stop(paused, paused.at + 1))
     expect(room.status.waiting).toBe('engine')
     expect(room.status.actor).not.toBe(YOU)
+  })
+})
+
+describe('a game that comes back (M7)', () => {
+  /** The whole table again, as a room that has taken the game back sends it: the stop the game was kept at, numbered on. */
+  const whole = (entry, seq) => ([
+    { op: 'status', status: { ...entry.status, stop: seq } },
+    { op: 'view', you: YOU, seq, state: entry.state, log: entry.fullLog },
+  ])
+
+  it('lets go of the stop while the game comes back, so nothing can be pressed, and says under the table what came back, once', async () => {
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+    expect(room.status).not.toBeNull()
+    await deliver(socket, { op: 'restoring', reason: 'relay' })
+    expect(room.restoring).toBe('relay')
+    expect(room.status).toBeNull()
+    // No status, no press: the send is refused here rather than reach a room with no engine.
+    let sent
+    act(() => { sent = room.act(0) })
+    expect(sent).toBe(false)
+    expect(socket.sent.some((m) => m.op === 'act')).toBe(false)
+    const before = said().length
+    await deliver(socket, { op: 'restored', reason: 'relay', behind: 0 }, { op: 'seated', seat: 'p1', engineSeat: YOU })
+    // Held until the table it is about has been drawn: the status after it says nothing yet.
+    await deliver(socket, whole(RUN.views[0], 2)[0])
+    expect(said()).toHaveLength(before)
+    await deliver(socket, whole(RUN.views[0], 2)[1])
+    expect(room.restoring).toBe(null)
+    expect(room.status.stop).toBe(2)
+    expect(said().at(-1)).toBe('The relay restarted; the table is as it was at the last stop.')
+    expect(said().filter((t) => /restarted/.test(t))).toHaveLength(1)
+    // The notes said at the first deal are not said again for the same seat.
+    expect(said().filter((t) => /levels|level\./.test(t)).length).toBeLessThanOrEqual(1)
+  })
+
+  it('says an engine that restarted as the engine\'s, and tells the person whose answer was lost that the question is put again, and why the same answer may end the game', async () => {
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+    await deliver(socket, { op: 'restoring', reason: 'engine' })
+    expect(room.restoring).toBe('engine')
+    await deliver(socket, { op: 'restored', reason: 'engine', behind: 1, lost: 'decide' }, ...whole(RUN.views[0], 2))
+    expect(said().slice(-2)).toEqual([
+      'The engine restarted; the table is as it was one stop before the last you saw, the last one it had saved.',
+      'The engine stopped while it was taking your last answer, so the question is put to you again. If it stops again before the game has gone on, the game ends there, so giving the same answer again may end it.',
+    ])
+  })
+
+  it('does not invite a move that stopped the engine to be made again as though it were safe', async () => {
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+    await deliver(socket, { op: 'restoring', reason: 'engine' }, { op: 'restored', reason: 'engine', behind: 0, lost: 'act', at: 2 }, ...whole(RUN.views[0], 2))
+    expect(said().at(-1)).toBe('The engine stopped while it was answering your last move, so the table is as it was before it. If it stops again before the game has gone on, the game ends there, so making the same move again may end it.')
+  })
+
+  it('takes any status as the game back, so a `restored` lost on a socket that died unnoticed does not leave the table saying nothing will happen', async () => {
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+    await deliver(socket, { op: 'restoring', reason: 'relay' })
+    expect(room.restoring).toBe('relay')
+    // No `restored`: it went to a socket that was no longer there.
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...whole(RUN.views[0], 2))
+    expect(room.restoring).toBe(null)
+    expect(room.status.stop).toBe(2)
+  })
+
+  it('says a coming back once where the room says it again on the socket that took the old one\'s place', async () => {
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+    await deliver(socket, { op: 'restoring', reason: 'relay' }, { op: 'restored', reason: 'relay', behind: 0, at: 2 }, ...whole(RUN.views[0], 2))
+    // The wire drops, and the seat sits again on a new one: the room could not be
+    // sure the first was heard, and says it again, with the same number.
+    await deliver(socket, { op: 'restored', reason: 'relay', behind: 0, at: 2 }, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...whole(RUN.views[0], 3))
+    expect(said().filter((t) => /restarted/.test(t))).toEqual(['The relay restarted; the table is as it was at the last stop.'])
+    // Another coming back, later, is another line.
+    await deliver(socket, { op: 'restoring', reason: 'engine' }, { op: 'restored', reason: 'engine', behind: 0, at: 4 }, ...whole(RUN.views[0], 4))
+    expect(said().filter((t) => /restarted/.test(t))).toEqual(['The relay restarted; the table is as it was at the last stop.', 'The engine restarted; the table is as it was at the last stop.'])
+  })
+
+  it('draws the table it went back to, and keeps the log it had, where the game came back a stop behind what was seen', async () => {
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU })
+    // The hand to keep, then the mulligan taken: another seven in hand.
+    await deliver(socket, ...stop(RUN.views[0], 1), ...stop(RUN.views[1], 2))
+    const handOf = (view) => view.zones.find((z) => z.zoneId?.zoneType === 'Hand' && z.zoneId?.ownerId === YOU).cardIds
+    const first = handOf(RUN.views[0].state)
+    expect(room.run.board.zones[YOU].hand).not.toEqual(first)
+    const logBefore = room.run.events.map((e) => e.text ?? e.type)
+    // The mulligan was never kept: the game comes back to the hand before it.
+    await deliver(socket, { op: 'restoring', reason: 'relay' }, { op: 'restored', reason: 'relay', behind: 1, lost: 'act', at: 3 }, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...whole(RUN.views[0], 3))
+    expect(room.run.board.zones[YOU].hand).toEqual(first)
+    expect(room.status.actions.map((a) => a.type)).toEqual(['KeepHand', 'TakeMulligan'])
+    // The log keeps what it said, says nothing of the table twice, and ends with what came back.
+    const logAfter = room.run.events.map((e) => e.text ?? e.type)
+    expect(logAfter.slice(0, logBefore.length)).toEqual(logBefore)
+    expect(logAfter.slice(logBefore.length).filter((t) => t !== 'stepped' && t !== 'turnBegan')).toEqual([
+      'The relay restarted; the table is as it was one stop before the last you saw, the last one it had saved.',
+      'Your last move was not saved in time, so the table is as it was before it: make it again if you still want to.',
+    ])
+    expect(socket.sent.some((m) => m.op === 'resync')).toBe(false)
+  })
+
+  it('lets go of a press still waiting when the game went, and does not say twice a press refused as crossing it', async () => {
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+    act(() => { room.act(1) })
+    expect(room.answering).toBe(true)
+    await deliver(socket, { op: 'restoring', reason: 'relay' })
+    expect(room.answering).toBe(false)
+    await deliver(socket, { op: 'refused', error: 'The table is coming back; nothing can be played until it is.', stale: true, restoring: true })
+    // The table already says it is coming back; a banner saying so again would be the same words twice.
+    expect(room.refusal).toBe(null)
+    expect(room.restoring).toBe('relay')
+    await deliver(socket, { op: 'restored', reason: 'relay', behind: 0, lost: 'act' }, ...whole(RUN.views[0], 2))
+    expect(said().at(-1)).toBe('Your last move was not saved in time, so the table is as it was before it: make it again if you still want to.')
+  })
+
+  it('reads a room of any age forgivingly, and says what came back even where the game then goes', async () => {
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+    await deliver(socket, { op: 'restoring', reason: 'a word from a newer relay' })
+    expect(room.restoring).toBe('relay')
+    await deliver(socket, { op: 'restored', behind: 'x', lost: 'fly' })
+    await deliver(socket, { op: 'gone', reason: 'The engine stopped again before the game could go on, so it was not started a third time: the engine stopped (exit 3).' })
+    expect(room.restoring).toBe(null)
+    expect(room.gone).toMatch(/not started a third time/)
+    expect(said().at(-1)).toBe('The relay restarted; the table is as it was at the last stop.')
   })
 })

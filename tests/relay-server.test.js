@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, readdirSync, rmSync, readFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { gzipSync, gunzipSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { createServer, request } from 'node:http'
 import { connect } from 'node:net'
 import { createRelay } from '../scripts/relay-server.mjs'
-import { createEngineRoom, PACE_MS } from '../scripts/relay-engine.mjs'
+import { clause, createEngineRoom, PACE_MS, RESTORING, TRIED_AGAIN, savedRoomOf } from '../scripts/relay-engine.mjs'
 import { guest, KIND, PROTOCOL } from '../src/lib/board/net.js'
 import { relay, rooms as roomsApi } from '../src/lib/board/relay.js'
 import { handOf, invariants } from '../src/lib/board/model.js'
@@ -1469,21 +1470,31 @@ describe('an enforced room', () => {
       you.leave()
     })
 
-    it('reports an engine that dies mid-turn, as it reports one that dies at any other time', async () => {
-      const { code } = await openPaced(40)
-      const you = await join(code, 'Robin')
-      await until(() => you.last('view'), 5000)
-      const engine = engineAt(code)
-      await engine.call('plays', { count: 6 })
-      you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
-      await until(() => you.last('status').status.waiting === 'engine', 5000)
-      await engine.call('die').catch(() => {})
-      await until(() => you.last('gone'), 5000)
-      // Whichever way round it happened — the step in flight when the process
-      // went, or the one asked for after — the room says so in the engine's
-      // own words, once, exactly as it does for an act that finds it dead.
-      expect(you.last('gone').reason).toMatch(/The engine (stopped|is not running)/)
-      you.leave()
+    it('reports an engine that keeps no game and dies mid-turn, as it reports one that dies at any other time', async () => {
+      // Since M7 an engine that stops mid-game is started again from the last
+      // stop kept ("a room that survives the relay", below). One from before
+      // protocol 9 keeps nothing to start again from, and is reported as gone.
+      process.env.FAKE_PROTOCOL = '8'
+      try {
+        const { code } = await openPaced(40)
+        const you = await join(code, 'Robin')
+        await until(() => you.last('view'), 5000)
+        const engine = engineAt(code)
+        await engine.call('plays', { count: 6 })
+        you.send({ op: 'act', stop: you.last('status').status.stop, index: 0 })
+        await until(() => you.last('status').status.waiting === 'engine', 5000)
+        await engine.call('die').catch(() => {})
+        await until(() => you.last('gone'), 5000)
+        // Whichever way round it happened — the step in flight when the process
+        // went, or the one asked for after — the room says so in the engine's
+        // own words, once, exactly as it does for an act that finds it dead.
+        expect(you.last('gone').reason).toMatch(/The engine (stopped|is not running)/)
+        expect(you.got.filter((m) => m.op === 'gone')).toHaveLength(1)
+        expect(you.got.some((m) => m.op === 'restoring')).toBe(false)
+        you.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
     })
 
     it('never asks an older engine for a pace, a continue or a delta', async () => {
@@ -1514,22 +1525,924 @@ describe('an enforced room', () => {
     })
   })
 
-  it('is not written to disk, and its engine goes when the relay does', async () => {
-    const api = roomsApi(base)
-    const { code } = await api.open({ seats: 2, enforced: true })
-    const you = await join(code, 'Robin')
-    await until(() => you.last('view'), 5000)
-    relayServer.flush()
-    expect(readdirSync(dir).some((f) => f.startsWith(code))).toBe(false)
-    const room = relayServer.rooms.get(code)
-    const pid = room.engine.engine.pid
-    expect(pid).toBeGreaterThan(0)
-    you.leave()
-    await relayServer.shutdown()
-    await until(() => room.engine.engine.exited, 3000)
-    relayServer = createRelay({ roomsDir: dir, pingMs: 60, engineCommand: FAKE_ENGINE })
-    await new Promise((resolve) => relayServer.server.listen(0, resolve))
-    base = `http://127.0.0.1:${relayServer.server.address().port}`
+  /**
+   * A room that survives the relay (HANDOFF.md, M7). The room keeps the
+   * engine's snapshot of the game after every stop, the relay writes it beside
+   * the room, and a relay that comes back starts an engine for the room and has
+   * it take the game back; an engine that stops mid-game is started again the
+   * same way. The stand-in's snapshot carries a 64-bit number as the real one's
+   * does, and it refuses a text whose number came back as another, so a relay
+   * that read the text as JSON would fail here.
+   */
+  describe('a room that survives the relay', () => {
+    const roomOf = (code) => relayServer.rooms.get(code).engine
+    // `resolve`, since `join` in this describe is the test's own client.
+    const fileOf = (code) => resolve(dir, `${code}.json`)
+    const readRoom = (code) => JSON.parse(readFileSync(fileOf(code), 'utf8'))
+    const writeRoom = (code, saved) => writeFileSync(fileOf(code), JSON.stringify(saved))
+    const textOf = (saved) => gunzipSync(Buffer.from(saved.room.kept.gzip, 'base64')).toString('utf8')
+    /**
+     * What two tables at one stop agree on, whatever it is numbered: where the
+     * game stands and what is offered or asked. The first status after a deal or
+     * a restore also carries that reply's own keys (`seats`, `seed`, `restored`).
+     */
+    const at = (s) => JSON.stringify({ over: s.over, winner: s.winner, turn: s.turn, phase: s.phase, step: s.step, actor: s.actor, waiting: s.waiting, actions: s.actions ?? null, decision: s.decision ?? null })
+    /** Once the room has kept the stop its seat last saw, which is what a restart comes back to. */
+    const keptThrough = (code, client) => untilAsked(async () => roomOf(code).record().kept?.stop === client.last('status')?.status.stop, 5000)
+    /**
+     * The relay stopped as a deploy stops it, and a new one started on the same
+     * rooms; `between` is done to the disk while neither is running.
+     */
+    const restart = async ({ between = null, ...options } = {}) => {
+      await relayServer.shutdown()
+      between?.()
+      relayServer = createRelay({ roomsDir: dir, pingMs: 60, engineCommand: FAKE_ENGINE, ...options })
+      await new Promise((resolve) => relayServer.server.listen(0, resolve))
+      base = `http://127.0.0.1:${relayServer.server.address().port}`
+    }
+    /**
+     * The relay killed rather than stopped — an out-of-memory kill, a host
+     * rebooting — so it writes nothing more and says no goodbye. What the next
+     * relay finds is the disk as it is at this moment: it is copied now, and the
+     * next relay starts on the copy, while the old one is let go on a directory
+     * nothing reads again.
+     */
+    const crash = async (options = {}) => {
+      const disk = mkdtempSync(resolve(tmpdir(), 'relay-'))
+      cpSync(dir, disk, { recursive: true })
+      const old = dir
+      dir = disk
+      await relayServer.shutdown()
+      rmSync(old, { recursive: true, force: true })
+      relayServer = createRelay({ roomsDir: dir, pingMs: 60, engineCommand: FAKE_ENGINE, ...options })
+      await new Promise((resolve) => relayServer.server.listen(0, resolve))
+      base = `http://127.0.0.1:${relayServer.server.address().port}`
+    }
+    const DAY = 24 * 60 * 60 * 1000
+    /** Once the game is back and playable: an engine holding it, and nothing coming back. */
+    const cameBack = (code) => untilAsked(async () => Boolean(roomOf(code).status) && !roomOf(code).describe().restoring, 5000)
+    const count = (client, op) => client.got.filter((m) => m.op === op).length
+
+    it('is written to disk from the moment it opens, and once dealt with the engine\'s own text of the game, gzipped, and no deck', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      // Written at once, so a code handed out before anybody sits still works after a restart.
+      relayServer.flush()
+      let saved = readRoom(code)
+      expect(saved).toMatchObject({ version: 1, code, mode: 'enforced', room: { seats: 2, ai: 'heuristic', pace: PACE_MS } })
+      expect(saved.room.dealt).toBeUndefined()
+      expect(saved.room.kept).toBeUndefined()
+      const you = await join(code, 'Robin', { deltas: true })
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      relayServer.flush()
+      saved = readRoom(code)
+      expect(saved.room).toMatchObject({ dealt: true, stop: 1, kept: { stop: 1 } })
+      expect(saved.room.seated.map((s) => [s.seat, s.engineSeat])).toEqual([['p1', 'e0'], ['p2', 'e1']])
+      // The engine's own text, byte for byte, with its generator's 64-bit state as digits.
+      const text = textOf(saved)
+      expect(text).toBe((await roomOf(code).engine.call('snapshot')).snapshot)
+      expect(text.endsWith(',"rng":9007199254740993}')).toBe(true)
+      expect(saved.room.kept.bytes).toBe(Buffer.byteLength(text))
+      expect(saved.room.kept.gzip.length).toBeLessThan(text.length)
+      // The room keeps no deck of its own: a dealt game's decks are in the engine's text.
+      expect(JSON.stringify({ ...saved.room, kept: null })).not.toMatch(/Raging Goblin|Mountain/)
+      you.leave()
+    })
+
+    it('comes back when the relay restarts: an engine started for it takes the game back, and the seat plays on from the same stop', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { deltas: true })
+      await until(() => you.last('view'), 5000)
+      await moved(you, { op: 'act', stop: 1, index: 0 })
+      const before = you.last('status').status
+      const seq = you.last('view').seq
+      await keptThrough(code, you)
+      const text = roomOf(code).record().kept.text
+      you.leave()
+      await restart()
+      expect(relayServer.rooms.has(code)).toBe(true)
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null, deltas: true })
+      await until(() => back.last('view'), 5000)
+      // Told what came back, before the table: the relay restarted, at the stop
+      // last seen, and the number that stop comes back as, which names this restart.
+      expect(back.last('restored')).toEqual({ t: 'engine', op: 'restored', reason: 'relay', behind: 0, at: before.stop + 1 })
+      const ops = back.got.map((m) => m.op)
+      expect(ops.indexOf('restored')).toBeLessThan(ops.lastIndexOf('status'))
+      // The same stop, numbered on from where the room was, and the table sent whole.
+      const now = back.last('status').status
+      expect(at(now)).toBe(at(before))
+      expect(now.stop).toBe(before.stop + 1)
+      expect(back.last('view').state).toBeDefined()
+      expect(back.last('view').seq).toBe(seq + 1)
+      expect(back.last('seated')).toMatchObject({ seat: 'p1', engineSeat: 'e0' })
+      // What the engine was given back is what was kept, the digits untouched.
+      expect((await roomOf(code).engine.call('lastRestore')).snapshot).toBe(text)
+      // And the game goes on.
+      await moved(back, { op: 'act', stop: now.stop, index: 0 })
+      expect(back.last('status').status.stop).toBe(now.stop + 1)
+      back.leave()
+    })
+
+    it('says while it comes back that it is, refuses a press that crossed that on the wire, and says it as dealt', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      you.leave()
+      // The new engine is held at its first answer, as a real one is while the corpus loads.
+      process.env.FAKE_HOLD_HELLO = '1'
+      try {
+        await restart()
+      } finally {
+        delete process.env.FAKE_HOLD_HELLO
+      }
+      expect(await roomsApi(base).peek(code)).toMatchObject({ dealt: true, restoring: 'relay' })
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => back.last('restoring'))
+      expect(back.last('restoring')).toEqual({ t: 'engine', op: 'restoring', reason: 'relay' })
+      expect(back.last('status')).toBe(null)
+      back.send({ op: 'act', stop: 1, index: 0 })
+      await until(() => back.last('refused'))
+      expect(back.last('refused')).toMatchObject({ error: RESTORING, stale: true, restoring: true })
+      back.send({ op: 'turn' })
+      await until(() => back.got.filter((m) => m.op === 'restoring').length === 2)
+      await roomOf(code).engine.call('release')
+      await until(() => back.last('view'), 5000)
+      expect(back.last('restored')).toMatchObject({ reason: 'relay', behind: 0 })
+      expect((await roomsApi(base).peek(code)).restoring).toBeUndefined()
+      back.leave()
+    })
+
+    it('comes back mid-way through a paced turn of the engine\'s, and the room watches the rest of it', async () => {
+      const res = await fetch(`${base}/rooms`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seats: 2, enforced: true, pace: 10_000 }) })
+      const { code } = await res.json()
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await roomOf(code).engine.call('plays', { count: 3 })
+      you.send({ op: 'act', stop: 1, index: 0 })
+      // The first of the engine's three plays is published, and the next is ten seconds away.
+      await until(() => you.last('status')?.status.waiting === 'engine', 5000)
+      await keptThrough(code, you)
+      you.leave()
+      // The room's pace is on disk with it; brought down here so the turn is not sat through.
+      await restart({ between: () => { const saved = readRoom(code); writeRoom(code, { ...saved, room: { ...saved.room, pace: 20 } }) } })
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => back.last('status')?.status.waiting === 'action', 5000)
+      const statuses = back.got.filter((m) => m.op === 'status').map((m) => m.status)
+      // Back at the engine's stop, then the rest of its turn, a play at a time, then the person's.
+      expect(statuses[0]).toMatchObject({ waiting: 'engine', actor: 'e1' })
+      expect(statuses.map((s) => s.waiting)).toEqual(['engine', 'engine', 'engine', 'action'])
+      expect((await roomOf(code).engine.call('tally')).continues).toBe(3)
+      back.leave()
+    })
+
+    it('lets go of a move still being answered when the relay went, and tells the person who made it, and nobody else, that it did not happen', async () => {
+      const { code } = await roomsApi(base).open({ seats: 3, enforced: true })
+      const you = await join(code, 'Robin')
+      const them = await join(code, 'Sam')
+      await until(() => you.last('view') && them.last('view'), 5000)
+      const first = you.last('status').status
+      await keptThrough(code, you)
+      await roomOf(code).engine.call('holdActs')
+      you.send({ op: 'act', stop: first.stop, index: 0 })
+      await untilAsked(async () => roomOf(code).record().inFlight?.op === 'act')
+      relayServer.flush()
+      expect(readRoom(code).room.inFlight).toEqual({ seat: 'p1', op: 'act' })
+      you.leave(); them.leave()
+      await restart()
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+      const also = await join(code, 'Sam', { seat: 'p2', deck: null })
+      await until(() => back.last('view') && also.last('view'), 5000)
+      expect(back.last('restored')).toEqual({ t: 'engine', op: 'restored', reason: 'relay', behind: 0, lost: 'act', at: first.stop + 1 })
+      expect(also.last('restored')).toEqual({ t: 'engine', op: 'restored', reason: 'relay', behind: 0, at: first.stop + 1 })
+      // The table is the stop before the move, which the engine never finished answering.
+      expect(at(back.last('status').status)).toBe(at(first))
+      expect((await roomOf(code).engine.call('tally')).acts).toBe(0)
+      // And once written again, nothing is in flight any more.
+      relayServer.flush()
+      expect(readRoom(code).room.inFlight).toBeUndefined()
+      back.leave(); also.leave()
+    })
+
+    it('comes back a stop behind where the relay went while the engine was still writing down the last one, and says so', async () => {
+      // The relay's grace for a snapshot being taken, cut short: it is never
+      // given here, and the relay goes down when the grace runs out.
+      await restart({ keepGraceMs: 20 })
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const first = you.last('status').status
+      await keptThrough(code, you)
+      await roomOf(code).engine.call('holdSnapshot')
+      await moved(you, { op: 'act', stop: first.stop, index: 0 })
+      // Published and seen, and not kept: the snapshot is held until the relay has gone.
+      expect(roomOf(code).record()).toMatchObject({ stop: first.stop + 1, kept: { stop: first.stop }, inFlight: { seat: 'p1', op: 'act' } })
+      you.leave()
+      await restart()
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => back.last('view'), 5000)
+      expect(back.last('restored')).toEqual({ t: 'engine', op: 'restored', reason: 'relay', behind: 1, lost: 'act', at: first.stop + 2 })
+      expect(at(back.last('status').status)).toBe(at(first))
+      back.leave()
+    })
+
+    it('waits, going down, for a snapshot being taken, writes the room once it is kept, and writes nothing after', async () => {
+      // The grace is long here, and never runs out: what ends the wait is the
+      // snapshot being given. Without the wait, the relay would go down with the
+      // stop unkept, and the room come back a stop behind.
+      await restart({ keepGraceMs: 30_000 })
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const first = you.last('status').status
+      await keptThrough(code, you)
+      const engine = roomOf(code).engine
+      await engine.call('holdSnapshot')
+      await moved(you, { op: 'act', stop: first.stop, index: 0 })
+      const moveTo = you.last('status').status
+      expect(roomOf(code).record()).toMatchObject({ stop: moveTo.stop, kept: { stop: first.stop } })
+      you.leave()
+      const going = relayServer.shutdown()
+      // Going down, and waiting: the snapshot is given while it waits.
+      await engine.call('release')
+      await going
+      const written = readFileSync(fileOf(code), 'utf8')
+      expect(JSON.parse(written).room).toMatchObject({ stop: moveTo.stop, kept: { stop: moveTo.stop } })
+      // The move is in the stop kept, so it is no longer in flight.
+      expect(JSON.parse(written).room.inFlight).toBeUndefined()
+      // Down, it writes nothing more, whatever asks it to.
+      relayServer.flush()
+      expect(readFileSync(fileOf(code), 'utf8')).toBe(written)
+      relayServer = createRelay({ roomsDir: dir, pingMs: 60, engineCommand: FAKE_ENGINE })
+      await new Promise((resolve) => relayServer.server.listen(0, resolve))
+      base = `http://127.0.0.1:${relayServer.server.address().port}`
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => back.last('view'), 5000)
+      // Nothing behind and nothing lost: the stop the move led to came back.
+      expect(back.last('restored')).toEqual({ t: 'engine', op: 'restored', reason: 'relay', behind: 0, at: moveTo.stop + 1 })
+      expect(at(back.last('status').status)).toBe(at(moveTo))
+      back.leave()
+    })
+
+    it('takes the next move while the last stop is still being written down, and keeps each move in flight until its own stop is kept', async () => {
+      // The one-move guard is there so two moves are never answered at once; the
+      // snapshot is no answer anybody waits on. Held up behind it (found in M7's
+      // own run of the suite), a move sent on the new status was refused.
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      await roomOf(code).engine.call('holdSnapshot')
+      await moved(you, { op: 'act', stop: 1, index: 0 })
+      expect(roomOf(code).record()).toMatchObject({ kept: { stop: 1 }, inFlight: { seat: 'p1', op: 'act' } })
+      // Taken, and sent on to the engine, which answers it after the snapshot it
+      // is still holding: the room marks it in flight, a mark of its own. Refused,
+      // the mark would stay the first move's, and stop 3 would never come.
+      const first = roomOf(code).record().inFlight
+      you.send({ op: 'act', stop: 2, index: 0 })
+      await until(() => roomOf(code).record().inFlight !== first || you.last('refused'), 5000)
+      expect(you.last('refused')).toBe(null)
+      await roomOf(code).engine.call('release')
+      await until(() => you.last('status')?.status.stop === 3, 5000)
+      expect(you.got.some((m) => m.op === 'refused')).toBe(false)
+      await keptThrough(code, you)
+      expect(roomOf(code).record().kept.stop).toBe(3)
+      expect(roomOf(code).record().inFlight).toBeUndefined()
+      expect((await roomOf(code).engine.call('tally')).acts).toBe(2)
+      you.leave()
+    })
+
+    it('comes back to the hand to keep, with the mulligans taken still taken', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { mulligans: true })
+      await until(() => you.last('view'), 5000)
+      const offers = () => you.last('status').status.actions.map((a) => a.type)
+      expect(offers()).toEqual(['KeepHand', 'TakeMulligan'])
+      await moved(you, { op: 'act', stop: 1, index: 1 })
+      const taken = you.last('status').status
+      expect(taken.actions[0]).toMatchObject({ type: 'KeepHand', mulligans: 1 })
+      await keptThrough(code, you)
+      you.leave()
+      await restart()
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null, mulligans: true })
+      await until(() => back.last('view'), 5000)
+      expect(at(back.last('status').status)).toBe(at(taken))
+      // Keeping it now asks for the card owed to the bottom, as it would have.
+      const stop = back.last('status').status.stop
+      await moved(back, { op: 'act', stop, index: 0 })
+      expect(back.last('status').status.actions[0]).toMatchObject({ type: 'BottomCards', bottom: 1 })
+      expect((await roomsApi(base).peek(code)).mulligans).toBe(true)
+      back.leave()
+    })
+
+    it('comes back to a question put to a person as the same question, and takes its answer', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { answers: ['SelectCards'] })
+      await until(() => you.last('view'), 5000)
+      const question = { id: 'q-1', type: 'YesNo', player: 'e0', prompt: 'Keep it?', yesText: 'Yes', noText: 'No' }
+      await roomOf(code).engine.call('ask', { decision: question })
+      await moved(you, { op: 'act', stop: 1, index: 0 })
+      const asked = you.last('status').status
+      expect(asked).toMatchObject({ waiting: 'decision', decision: question })
+      await keptThrough(code, you)
+      you.leave()
+      await restart()
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null, answers: ['SelectCards'] })
+      await until(() => back.last('view'), 5000)
+      expect(at(back.last('status').status)).toBe(at(asked))
+      // What this seat may choose is as it was dealt.
+      expect(back.last('seated').choices.decisions).toEqual(expect.arrayContaining(['SelectCards', 'YesNo']))
+      await moved(back, { op: 'decide', stop: back.last('status').status.stop, yes: true })
+      expect(back.last('status').status.waiting).toBe('action')
+      back.leave()
+    })
+
+    it('starts an engine that stopped mid-game again from the last stop kept, and every seat is told', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await moved(you, { op: 'act', stop: 1, index: 0 })
+      const before = you.last('status').status
+      await keptThrough(code, you)
+      const first = roomOf(code).engine
+      await first.call('die').catch(() => {})
+      await until(() => you.last('restored'), 5000)
+      await until(() => you.last('status').status.stop === before.stop + 1, 5000)
+      expect(you.got.find((m) => m.op === 'restoring')).toEqual({ t: 'engine', op: 'restoring', reason: 'engine' })
+      expect(you.last('restored')).toEqual({ t: 'engine', op: 'restored', reason: 'engine', behind: 0, at: before.stop + 1 })
+      expect(roomOf(code).engine).not.toBe(first)
+      expect(roomOf(code).engine.pid).not.toBe(first.pid)
+      expect(at(you.last('status').status)).toBe(at(before))
+      expect(you.got.some((m) => m.op === 'gone')).toBe(false)
+      await moved(you, { op: 'act', stop: before.stop + 1, index: 0 })
+      you.leave()
+    })
+
+    it('starts it again each time the game has gone on since, and not a third time where it stops again before it has', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const restoredCount = () => you.got.filter((m) => m.op === 'restored').length
+      await roomOf(code).engine.call('die').catch(() => {})
+      await until(() => restoredCount() === 1, 5000)
+      await until(() => you.last('view') && you.last('status').status.stop === 2, 5000)
+      // The game goes on, and the next stop is kept: a second stop is worth a second start.
+      await moved(you, { op: 'act', stop: 2, index: 0 })
+      await keptThrough(code, you)
+      await roomOf(code).engine.call('die').catch(() => {})
+      await until(() => restoredCount() === 2, 5000)
+      await until(() => you.last('status').status.stop === 4, 5000)
+      // Stopped again before anything happened: the same crash is most likely waiting where it was.
+      await roomOf(code).engine.call('die').catch(() => {})
+      await until(() => you.last('gone'), 5000)
+      expect(you.last('gone').reason).toBe('The engine stopped again before the game could go on, so it was not started a third time: the engine stopped (exit 3).')
+      expect(restoredCount()).toBe(2)
+      you.leave()
+    })
+
+    it('does not count a relay restart as the engine stopping: an engine that stops after one is started again', async () => {
+      // Found in M7's own reading over: a room that came back after its relay
+      // restarted treated the first real crash after it as the second, and gave up.
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      you.leave()
+      await restart()
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => back.last('restored'), 5000)
+      await until(() => back.last('view'), 5000)
+      await keptThrough(code, back)
+      await roomOf(code).engine.call('die').catch(() => {})
+      await until(() => back.got.filter((m) => m.op === 'restored').length === 2, 5000)
+      expect(back.last('restored')).toMatchObject({ reason: 'engine', behind: 0 })
+      expect(back.got.some((m) => m.op === 'gone')).toBe(false)
+      back.leave()
+    })
+
+    it('still tells the person whose move was lost when the relay goes down again while the game is coming back', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      await roomOf(code).engine.call('holdActs')
+      you.send({ op: 'act', stop: 1, index: 0 })
+      await untilAsked(async () => roomOf(code).record().inFlight?.op === 'act')
+      you.leave()
+      // Down again while the first relay after it is still loading its engine.
+      process.env.FAKE_HOLD_HELLO = '1'
+      try {
+        await restart()
+      } finally {
+        delete process.env.FAKE_HOLD_HELLO
+      }
+      expect(roomOf(code).describe().restoring).toBe('relay')
+      await restart()
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => back.last('view'), 5000)
+      expect(back.last('restored')).toEqual({ t: 'engine', op: 'restored', reason: 'relay', behind: 0, lost: 'act', at: 2 })
+      back.leave()
+    })
+
+    it('says in words why a game could not come back — an engine that takes none back, a text it cannot read, a number that came back as another — and leaves its file for a relay that can', async () => {
+      const codes = []
+      for (let i = 0; i < 3; i++) {
+        const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+        const you = await join(code, 'Robin')
+        await until(() => you.last('view'), 5000)
+        await keptThrough(code, you)
+        you.leave()
+        codes.push(code)
+      }
+      const [unread, rounded, whole] = codes
+      const tamper = (code, text) => { const s = readRoom(code); writeRoom(code, { ...s, room: { ...s.room, kept: { ...s.room.kept, gzip: gzipSync(text).toString('base64') } } }) }
+      const said = async (code) => {
+        const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+        await until(() => back.last('gone'), 5000)
+        back.leave()
+        return back.last('gone').reason
+      }
+      // The engines a relay starts for its rooms are started as it comes up, and
+      // these read an environment that plays an engine from before keeping a game.
+      process.env.FAKE_PROTOCOL = '8'
+      try {
+        await restart({
+          between: () => {
+            tamper(unread, 'not a game at all')
+            // What a relay that read the text as JSON would have handed back: the last digit is lost.
+            tamper(rounded, textOf(readRoom(rounded)).replace('"rng":9007199254740993}', '"rng":9007199254740992}'))
+          },
+        })
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
+      // Each says that it is not the end of it: what refused it was this relay's
+      // engine, and the next relay tries again (M7's review).
+      expect(await said(whole)).toBe(`The relay restarted, and the game could not come back: its engine takes no game back (protocol 8; that came with 9). ${TRIED_AGAIN}`)
+      await restart()
+      expect(await said(unread)).toMatch(/^The relay restarted, and the game could not come back: that snapshot could not be read: .+\. The relay tries again each time it restarts\.$/)
+      expect(await said(rounded)).toBe(`The relay restarted, and the game could not come back: that game's random number generator came back as 9007199254740992, where it was kept as 9007199254740993. ${TRIED_AGAIN}`)
+      // The one left as it was comes back to a relay whose engine can take it.
+      const back = await join(whole, 'Robin', { seat: 'p1', deck: null })
+      await until(() => back.last('view'), 5000)
+      expect(back.last('restored')).toMatchObject({ reason: 'relay', behind: 0 })
+      back.leave()
+      for (const code of codes) expect(existsSync(fileOf(code))).toBe(true)
+    })
+
+    it('says a game that was dealt and never kept could not come back: an engine too old to keep one, or a copy the disk cannot give back', async () => {
+      process.env.FAKE_PROTOCOL = '8'
+      let old
+      try {
+        ;({ code: old } = await roomsApi(base).open({ seats: 2, enforced: true }))
+        const you = await join(old, 'Robin')
+        await until(() => you.last('view'), 5000)
+        await untilAsked(async () => Boolean(roomOf(old).record().unkept))
+        you.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
+      const { code: spoilt } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(spoilt, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await keptThrough(spoilt, you)
+      you.leave()
+      await restart({ between: () => { const s = readRoom(spoilt); writeRoom(spoilt, { ...s, room: { ...s.room, kept: { ...s.room.kept, gzip: 'this is not gzip' } } }) } })
+      const said = async (code) => {
+        const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+        await until(() => back.last('gone'))
+        back.leave()
+        return back.last('gone').reason
+      }
+      expect(await said(old)).toBe('The relay restarted, and this game could not come back: the engine it was played on keeps no game (protocol 8; keeping one came with 9).')
+      expect(await said(spoilt)).toBe('The relay restarted, and this game could not come back: what was kept of it could not be read back from the disk.')
+      // No engine was started for either: there was nothing to give one.
+      expect(roomOf(old).lastStarted).toBe(null)
+      expect(roomOf(spoilt).lastStarted).toBe(null)
+    })
+
+    it('will not take back a game whose seats are not the ones this table dealt, and says so', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      you.leave()
+      await restart({ between: () => { const s = readRoom(code); writeRoom(code, { ...s, room: { ...s.room, seated: s.room.seated.map((x, i) => ({ ...x, engineSeat: `e${i + 7}` })) } }) } })
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => back.last('gone'), 5000)
+      expect(back.last('gone').reason).toBe(`The relay restarted, and the game could not come back: the game the engine took back is not the one this table was playing. ${TRIED_AGAIN}`)
+      expect(back.got.some((m) => m.op === 'status')).toBe(false)
+      back.leave()
+    })
+
+    it('comes back as a table waiting for its seats where it had not dealt, and deals when they sit', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true, level: 'hard' })
+      await restart()
+      expect(await roomsApi(base).peek(code)).toMatchObject({ mode: 'enforced', started: false, dealt: false, level: 'hard' })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      expect(you.got.some((m) => m.op === 'restoring' || m.op === 'restored')).toBe(false)
+      expect((await roomsApi(base).peek(code)).dealt).toBe(true)
+      you.leave()
+    })
+
+    it('is left on disk by a relay with no engine, for one that has', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      you.leave()
+      await restart({ engineCommand: null })
+      expect(relayServer.rooms.has(code)).toBe(false)
+      expect(await roomsApi(base).peek(code)).toBe(null)
+      await restart()
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => back.last('view'), 5000)
+      expect(back.last('restored')).toMatchObject({ reason: 'relay' })
+      back.leave()
+    })
+
+    it('is swept with its file and its engine once nobody has touched it for a week', async () => {
+      let clock = 1_000_000
+      await restart({ idleMs: 1000, now: () => clock })
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      you.leave()
+      await until(() => relayServer.rooms.get(code).sockets.size === 0)
+      const engine = roomOf(code).engine
+      relayServer.flush()
+      expect(existsSync(fileOf(code))).toBe(true)
+      clock += 2000
+      relayServer.sweep()
+      expect(relayServer.rooms.has(code)).toBe(false)
+      expect(existsSync(fileOf(code))).toBe(false)
+      await until(() => engine.exited, 3000)
+    })
+
+    it('reads a record forgivingly: what makes no sense brings back a table, or one that says its game is gone, never a thrown error', async () => {
+      const touchedAt = Date.now()
+      await restart({
+        between: () => {
+          writeRoom('NNNNN', { version: 1, code: 'NNNNN', mode: 'enforced', touchedAt, room: 'nonsense' })
+          writeRoom('MMMMM', { version: 1, code: 'MMMMM', mode: 'enforced', touchedAt, room: { seats: 99, ai: 7, pace: 'soon', level: 'expert', dealt: true, stop: -4, seated: [null, 5, { seat: 3 }], kept: { gzip: 12 }, inFlight: { seat: [], op: 'fly' } } })
+          writeRoom('PPPPP', { version: 1, code: 'PPPPP', mode: 'enforced', touchedAt, room: { dealt: true, kept: { text: 'not a game', stop: 'x' }, seated: [{ seat: 'p1', engineSeat: 'e0' }, { seat: 'p2', engineSeat: 'e1' }] } })
+          // Kept, as something that is not a kept game at all: damaged, not never kept.
+          writeRoom('QQQQQ', { version: 1, code: 'QQQQQ', mode: 'enforced', touchedAt, room: { dealt: true, kept: 'a game, honestly' } })
+        },
+      })
+      expect(await roomsApi(base).peek('NNNNN')).toMatchObject({ mode: 'enforced', dealt: false, seats: [{ seat: 'p1' }, { seat: 'p2', ai: 'heuristic' }] })
+      expect((await roomsApi(base).peek('MMMMM')).seats).toHaveLength(6)
+      const gone = async (code) => {
+        const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+        await until(() => back.last('gone'), 5000)
+        back.leave()
+        return back.last('gone').reason
+      }
+      expect(await gone('MMMMM')).toBe('The relay restarted, and this game could not come back: what was kept of it could not be read back from the disk.')
+      expect(await gone('PPPPP')).toMatch(/^The relay restarted, and the game could not come back: that snapshot could not be read: /)
+      expect(await gone('QQQQQ')).toBe('The relay restarted, and this game could not come back: what was kept of it could not be read back from the disk.')
+      // A room whose game could not come back says so to a lobby that asks, rather than look open.
+      expect((await roomsApi(base).peek('QQQQQ')).gone).toBe('The relay restarted, and this game could not come back: what was kept of it could not be read back from the disk.')
+      // And the table nobody could make sense of is one that deals.
+      const you = await join('NNNNN', 'Robin')
+      await until(() => you.last('view'), 5000)
+      you.leave()
+      expect(savedRoomOf(undefined)).toMatchObject({ dealt: false, kept: null, seated: [] })
+      // A record from before a game's end or a room's end was written reads as neither.
+      expect(savedRoomOf({ dealt: true, over: 'yes', gone: 7 })).toMatchObject({ over: false, gone: null })
+    })
+
+    /*
+     * What M7's review found in how a room is written down and read back.
+     */
+
+    it('does not count a game coming back as somebody touching its room: a relay that restarts keeps the room\'s clock, and drops it a week after the last move', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      you.leave()
+      // Last touched six days before now, by the clock the next relays keep.
+      let clock = Date.parse('2026-09-25T12:00:00Z')
+      const touchedAt = clock - 6 * DAY
+      await restart({ now: () => clock, between: () => writeRoom(code, { ...readRoom(code), touchedAt }) })
+      // The game is taken back, and the room written with it — its clock as it was.
+      await cameBack(code)
+      relayServer.flush()
+      expect(readRoom(code).touchedAt).toBe(touchedAt)
+      expect(relayServer.rooms.get(code).touchedAt).toBe(touchedAt)
+      // And again: a restart a day is not a room kept for ever.
+      await restart({ now: () => clock })
+      await cameBack(code)
+      relayServer.flush()
+      expect(readRoom(code).touchedAt).toBe(touchedAt)
+      // Two days on, a week and a day since anybody did anything there.
+      clock += 2 * DAY
+      relayServer.sweep()
+      expect(relayServer.rooms.has(code)).toBe(false)
+      expect(existsSync(fileOf(code))).toBe(false)
+    })
+
+    it('counts somebody at the table as touching it, and writes that', async () => {
+      let clock = Date.parse('2026-09-25T12:00:00Z')
+      await restart({ now: () => clock, flushMs: 5 })
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      clock += DAY
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await until(() => readRoom(code).touchedAt === clock, 5000)
+      you.leave()
+    })
+
+    it('keeps a game the room ended for good ended through a restart, and starts no engine for it', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await roomOf(code).engine.call('die').catch(() => {})
+      await until(() => count(you, 'restored') === 1 && you.last('status')?.status.stop === 2, 5000)
+      // Stopped again before the game went on: ended, and said why.
+      await roomOf(code).engine.call('die').catch(() => {})
+      await until(() => you.last('gone'), 5000)
+      const reason = you.last('gone').reason
+      expect(reason).toMatch(/not started a third time/)
+      you.leave()
+      await restart()
+      // Not taken back: no engine loads the corpus for it, and the lobby says why it went.
+      expect(roomOf(code).lastStarted).toBe(null)
+      expect(await roomsApi(base).peek(code)).toMatchObject({ dealt: true, gone: reason })
+      const again = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => again.last('gone'))
+      expect(again.last('gone').reason).toBe(reason)
+      expect(again.got.some((m) => m.op === 'restoring' || m.op === 'restored' || m.op === 'status')).toBe(false)
+      expect(roomOf(code).lastStarted).toBe(null)
+      again.leave()
+    })
+
+    it('does not take a game that had ended back as the relay comes up, and takes it back for somebody who sits down to look at it', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      // The stand-in's game is two moves long.
+      await moved(you, { op: 'act', stop: 1, index: 0 })
+      await moved(you, { op: 'act', stop: 2, index: 0 })
+      const end = you.last('status').status
+      expect(end.over).toBe(true)
+      await keptThrough(code, you)
+      you.leave()
+      await restart()
+      expect(roomOf(code).lastStarted).toBe(null)
+      // Said as a game that was dealt and is over, not as a table to be dealt.
+      const seen = await roomsApi(base).peek(code)
+      expect(seen).toMatchObject({ started: true, dealt: true, over: true })
+      expect(seen.restoring).toBeUndefined()
+      const again = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => again.last('view'), 5000)
+      expect(again.got.find((m) => m.op === 'restoring')).toEqual({ t: 'engine', op: 'restoring', reason: 'relay' })
+      expect(again.last('restored')).toMatchObject({ reason: 'relay', behind: 0 })
+      expect(at(again.last('status').status)).toBe(at(end))
+      // Never dealt again: the engine took the kept game back, and was asked for no new one.
+      expect((await roomOf(code).engine.call('lastRestore')).restores).toBe(1)
+      again.leave()
+    })
+
+    it('writes a room beside its file and then over it, so a write that fails leaves the last record whole, and the next relay clears what was left beside it', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const first = you.last('status').status
+      await keptThrough(code, you)
+      relayServer.flush()
+      const was = readFileSync(fileOf(code), 'utf8')
+      expect(existsSync(`${fileOf(code)}.tmp`)).toBe(false)
+      // Somewhere the next record cannot be written: a directory where it would go.
+      mkdirSync(`${fileOf(code)}.tmp`)
+      await moved(you, { op: 'act', stop: first.stop, index: 0 })
+      await keptThrough(code, you)
+      relayServer.flush()
+      // The last record stands, whole.
+      expect(readFileSync(fileOf(code), 'utf8')).toBe(was)
+      you.leave()
+      await restart({
+        between: () => {
+          // What a relay that died mid-write leaves beside the room's file.
+          rmSync(`${fileOf(code)}.tmp`, { recursive: true, force: true })
+          writeFileSync(`${fileOf(code)}.tmp`, '{"version":1,"code":"')
+        },
+      })
+      expect(existsSync(`${fileOf(code)}.tmp`)).toBe(false)
+      const again = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => again.last('view'), 5000)
+      // Back from the last whole record: the stop before the move.
+      expect(at(again.last('status').status)).toBe(at(first))
+      again.leave()
+    })
+
+    it('has the stop it publishes, and a move being answered, on disk before anybody hears of either, so a relay killed comes back no further on than what was seen', async () => {
+      // Nothing is written at the relay's leisure in this test, only what is written at once.
+      await restart({ flushMs: 60_000 })
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const first = you.last('status').status
+      // The deal's stop, on disk as it was published.
+      expect(readRoom(code).room).toMatchObject({ dealt: true, stop: first.stop })
+      await keptThrough(code, you)
+      await roomOf(code).engine.call('holdActs')
+      you.send({ op: 'act', stop: first.stop, index: 0 })
+      await untilAsked(async () => roomOf(code).record().inFlight?.op === 'act')
+      // The move, on disk before the engine has answered it.
+      expect(readRoom(code).room).toMatchObject({ stop: first.stop, kept: { stop: first.stop }, inFlight: { seat: 'p1', op: 'act' } })
+      await roomOf(code).engine.call('release')
+      await until(() => you.last('status')?.status.stop === first.stop + 1, 5000)
+      // The stop it led to, on disk by the time it was heard; its snapshot, kept
+      // since, would be written at leisure, and has not been.
+      expect(readRoom(code).room).toMatchObject({ stop: first.stop + 1, kept: { stop: first.stop }, inFlight: { seat: 'p1', op: 'act' } })
+      await keptThrough(code, you)
+      you.leave()
+      await crash()
+      const again = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => again.last('view'), 5000)
+      // A stop behind what was seen, and said; the move lost with it, and said;
+      // and the stop that comes back numbered after every one anybody saw.
+      expect(again.last('restored')).toEqual({ t: 'engine', op: 'restored', reason: 'relay', behind: 1, lost: 'act', at: first.stop + 2 })
+      expect(at(again.last('status').status)).toBe(at(first))
+      again.leave()
+    })
+
+    it('writes the game kept after every stop without being asked, so a relay killed comes back to it', async () => {
+      await restart({ flushMs: 5 })
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await moved(you, { op: 'act', stop: 1, index: 0 })
+      const now = you.last('status').status
+      // Read off the disk as the next relay would, never flushed by hand.
+      await until(() => { const r = readRoom(code).room; return r.kept?.stop === now.stop && !r.inFlight }, 5000)
+      you.leave()
+      await crash()
+      const again = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => again.last('view'), 5000)
+      expect(again.last('restored')).toEqual({ t: 'engine', op: 'restored', reason: 'relay', behind: 0, at: now.stop + 1 })
+      expect(at(again.last('status').status)).toBe(at(now))
+      again.leave()
+    })
+
+    it('does not start an engine again for ever where it stops each time building the same stop: once the game has not gone on, it is not started a third time', async () => {
+      // An engine that answers and then stops before the stop is kept — a reply
+      // it cannot write, tied to the position — used to count as the game going
+      // on, and was started again at the same place, every sixteen seconds, for
+      // good (found in M7's review).
+      const res = await fetch(`${base}/rooms`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seats: 2, enforced: true, pace: 20 }) })
+      const { code } = await res.json()
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await roomOf(code).engine.call('plays', { count: 3 })
+      await roomOf(code).engine.call('fragile')
+      you.send({ op: 'act', stop: 1, index: 0 })
+      await until(() => you.last('gone'), 5000)
+      expect(you.last('gone').reason).toBe('The engine stopped again before the game could go on, so it was not started a third time: the engine stopped (exit 3).')
+      // Started again once, where the game was last kept, and not after.
+      expect(count(you, 'restored')).toBe(1)
+      expect(count(you, 'restoring')).toBe(1)
+      await sleep(100)
+      expect(count(you, 'restoring')).toBe(1)
+      you.leave()
+    })
+
+    it('starts an engine killed while it was answering a move again, and tells the person the move was not saved, and nothing else', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      const first = you.last('status').status
+      await keptThrough(code, you)
+      const engine = roomOf(code).engine
+      await engine.call('holdActs')
+      you.send({ op: 'act', stop: first.stop, index: 0 })
+      await untilAsked(async () => roomOf(code).record().inFlight?.op === 'act')
+      const views = count(you, 'view')
+      // Killed from outside, as an out-of-memory killer would: a `die` would wait behind the held move.
+      process.kill(engine.pid)
+      await until(() => you.last('restored') && count(you, 'view') > views, 5000)
+      expect(you.got.find((m) => m.op === 'restoring')).toEqual({ t: 'engine', op: 'restoring', reason: 'engine' })
+      expect(you.last('restored')).toEqual({ t: 'engine', op: 'restored', reason: 'engine', behind: 0, lost: 'act', at: first.stop + 1 })
+      expect(at(you.last('status').status)).toBe(at(first))
+      // The move's own failure is not said beside it: the engine that failed it was replaced.
+      expect(you.got.some((m) => m.op === 'refused' || m.op === 'gone')).toBe(false)
+      expect(roomOf(code).engine).not.toBe(engine)
+      expect((await roomOf(code).engine.call('tally')).acts).toBe(0)
+      you.leave()
+    })
+
+    it('takes a paced turn back whose engine was killed in the middle of it, and watches the rest of it on the new engine', async () => {
+      const sent = []
+      // The room's pace, held by the test: each wait is let go by hand, so the
+      // engine is killed while the room is waiting to ask for the next play.
+      const gates = []
+      const you = { id: 's1', seat: null }
+      const room = createEngineRoom({
+        code: 'PACED', seats: 2, ai: 'heuristic', engineCommand: FAKE_ENGINE, paceMs: 5,
+        deliver: (socket, m) => sent.push(m), wait: () => new Promise((go) => gates.push(go)),
+      })
+      const last = (op) => sent.filter((m) => m.op === op).at(-1) ?? null
+      room.join(you)
+      room.receive({ t: 'engine', op: 'sit', name: 'Robin', deck: DECK }, you)
+      await until(() => last('view'), 5000)
+      await room.engine.call('plays', { count: 3 })
+      room.receive({ t: 'engine', op: 'act', stop: 1, index: 0 }, you)
+      // The first of the engine's plays, published and kept, and the room waiting its pace.
+      await until(() => last('status')?.status.waiting === 'engine' && gates.length === 1, 5000)
+      const shown = last('status').status
+      await untilAsked(async () => room.record().kept?.stop === shown.stop, 5000)
+      const first = room.engine
+      process.kill(first.pid)
+      await until(() => last('restored'), 5000)
+      expect(last('restored')).toEqual({ t: 'engine', op: 'restored', reason: 'engine', behind: 0, at: shown.stop + 1 })
+      expect(at(last('status').status)).toBe(at(shown))
+      const from = sent.length
+      // The loop that was watching the old engine lets go, and the turn is
+      // taken up on the new one, a play a pace, until it is the person's.
+      for (let i = 0; i < 10 && last('status').status.waiting === 'engine'; i++) {
+        await until(() => gates.length > 0, 5000)
+        gates.shift()()
+        await until(() => gates.length > 0 || last('status').status.waiting === 'action', 5000)
+      }
+      expect(sent.slice(from).filter((m) => m.op === 'status').map((m) => m.status.waiting)).toEqual(['engine', 'engine', 'action'])
+      expect(room.engine).not.toBe(first)
+      // Every play left was asked of the new engine, one each, and none of the old.
+      expect((await room.engine.call('tally')).continues).toBe(3)
+      expect(sent.some((m) => m.op === 'refused' || m.op === 'gone')).toBe(false)
+      await room.close()
+    })
+
+    it('tells a person again what came back where the socket it was said to may not have heard it, and not where it has spoken since', async () => {
+      // A phone that changed networks while the game came back: its socket stays
+      // open to the relay until the heartbeat finds it, and nothing said on it arrives.
+      const sent = []
+      const deaf = new Set()
+      const room = createEngineRoom({
+        code: 'TOLD', seats: 2, ai: 'heuristic', engineCommand: FAKE_ENGINE, paceMs: 0,
+        deliver: (socket, m) => { if (!deaf.has(socket)) sent.push({ socket, ...m }) },
+      })
+      const to = (socket, op) => sent.filter((m) => m.socket === socket && m.op === op)
+      const phone = { id: 's1', seat: null }
+      room.join(phone)
+      room.receive({ t: 'engine', op: 'sit', name: 'Robin', deck: DECK }, phone)
+      await until(() => to(phone, 'view').length, 5000)
+      await untilAsked(async () => room.record().kept?.stop === 1, 5000)
+      deaf.add(phone)
+      await room.engine.call('die').catch(() => {})
+      await untilAsked(async () => Boolean(room.status) && !room.describe().restoring, 5000)
+      // Said to the phone's old socket, where it went nowhere.
+      expect(to(phone, 'restored')).toHaveLength(0)
+      const again = { id: 's2', seat: null }
+      room.join(again)
+      room.receive({ t: 'engine', op: 'sit', name: 'Robin', seat: 'p1', deck: null }, again)
+      await until(() => to(again, 'view').length, 5000)
+      expect(to(again, 'restored')).toEqual([{ socket: again, t: 'engine', op: 'restored', reason: 'engine', behind: 0, at: 2 }])
+      // Told on a socket that had just sat: once is enough.
+      const third = { id: 's3', seat: null }
+      room.join(third)
+      room.receive({ t: 'engine', op: 'sit', name: 'Robin', seat: 'p1', deck: null }, third)
+      await until(() => to(third, 'view').length, 5000)
+      expect(to(third, 'restored')).toHaveLength(0)
+      // The game goes on and is kept, and the engine stops again: told to a
+      // socket that then speaks, which was there to hear it.
+      room.receive({ t: 'engine', op: 'act', stop: 2, index: 0 }, third)
+      await untilAsked(async () => room.record().kept?.stop === 3, 5000)
+      await room.engine.call('die').catch(() => {})
+      await until(() => to(third, 'restored').length === 1, 5000)
+      await untilAsked(async () => Boolean(room.status) && !room.describe().restoring, 5000)
+      room.receive({ t: 'engine', op: 'turn' }, third)
+      const fourth = { id: 's4', seat: null }
+      room.join(fourth)
+      room.receive({ t: 'engine', op: 'sit', name: 'Robin', seat: 'p1', deck: null }, fourth)
+      await until(() => to(fourth, 'view').length, 5000)
+      expect(to(fourth, 'restored')).toHaveLength(0)
+      await room.close()
+    })
+
+    it('keeps the capital of a name at the head of an engine\'s reason, and lowers only the first letter of a sentence', async () => {
+      // A reason the engine did not expect is the name of what was thrown (Server.kt).
+      expect(clause('IllegalStateException: the stack was not empty')).toBe('IllegalStateException: the stack was not empty')
+      expect(clause('That snapshot could not be read: no.')).toBe('that snapshot could not be read: no.')
+      expect(clause('A player has no deck.')).toBe('a player has no deck.')
+      expect(clause('')).toBe('no reason was given.')
+      expect(clause(undefined)).toBe('no reason was given.')
+      // As the room says it, of a snapshot the engine could not take.
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin')
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      await roomOf(code).engine.call('failSnapshot', { error: 'IllegalStateException: the stack was not empty' })
+      await moved(you, { op: 'act', stop: 1, index: 0 })
+      await untilAsked(async () => Boolean(roomOf(code).record().unkept), 5000)
+      expect(roomOf(code).record().unkept).toBe('the engine could not keep it: IllegalStateException: the stack was not empty')
+      // The last stop kept stands.
+      expect(roomOf(code).record().kept.stop).toBe(1)
+      you.leave()
+    })
   })
 })
 

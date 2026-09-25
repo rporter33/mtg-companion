@@ -7,6 +7,7 @@ import { levelLine, levelOf } from '../../lib/engine/levels.js'
 import { ANSWERS, NO_CHOICES, choicesFrom } from '../../lib/engine/choose.js'
 import { DEFAULT_OPPONENT, OPPONENT_KINDS, engineDeckLine, formatWord, insteadLine, setsOf } from '../../lib/engine/opponent.js'
 import { COMMANDER_GAME, formatLine, gameOf } from '../../lib/engine/commander.js'
+import { restartOf, restoredLines } from '../../lib/engine/restart.js'
 
 /**
  * A seat at a table the engine holds.
@@ -64,6 +65,18 @@ import { COMMANDER_GAME, formatLine, gameOf } from '../../lib/engine/commander.j
  * Commander deck bringing its commander apart from its library (`commander`),
  * and the log says once which game the room reports was dealt — the Commander
  * rules, or the ordinary ones and why.
+ *
+ * And a game that comes back (M7). A relay that restarts, or an engine that
+ * stops, costs the room its engine for the fifteen seconds or so a new one
+ * takes to load; the room says so (`restoring`), and this seat lets go of the
+ * status it held, so nothing on screen offers a play there is no engine to
+ * take, and `restoring` says why on the table. Once the game is back the room
+ * says what came back (`restored`), and the log says it under the table it came
+ * back to, as it says what the engine did for the player: which of the two
+ * restarted, where the table is, and whether a move of this person's was lost
+ * (src/lib/engine/restart.js). Any status is the game back too, since a room
+ * sends none while it is coming back, and `restored` can be lost on a socket
+ * that died unnoticed.
  */
 /**
  * How long a press may go unanswered before the table says the engine is
@@ -140,6 +153,8 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   const [run, setRun] = useState(null)
   const [refusal, setRefusal] = useState(null)
   const [gone, setGone] = useState(null)
+  // The game coming back (M7): 'relay' or 'engine' while it is, null otherwise.
+  const [restoring, setRestoring] = useState(null)
   // A press sent and not yet answered. Against a level that searches, the
   // engine can take seconds over what follows a move (PLAN.md, M3), and with
   // nothing on screen changing a player presses again. So a second press is
@@ -166,6 +181,14 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   // What the status said the engine did for the player, waiting for the view
   // it belongs to so that it lands under it rather than over it.
   const held = useRef([])
+  // What the room said came back (M7), said under the first view after it. Kept
+  // apart from `held`, which the next status says at once, since the status
+  // after a game comes back always precedes the view that shows it.
+  const cameBack = useRef([])
+  // Which coming back was last said (`at` on `restored`, the number of the stop
+  // it came back at): a room that could not be sure this seat heard it says it
+  // again on the socket that takes the old one's place, and it is said once.
+  const heardBack = useRef(null)
   const stands = useRef(new Map())
   const memory = useMemo(() => recall(code) ?? {}, [code])
   // What the lobby agreed to leave out, for this deck only, read forgivingly:
@@ -227,11 +250,13 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   useEffect(() => {
     if (!address || !code || !deckNames) return undefined
     // A press outstanding when the wire drops will never be answered on that
-    // wire: an enforced room does not outlive its relay, and one that does
-    // resends the status when this seat sits again. Left waiting, "The engine
-    // is thinking…" stood on the plate for good beside "Reconnecting…" (found
-    // in M3's review). The room's own one-move guard still stops a second
-    // press reaching the engine while the first is being answered.
+    // wire: a room that comes back after its relay restarts is at the stop it
+    // last saved, says so, and tells this seat if the press was lost (M7), and
+    // one that stayed up resends the status when this seat sits again. Left
+    // waiting, "The engine is thinking…" stood on the plate for good beside
+    // "Reconnecting…" (found in M3's review). The room's own one-move guard
+    // still stops a second press reaching the engine while the first is being
+    // answered.
     const line = relay({
       url: `${address.replace(/\/$/, '').replace(/^http/, 'ws')}/rooms/${encodeURIComponent(code)}/ws`,
       onStatus: (s) => { setWireStatus(s); if (s !== 'open') answered() },
@@ -346,6 +371,12 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
           if (s?.autoPassed > 0) hold(`The engine passed ${s.autoPassed} priority window${s.autoPassed === 1 ? '' : 's'} for you: nothing was affordable.`)
           for (const d of s?.decided ?? []) hold(`Decided for you — ${d.prompt}${d.source ? ` (${d.source})` : ''}.`)
           setStatus(s)
+          // A room sends no status while its game is coming back, so a status is
+          // the game back, whether or not the `restored` before it arrived: one
+          // said on a socket that had silently died was lost, and the banner
+          // saying nothing pressed would happen stood over a table that played
+          // (found in M7's review).
+          setRestoring(null)
           // Any status is the room having answered, whoever's stop it is.
           answered()
           // A refusal stands until the table is the player's to answer again.
@@ -382,20 +413,53 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
           const order = seating.current.length && seating.current.every((x) => x.engineSeat) ? seating.current.map((x) => ({ id: x.engineSeat })) : null
           board.current = boardFromView(next, { prev: board.current, seats: order })
           // Now that this view's own lines are in the log, what the engine did
-          // for the player before them can be said under them.
+          // for the player before them can be said under them, and what came
+          // back after a restart under the table it came back to.
           flush()
+          for (const text of cameBack.current.splice(0)) note(text)
           setRun({ board: board.current, events: events.current, restored: false, past: [], refusal: null })
           break
         }
         // `answering` is the room saying the refusal is its one-move guard,
         // which the next status makes untrue; a room from before it says only
-        // the words, and its refusal then stands as any other does.
-        case 'refused': setRefusal({ message: m.error, stale: Boolean(m.stale), ...(m.answering === true ? { answering: true } : {}) }); answered(); break
+        // the words, and its refusal then stands as any other does. One marked
+        // `restoring` is a press that crossed the room's word that the game is
+        // coming back, which the table already says, so it is not said twice.
+        case 'refused':
+          answered()
+          if (m.restoring === true) { setRestoring((r) => r ?? 'relay'); setStatus(null); break }
+          setRefusal({ message: m.error, stale: Boolean(m.stale), ...(m.answering === true ? { answering: true } : {}) })
+          break
+        case 'restoring': {
+          // The game is coming back (M7). What is held is said now, as for a
+          // status whose view never came; the status is let go of, because the
+          // engine that would take a press on it is not there; and anything
+          // pressed and not yet answered never will be.
+          if (flush()) setRun((r) => (r ? { ...r, events: events.current } : r))
+          answered()
+          setStatus(null)
+          setRefusal(null)
+          setRestoring(restartOf(m.reason))
+          break
+        }
+        case 'restored': {
+          // Said under the table it came back to, which the view after this
+          // brings; and once, where the room says it again. A room from before
+          // `at` says it once of itself.
+          setRestoring(null)
+          const at = Number.isInteger(m.at) ? m.at : null
+          if (at !== null && at === heardBack.current) break
+          heardBack.current = at
+          cameBack.current.push(...restoredLines(m))
+          break
+        }
         case 'gone': {
           // Nothing more is coming, so anything held is said now: the log is
           // the record of the game, and a table that has gone still has one.
           flush()
+          for (const text of cameBack.current.splice(0)) note(text)
           answered()
+          setRestoring(null)
           setRun((r) => (r ? { ...r, events: events.current } : r))
           setGone(m.reason ?? 'The engine has gone.')
           break
@@ -440,7 +504,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   }, [])
 
   return {
-    run, seat, seats, status, refusal, gone, wireStatus, unloaded, leftOut, sideboardLeftOut, level, answering, slow, can, engineDeck, game,
+    run, seat, seats, status, refusal, gone, restoring, wireStatus, unloaded, leftOut, sideboardLeftOut, level, answering, slow, can, engineDeck, game,
     act, decide, cardFor, moveCard,
     refuse: (message) => setRefusal({ message }),
     clearRefusal: () => setRefusal(null),

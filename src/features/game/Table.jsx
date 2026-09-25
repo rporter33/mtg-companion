@@ -38,6 +38,7 @@ import { NO_CHOICES, advance, answerOf, beginBottom, beginDecision, beginPlay, c
 import { chosenLevel, LEVEL_NAMES, levelOf } from '../../lib/engine/levels.js'
 import { chosenOpponent } from '../../lib/engine/opponent.js'
 import { damageRule, damageWords } from '../../lib/engine/commander.js'
+import { restoringLine } from '../../lib/engine/restart.js'
 import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
 import useEngineRoom from './useEngineRoom.js'
@@ -472,6 +473,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     const inst = board?.cards[id]
     if (!inst) return
     if (engine) {
+      // The game coming back (M7): there is no stop to be or not be this seat's,
+      // and the banner already says nothing pressed will happen until it is
+      // back. Refused in words here, the tap said "It is not your stop." of a
+      // stop that may well be this person's (found in M7's review).
+      if (held.restoring) return
       if (choosing) { answerTapRef.current?.(id); return }
       const offer = offerFor(id)
       if (offer && heldBack(offer, can)) held.refuse(cannotDo(offer, nameOf(board, id, lookup), can))
@@ -598,7 +604,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     // appear is already where it will be, and the line says what is being
     // waited for.
     const why = asking === 'carry' ? 'A game with this deck is waiting at the old table.' : engine
-      ? (held.gone ? `The engine has gone: ${held.gone}` : !ready ? 'Fetching the cards, then sitting down…'
+      ? (held.gone ? `The engine has gone: ${held.gone}` : held.restoring ? restoringLine(held.restoring) : !ready ? 'Fetching the cards, then sitting down…'
         // Not sent short: without those cards the engine would deal a smaller
         // deck than the player's, and it has no name to be told them by.
         : held.unloaded ? `${held.unloaded === 1 ? 'One card' : `${held.unloaded} cards`} in this deck did not load, so it is not sent to the engine: it would deal a smaller deck than yours.`
@@ -948,6 +954,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
         {engine && held.gone && (
           <div className="banner banner--warn" role="alert">The engine has gone: {held.gone}</div>
         )}
+        {/* The game coming back after a restart (M7): no prompt is shown, since
+            there is no engine to take a press, and this says why. */}
+        {engine && held.restoring && !held.gone && (
+          <div className="banner banner--warn game__restoring" role="status">{restoringLine(held.restoring)}</div>
+        )}
         {missing.length > 0 && (
           <div className="banner banner--warn">
             {missing.length} card{missing.length === 1 ? '' : 's'} in this deck could not be loaded, so
@@ -1065,7 +1076,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                 className="rail__btn rail__btn--go"
                 onClick={() => { const pass = offers.find((a) => a.type === 'PassPriority'); if (pass) held.act(pass.index) }}
                 disabled={!offers.some((a) => a.type === 'PassPriority')}
-                title={myStop ? undefined : 'The engine is not waiting on you.'}
+                title={held.restoring ? restoringLine(held.restoring) : myStop ? undefined : 'The engine is not waiting on you.'}
                 aria-keyshortcuts="Space"
               >
                 → Pass
@@ -1239,6 +1250,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             name={selectedInst ? nameFor(selectedInst) : null}
             card={selectedInst ? cardFor(selectedInst) : null}
             myStop={myStop}
+            restoring={held.restoring}
             can={can}
             onAct={(offer) => choose(offer)}
             onInspect={() => { const card = selectedInst ? cardFor(selectedInst) : null; if (card) onOpenCard(card) }}
@@ -1420,9 +1432,11 @@ function Plate({ who, status, active = false, thinking = false, target = false, 
 /**
  * What the engine offers, as a list: the actions panel at its table. The
  * card last touched comes first; mana abilities are counted rather than
- * listed, because the engine pays for spells itself.
+ * listed, because the engine pays for spells itself. While the game is coming
+ * back (M7) there is no stop at all, and it says that rather than whose stop
+ * it is not.
  */
-function EngineActions({ offers, selected, name, card, myStop, can = NO_CHOICES, onAct, onInspect, onClose }) {
+export function EngineActions({ offers, selected, name, card, myStop, restoring = null, can = NO_CHOICES, onAct, onInspect, onClose }) {
   const listed = offers.filter((a) => !a.mana && a.type !== 'PassPriority')
   const mine = selected ? listed.filter((a) => a.card === selected.id) : []
   const rest = listed.filter((a) => !mine.includes(a))
@@ -1447,14 +1461,14 @@ function EngineActions({ offers, selected, name, card, myStop, can = NO_CHOICES,
     <section className="actions" aria-label={name ? `Actions for ${name}` : 'Actions'}>
       <div className="row row--wrap">
         <strong className="actions__name">{name ?? 'What the engine offers'}</strong>
-        <span className="faint tiny">{myStop ? 'your stop' : 'not your stop'}</span>
+        <span className="faint tiny">{restoring ? 'coming back' : myStop ? 'your stop' : 'not your stop'}</span>
         <span className="spacer" />
         <button className="btn btn--ghost btn--sm" onClick={onClose}>Close</button>
       </div>
       {card && <div className="row row--wrap"><button className="btn btn--ghost btn--sm" onClick={onInspect}>Read it</button></div>}
       {mine.length > 0 && <div className="row row--wrap">{mine.map(row)}</div>}
       {rest.length > 0 && <div className="row row--wrap">{rest.map(row)}</div>}
-      {!listed.length && <p className="faint tiny m0">{myStop ? 'Nothing but passing is offered here.' : 'The engine is not waiting on you.'}</p>}
+      {!listed.length && <p className="faint tiny m0">{restoring ? restoringLine(restoring) : myStop ? 'Nothing but passing is offered here.' : 'The engine is not waiting on you.'}</p>}
       {listed.some((a) => a.affordable && heldBack(a, can) === 'target') && (
         <p className="faint tiny m0">What needs a target cannot be played here yet: this table does not choose targets for a spell or an ability.</p>
       )}

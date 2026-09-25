@@ -46,9 +46,23 @@
 // `commanderDamage` sets the tally a player's view carries. FAKE_PROTOCOL=7
 // plays an engine from before it, which deals the decks by the ordinary rules.
 //
+// And keeping a game (protocol 9): `snapshot` answers everything it holds as
+// text, and `restore` takes that text back into a stand-in that holds no game
+// (or any, with `replace`), answering as `new` does. The text carries a random
+// number generator's state as the real one's does, a 64-bit number JavaScript
+// cannot hold, and a restore whose number came back as another is refused: a
+// relay that read the text as JSON would round it, and another game would be
+// played. FAKE_PROTOCOL=8 plays an engine from before it, which knows neither op.
+//
 // It can be made to hold a request until the test lets it go (`holdActs`,
-// `release`, FAKE_HOLD_HELLO), which is how a test waits on "the engine is
-// still answering" without waiting on a clock.
+// `holdSnapshot`, `release`, FAKE_HOLD_HELLO), which is how a test waits on
+// "the engine is still answering" without waiting on a clock.
+//
+// And to fail the ways M7's review found a room must survive: `fragile` ends the
+// process at the first view asked for after it answers a `continue`, as a reply
+// it could not write would, and is kept in its snapshot, so a game taken back
+// from before that play fails at the same place again, as a crash tied to a
+// position does; `failSnapshot` answers the next snapshot with the error given.
 import { createInterface } from 'node:readline'
 import { readFileSync } from 'node:fs'
 
@@ -101,7 +115,24 @@ let acts = 0
 let lastNew = null
 let lastAct = null
 let lastDecide = null
-const protocol = () => Number(process.env.FAKE_PROTOCOL) || 8
+const protocol = () => Number(process.env.FAKE_PROTOCOL) || 9
+// Protocol 9: how many games this stand-in has taken back, and the last text it
+// was given, so a test can see what the relay kept and passed back.
+let restores = 0
+let lastRestore = null
+let holdingSnapshot = false
+// The faults above: whether this game ends the process at the view after a
+// continue, whether the last answer was a continue, and the error the next
+// snapshot is to be answered with.
+let fragile = false
+let continued = false
+let snapshotError = null
+/**
+ * The random number generator's state the stand-in's kept games carry: past
+ * 2^53, as the real one's are (PLAN.md, M7), so JavaScript reads it as another
+ * number. Written into the text and read back from it as text, never as JSON.
+ */
+const RNG = '9007199254740993'
 // Protocol 5's choices, as the real engine names them in hello (Server.kt);
 // protocol 6 adds the cards put on the bottom after a mulligan to what act takes.
 const ALWAYS_ASKED = ['ChooseTargets', 'YesNo', 'ChooseOption']
@@ -293,6 +324,19 @@ const status = () => {
   if (commanders?.main && at >= 0 && at < shots.length) return mainStop()
   return at >= shots.length ? ended() : { ...shots[at].status, ok: true }
 }
+/**
+ * The reply to a deal, and to a game taken back (protocol 9): the status, what
+ * the deal took, and the seats as Server.kt says them. A sideboard card it does
+ * not know is left out and named, as the real engine does.
+ */
+const dealtReply = (req, commanderGame, leaders) => ({
+  ...status(),
+  ...(paced ? { paced: true } : {}),
+  ...(mulligan ? { mulligans: true } : {}),
+  ...(commanderGame ? { format: 'commander' } : {}),
+  seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(typeof req.players?.[i]?.deck === 'object' ? req.players[i].deck : null), ...played(req.players?.[i]), ...asked(req.players?.[i]), ...built(req.players?.[i], req.players, commanderGame), ...(leaders[i] ? { commander: leaders[i] } : {}) })),
+})
+
 /** The log so far: one line a step, each carrying its words and its step, as M1 left them. */
 const logSoFar = () => Array.from({ length: steps }, (_, i) => ({ type: 'note', description: `Something happened (${i + 1})`, step: shot().status.step ?? null }))
 
@@ -332,6 +376,8 @@ const deltaOf = (prev, next) => {
 lines.on('line', (line) => {
   let req
   try { req = JSON.parse(line) } catch { say({ id: null, ok: false, error: 'not json' }); return }
+  // Only the views that follow a continue are the ones `fragile` fails on.
+  if (req.op !== 'view') continued = false
   // A request held (`holdActs`, FAKE_HOLD_HELLO) keeps every line after it
   // waiting, as a process busy on one request reads no other. Two get
   // through: the test's `release`, and `quit`, so a room closed mid-hold
@@ -415,17 +461,46 @@ function handle(req) {
       paced = protocol() >= 3 && (req.pace === true || (typeof req.pace === 'number' && req.pace > 0))
       // So is a mulligan phase, from protocol 6.
       mulligan = protocol() >= 6 && req.mulligans === true ? { taken: 0, kept: false } : null
-      // A sideboard card it does not know is left out and named, as the real engine does.
-      say({
-        id,
-        ...status(),
-        ...(paced ? { paced: true } : {}),
-        ...(mulligan ? { mulligans: true } : {}),
-        ...(commanderGame ? { format: 'commander' } : {}),
-        seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(typeof req.players?.[i]?.deck === 'object' ? req.players[i].deck : null), ...played(req.players?.[i]), ...asked(req.players?.[i]), ...built(req.players?.[i], req.players, commanderGame), ...(leaders[i] ? { commander: leaders[i] } : {}) })),
-      })
+      say({ id, ...dealtReply(req, commanderGame, leaders) })
       break
     }
+    // The game as it stands, as text (protocol 9), with the generator's state
+    // written into it as digits no JavaScript number can hold.
+    case 'snapshot': {
+      if (protocol() < 9) { say({ id, ok: false, error: `Unknown op "${req.op}".` }); break }
+      // Test-only: held, as an act is held, for a relay going down while its
+      // engine is still writing down the stop it has just published.
+      if (holdingSnapshot && !req.released) { holdingSnapshot = false; held = req; return }
+      if (!lastNew) { say({ id, ok: false, error: 'No game yet. Send "new" first.' }); break }
+      if (snapshotError) { say({ id, ok: false, error: snapshotError }); snapshotError = null; break }
+      const body = JSON.stringify({ kind: 'fake-game', at, steps, paced, plays, pending, mulligan, commanders, asking, lastNew, fragile })
+      const text = `${body.slice(0, -1)},"rng":${RNG}}`
+      say({ id, ok: true, snapshot: text, bytes: Buffer.byteLength(text) })
+      break
+    }
+    // A kept game taken back, answered as `new` is (protocol 9). Refused into a
+    // stand-in that holds a game already, as the real one refuses it, unless
+    // asked to replace it; and refused where the text is not the one kept.
+    case 'restore': {
+      if (protocol() < 9) { say({ id, ok: false, error: `Unknown op "${req.op}".` }); break }
+      if (lastNew && req.replace !== true) { say({ id, ok: false, error: 'This engine already holds a game; a kept game is taken back by a fresh one.' }); break }
+      if (typeof req.snapshot !== 'string') { say({ id, ok: false, error: '"snapshot" is required: the text a "snapshot" answered.' }); break }
+      // Read as text: parsed as JSON, the digits would come back as 9007199254740992.
+      const rng = req.snapshot.match(/"rng":(-?\d+)\}$/)?.[1]
+      let doc
+      try { doc = JSON.parse(req.snapshot) } catch (e) { say({ id, ok: false, error: `That snapshot could not be read: ${e.message}` }); break }
+      if (doc?.kind !== 'fake-game') { say({ id, ok: false, error: 'That is not a game this engine kept.' }); break }
+      if (rng !== RNG) { say({ id, ok: false, error: `That game's random number generator came back as ${rng ?? 'nothing'}, where it was kept as ${RNG}.` }); break }
+      ;({ at, steps, paced, plays, pending, mulligan, commanders, asking, lastNew } = doc)
+      fragile = doc.fragile === true
+      lastView.clear(); sentLines.clear()
+      restores++
+      lastRestore = req.snapshot
+      const leaders = FIXTURE.seats.map((s) => commanders?.seats?.[s.id]?.name ?? null)
+      say({ id, ...dealtReply(lastNew, Boolean(commanders), leaders), restored: true })
+      break
+    }
+    case 'lastRestore': say({ id, ok: true, snapshot: lastRestore, restores }); break
     case 'turn': say({ id, ...status() }); break
     case 'lastNew': say({ id, ok: true, request: lastNew }); break
     case 'lastAct': say({ id, ok: true, request: lastAct }); break
@@ -436,9 +511,10 @@ function handle(req) {
     // the player's stops alone, so what it does between them is said here.
     case 'plays': plays = Math.max(0, Number(req.count) || 0); say({ id, ok: true, plays }); break
     // Test-only: what this engine has been asked for and where it stands.
-    case 'tally': say({ id, ok: true, continues, steps, pending, paced, plays, acts }); break
+    case 'tally': say({ id, ok: true, continues, steps, pending, paced, plays, acts, restores }); break
     // Test-only: the next act is taken and not answered until `release`.
     case 'holdActs': holding = true; say({ id, ok: true }); break
+    case 'holdSnapshot': holdingSnapshot = true; say({ id, ok: true }); break
     case 'release': {
       // The held request is answered first, as the process would have answered
       // it, then this line, then whatever waited behind them, in order.
@@ -471,6 +547,8 @@ function handle(req) {
     // Test-only faults, above.
     case 'dropViews': dropViews = Math.max(0, Number(req.count) || 0); say({ id, ok: true, dropViews }); break
     case 'sulk': sulking = true; say({ id, ok: true }); break
+    case 'fragile': fragile = true; say({ id, ok: true }); break
+    case 'failSnapshot': snapshotError = String(req.error ?? 'It could not.'); say({ id, ok: true }); break
     case 'act': {
       if (!req.released) acts++
       lastAct = req
@@ -546,9 +624,11 @@ function handle(req) {
       if (pending <= 0) { say({ id, ok: false, error: 'Nothing is waiting on the engine. Ask for "turn" to see where the table stands.' }); break }
       pending--; steps++
       say({ id, ...status() })
+      continued = true
       break
     }
     case 'view': {
+      if (fragile && continued) { process.stderr.write('fake engine: a view it could not write\n'); process.exit(3) }
       const here = shot()
       const seatId = req.viewer ?? here.view.viewingPlayerId
       const next = commanderView({ ...here.view, viewingPlayerId: seatId })

@@ -270,6 +270,67 @@ report, the gate's path with "own", a sit again with a sixty-card deck);
 four, `tests/engine-commander.test.js` one, `tests/engine-room.test.jsx` one;
 `engine-commander.spec.mjs` seven checks and `engine-deck.spec.mjs` three.
 
+Added at M7 (2026-09-25), a room that survives the relay (PLAN.md, "M7: a room
+that survives the relay"):
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/engine/restart.js` | 52 | Every word said when a game comes back: `restoringLine` (the table's banner while it does, the relay's or the engine's), `restoredLines` (the log's line once it has, and to the person whose move or answer was lost, what became of it), `restartOf`. Pure; reads the wire forgivingly. |
+| `scripts/engine-restore.mjs` | 217 | Measures keeping a game: a snapshot at every stop of paced games, sixty-card and Commander — its size as text, gzipped and as the room's file holds it, and its time — and one stop a game taken back by a second process, which then plays on beside the first, every status on the way held to the game not taken back, and every seat's view at the stop kept and at the end. PLAN.md's M7 numbers are its output. |
+| `tests/engine-restart.test.js` | 55 | `restart.js`: each line for the relay and the engine, a table behind, a lost move and a lost answer, and a relay of any age read forgivingly. |
+| `tests/browser/engine-restart.spec.mjs` | 303 | Against the real engine through the built app: sit, keep, a land; the relay stopped and started again on the same rooms — the page says it lost the table, then that the game is coming back, offering nothing, axe clean at 1280 and 390 and still under reduced motion — and the table back as it was, the log saying so, the game going on; then the engine killed mid-game, the same. Prints how long each took and the room's file size. Skips where there is no engine. |
+
+And these grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `engine/src/main/kotlin/companion/Server.kt` | 2,265 | Protocol 9: `snapshot` (`Table.snapshot`: `GameState` with Argentum's own persistence settings, `snapshotJson`, and the seats, logs, step and paced pause beside it, as text) and `restore` (`restoreTable`, refusing in words; `Table.settle` finds the stop's offers again without moving the game on; `replace` for measuring); `deckReport`, so a seat taken back says its deck as it was said. |
+| `scripts/relay-engine.mjs` | 1,167 | Keeps the engine's snapshot after every stop (`keep`), with a move in flight marked until its stop is kept; `record` and `savedRoomOf` (forgiving); `comeBack` and `resume` take a game back after a relay restart or an engine that stopped (`died`: once, and again only after the game has gone on), telling every seat `restoring` and each person `restored`; the one-move guard down before the snapshot; `gone` in `describe()`. |
+| `scripts/relay-server.mjs` | 635 | Writes enforced rooms, their game gzipped (`packed`), reads them back (`unpacked`) and starts an engine for each; waits `KEEP_GRACE_MS` for a snapshot being taken when going down, and writes nothing after (`down`); sweeps an idle one's file with its engine. |
+| `src/features/game/useEngineRoom.js` | 494 | `restoring` and `restored`: the status let go of while a game comes back, and what came back said under the table it came back to (`cameBack`). |
+| `src/features/game/Table.jsx`, `Seats.jsx` | 1,776, 367 | The banner while a game comes back; the lobby's lines for a table coming back and one whose game has gone, with the reason, and a table that has gone kept for a week through a restart of its relay. |
+| `tests/fixtures/fake-engine.mjs` | 636 | Protocol 9: `snapshot` with a 64-bit number in it written as digits, `restore` refusing one whose number came back as another, `holdSnapshot` and `lastRestore` for tests. |
+
+`tests/relay-server.test.js` (2,231 lines) gains twenty tests of a room that
+survives the relay — written, back, coming back, mid-turn, a move lost, a stop
+behind, the next move taken while a stop is kept, the hand to keep, a question,
+an engine stopped once and again, a relay restart not counted, a second restart
+while loading, every reason a game cannot come back, other seats, a room never
+dealt, a relay with no engine, the sweep, and records that make no sense — and the mid-turn
+death test is kept for an engine at 8; `tests/engine-live.test.js` (1,547) six of
+a game kept and taken back by a second process; `tests/engine-room.test.jsx` (687)
+four of the seat's.
+
+Added at M7's second review (2026-09-25; PLAN.md, M7, "What the second review
+found"):
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `tests/restart-screens.test.jsx` | 133 | The lobby's lines for a table the engine holds, against a relay that is the test's own `fetch`: coming back (the relay's, the engine's, as a status), gone with the room's reason, gone from a relay with an engine, not open on a relay without one, a game that ended said as under way; and the actions panel saying the game is coming back rather than whose stop it is not. |
+
+And these grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `scripts/relay-engine.mjs` | 1,292 | `record` writes `over` and, for a game the room ended for good, `gone` (`final`); `savedRoomOf` reads both; `comeBack` skips either, and a sit takes an ended game back; `lost` writes; a game that could not be taken back says `TRIED_AGAIN`; `publish` and a move in flight write at once (`onChange({ now })`); `keep` forgives the crash count only past `restoredAt`, and takes the in-flight mark down in the same write; `restored` carries `at`, and what a seat is told is kept until the socket told speaks (`untold.to`); `clause` keeps a name's capital, exported. |
+| `scripts/relay-server.mjs` | 675 | `save` (write later, clock untouched) apart from `touch` (a person: clock and write); `flush` writes beside the file and renames over it, and `loadRooms` clears what is left beside; an enforced room's `now` writes at once; `flushMs` and `keepGraceMs` options. |
+| `src/lib/engine/restart.js` | 74 | The lost move and answer worded by which restarted (`LOST`): the engine's says the same move again may end the game. |
+| `src/features/game/useEngineRoom.js` | 512 | Any status ends `restoring`; a `restored` with an `at` already said is said once (`heardBack`). |
+| `src/features/game/Table.jsx`, `Seats.jsx` | 1,784, 376 | A tap on a card does nothing while the game comes back; `EngineActions` (now exported) and the Pass button say it is coming back; the lobby says a relay with no engine has none, rather than that the table has gone. |
+| `tests/fixtures/fake-engine.mjs` | 656 | `fragile` (the view after a `continue` ends the process, kept in the snapshot) and `failSnapshot`. |
+| `tests/browser/engine-restart.spec.mjs` | 383 | The table held by name in both halves; a tap and the actions panel while it comes back; a reload mid-way; the lobby of a table whose kept game could not be read back. |
+
+`tests/relay-server.test.js` (2,629 lines) gains thirteen: the clock kept through
+restarts and the week kept, a person moving it, a game ended for good kept ended, a
+game that ended taken back only at a sit, a write that fails leaving the last
+record, a stop and a move on disk before they are seen and a relay killed coming
+back no further on, the kept game on disk unasked, the crash count forgiven only
+past a stop kept, an engine killed mid-move and mid-turn, a `restored` said again
+where it may not have been heard, the grace for a snapshot, and `clause`; the stop
+behind now waits a small grace, not a second. `tests/engine-room.test.jsx` (741)
+four, `tests/engine-restart.test.js` (69) one, and the live test that leaned on its
+neighbours deals its own game.
+
 ## `src/lib/board/` — the rules-free table
 
 | File | Lines | What it holds |

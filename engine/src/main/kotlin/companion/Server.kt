@@ -62,6 +62,7 @@ import com.wingedsheep.engine.core.TurnChangedEvent
 import com.wingedsheep.engine.core.YesNoDecision
 import com.wingedsheep.engine.core.YesNoResponse
 import com.wingedsheep.engine.core.ZoneChangeEvent
+import com.wingedsheep.engine.core.engineSerializersModule
 import com.wingedsheep.engine.handlers.MulliganHandler
 import com.wingedsheep.engine.handlers.continuations.entityIdToChosenTarget
 import com.wingedsheep.engine.legalactions.AdditionalCostData
@@ -73,6 +74,7 @@ import com.wingedsheep.engine.state.components.identity.CardComponent
 import com.wingedsheep.engine.state.components.identity.CommanderComponent
 import com.wingedsheep.engine.state.components.player.MulliganStateComponent
 import com.wingedsheep.engine.state.components.stack.ChosenTarget
+import com.wingedsheep.engine.state.GameState
 import com.wingedsheep.engine.registry.CardRegistry
 import com.wingedsheep.engine.registry.PrintingRegistry
 import com.wingedsheep.engine.view.ClientEvent
@@ -176,6 +178,11 @@ import java.util.Random
  *    table stops after each of the engine's own plays so they can be seen
  *    happening, but not after a priority pass or a mana ability: the same
  *    `MeaningfulActionFilter` answers both.
+ *  - **A game can be kept, and taken back by another process.** `snapshot` writes the game as it
+ *    stands — Argentum's own `GameState`, its random number generator inside it, and what this
+ *    process keeps beside it: the seats, each seat's log, a paced table's pause — and `restore` takes
+ *    it into a fresh process at the same stop, so a room outlives its relay and its engine
+ *    (HANDOFF.md, M7). What cannot travel is said where it is kept (`snapshot`).
  */
 // 2: a deck line may name its printing, {"count","set","number"} or a list of those, and
 // the deal honours it. An engine at 1 reads only counts, so the relay sends it only counts.
@@ -220,7 +227,13 @@ import java.util.Random
 // where the game is Commander, and each seat its commander. "hello" lists the game formats
 // ("formats"). An engine at 7 ignores "format" and "commander" and deals the decks as sent, by the
 // ordinary rules, so a relay reading 7 must not tell anybody a Commander game is coming.
-const val PROTOCOL = 8
+// 9: a game may be kept and taken back. "snapshot" answers the game as it stands, as text, and
+// "restore" takes that text into a process that holds no game yet and answers as "new" does, at the
+// same stop. The text is not JSON on the wire but a string holding it, because the game's random
+// number generator is a 64-bit number, which a relay reading JSON as JavaScript would round to another
+// one, and so to another game. An engine at 8 refuses both as unknown ops, so a relay reading 8 keeps
+// no game and must say so, rather than promise a room that could come back.
+const val PROTOCOL = 9
 
 /**
  * The decisions put to a person whatever their client said, because every client since the
@@ -362,6 +375,32 @@ private val PROFILES: Map<String, AiProfile> = listOf(
 
 private val json = Json { encodeDefaults = false; ignoreUnknownKeys = true }
 
+/**
+ * How a kept game is written (protocol 9): Argentum's own settings for persisting one, as its game
+ * server's `persistenceJson` has them, less the log types that server registers for itself — a
+ * `ClientEvent` is written here by its own sealed serializer. `engineSerializersModule` names every
+ * polymorphic thing a `GameState` holds; `allowStructuredMapKeys` is there because its zones are keyed
+ * by an object; the discriminator is `type` because Argentum's reader of older states looks for it
+ * there (`LegacyGameStateSerializer`); and defaults are written, as Argentum writes them, so a value
+ * that happens to equal its default is not left to a default that may one day change.
+ */
+private val snapshotJson = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+    classDiscriminator = "type"
+    allowStructuredMapKeys = true
+    serializersModule = engineSerializersModule
+}
+
+/** What a kept game says it is, so a text that is anything else is refused in words rather than half read. */
+private const val SNAPSHOT_KIND = "companion-game"
+
+/**
+ * The shape of a kept game this process writes and reads. Bumped when the shape changes, so a newer
+ * process refuses an older game in words instead of taking back something other than what was kept.
+ */
+private const val SNAPSHOT_VERSION = 1
+
 private class Seat(
     val id: EntityId,
     val name: String,
@@ -385,6 +424,12 @@ private class Seat(
     val built: Built? = null,
     /** At a Commander table, this seat's commander by the name the engine knows it by (protocol 8). */
     val commander: String? = null,
+    /**
+     * For a seat the engine plays in a game taken back from a snapshot (protocol 9), what its deck was
+     * said to be at the deal, as it was said: the builder's own account (`built`) does not travel, and
+     * the words it gave rise to do.
+     */
+    val report: JsonObject? = null,
 ) {
     /** Whether this decision is put to the person in this seat, rather than answered here. */
     fun asked(d: PendingDecision): Boolean = ai == null && d.kind() in asks
@@ -493,8 +538,11 @@ private class Table(
     /** What each seat has been told happened, in its own words: the game log. */
     val logs = HashMap<EntityId, MutableList<LogLine>>()
     private var logged = 0
-    /** The step the game stood in at the last event recorded, carried from one batch to the next. */
-    private var step: Step? = null
+    /**
+     * The step the game stood in at the last event recorded, carried from one batch to the next, and
+     * from one process to the next with a kept game (protocol 9): the next line is filed under it.
+     */
+    var step: Step? = null
     /** Where in `env.events` cards were put on the bottom after a mulligan, so the log can say so. */
     private val bottomed = HashSet<Int>()
     // The deal's own events, which GameEnvironment.restore does not keep: without them
@@ -966,6 +1014,87 @@ private class Table(
         if (pausedAfter == null) throw Refused("Nothing is waiting on the engine. Ask for \"turn\" to see where the table stands.")
         drive()
         return status()
+    }
+
+    /**
+     * The game as it stands, written down so another process can take it back (protocol 9,
+     * HANDOFF.md M7): Argentum's `GameState` whole, and beside it what this process keeps that
+     * Argentum does not — who sits where and how each seat is played, each seat's log in its own
+     * words, the step the next line is filed under, and a paced table's pause after one of the
+     * engine's plays.
+     *
+     * The random number generator is in the state (`GameState.rng`, one 64-bit number), so the
+     * game taken back shuffles and flips as this one would have. So is every question waiting on an
+     * answer: Argentum keeps a suspended decision and what follows it in the state too.
+     *
+     * What does not travel, and why it is not needed or what it costs:
+     *  - The last view each seat was sent and how much of its log. A process taken back sends each
+     *    seat the table whole, log and all, which starts both counts again.
+     *  - The offers on the table. They are the engine's own legal actions at this position, found
+     *    again when the game is taken back (`settle`).
+     *  - The engine's players. Argentum's search seeds itself from the position alone
+     *    (`RolloutCandidateEvaluator.rootSeedFor`, `Determinizer.sampleForSearch`), so a player built
+     *    again chooses as the old one would — but for one thing: its `Strategist` remembers the
+     *    positions it has acted from (32 of them, each marked with its turn and step), to keep it from
+     *    going round in circles, and a new one remembers none. It can matter only inside the step the
+     *    game was kept in. A random player (`ai: "random"`, a test opponent) starts its own sequence
+     *    again, and plays differently from there.
+     *  - What the engine has passed and decided for a person since the last stop. Nothing: a game is
+     *    written at a stop, where both have just been said.
+     */
+    fun snapshot(corpus: Corpus): String {
+        record()
+        val doc = buildJsonObject {
+            put("kind", SNAPSHOT_KIND)
+            put("version", SNAPSHOT_VERSION)
+            put("protocol", PROTOCOL)
+            put("state", snapshotJson.encodeToJsonElement(GameState.serializer(), env.state))
+            putJsonArray("playerIds") { env.playerIds.forEach { add(JsonPrimitive(it.value)) } }
+            put("stepCount", env.stepCount)
+            put("seed", seed)
+            put("paced", paced)
+            put("opening", opening)
+            put("format", format)
+            put("step", step?.name)
+            put("pausedAfter", pausedAfter?.value)
+            putJsonArray("seats") { seats.forEach { add(seatRecord(it, corpus)) } }
+            putJsonObject("logs") {
+                for (s in seats) putJsonArray(s.id.value) {
+                    logs[s.id].orEmpty().forEach { line ->
+                        add(buildJsonObject {
+                            put("event", snapshotJson.encodeToJsonElement(ClientEvent.serializer(), line.event))
+                            line.step?.let { put("step", it.name) }
+                        })
+                    }
+                }
+            }
+        }
+        return snapshotJson.encodeToString(JsonObject.serializer(), doc)
+    }
+
+    /**
+     * A game just taken back, brought to the stop it was kept at: the offers found again, without
+     * the game moving on. A game is kept only at a stop, which `drive` returned at, so asked again at
+     * the same position it returns there again — the same seat, the same offers or the same question,
+     * in the same order. A paced table kept while waiting on the engine is not driven at all: that
+     * stop is the relay's to take on with `continue`, and driving it would take the engine's next
+     * play here, unwatched.
+     */
+    fun settle() { if (pausedAfter == null) drive() }
+
+    /** One seat as a kept game holds it: everything `Seat` is, its deck's words in place of its builder. */
+    private fun seatRecord(s: Seat, corpus: Corpus): JsonObject = buildJsonObject {
+        put("id", s.id.value); put("name", s.name); put("ai", s.ai); put("autoPass", s.autoPass)
+        putJsonArray("sideboardLeftOut") { s.sideboardLeftOut.forEach { add(JsonPrimitive(it)) } }
+        putJsonArray("unknownPrintings") { s.unknownPrintings.forEach { add(JsonPrimitive(it)) } }
+        put("profile", s.profile?.id)
+        put("level", s.level)
+        putJsonArray("asks") { s.asks.forEach { add(JsonPrimitive(it)) } }
+        putJsonArray("dealt") {
+            s.dealt.forEach { l -> add(buildJsonObject { put("name", l.name); put("count", l.count); put("set", l.set); put("number", l.number) }) }
+        }
+        put("commander", s.commander)
+        deckReport(s, corpus)?.let { put("deck", it) }
     }
 
     fun decide(params: JsonObject): JsonObject {
@@ -1847,6 +1976,100 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
     return Table(registry, env, seats, seed, pacedBy(params), dealt.events, opening, formatWord)
 }
 
+/**
+ * What a seat the engine plays was dealt, and how (protocol 7): never its cards, which are as hidden
+ * from the person opposite as any opponent's deck, but what they are made of — how many, what colours,
+ * and for a deck of its own, the format and the sets. A Commander deck counts its commander among its
+ * cards (CR 903.5a), and is named by its commander's colours. A seat in a game taken back from a
+ * snapshot (protocol 9) says what it was said to be at the deal, since its builder did not travel.
+ */
+private fun deckReport(s: Seat, corpus: Corpus): JsonObject? = s.report ?: s.built?.let { b ->
+    buildJsonObject {
+        put("asked", b.asked); put("played", b.played)
+        put("cards", b.lines.sumOf { it.count ?: 0 } + (if (s.commander != null) 1 else 0))
+        putJsonArray("colours") { coloursOf(corpus, b.lines, b.commander.takeIf { s.commander != null }).forEach { add(JsonPrimitive(it.symbol.toString())) } }
+        s.commander?.let { put("commander", it) }
+        b.formatWord?.let { put("format", it) }
+        b.format?.let { put("formatName", it.displayName) }
+        b.from?.let { put("from", it) }
+        if (b.sets.isNotEmpty()) putJsonArray("sets") { b.sets.forEach { set -> add(buildJsonObject { put("code", set.setCode); put("name", set.setName) }) } }
+        if (b.missingSets.isNotEmpty()) putJsonArray("missingSets") { b.missingSets.forEach { add(JsonPrimitive(it)) } }
+        b.fellBack?.let { put("fellBack", it) }
+        b.why?.let { put("why", it) }
+    }
+}
+
+/**
+ * A game kept by `Table.snapshot`, taken back into this process (protocol 9): the state installed as
+ * the deal installs one (`env.restore`), the seats as they were, each seat's log as it had been told,
+ * and the stop found again (`Table.settle`). Everything is checked before anything is kept, and a text
+ * that is not a game this engine wrote, or one it cannot read, is refused in words: a relay that asked
+ * has a room of people waiting on the answer, and "could not come back, because …" is one it can give.
+ */
+private fun restoreTable(corpus: Corpus, text: String): Table {
+    val doc = try { snapshotJson.parseToJsonElement(text).jsonObject } catch (e: Exception) {
+        throw Refused("That snapshot could not be read: ${e.message}")
+    }
+    if ((doc["kind"] as? JsonPrimitive)?.contentOrNull != SNAPSHOT_KIND) throw Refused("That is not a game this engine kept.")
+    val version = (doc["version"] as? JsonPrimitive)?.intOrNull
+    if (version != SNAPSHOT_VERSION) throw Refused("That game was kept in the shape of version $version, and this engine reads version $SNAPSHOT_VERSION.")
+    val state = try { snapshotJson.decodeFromJsonElement(GameState.serializer(), doc["state"] ?: JsonNull) } catch (e: Exception) {
+        throw Refused("The game in that snapshot could not be read: ${e.message}")
+    }
+    val string = { o: JsonObject, key: String -> (o[key] as? JsonPrimitive)?.contentOrNull }
+    val strings = { v: JsonElement? -> (v as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull } }
+    val playerIds = strings(doc["playerIds"]).map(::EntityId)
+    if (playerIds.isEmpty() || playerIds.any { state.getEntity(it) == null }) throw Refused("That snapshot's players are not in its game.")
+    val seats = (doc["seats"] as? JsonArray).orEmpty().map { v ->
+        val o = v as? JsonObject ?: throw Refused("That snapshot's seats could not be read.")
+        val id = string(o, "id")?.let(::EntityId) ?: throw Refused("A seat in that snapshot has no id.")
+        val profileId = string(o, "profile")
+        Seat(
+            id = id,
+            name = string(o, "name") ?: id.value,
+            ai = string(o, "ai"),
+            autoPass = (o["autoPass"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            sideboardLeftOut = strings(o["sideboardLeftOut"]),
+            unknownPrintings = strings(o["unknownPrintings"]),
+            // A profile is kept by Argentum's id for it; one this engine does not list is refused
+            // rather than played as another, as `new` refuses one.
+            profile = profileId?.let { PROFILES[it] ?: throw Refused("That game's engine played as \"$it\", a profile this engine does not have.") },
+            level = string(o, "level"),
+            asks = strings(o["asks"]).toSet(),
+            dealt = (o["dealt"] as? JsonArray).orEmpty().mapNotNull { l ->
+                (l as? JsonObject)?.let { Line(string(it, "name") ?: return@mapNotNull null, (it["count"] as? JsonPrimitive)?.intOrNull, string(it, "set"), string(it, "number")) }
+            },
+            commander = string(o, "commander"),
+            report = o["deck"] as? JsonObject,
+        )
+    }
+    if (seats.map { it.id } != playerIds) throw Refused("That snapshot's seats are not its game's players.")
+    val env = GameEnvironment.create(corpus.registry)
+    env.restore(state, playerIds, (doc["stepCount"] as? JsonPrimitive)?.intOrNull ?: 0)
+    val format = string(doc, "format")?.takeIf { it in GAME_FORMATS } ?: "standard"
+    val table = Table(
+        corpus.registry, env, seats,
+        seed = (doc["seed"] as? JsonPrimitive)?.longOrNull ?: 0L,
+        paced = (doc["paced"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        opening = (doc["opening"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        format = format,
+    )
+    val logs = doc["logs"] as? JsonObject
+    for (s in seats) {
+        table.logs[s.id] = (logs?.get(s.id.value) as? JsonArray).orEmpty().mapTo(mutableListOf()) { v ->
+            val o = v as? JsonObject ?: throw Refused("A line of that game's log could not be read.")
+            val event = try { snapshotJson.decodeFromJsonElement(ClientEvent.serializer(), o["event"] ?: JsonNull) } catch (e: Exception) {
+                throw Refused("A line of that game's log could not be read: ${e.message}")
+            }
+            LogLine(event, string(o, "step")?.let { name -> Step.entries.firstOrNull { it.name == name } })
+        }
+    }
+    table.step = string(doc, "step")?.let { name -> Step.entries.firstOrNull { it.name == name } }
+    table.pausedAfter = string(doc, "pausedAfter")?.let(::EntityId)?.takeIf { id -> seats.any { it.id == id && it.ai != null } }
+    table.settle()
+    return table
+}
+
 private fun seatsOf(table: Table, corpus: Corpus): JsonArray = buildJsonArray {
     table.seats.forEach { s ->
         add(buildJsonObject {
@@ -1861,26 +2084,7 @@ private fun seatsOf(table: Table, corpus: Corpus): JsonArray = buildJsonArray {
             // engine's too: a commander begins the game face up in the command zone (CR 903.6), so
             // it is on the table for everybody to see, where the rest of a deck is not.
             s.commander?.let { put("commander", it) }
-            // What a seat the engine plays was dealt, and how (protocol 7): never its cards, which
-            // are as hidden from the person opposite as any opponent's deck, but what they are
-            // made of — how many, what colours, and for a deck of its own, the format and the sets.
-            // A Commander deck counts its commander among its cards (CR 903.5a), and is named by its
-            // commander's colours.
-            s.built?.let { b ->
-                putJsonObject("deck") {
-                    put("asked", b.asked); put("played", b.played)
-                    put("cards", b.lines.sumOf { it.count ?: 0 } + (if (s.commander != null) 1 else 0))
-                    putJsonArray("colours") { coloursOf(corpus, b.lines, b.commander.takeIf { s.commander != null }).forEach { add(JsonPrimitive(it.symbol.toString())) } }
-                    s.commander?.let { put("commander", it) }
-                    b.formatWord?.let { put("format", it) }
-                    b.format?.let { put("formatName", it.displayName) }
-                    b.from?.let { put("from", it) }
-                    if (b.sets.isNotEmpty()) putJsonArray("sets") { b.sets.forEach { set -> add(buildJsonObject { put("code", set.setCode); put("name", set.setName) }) } }
-                    if (b.missingSets.isNotEmpty()) putJsonArray("missingSets") { b.missingSets.forEach { add(JsonPrimitive(it)) } }
-                    b.fellBack?.let { put("fellBack", it) }
-                    b.why?.let { put("why", it) }
-                }
-            }
+            deckReport(s, corpus)?.let { put("deck", it) }
             putJsonArray("sideboardLeftOut") { s.sideboardLeftOut.forEach { add(JsonPrimitive(it)) } }
             putJsonArray("unknownPrintings") { s.unknownPrintings.forEach { add(JsonPrimitive(it)) } }
         })
@@ -1968,6 +2172,32 @@ fun main() {
                     // process leaves off the wire is: a relay sees whether the engine understood
                     // what it asked for rather than assuming an older one did.
                     JsonObject(t.status() + mapOf("seats" to seatsOf(t, corpus), "seed" to JsonPrimitive(t.seed)) +
+                        (if (t.paced) mapOf("paced" to JsonPrimitive(true)) else emptyMap()) +
+                        (if (t.opening) mapOf("mulligans" to JsonPrimitive(true)) else emptyMap()) +
+                        (if (t.format != "standard") mapOf("format" to JsonPrimitive(t.format)) else emptyMap()))
+                }
+                // The game as it stands, as text (protocol 9): the relay keeps it beside the room and
+                // gives it back to a fresh process with `restore`. Text rather than JSON on the wire,
+                // because the game's random number generator is a 64-bit number and a relay that read
+                // it as JavaScript would round it. `bytes` is its length, for measuring what is kept.
+                "snapshot" -> {
+                    val t = table ?: throw Refused("No game yet. Send \"new\" first.")
+                    val text = t.snapshot(corpus)
+                    buildJsonObject { put("ok", true); put("snapshot", text); put("bytes", text.toByteArray(Charsets.UTF_8).size) }
+                }
+                // A kept game taken back, into a process that holds none yet (protocol 9), answered as
+                // `new` is answered, at the stop it was kept at. Refused into a process that holds one,
+                // so a game is never quietly replaced under the people playing it; `replace: true` is
+                // for measuring and tests, which take several kept games back into one process rather
+                // than wait out the corpus loading for each, and the relay never sends it.
+                "restore" -> {
+                    val replace = (req["replace"] as? JsonPrimitive)?.booleanOrNull == true
+                    if (table != null && !replace) throw Refused("This engine already holds a game; a kept game is taken back by a fresh one.")
+                    val text = (req["snapshot"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                        ?: throw Refused("\"snapshot\" is required: the text a \"snapshot\" answered.")
+                    val t = restoreTable(corpus, text)
+                    table = t
+                    JsonObject(t.status() + mapOf("seats" to seatsOf(t, corpus), "seed" to JsonPrimitive(t.seed), "restored" to JsonPrimitive(true)) +
                         (if (t.paced) mapOf("paced" to JsonPrimitive(true)) else emptyMap()) +
                         (if (t.opening) mapOf("mulligans" to JsonPrimitive(true)) else emptyMap()) +
                         (if (t.format != "standard") mapOf("format" to JsonPrimitive(t.format)) else emptyMap()))

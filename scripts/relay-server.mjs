@@ -25,6 +25,11 @@
  *   - a late joiner or a reconnect gets the whole table from the server,
  *     without asking a host who may have gone.
  *
+ * Since M7 the rooms the engine holds are written too: the room's settings and
+ * seats, and the engine's own text of the game at the last stop, gzipped. A
+ * relay that comes back starts an engine for each and has it take the game
+ * back (`relay-engine.mjs`), so a restart is a pause at that table as well.
+ *
  *   node scripts/relay-server.mjs                 # localhost:8788
  *   PORT=9000 ROOMS_DIR=/data/rooms STATIC_DIR=dist node scripts/relay-server.mjs
  *
@@ -32,7 +37,8 @@
  *   POST /rooms            body: { seats?: 2..6, enforced?: true, ai?: 'heuristic' | 'random' | null,
  *                                  pace?: milliseconds | false, level?: 'easy' | 'intermediate' | 'hard' }
  *                                                  -> { code, seats, mode }
- *   GET  /rooms/<code>                              -> { code, seats, seq, players }
+ *   GET  /rooms/<code>                              -> { code, seats, seq, players }, or for an enforced room
+ *                                                      { mode, ai, seats, started, dealt, …, restoring? }
  *   WS   /rooms/<code>/ws                           the protocol in src/lib/board/net.js
  *   POST /engine/check     body: { deck: { name: count, … }, sideboard? }
  *                                                  -> { known, total, unknown, unknownSideboard, engineSets? }
@@ -44,9 +50,10 @@
  */
 import { createServer } from 'node:http'
 import { randomInt } from 'node:crypto'
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync, existsSync, statSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, existsSync, statSync } from 'node:fs'
 import { join, extname, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { gzipSync, gunzipSync } from 'node:zlib'
 import { WebSocketServer } from 'ws'
 import { host, KIND, PROTOCOL, restore } from '../src/lib/board/net.js'
 import { findEngine, startEngine } from './engine-bridge.mjs'
@@ -77,6 +84,22 @@ export const CHECK_IDLE_MS = 10 * 60 * 1000
  * brought back to something a person would sit through.
  */
 export const MAX_PACE_MS = 10 * 1000
+/**
+ * How long a relay going down waits for an engine to finish writing down the
+ * stop it has just published (M7). A snapshot took 6 ms at the median and
+ * under 200 at the most when measured (PLAN.md, M7), so this is room to spare;
+ * but one asked behind a move a hard level is still thinking over waits on that
+ * move, and a restart is not held for it. The room then comes back to the stop
+ * before, and says so to whoever made the move.
+ */
+export const KEEP_GRACE_MS = 1000
+/**
+ * How long a room waits, after something worth writing, before it is written:
+ * a card being dragged is many actions a second, and the disk is not. What
+ * must be on disk before anybody sees it — a stop an enforced room publishes, a
+ * move it is answering — is written at once instead (M7's review).
+ */
+export const FLUSH_MS = 250
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -87,9 +110,10 @@ const TYPES = {
 /**
  * Builds a relay. Everything is a parameter so a test can run one on port 0
  * with a fast ping and a temporary rooms directory; `main` below runs it
- * from the environment.
+ * from the environment. `flushMs` and `keepGraceMs` are the waits above, so a
+ * test can hold what the disk says without sitting through either.
  */
-export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = null, idleMs = IDLE_MS, now = Date.now, engineCommand = findEngine(), engineSeed = null, checkIdleMs = CHECK_IDLE_MS, pace = PACE_MS } = {}) {
+export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = null, idleMs = IDLE_MS, now = Date.now, engineCommand = findEngine(), engineSeed = null, checkIdleMs = CHECK_IDLE_MS, pace = PACE_MS, flushMs = FLUSH_MS, keepGraceMs = KEEP_GRACE_MS } = {}) {
   const rooms = new Map()
   let nextSocketId = 1
 
@@ -97,30 +121,91 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
 
   const roomFile = (code) => (roomsDir ? join(roomsDir, `${code}.json`) : null)
 
-  /** What goes to disk: the table and who is at it, nothing derived. */
-  const record = (room) => ({
-    version: 1,
-    code: room.code,
-    seq: room.table.seq,
-    snapshot: room.table.table().snapshot,
-    seats: room.table.seats.map(({ seat, name }) => ({ seat, name })),
-    touchedAt: room.touchedAt,
-  })
+  /**
+   * The engine's text of a game, as the disk keeps it (M7): gzipped, a tenth
+   * of its size or less when measured (PLAN.md, M7), and base64 so the record
+   * stays one JSON file. Compressed once per text, since a room is written
+   * again for things that do not change it — a move in flight, a touch.
+   */
+  const packed = (room, kept) => {
+    if (room.packed?.text !== kept.text) room.packed = { text: kept.text, gzip: gzipSync(kept.text).toString('base64') }
+    return { stop: kept.stop, bytes: Buffer.byteLength(kept.text), gzip: room.packed.gzip }
+  }
+  /**
+   * An enforced room's record as it comes off the disk, the game unpacked back
+   * into the engine's text for `savedRoomOf` to read. Text that will not
+   * unpack is dropped here, and the room says its game could not come back.
+   */
+  const unpacked = (saved) => {
+    const k = saved?.kept
+    if (k === undefined || k === null) return saved
+    const unreadable = { ...saved, kept: null, unkept: 'what was kept of it could not be read back from the disk.' }
+    if (typeof k !== 'object') return unreadable
+    let text = typeof k.text === 'string' ? k.text : null
+    if (!text && typeof k.gzip === 'string') {
+      try { text = gunzipSync(Buffer.from(k.gzip, 'base64')).toString('utf8') } catch { text = null }
+    }
+    return text ? { ...saved, kept: { text, stop: k.stop } } : unreadable
+  }
 
+  /** What goes to disk: the table and who is at it, nothing derived. */
+  const record = (room) => {
+    if (room.mode === 'enforced') {
+      const r = room.engine.record()
+      return { version: 1, code: room.code, mode: 'enforced', touchedAt: room.touchedAt, room: r.kept ? { ...r, kept: packed(room, r.kept) } : r }
+    }
+    return {
+      version: 1,
+      code: room.code,
+      seq: room.table.seq,
+      snapshot: room.table.table().snapshot,
+      seats: room.table.seats.map(({ seat, name }) => ({ seat, name })),
+      touchedAt: room.touchedAt,
+    }
+  }
+
+  // Set once a relay going down has written its rooms for the last time. A room
+  // answering late — an engine's reply landing as it is closed — must not write
+  // over that last record, which the relay after this one may already be reading.
+  let down = false
+  /**
+   * A room written whole, beside its file and then over it, so the file on disk
+   * is always a whole record: the last one, or the one before. Written in place,
+   * a full disk freed the old record's blocks as it opened the file and then
+   * failed partway through the new one, and the room came back as nothing at all
+   * (found in M7's review, where an enforced room's record grew to tens of
+   * kilobytes, written after every stop). A write that fails leaves the last
+   * record standing, and a half-written one beside it is ignored and cleared up
+   * when the rooms are next read (`loadRooms`).
+   */
   const flush = (room) => {
     const file = roomFile(room.code)
-    if (!file || room.mode === 'enforced') return
+    if (!file || down) return
     clearTimeout(room.flushTimer)
     room.flushTimer = null
-    try { writeFileSync(file, JSON.stringify(record(room))) } catch { /* a full disk loses a save, not the game */ }
+    try {
+      writeFileSync(`${file}.tmp`, JSON.stringify(record(room)))
+      renameSync(`${file}.tmp`, file)
+    } catch { /* the last record stands: a full disk loses a save, not the game */ }
   }
 
   // Written a moment after things settle rather than on every action: a
   // card being dragged is many actions a second and the disk is not.
+  const save = (room) => {
+    if (!roomFile(room.code) || room.flushTimer || down) return
+    room.flushTimer = setTimeout(() => flush(room), flushMs)
+  }
+  /**
+   * Somebody did something in this room: it is a week from being dropped
+   * again, and written. Only people's doings count. A room writing itself for
+   * its own reasons — a game taken back at start-up, a snapshot kept — is `save`,
+   * which leaves the clock alone: counted as a touch, every restart made every
+   * room the engine holds look freshly played, and none was ever dropped
+   * (found in M7's review).
+   */
   const touch = (room) => {
     room.touchedAt = now()
-    if (!roomFile(room.code) || room.flushTimer) return
-    room.flushTimer = setTimeout(() => flush(room), 250)
+    save(room)
   }
 
   const wire = (room) => {
@@ -160,27 +245,38 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, MAX_PACE_MS) : pace
   }
 
+  /**
+   * The other authority. An enforced room is held by an engine process of its
+   * own rather than by the board model here. Since M7 it is written to disk
+   * like any other — its settings, and once dealt the engine's own text of the
+   * game at the last stop — whenever the room says something worth keeping
+   * changed (`onChange`), through the same debounced write, or at once where it
+   * says so (`now`: a stop it is about to publish, a move it is about to have
+   * answered); and it comes back with the relay (`loadRooms`). None of that is
+   * somebody touching the room, and none of it moves its clock (`touch`).
+   */
+  const enforcedRoom = ({ code, touchedAt, seats, ai, level, paceMs, saved = null }) => {
+    const room = { code, mode: 'enforced', sockets: new Map(), touchedAt, flushTimer: null }
+    room.engine = createEngineRoom({
+      // The level is read by the room, which takes only a word it knows.
+      code, seats, ai: ai || null, level, engineCommand, seed: engineSeed, paceMs,
+      deliver, onStderr: (line) => console.error(`[${code}] ${line}`),
+      saved, onChange: (how) => (how?.now ? flush(room) : save(room)),
+    })
+    return room
+  }
+
   const makeRoom = ({ seats = MIN_SEATS, enforced = false, ai = 'heuristic', pace: asked, level = null } = {}) => {
     const n = Math.min(MAX_SEATS, Math.max(MIN_SEATS, Math.floor(Number(seats)) || MIN_SEATS))
     let code = makeCode()
     while (rooms.has(code)) code = makeCode()
-    /*
-     * The other authority. An enforced room is held by an engine process
-     * of its own rather than by the board model here, so it is neither
-     * saved to disk nor swept while its game runs: a relay restart ends it,
-     * and says so to whoever is at it. That is the honest limit for now.
-     */
     if (enforced) {
       if (!engineCommand) throw Object.assign(new Error('This relay has no engine.'), { status: 503 })
-      const room = {
-        code, mode: 'enforced', sockets: new Map(), touchedAt: now(), flushTimer: null,
-        engine: createEngineRoom({
-          // The level is read by the room, which takes only a word it knows.
-          code, seats: n, ai: ai || null, level, engineCommand, seed: engineSeed, paceMs: paceFor(asked),
-          deliver, onStderr: (line) => console.error(`[${code}] ${line}`),
-        }),
-      }
+      const room = enforcedRoom({ code, touchedAt: now(), seats: n, ai, level, paceMs: paceFor(asked) })
       rooms.set(code, room)
+      // Written at once, so a room shared by its code and not yet sat at still
+      // has that code after a restart.
+      touch(room)
       return room
     }
     const players = Array.from({ length: n }, (_, i) => `p${i + 1}`)
@@ -197,16 +293,39 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
    * Rooms back from disk. A file this build cannot make sense of is left
    * where it is and skipped, never deleted: the next build may read it.
    * Rooms nobody has touched for a week are dropped.
+   *
+   * A room the engine holds comes back with an engine started for it at once
+   * (M7), which takes its game back while the people at it are still finding
+   * their way back; what cannot come back is said to them when they sit. A
+   * relay with no engine leaves such a file where it is, for one that has.
+   *
+   * A record half written beside its room's (`flush`) is what a relay that died
+   * mid-write left: the room's own file is the last whole one, and this is
+   * cleared away rather than read.
    */
   const loadRooms = () => {
     if (!roomsDir) return
     mkdirSync(roomsDir, { recursive: true })
     for (const name of readdirSync(roomsDir)) {
+      if (name.endsWith('.json.tmp')) { try { unlinkSync(join(roomsDir, name)) } catch { /* not a file of ours to clear */ } continue }
       if (!name.endsWith('.json')) continue
       try {
         const saved = JSON.parse(readFileSync(join(roomsDir, name), 'utf8'))
-        if (saved.version !== 1 || !saved.code) continue
+        if (saved.version !== 1 || typeof saved.code !== 'string' || !/^[A-Z0-9]{5}$/.test(saved.code)) continue
         if (now() - (saved.touchedAt ?? 0) > idleMs) { unlinkSync(join(roomsDir, name)); continue }
+        if (saved.mode === 'enforced') {
+          if (!engineCommand) continue
+          const r = saved.room && typeof saved.room === 'object' ? saved.room : {}
+          const seats = Math.min(MAX_SEATS, Math.max(MIN_SEATS, Math.floor(Number(r.seats)) || MIN_SEATS))
+          const ai = r.ai === 'heuristic' || r.ai === 'random' ? r.ai : r.ai === null ? null : 'heuristic'
+          const room = enforcedRoom({
+            code: saved.code, touchedAt: Number.isFinite(saved.touchedAt) ? saved.touchedAt : now(),
+            seats, ai, level: r.level ?? null, paceMs: paceFor(r.pace), saved: unpacked(r),
+          })
+          rooms.set(saved.code, room)
+          room.engine.comeBack()
+          continue
+        }
         const run = restore(saved.snapshot)
         if (!run) continue
         rooms.set(saved.code, wire({
@@ -221,7 +340,8 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     for (const [code, room] of rooms) {
       if (room.sockets.size || now() - room.touchedAt <= idleMs) continue
       rooms.delete(code)
-      if (room.mode === 'enforced') { room.engine.close(); continue }
+      clearTimeout(room.flushTimer)
+      if (room.mode === 'enforced') room.engine.close()
       const file = roomFile(code)
       if (file) try { unlinkSync(file) } catch { /* already gone */ }
     }
@@ -253,7 +373,8 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
       let message
       try { message = JSON.parse(String(data)) } catch { return }
       if (!message || typeof message !== 'object') return
-      if (room.mode === 'enforced') { room.touchedAt = now(); room.engine.receive(message, socket); return }
+      // Somebody at an enforced table: its clock starts again, and is written.
+      if (room.mode === 'enforced') { touch(room); room.engine.receive(message, socket); return }
       /*
        * Somebody coming back for their seat before the server noticed they
        * had gone: the old socket is dead weight and the seat is theirs.
@@ -475,7 +596,21 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     // matters may wait behind it, so the engines are closed alongside the
     // goodbyes and waited for last.
     for (const room of rooms.values()) flush(room)
-    const engines = Promise.all([letCheckerGo(), ...[...rooms.values()].filter((r) => r.mode === 'enforced').map((r) => r.engine.close())])
+    // A room the engine holds may be writing down the stop it has just
+    // published (M7): each is given a moment to finish, and written again, and
+    // only then is its engine closed. Bounded, so a restart is never held for
+    // a move a hard level is still thinking over; that room comes back to the
+    // stop before, and tells the person whose move it was.
+    const enforced = [...rooms.values()].filter((r) => r.mode === 'enforced')
+    const keeping = Promise.race([
+      Promise.all(enforced.map((r) => r.engine.settled().then(() => flush(r), () => {}))),
+      new Promise((done) => { const t = setTimeout(done, keepGraceMs); t.unref?.() }),
+    ])
+    const engines = Promise.all([letCheckerGo(), keeping.then(() => {
+      down = true
+      for (const room of rooms.values()) clearTimeout(room.flushTimer)
+      return Promise.all(enforced.map((r) => r.engine.close()))
+    })])
     // Nobody new from here on. A client told 1012 comes back a quarter of a
     // second later, while this relay may still be waiting on a slow goodbye;
     // one that found it listening would be seated at a table already written

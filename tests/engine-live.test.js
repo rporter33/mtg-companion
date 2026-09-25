@@ -28,7 +28,7 @@ describe.skipIf(!command)('the engine on the wire', () => {
 
   it('says who it is, and knows the whole corpus rather than one set', async () => {
     expect(hello.engine).toBe('argentum')
-    expect(hello.protocol).toBe(8)
+    expect(hello.protocol).toBe(9)
     // The formats an engine's seat can be dealt a deck of its own in (protocol 7):
     // every one ConstructedDeckGenerator builds to, and since protocol 8 Commander,
     // which CommanderDeckGenerator builds, at a Commander table.
@@ -1382,6 +1382,157 @@ describe.skipIf(!command)('the engine on the wire', () => {
       await expect(engine.call('new', { format: 'commander', players: [{ name: 'You', deck: LIBRARY }, person('B')] })).rejects.toThrow('You has no commander, and every player in a Commander game has one.')
       await expect(engine.call('new', { format: 'commander', players: [person('You', { commander: 'Made-Up Legend' }), person('B')] })).rejects.toThrow("The engine does not know You's commander, Made-Up Legend.")
       await expect(engine.call('new', { format: 'brawl', players: [person('A'), person('B')] })).rejects.toThrow('The engine deals no "brawl" game; it deals "standard" and "commander".')
+    }, 60_000)
+  })
+
+  /**
+   * A game kept and taken back (protocol 9, HANDOFF.md M7). A second process —
+   * loaded fresh, as the one a relay starts after a restart is — takes back the
+   * text the first wrote at a stop, and from there the two are held to one
+   * game: the same stop, the same views, and the same course after it, played
+   * by the same person. The first time into the fresh process, and after that
+   * with `replace`, so the corpus loads once.
+   */
+  describe('a game kept and taken back (protocol 9)', () => {
+    let other
+    beforeAll(async () => {
+      other = startEngine({ command, timeoutMs: 120_000 })
+      await other.call('hello')
+    }, 150_000)
+    afterAll(async () => { await other?.close() })
+
+    /** Where a table stands and what it offers or asks: what two processes at one stop must agree on. */
+    const stopOf = (s) => JSON.stringify({ over: s.over, winner: s.winner, turn: s.turn, phase: s.phase, step: s.step, actor: s.actor, waiting: s.waiting, actions: s.actions ?? null, decision: s.decision ?? null })
+    /** Every seat's whole view and log. */
+    const views = async (e, seats) => JSON.stringify(await Promise.all(seats.map((viewer) => e.call('view', { viewer }))))
+    /** The person as the scripts here play one: every hand kept, the first play worth making chosen whole by the engine, else a pass; every question the engine's choice. */
+    const plainly = (status) => {
+      if (status.waiting === 'engine') return ['continue', {}]
+      if (status.waiting === 'decision') return ['decide', { auto: true }]
+      const offers = status.actions ?? []
+      const keep = offers.find((a) => a.type === 'KeepHand')
+      if (keep) return ['act', { index: keep.index }]
+      const bottom = offers.find((a) => a.type === 'BottomCards')
+      if (bottom) return ['act', { index: bottom.index, auto: true }]
+      const play = offers.find((a) => a.meaningful && a.affordable && !a.mana)
+      if (play) return ['act', { index: play.index, auto: true }]
+      return ['act', { index: (offers.find((a) => a.type === 'PassPriority') ?? offers[0]).index }]
+    }
+    const step = (e, status) => { const [op, params] = plainly(status); return e.call(op, params) }
+    /** Played on in both from one stop, the same choice in each, holding every stop and the views at the end to each other. */
+    const inStep = async (a, b, seats, most) => {
+      let n = 0
+      for (; n < most && !a.over; n++) {
+        ;[a, b] = await Promise.all([step(engine, a), step(other, a)])
+        expect(stopOf(b)).toBe(stopOf(a))
+      }
+      expect(await views(other, seats)).toBe(await views(engine, seats))
+      return n
+    }
+    const person = (d = deck) => ({ name: 'You', deck: d, autoPass: true, answers: hello.choices.decisions })
+    const bot = { name: 'Bot', deck: 'mirror', ai: 'heuristic', level: 'intermediate' }
+
+    it('writes the game as text, its generator a number JavaScript cannot hold, and a fresh process takes it back to the same stop and plays the very same game', async () => {
+      let status = await engine.call('new', { players: [person(), bot], seed: 20260928, pace: true, mulligans: true })
+      const dealtSeed = status.seed
+      const seats = status.seats.map((s) => s.id)
+      for (let n = 0; n < 400 && !(status.waiting === 'action' && status.actor === seats[0] && status.turn >= 5 && status.actions.some((a) => a.meaningful)); n++) status = await step(engine, status)
+      expect(status.turn).toBeGreaterThanOrEqual(5)
+      const { snapshot, bytes } = await engine.call('snapshot')
+      expect(typeof snapshot).toBe('string')
+      expect(bytes).toBe(Buffer.byteLength(snapshot))
+      // The generator's state, as the text holds it, and as a relay reading the
+      // text as JSON would hold it instead: another number, so another game.
+      const digits = snapshot.match(/"rng":\{"state":(-?\d+)\}/)?.[1]
+      expect(digits).toMatch(/^-?\d+$/)
+      expect(String(JSON.parse(snapshot).state.rng.state)).not.toBe(digits)
+      const back = await other.call('restore', { snapshot })
+      expect(back.restored).toBe(true)
+      expect(back.seats.map((s) => s.id)).toEqual(seats)
+      expect(back.seed).toBe(dealtSeed)
+      expect(back).toMatchObject({ paced: true, mulligans: true })
+      expect(stopOf(back)).toBe(stopOf(status))
+      expect(await views(other, seats)).toBe(await views(engine, seats))
+      // The engine's seat says what it was dealt as it said at the deal.
+      expect(back.seats[1].deck).toMatchObject({ asked: 'mirror', played: 'mirror', cards: 34 })
+      expect(await inStep(status, back, seats, 150)).toBeGreaterThan(20)
+    }, 300_000)
+
+    it('takes back the hand to keep, and the mulligan taken after it deals the very seven the game would have dealt', async () => {
+      let status = await engine.call('new', { players: [person(), bot], seed: 20260929, mulligans: true })
+      const seats = status.seats.map((s) => s.id)
+      expect(status.actions.map((a) => a.type)).toEqual(['KeepHand', 'TakeMulligan'])
+      const { snapshot } = await engine.call('snapshot')
+      let back = await other.call('restore', { snapshot, replace: true })
+      expect(stopOf(back)).toBe(stopOf(status))
+      const mulligan = status.actions.find((a) => a.type === 'TakeMulligan').index
+      ;[status, back] = await Promise.all([engine.call('act', { index: mulligan }), other.call('act', { index: mulligan })])
+      expect(stopOf(back)).toBe(stopOf(status))
+      expect(status.actions[0]).toMatchObject({ type: 'KeepHand', mulligans: 1 })
+      // The shuffle and the seven drawn are the generator's, carried in the text.
+      expect(await views(other, seats)).toBe(await views(engine, seats))
+      await inStep(status, back, seats, 12)
+    }, 300_000)
+
+    it('takes back a question put to the person as the same question, and the same answer leads to the same game', async () => {
+      // Sparkmage Apprentice's arrival asks its controller for a target: a real question in flight.
+      const sparks = { Mountain: 14, 'Sparkmage Apprentice': 12, 'Raging Goblin': 8 }
+      let status = await engine.call('new', { players: [person(sparks), { ...bot }], seed: 20260927, pace: true, mulligans: true })
+      const seats = status.seats.map((s) => s.id)
+      for (let n = 0; n < 400 && !status.over && !(status.waiting === 'decision' && status.actor === seats[0]); n++) status = await step(engine, status)
+      expect(status.decision).toMatchObject({ type: 'ChooseTargets', player: seats[0] })
+      const { snapshot } = await engine.call('snapshot')
+      const back = await other.call('restore', { snapshot, replace: true })
+      expect(stopOf(back)).toBe(stopOf(status))
+      await inStep(status, back, seats, 40)
+    }, 300_000)
+
+    it('takes back a paced turn half watched, and the next step is the play the engine would have made', async () => {
+      let status = await engine.call('new', { players: [person(), bot], seed: 20260926, pace: true, mulligans: true })
+      const seats = status.seats.map((s) => s.id)
+      for (let n = 0; n < 400 && !(status.waiting === 'engine' && status.turn >= 4); n++) status = await step(engine, status)
+      expect(status).toMatchObject({ waiting: 'engine', actor: seats[1] })
+      const { snapshot } = await engine.call('snapshot')
+      const back = await other.call('restore', { snapshot, replace: true })
+      expect(stopOf(back)).toBe(stopOf(status))
+      expect(back.paced).toBe(true)
+      await inStep(status, back, seats, 40)
+    }, 300_000)
+
+    it('takes back a Commander game, command zones and all', async () => {
+      // Two seats of the engine's own, paced, so the game stops at each of their plays and needs no person's deck.
+      const own = { ai: 'heuristic', level: 'intermediate', deck: 'own', format: 'commander' }
+      const dealt = await engine.call('new', { format: 'commander', players: [{ name: 'A', ...own }, { name: 'B', ...own }], seed: 20260930, pace: true })
+      const seats = dealt.seats.map((s) => s.id)
+      let status = dealt
+      for (let n = 0; n < 12 && !status.over; n++) status = await engine.call('continue')
+      const { snapshot } = await engine.call('snapshot')
+      const back = await other.call('restore', { snapshot, replace: true })
+      expect(back.format).toBe('commander')
+      expect(back.seats.map((s) => s.commander)).toEqual(dealt.seats.map((s) => s.commander))
+      expect(back.seats.every((s) => typeof s.commander === 'string')).toBe(true)
+      expect(stopOf(back)).toBe(stopOf(status))
+      const [va, vb] = await Promise.all([engine.call('view', { viewer: seats[0] }), other.call('view', { viewer: seats[0] })])
+      expect(vb.state.zones.some((z) => z.zoneId.zoneType === 'Command')).toBe(true)
+      expect(JSON.stringify(vb)).toBe(JSON.stringify(va))
+      await inStep(status, back, seats, 20)
+    }, 300_000)
+
+    it('refuses in words a game into a process that holds one, and a text that is not a game it kept', async () => {
+      // A game of its own, dealt and taken back here, so each refusal is shown
+      // whatever ran before this, or whether anything did (M7's review: run
+      // alone it met "No game yet." first, and never reached the ones it names).
+      await engine.call('new', { players: [person(), bot], seed: 20260931 })
+      const { snapshot } = await engine.call('snapshot')
+      await other.call('restore', { snapshot, replace: true })
+      await expect(other.call('restore', { snapshot })).rejects.toThrow('This engine already holds a game; a kept game is taken back by a fresh one.')
+      await expect(other.call('restore', { replace: true })).rejects.toThrow('"snapshot" is required: the text a "snapshot" answered.')
+      await expect(other.call('restore', { snapshot: 'not a game', replace: true })).rejects.toThrow(/^That snapshot could not be read: /)
+      await expect(other.call('restore', { snapshot: '{"kind":"a game of chess"}', replace: true })).rejects.toThrow('That is not a game this engine kept.')
+      const newer = snapshot.replace('"version":1', '"version":2')
+      await expect(other.call('restore', { snapshot: newer, replace: true })).rejects.toThrow('That game was kept in the shape of version 2, and this engine reads version 1.')
+      // A refusal leaves what the process held as it was: the last game taken back still answers.
+      expect((await other.call('turn')).turn).toBeGreaterThan(0)
     }, 60_000)
   })
 

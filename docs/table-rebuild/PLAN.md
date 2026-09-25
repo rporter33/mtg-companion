@@ -2428,6 +2428,330 @@ the command zone's own tile; the app was rebuilt, the preview restarted, and
 again, and the unit suite once more, all passing. The token check clean. No JVM
 and no preview left running.
 
+### M7: a room that survives the relay — 2026-09-25
+
+**What Argentum could and could not do, read before anything was built.** The
+brief pointed at `SnapshotCodec` and `GameEnvironment.restore`. The first keeps
+a `GameState` in the process's memory by reference, for search (its own words:
+"for now only the in-process variant is implemented"), and cannot write a game
+down at all. What can be written is `GameState` itself: it is `@Serializable`
+(`LegacyGameStateSerializer`, which also reads Argentum's older shapes), and
+Argentum's own game server persists it as JSON (`game-server/…/persistence`,
+`persistenceJson`: `engineSerializersModule`, discriminator `type`, structured map
+keys, defaults written), and its tests round-trip a suspended question through
+it. `restore(state, playerIds, stepCount)` installs one, as M1's deal already
+does. The brief's *verify* — does the RNG travel? — has a plain answer: the game's
+generator is `GameState.rng`, a SplitMix64 state of one 64-bit number, so it
+travels inside the state; but at one stop measured it was `-3869328946740255321`,
+which JavaScript cannot hold, so the relay, which reads every reply as JSON, would
+have rounded it into another game. The snapshot crosses the wire as text. Two
+things of Argentum's are outside the state and do not travel: the `Strategist`'s
+memory of the last 32 positions it acted from (kept, by its own account, only so
+as not to go round in circles, each marked with its turn and step), and a random
+seat's `java.util.Random`. Everything else the engine's players decide from is
+the position: hard's search seeds itself from it (`rootSeedFor`,
+`sampleForSearch`).
+
+**What was built.**
+
+In the process (`Server.kt`), protocol 9. `snapshot` answers the game as text:
+the state, written with Argentum's own persistence settings, and beside it what
+the process keeps that Argentum does not — the seats (who plays each, at which
+level and profile, what each person is asked, what each was dealt and what the
+engine's deck was said to be), each seat's log in its own words, the step the next
+line is filed under, and a paced table's pause after one of the engine's plays.
+`restore` takes the text into a process that holds no game, installs it, finds the
+stop's offers again without moving the game on (`settle`: a game is kept only at a
+stop, where `drive` returned, so asked again at the same position it returns there
+again; a paced pause is not driven at all), and answers as `new` does. It refuses
+in words: a process that holds a game (`replace`, for measuring, lets it), text
+that is not JSON, not a game this process kept, another shape (`version`), players
+and seats that do not add up, a profile it does not have.
+
+In the room (`relay-engine.mjs`). After every stop it asks an engine at 9 for a
+snapshot — after the views, and after the one-move guard is down — and holds the
+latest with the stop it was taken at; a move sent to the engine is marked in
+flight until the stop it leads to has been kept. `record` is what the relay
+writes; `savedRoomOf` reads it back forgivingly. `comeBack` starts an engine for a
+room read back and has it take the game back; an engine that stops mid-game is
+started again the same way, once, and again only after the game has gone on since.
+Meanwhile every seat is told `restoring` and a press is refused in words; once
+back, each person is told `restored` — which restarted, whether the table is
+behind what they last saw, and to the person whose move was lost, that it was —
+then the table whole. A game that cannot come back is `gone` with the reason:
+an engine too old to keep one, text it cannot read, a copy the disk cannot give
+back, a game with other seats in it.
+
+In the relay (`relay-server.mjs`). Enforced rooms are written to disk from the
+moment they open, through the same debounced write as the board rooms, the game
+gzipped and base64 in the room's file; read back at start-up, each with an engine
+started for it at once. A relay going down waits up to a second for a snapshot
+being taken, writes the rooms again, and writes nothing after. A relay started
+with no engine leaves such files where they are. `GET /rooms/<code>` says
+`restoring`, and `gone` with its reason.
+
+In the client. `src/lib/engine/restart.js` holds every word said about it. The hook
+lets go of its status at `restoring`, so nothing is offered to press, and says
+what came back under the table it came back to; the table shows a banner while
+the game comes back, and the lobby says of a table that it is coming back, or that
+its game has gone and why. The lobby's old line, "A table the engine holds ends
+when the relay restarts", now says such a table is kept for a week through a
+restart of its relay.
+
+**Measured.** On the owner's machine, 2026-09-25, the real engine, by
+`scripts/engine-restore.mjs` (kept), run twice with the same results: games dealt
+as a room deals them — paced, with the hands to keep, the engine at intermediate —
+the person playing plainly, to turn 14, a snapshot asked at every stop; sixteen
+games, eight sixty-card (the goblins, and a deck of Sparkmage Apprentices where a
+question is to be caught) and eight Commander (decks the engine built for itself).
+In each game one stop was taken back by a second process and both played on from
+there, the same player choosing in each.
+
+| | Sixty cards (317 stops) | Commander (258 stops) |
+| --- | --- | --- |
+| The snapshot, text, median / p90 / largest | 130 / 169 / 197 kB | 320 / 355 / 392 kB |
+| Gzipped | 7.6 / 8.9 / 10.4 kB | 32.7 / 36.0 / 40.5 kB |
+| As the room's file holds it (gzipped, base64) | 10.1 / 11.9 / 13.9 kB | 43.7 / 48.0 / 54.1 kB |
+| Taking it, median / p90 / slowest | 6 / 10–11 / 171–186 ms | 12–13 / 17 / 33–35 ms |
+| Taking it back, into a loaded process, median / slowest | 18–19 / 407–450 ms | 21–23 / 42–49 ms |
+
+The slowest of each is the first in a process, the JVM warming. The state is most
+of a snapshot at the first stop (83 of 86 kB for sixty cards, 274 of 284 for
+Commander) and the logs grow with the game (66 kB of it by the last stop for sixty
+cards). Kept at the four kinds of stop a room can be caught at — the hand to keep
+before anybody has (and a mulligan then taken in both), one of the engine's paced
+plays from turn 4, the first question put to the person (a Sparkmage Apprentice's
+target, in the sixty-card games; one Commander game asked its person nothing by turn
+6, and was kept at an ordinary stop instead), an ordinary stop from turn 6 — all sixteen
+came back as the same game: the same status and the same view of every seat at the
+stop, and every status on the way and every view at the end the same, 11 to 49
+stops later. So the position memory that does not travel made no difference in any
+of them; it could only inside the step a game was kept in.
+
+What a person waits, measured through the built app and the real relay, four runs
+of `tests/browser/engine-restart.spec.mjs`: from the relay listening again to this
+seat having a play offered, 16.2–16.5 s; from the engine killed to the same,
+16.3–16.8 s. Nearly all of it is the new engine loading the corpus before it can
+take the game back — taking it back is milliseconds, above — which a warm engine
+(M8) would take away. The room's whole file for that game, at its first turn:
+7,366 bytes, holding a game of 87,846 bytes before gzip.
+
+What happens to what was in flight, each held by a test: a paced turn of the
+engine's comes back at its last play shown and the room watches the rest of it,
+the same plays (the live test and the measurement; the relay test with the
+stand-in); a question put to a person comes back as the same question, and the same
+answer leads to the same game; a hand to keep comes back with the mulligans taken
+still taken, and the next one draws the very seven; a move a person had sent and
+the engine had not finished answering is let go of — the table is the stop before
+it — and that person, and nobody else, is told "Your last move was not saved in
+time, so the table is as it was before it: make it again if you still want to."
+(an answer: "…so the question is put to you again."; and since the second review,
+where it was the engine that stopped, that it stopped while answering the move,
+and that the same move again may end the game); and where the relay went
+down in the moment between publishing a stop and keeping it, the table comes back
+a stop behind and says so: "…as it was one stop before the last you saw, the last
+one it had saved."
+
+**Found by the runs, and fixed.**
+
+1. *The one-move guard waited on the snapshot.* The whole unit suite, run in
+   parallel, failed M3's one-move test once: a move sent on the new status was
+   refused as "still answering", because the guard came down only when the
+   snapshot after the views had been kept — a window widened by 6 ms at the median
+   and 186 at the first. The guard is there so two moves are never answered at
+   once, and a snapshot is no answer; it comes down once the views are out now,
+   and the snapshot, asked before any later line, is still of that stop. Each
+   move's marks are its own, so the first finishing does not take down the
+   second's. A test holds the next move taken while the snapshot is still held,
+   and fails against the old order.
+2. *The browser spec's first times measured nothing.* 827 ms from the relay back
+   to a play, and 261 ms from the engine killed: the page's last status from before
+   the restart still said it was this seat's stop. The spec now waits for a status
+   the room sent after the event, and the times are the room's own messages'.
+
+**What the review found, and what was done.** A reading-over of the whole change
+the same day found three faults, each fixed with a test that fails without it:
+
+1. *A relay restart counted as the engine stopping.* After a relay brought a game
+   back, the first real crash of its engine was treated as a second, and the game
+   was said to be gone "not started a third time". Only the engine's own stops
+   since the game last went on are counted now.
+2. *The move in flight was forgotten if the relay went down again while the game
+   was coming back.* The room let go of the mark as the restore began, so a second
+   restart in those sixteen seconds would not tell the person. The mark stays until
+   the game is back.
+3. *A room whose game could not come back looked, to a lobby, like a table waiting
+   to be dealt*, and a record whose kept game was not an object at all was said
+   never to have been kept. `GET /rooms` says `gone` with its reason, which the
+   lobby shows, and a damaged record says it could not be read back from the disk.
+
+**What the second review found, and what was done — 2026-09-25.** A second
+reading-over the same day, its findings checked by a sceptic before they were
+passed on, found eighteen faults, two of them found twice from different ends.
+Every one is fixed, and each fixed in code has a test. Eighteen of the fixes were
+then taken out again, one at a time, and the test written for each run against
+it: every one failed, and passed again once the fix was back.
+
+1. *A restart made every room the engine holds look freshly played,* and brought
+   back games that had ended. A game taken back at start-up wrote its room through
+   the same `touch` people's messages use, which moved the room's clock: a relay
+   restarted more often than weekly never dropped a room, however long nobody had
+   played there. And the room's file said neither that a game had ended nor that
+   the room had ended it for good ("not started a third time"), so both came back
+   at every restart, each with a JVM of its own, the second saying the table was
+   "as it was at the last stop" to people told it had gone. A room writing itself
+   now leaves the clock alone (`save`), and only people's messages move it
+   (`touch`); the file says `over` of a game that ended, which a relay coming up
+   takes back only when somebody sits down to look at it, and `gone` of one the
+   room ended for good, which it never takes back. A game that could not be taken
+   back is not written as ended: the next relay's engine may manage it (one at
+   protocol 8 cannot; one at 9 can), and its reason says the relay tries again each
+   time it restarts. Tests: a room six days untouched, restarted twice, keeps its
+   clock and is dropped two days later; a room ended for good stays so through a
+   restart and starts no engine; a game that ended starts none until somebody sits,
+   and then comes back as it ended; a person sitting moves the clock, on disk.
+2. *A room's file was overwritten in place.* Opening it for writing freed the old
+   record, so on a full disk the new, larger one — an enforced room's, tens of
+   kilobytes, rewritten after every stop — failed partway, and the room came back
+   as nothing, its code answering 404. A room is written beside its file and
+   renamed over it; a half-written one left beside it is cleared when the rooms are
+   next read. Test: a directory where the next record would go, and the last record
+   stands whole and the room comes back from it.
+3. *A relay killed rather than stopped came back behind what people had seen, and
+   did not say so.* A stop published, and a move sent to the engine, reached disk
+   only at the relay's next write, a quarter of a second on; killed in that moment
+   — out of memory, a host rebooting — the relay came back to the stop before,
+   said "as it was at the last stop", told nobody their move was lost, and numbered
+   the position with a number the clients had already seen for another. Both are
+   now written at once, before anybody is sent the stop and before the engine is
+   asked the move, so what comes back is never further on than what people saw,
+   and `behind` and `lost` say how far back it is. (The review found this twice,
+   from the publish and from the move.) Tests, with a relay killed as the disk
+   stood — its directory copied at that moment and the next relay started on the
+   copy: with the relay's own writes held off for a minute, each stop and each move
+   is on disk as it happens, and the game comes back a stop behind, says so, tells
+   the person their move was lost, and numbers the stop after every one seen; with
+   them on, the game kept is on disk without anybody asking, and comes back as it was.
+4. *The engine's crash count was forgiven when it answered,* before the stop the
+   answer led to was kept. An engine that answered and then stopped building that
+   stop's views — a reply it could not write, tied to the position — was started
+   again at the same place, every sixteen seconds, with nobody pressing anything.
+   It is forgiven once a stop after the one the game came back at has been kept.
+   Test: the stand-in's `fragile`, which ends the process at the view after a
+   `continue` and travels in its snapshot, is started again once and then the game
+   is gone, "not started a third time".
+5. *A `restored` said to a socket that had died unnoticed was lost,* and with it the
+   banner's end: a phone that changed networks during the sixteen seconds came back
+   to a table that played on under "Nothing you press will happen until it is
+   back", never told its move was lost. The client takes any status as the game
+   back, since a room sends none while it is coming back; the room keeps what it
+   told a seat until the socket it told speaks, and says it again on the socket
+   that takes its place; and `restored` carries `at`, the number the stop taken
+   back is published as, so a client that did hear it the first time says it once.
+6. *While a game came back the table said "It is not your stop." and "The engine
+   is not waiting on you."* of a stop that could well be the person's own. A tap
+   does nothing, the banner saying why, and the actions panel and the Pass button
+   say the game is coming back.
+7. *A move lost when the engine stopped was worded as one lost to the relay,* "make
+   it again if you still want to", inviting the move that may have stopped the
+   engine, which a second time ends the game. It says the engine stopped while
+   answering it, and that the same move again may end the game.
+8. *A relay with no engine made the lobby say an engine's table had gone,* though
+   its file waits on the disk for a relay that has one (§3 item 21). The lobby says
+   the relay has no engine, and what becomes of such a table.
+9. *The documents claimed more than was checked.* The measurement and the live test
+   hold every status on the way to the game not taken back, and the views only at
+   the stop kept and at the end; and `behind` has more causes than a relay going
+   down mid-snapshot. Both are corrected: engine/README.md, CURRENT.md, M7's
+   "departs" item 3 above, and HANDOFF.md §7.
+10. *An engine's unforeseen reason came out as "illegalStateException: …".*
+    `clause` keeps the capital of a name at the head of a reason, and the README
+    says how such a reason is shaped.
+11. *Nothing tested the relay's grace for a snapshot being taken*, and the one test
+    near it paid a real second. `createRelay` takes `keepGraceMs` and `flushMs`; a
+    test gives the snapshot while the relay waits and finds the room written with
+    it, nothing behind and nothing lost, and nothing written after it went down.
+    Writing that test found a fault of its own: the move's in-flight mark came down
+    a few ticks after the stop it was in was kept, and the relay's write waiting on
+    the snapshot came between, so the room came back telling the person a move was
+    lost that had been kept (the test fails with the old order put back). The mark
+    now comes down in the same write, by any stop kept after the one it answered.
+12. *Nothing tested the engine stopping, at protocol 9, mid-move or mid-turn.* An
+    engine killed while a move is held is started again, and the person told their
+    move was lost and nothing else; one killed while the room waits its pace in the
+    engine's turn is taken back there, and the rest of the turn is watched on the
+    new engine, a play at a time (the room's wait held by the test, not a clock).
+13. *The browser spec did not show that the same game came back*: it counted cards.
+    It now holds the table by name — every card in the hand and on each
+    battlefield, both life totals, and the turn, step and seat the room says the
+    game waits on — in both halves; taps a card and opens the actions panel while
+    the game comes back; reloads the page mid-way, where the table's place says the
+    game is coming back, still and axe-clean under reduced motion; and ends at the
+    lobby of a table whose kept game could not be read back, which says why. The
+    lobby's lines had no test at any level; `tests/restart-screens.test.jsx`
+    renders each, and the actions panel's; and the hook is held going back from a
+    mulligan taken to the hand before it, board and log.
+14. *The live test "refuses in words…" passed only after the tests before it*, which
+    had left games in both processes. It deals and takes back its own.
+
+Not done, of what the review offered: a room file that will not parse is still
+skipped, and its code answers 404, rather than coming back as a room gone with a
+reason. With the write now whole or nothing, only something outside the relay can
+leave such a file.
+
+The bar at the end of the second review: 2,085 unit tests across 97 files, 25 of
+them new and one file new (`tests/restart-screens.test.jsx`), the live engine suite
+59 of 59 against the engine as built at protocol 9 (`Server.kt` unchanged by the
+review); 39 browser specs, 1,611 checks, none failed, `engine-restart.spec.mjs` 41
+of them — from the relay listening again, or the engine killed, to a play offered,
+16.3–16.8 s in every run whose times were read, as before. The token check clean.
+No JVM and no preview left running.
+
+**Where it departs from the brief's letter, and why.**
+
+1. *`SnapshotCodec` is not used*, since it cannot write a game down; `GameState` is
+   written as Argentum's game server writes it (above).
+2. *The snapshot is a string on the wire*, not JSON, for the generator's 64-bit
+   state.
+3. *Beyond the letter:* the snapshot is taken at every stop, as the brief says, and
+   gzipped for the disk, which it does not; `restoring` and `restored` on the wire,
+   the banner and the lobby's lines, since what cannot be played or cannot come
+   back must be said; `gone` in `GET /rooms`; `replace` on `restore`, for measuring;
+   and `scripts/engine-restore.mjs`, kept. The live test does more than continue to
+   the same next stop: it plays on from each of five kinds of kept stop, and holds
+   every status on the way, and every seat's view at the stop kept and at the end,
+   to the game that was not taken back. (Written first as "every stop and every
+   view", which the second review found it did not do.)
+4. *An engine that stops is started again once, and again only after the game has
+   gone on*, where the brief says it restarts: an engine that crashes at the same
+   place every time would otherwise load the corpus forever while the table said
+   it was coming back.
+5. *The line is "The engine restarted; the table is as it was at the last stop."*
+   where the brief has "at your last stop": at a paced table the last stop may be
+   one of the engine's own plays.
+
+**Not done, and where it goes.** A relay coming back starts an engine for every
+room it kept, at once: one JVM holding the corpus per room, which M8 must size. A
+move lost at a restart is the person's to make again, not the room's to send. The
+position memory and a random seat's sequence do not travel (above). A room kept
+under one pin and taken back under another (§3 item 12) is untested: Argentum's
+reader migrates its own older shapes, and a text it cannot read is said to be one,
+but that has not been tried across a real pin move. Nor has an engine whose corpus
+lacks a card a kept game holds. A client from before M7 is not told the game is
+coming back; its press is refused in words, and it is sent the table whole as on
+any reconnect. The owner's two decisions of 2026-09-25 (HANDOFF.md §3 items 19 and
+20) are recorded, not built.
+
+The bar at the end: 2,060 unit tests across 96 files, 35 of them new and one file
+new (2,025 across 95 at M6's end), the live engine suite 59 of 59, six new, against
+the engine rebuilt at protocol 9; 39 browser specs, 1,600 checks, none failed, the
+new `engine-restart.spec.mjs` 30 of them against the real engine through the real
+relay; the token check clean. Three faults were put back into the room to see the
+tests catch them — the snapshot read as JSON and written back (13 of the room's
+M7 tests fail), the guard held behind the snapshot, and the mark cleared as a
+restore began (their tests fail) — and each passed again once taken out. No JVM
+and no preview left running.
+
 ## Phase 3-alt — Writing the rules core ourselves
 
 Only if the owner wants the engine to be ours. `src/lib/engine/`, TypeScript,
