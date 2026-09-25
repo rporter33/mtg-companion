@@ -257,6 +257,55 @@ check('a mulligan draws seven again', (await inHand()) === 7)
 check('and the prompt counts it, and says what is owed',
   /1 mulligan/.test(await page.locator('.prompt').innerText()) && /put 2 on the bottom/.test(await page.locator('.prompt').innerText()),
   await page.locator('.prompt').innerText())
+
+console.log('\nThe preview never covers the prompt')
+// A phone's width, the prompt across the foot of the battlefield just above
+// the hand: above a card in hand is where the preview used to go, and where
+// the prompt is (HANDOFF.md, M1b). Every card in hand is read in turn, with Z
+// held so the preview shows at once, after the card has lifted out of the fan.
+{
+  const box = (b) => (b ? { left: b.x, top: b.y, right: b.x + b.width, bottom: b.y + b.height } : null)
+  const overlaps = (a, b) => Boolean(a && b) && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+  const seen = []
+  const cards = page.locator('.tabletop__handcard .bcard')
+  await page.keyboard.down('z')
+  for (let i = 0; i < await cards.count(); i++) {
+    // Off the hand first, so the card just read has settled back into the fan
+    // and is not covering the one after it.
+    await page.mouse.move(5, 5)
+    await page.waitForTimeout(200)
+    const p = await handPoint(cards.nth(i))
+    await page.mouse.move(p.x, p.y)
+    await page.waitForTimeout(250)
+    seen.push({
+      p,
+      side: await page.locator('.facepeek').getAttribute('data-side').catch(() => null),
+      peek: box(await page.locator('.facepeek').boundingBox().catch(() => null)),
+      prompt: box(await page.locator('.prompt').boundingBox()),
+      rail: box(await page.locator('.rail').boundingBox()),
+    })
+  }
+  await page.keyboard.up('z')
+  check('a preview shows for every card in hand', seen.length === 7 && seen.every((s) => s.peek), JSON.stringify(seen.map((s) => s.peek)))
+  check('and none covers the prompt, or the rail with End turn on it',
+    seen.every((s) => !overlaps(s.peek, s.prompt) && !overlaps(s.peek, s.rail)),
+    JSON.stringify(seen.filter((s) => overlaps(s.peek, s.prompt) || overlaps(s.peek, s.rail))))
+  check('nor sits under the pointer', seen.every((s) => !(s.p.x >= s.peek?.left && s.p.x <= s.peek?.right && s.p.y >= s.peek?.top && s.p.y <= s.peek?.bottom)))
+  console.log(`  (placed ${Object.entries(seen.reduce((n, s) => ({ ...n, [s.side]: (n[s.side] ?? 0) + 1 }), {})).map(([side, n]) => `${side} ${n}`).join(', ')} of the hand's seven)`)
+  const p = await handPoint(cards.nth(3))
+  await page.mouse.move(p.x, p.y)
+  await page.keyboard.down('z')
+  await page.waitForTimeout(250)
+  await page.screenshot({ path: SHOT('peek-prompt') })
+  await page.keyboard.up('z')
+  await page.mouse.move(5, 5)
+  await page.waitForTimeout(100)
+}
+check('nothing glows at a table played by hand, which knows nothing of what a card can do',
+  (await page.locator('.bcard--playable, .bcard--target, .plate--target').count()) === 0)
+check('its credit line names Scryfall, and no engine, since none is playing',
+  /Card data and imagery from Scryfall\./.test(await page.locator('.game__credit').innerText()) && !/Argentum/.test(await page.locator('.game__credit').innerText()),
+  await page.locator('.game__credit').innerText())
 await page.getByRole('button', { name: 'Keep hand →' }).click()
 await page.waitForTimeout(200)
 check('keeping puts the prompt away', (await page.locator('.prompt').count()) === 0)
@@ -325,7 +374,9 @@ console.log('\nReading a card without picking it up')
   await page.waitForTimeout(450)
   check('resting on a card shows its printed face beside it', (await page.locator('.facepeek img').count()) === 1)
   const box = await page.locator('.facepeek').boundingBox()
-  check('and not under the pointer', box && (box.x > p.x + 8 || box.x + box.width < p.x - 8), JSON.stringify(box))
+  // Not under the pointer, in either direction: above a card is as clear of
+  // it as beside it is.
+  check('and not under the pointer', box && !(p.x >= box.x && p.x <= box.x + box.width && p.y >= box.y && p.y <= box.y + box.height), JSON.stringify(box))
   // The whole card, not the top left corner of it: the face is drawn at the
   // size of the preview, never at the image's own, which the box would clip.
   const face = await page.locator('.facepeek img').boundingBox()
@@ -525,7 +576,7 @@ await page.waitForTimeout(250)
 
 console.log()
 check('no console errors throughout', errors.length === 0, errors.join('\n'))
-console.log(`\nScreenshot: ${SHOT('peek')}`)
+console.log(`\nScreenshots: ${SHOT('peek-prompt')} and ${SHOT('peek')}`)
 
 await browser.close()
 console.log(`\n${pass} passed, ${fail} failed`)

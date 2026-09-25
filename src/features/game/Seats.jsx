@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { rooms } from '../../lib/board/relay.js'
 import { navigate } from '../../lib/router.js'
 import { getPrefs, setPref } from '../../lib/storage.js'
+import { chosenLevel, LEVELS, LEVEL_LINES, LEVEL_NAMES, LEVELS_MEASURED, roomLevel } from '../../lib/engine/levels.js'
 import { relayAddress, setRelayAddress, inviteLink } from './relayAddress.js'
 
 /**
@@ -22,6 +23,10 @@ export default function Seats({ room, engine = null }) {
   const [hasEngine, setHasEngine] = useState(false)
   const [draft, setDraft] = useState(address ?? '')
   const [name, setName] = useState(() => getPrefs().playerName ?? '')
+  // How strongly the engine plays, remembered with the player's other table
+  // preferences. Intermediate until they choose otherwise: the owner's
+  // choice for a first game (2026-09-24).
+  const [level, setLevel] = useState(() => chosenLevel(getPrefs().engineLevel))
   const [seats, setSeats] = useState(MIN_SEATS)
   const [peek, setPeek] = useState(null)
   const [gone, setGone] = useState(false)
@@ -71,7 +76,7 @@ export default function Seats({ room, engine = null }) {
   const challenge = async () => {
     setBusy(true); setError(null)
     try {
-      const made = await rooms(address).open({ seats: 2, enforced: true, ai: 'heuristic' })
+      const made = await rooms(address).open({ seats: 2, enforced: true, ai: 'heuristic', level })
       navigate({ tab: 'game', gameEngine: made.code, gameRoom: null })
     } catch (e) {
       setError(e.message === 'This relay has no engine.' ? 'That relay has no engine to enforce a game with.' : 'The relay did not answer. Is it running at that address?')
@@ -85,9 +90,15 @@ export default function Seats({ room, engine = null }) {
   }
 
   const saveName = (value) => { setName(value); setPref('playerName', value.trim()) }
+  const chooseLevel = (value) => { setLevel(value); setPref('engineLevel', value) }
 
   if (engine) {
     const seated = peek?.seats ?? []
+    // Once the engine has dealt, the table's level is the game's, and is said
+    // as the room says it rather than offered as though it could still change.
+    // While it is still loading to deal, the level asked for is said as asked,
+    // and not offered either: the room takes no other once it has begun.
+    const { stage, level: roomAt } = roomLevel(peek)
     return (
       <aside className="lobby__seats" aria-label="Table">
         <h2 className="lobby__label">Table · {seated.filter((s) => s.here || s.ai).length} / {seated.length || 2} <span className="chip tiny">{engine}</span></h2>
@@ -103,6 +114,32 @@ export default function Seats({ room, engine = null }) {
                 </li>
               ))}
             </ul>
+            {stage === 'dealing' ? (
+              <p className="lobby__notice tiny" role="status">
+                {roomAt
+                  ? <>The engine is dealing this table&apos;s game, asked to play at the <strong>{roomAt}</strong> level. A table you open next can be played at another.</>
+                  : <>The engine is dealing this table&apos;s game.</>}
+              </p>
+            ) : stage === 'dealt' ? (
+              <p className="lobby__notice tiny">
+                {roomAt
+                  ? <>This table&apos;s game is under way at the <strong>{roomAt}</strong> level. A table you open next can be played at another.</>
+                  : <>This table&apos;s game is under way, and its engine plays one way only.</>}
+              </p>
+            ) : (
+              <fieldset className="lobby__levels">
+                <legend className="lobby__label">How the engine plays</legend>
+                {LEVELS.map((l) => (
+                  <label key={l} className={`lobby__level${level === l ? ' lobby__level--on' : ''}`}>
+                    <input type="radio" name="engine-level" value={l} checked={level === l} onChange={() => chooseLevel(l)} />
+                    <span className="lobby__levelname">{LEVEL_NAMES[l]}</span>
+                    <span className="lobby__levelline faint tiny">{LEVEL_LINES[l]}</span>
+                  </label>
+                ))}
+                {/* The lines above are the app's own words, and the numbers under them were measured, not claimed. */}
+                <p className="faint tiny m0">These descriptions are this app&apos;s own. {LEVELS_MEASURED}</p>
+              </fieldset>
+            )}
             <label className="lobby__field">
               <span className="lobby__label">Your name at the table</span>
               <input className="input" value={name} onChange={(e) => saveName(e.target.value)} placeholder="Player" maxLength={24} />

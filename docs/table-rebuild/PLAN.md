@@ -760,6 +760,531 @@ faults, so it now measures to the next moment the board has caught up and
 leaves the bound to say whether that was quick enough. No JVM and no preview
 left running after any of it.
 
+### M1b: the glows, and a preview that never covers Pass — 2026-09-24
+
+**Built against the code M2 left, not the code the brief was written for.**
+The brief dates from before M2 found that a targeted spell cannot be cast at
+this table, and before the thinking plate and the silent prompt; where the two
+disagree the code won, and each place is said below. Nothing on the wire
+changed and `Server.kt` was not touched.
+
+**What glows.** At the engine's table only, and read off what the engine is
+offering or asking this seat at that moment (`src/lib/engine/glow.js`):
+
+- *Playable* — a card in hand with a meaningful, affordable offer, and a
+  permanent with an affordable ability that is not a mana ability: the two
+  things one tap on a card does here. `bcard--playable`.
+- *A target* — every legal id of a targets decision, across all its
+  requirements. A seat that is a legal target lights its plate
+  (`plate--target`) and is offered in the prompt by name ("Aim at the engine",
+  "Aim at yourself"), because a plate is not a card to tap. The creatures that
+  may attack while attackers are declared, and the ones that may block while
+  blockers are. `bcard--target`.
+- *Chosen* — an attacker gathered into the attack, or a blocker placed, stays
+  lit, more heavily and still, and says it is attacking or blocking.
+  `bcard--chosen` beside `bcard--target`.
+
+Every glow says the same thing in words: `playable now`, `a legal target`,
+`can attack`, `attacking` and so on end the card's spoken label, the plate's
+label says `a legal target`, and the prompt says what the glow is for ("The 3
+cards you can play glow. Tap one, or pass."; "Tap what Sparkmage Apprentice is
+aimed at: the legal targets glow."). The colour is the accent, so the season's
+theme turns it cyan; the engine spec puts the season's shell on by hand to
+check that rather than waiting for a date. The two glows differ by weight, not
+colour, and never show together, since a stop is either a play or a question.
+Each ring has a thin band of ink outside it, found necessary by looking: the
+accent is gold outside the season, and gold on the parchment mat all but
+vanished. The light breathes slowly and stands still under the system's
+reduced-motion setting and under the app's own, which the stylesheet could not
+read until now: the table's root wears `game--still` when it is on.
+
+**The preview never covers Pass.** `Peek.jsx` now places the face with
+`placePeek` (`src/features/game/peekPlace.js`): never over the prompt panel or
+the rail (the rail carries its own Pass, and at the table played by hand End
+turn), never over the card itself, never off the screen; among the places that
+keep all three, the nearest the card, with the old order breaking ties — above
+a low card, then right, left, below. So above a card in hand becomes beside it
+where the prompt is in the way, or above the prompt where beside would cover it
+too. The rectangles are read when the preview is placed, which is after every
+render of the table, so a prompt that appears while a card is being read moves
+the preview rather than being covered by it; and the card is measured again
+once it has lifted out of the fan. Where nothing at full size fits, a smaller
+preview is tried, and where nothing fits at all none is shown and the card is
+still one press from "Read it": the table chooses the press over the picture.
+
+*Measured.* At the engine's first stop, 1280 by 900, every one of the seven
+cards in hand read in turn with Z held: four previews placed to the right,
+two above the prompt, one to the left, and none over the prompt, its Pass,
+the rail or the pointer. At 430 by 1100, the table played by hand with the
+opening-hand prompt across the foot of the battlefield: all seven clear of the
+prompt and the rail — two to the right, two to the left, where an end card
+leaves room, and three above the prompt, where nothing beside fits. A sweep of card
+positions over four layouts in `tests/peek-place.test.js` holds the three
+rules for every place it takes.
+
+*Floating, not an inspector.* The brief asked for the pack's alternative to be
+weighed: the preview parked at the top of the side column
+(`inbox/grok-pack-2026-09-20/shots/table-play.jpg`) against Moxgate's own
+floating one. The floating preview stays. It is Moxgate's ("Hold Z to zoom the
+card you are hovering. Card zoom also auto-zooms on hover", `frames/v2_09`),
+and the owner's standing preference is Moxgate's look for the table
+(`SOURCES.md`). The side column here is not empty the way the pack's is: it
+holds the seats, the log, the turn and whatever panel is open, and a card
+parked at its top would push the log down or cover it at every hover. Below
+900 px there is no column beside the field at all, so the floating preview
+would be needed anyway. And a preview beside the card is read without the eye
+crossing the screen. The pack gets its guarantee by giving the preview a band
+nothing else uses; `placePeek` gives the same one without the band. The
+recordings are of an iPad, where a zoom has no pointer to follow, so what was
+weighed on Moxgate's side is its own description of the zoom rather than a
+frame of it.
+
+**Space passes.** When a pass is on offer: not in a field, where Space is a
+letter; not in a dialog; and not on a control the keyboard is on, where Space
+presses that control, as every button does. A control last pressed with the
+pointer has focus without showing it, and there Space passes. A held key's
+repeats are not further passes. Z stays the zoom. The prompt's Pass says "or
+press Space" (hidden on a screen with no keyboard), and both buttons that pass
+carry `aria-keyshortcuts`.
+
+**The credit line** gains "Card data and imagery from Scryfall." everywhere,
+and at the engine's table "Rules-enforced play is powered by Argentum, an
+independent open-source rules engine, used under the MIT licence."
+
+**Where it departs from the brief's letter, and why.**
+
+1. *A spell or ability needing a target does not glow as playable.* The brief
+   glows any affordable, meaningful offer, but `act` still sends no targets
+   and Argentum refuses such a cast before it would ask (M2, above). A glow
+   there would be the table promising a play it cannot make. So the stop the
+   engine made for one names it instead ("Volcanic Hammer needs a target,
+   which this table cannot choose yet. Pass to go on."); a tap on the card says
+   the same rather than sending an act the engine answers with "no valid
+   targets", which is not true; and the actions panel lists it, not pressable,
+   with a line saying why. The captured run holds a stop made for Volcanic
+   Hammer alone, and the unit tests read it. `HANDOFF.md` M4 now names the
+   three places to lift when targets are sent.
+2. *"The aiming banner names the source."* At the engine's table the question
+   is asked in the prompt panel, which is where the aiming happens; its line
+   now names the source. A banner as well would say it twice.
+3. *Targets are watched through a triggered ability.* A targets decision
+   reaches this table only from a trigger today. The engine spec plays a third
+   table with a deck of Mountains, Sparkmage Apprentices and Raging Goblins,
+   tried against the engine directly first: dealt from the spec's seed and
+   played by the engine's own list, turn 5 casts a Sparkmage Apprentice whose
+   arrival asks for any target, with three creatures on each side of the table
+   and both players legal.
+4. *Beyond the letter:* the seats glow and are offered by name; valid blockers
+   glow and placed ones stay lit. No attacker glows as blockable: the offer
+   does not say which attacker a given blocker could legally block, and the
+   table does not guess.
+5. *The preview keeps clear of the rail too*, and takes the nearest clear
+   place rather than only "beside when above overlaps".
+6. *Space* is kept from a keyboard-focused control as well as from a field.
+
+**The run in a browser.** Through the built app and the real relay and engine.
+The engine spec holds each glow to the engine's own offers, read off the socket
+as the page received them, rather than to the spec's idea of what should be
+playable: exactly the three Mountains glowed at the first stop, and neither
+Volcanic Hammer; exactly the engine's valid attackers glowed in the declaration,
+and the one tapped stayed lit and said it was attacking; exactly the eight
+legal targets of the Sparkmage Apprentice's trigger glowed, six creatures
+across both sides and the two plates; "Aim at the engine" answered it, the
+engine lost the one life and every glow went out. And at the first stop of the
+player's with Volcanic Hammer affordable in hand, it did not glow; a tap on it
+said "Volcanic Hammer needs a target, and this table cannot choose one for it
+yet." and sent nothing (the same stop, the card still in hand); the actions
+panel listed it, not pressable, with the line saying why. axe found nothing on the
+table while cards glowed, nor while the trigger asked. A field with focus kept
+Space as a letter; elsewhere Space passed. Screenshots looked at: the playable
+glow in both the core and the season's colours, the preview beside a card in
+hand clear of the prompt, the attack, the targets, and at the table played by
+hand the preview above the prompt at a phone's width. The pictures are
+`engine-playable.png`, `engine-playable-season.png`,
+`engine-peek-prompt.png`, `engine-attack.png` and `engine-targets.png`, and
+`game-peek-prompt.png` and `game-peek.png`, all in the system's temporary folder.
+
+**Found by looking, and fixed.** The accent ring alone, gold on parchment,
+was hard to see on the battlefield: the ink band came from that. The first run
+of the preview checks measured nothing — at 1280 by 900 the hand is below the
+fold, a point off the screen hits nothing, and the check that every card got a
+preview failed and said so; the hand is now scrolled into view first. The
+attack screenshot showed a half-faded log: changing the emulated motion setting
+restarts the log's own fade-in, and the picture was taken inside it.
+
+**Gone over afterwards, and what the reading found.** The actions panel still
+offered a targeted spell as a live button, which the engine would refuse: now
+listed, not pressable, with a line saying why. A preview slid sideways off the
+card's column read as a neighbour's: above and below now stay centred on the
+card, and sideways is what "beside" is for. The preview measured a hand card
+before it lifted out of the fan: it is measured again when the card settles.
+`game.spec.mjs`'s "not under the pointer" only looked sideways, so a preview
+placed above would have failed it while being right, and one covering the
+pointer from above would have passed: it is now a point in a box.
+
+**Not done, and where it goes.** Targets for a spell or an ability — M4, with
+the three places named in `HANDOFF.md`. A decision with more than one target,
+or more than one requirement, is still answered with one target, as it was;
+M4's decision prompts. At 1280 by 900 the hand at the engine's table sits below
+the fold, which is the layout and not this milestone, but a player on a
+laptop scrolls to see their hand. The engine spec routes `cards.scryfall.io` to
+a pixel, and the built app's service worker fetches those images itself, which
+`page.route` cannot see: on a machine that reaches Scryfall the spec loads real
+card faces. Found by looking at the screenshots; nothing depends on it, and it
+was so before this milestone.
+
+The bar at the end: 1,770 unit tests across 88 files, 23 of them new; 34
+browser specs, 1,291 checks, none failed, in 788 s on the final build; the
+engine's own spec 109 checks of those against the real engine through the real
+relay, and 110 in a run of its own afterwards with a check added for the
+plate's motion — 42 more than M2 left it, seven runs in all, every one after
+the first without a failure; `game.spec.mjs` 98, five more; the live engine suite 15 of
+15; the token check clean. No JVM and no preview left running.
+
+### M3: easy, intermediate, hard — 2026-09-24
+
+**The owner's answer first.** A first game is played at intermediate, with easy
+and hard a choice away in the lobby (`HANDOFF.md` §3, item 13). The choice is
+kept with the player's other table preferences (`prefs.engineLevel`), read
+forgivingly: anything but one of the three words is intermediate.
+
+**What Argentum's profiles are, read at the pin rather than taken from the
+brief.** `ai/…/engine/AiProfile.kt` at `70d525c` holds 44 named
+profiles. The brief's table named three candidates, and two of them had moved
+on. `LEGACY_V0` is the greedy one-move look Argentum freezes as the reference
+every arena number is quoted against, and `CURRENT` is the same player under
+another id (what `AIPlayer.create(registry, id)` builds, so what this table
+played until now). `PRODUCTION` is that look plus card knowledge (`CardIntent`)
+and the card advisors — which exist for two sets, Bloomburrow and Onslaught.
+`PRODUCTION_CANDIDATE_TUNED` was what Argentum's own game server played
+people with from 2026-08-07; at the pin its `EngineAiPlayerController` plays
+`PRODUCTION_CANDIDATE_EXPIRING`, which is that plus the nine promotions made
+since, each with its arena and puzzle numbers in its KDoc. Argentum's own arena
+(Bloomburrow sealed) had already said the thing that decided intermediate:
+card knowledge alone is arena-neutral against `v0` (50.9%, 1,000 games), the
+Bloomburrow advisors alone likewise (50.0%), and the one evaluator fix it
+measured as a gain on its own, without rollouts, is the discounted race clock
+(`PRODUCTION` 43.7% against `PRODUCTION_RACECLOCK`, 300 games).
+
+**The mapping, and why** (`LEVELS` in `Server.kt`; `hello` lists it):
+
+| Level | Argentum profile | Why |
+| --- | --- | --- |
+| easy | `v0` (`LEGACY_V0`) | The player this table has always fielded, so easy changes nothing for anyone; frozen upstream, so it stays the same player whatever the pin. |
+| intermediate | `production-raceclock` | One move deep and as quick as easy, with card knowledge, the advisors, and a race judged by how soon it would end. The brief's `PRODUCTION` measured no stronger than easy here (below). |
+| hard | `production-candidate-expiring` | What Argentum plays its own players with at the pin: each bigger choice played out two turns ahead (three in combat or within reach of lethal) on the four-tier budget, the cards it cannot see shuffled among themselves before it searches, every promoted fix. |
+
+**Hard's budget, in milliseconds.** `TieredBudgetPolicy` names 0, 200, 2,000
+and 5,000 ms for its four tiers — nothing to choose; a routine window on the
+other player's turn; a main phase or a response; combat or either side within
+reach of lethal. They are not stopwatches. Each is turned once into counts
+(`SearchAllowances.forMillis`): no rollouts below 2 s, 16 at 2 s, 40 at 5 s,
+with the combat searches and target refinement scaled the same way, and the
+milliseconds kept only as a hard stop a healthy decision never meets. That is
+why a seed replays the same game at hard (checked below) and why a slower
+machine makes hard slower, not weaker. What it costs was measured.
+
+**How it was measured.** `scripts/engine-levels.mjs`, kept. Both seats the
+engine's own, the whole game played inside one `new`; every game played twice
+from one seed with the players' seats swapped, and the pair — 1, ½ or 0 — is
+what is counted, as Argentum's arena counts; a 95% interval over pairs. Two
+mirror decks: Portal goblins, the deck every measurement here has used, and a
+sixty-card Boros deck of Bloomburrow cards put together by this app for the
+purpose (one- and two-drops, tricks, removal that needs a target; Bloomburrow
+because Argentum's arena and its advisors are Bloomburrow's). After every game
+the process's new `clock` op says how long each seat took over each choice.
+Seeds from 20260924; 3,200 games on six processes, then 1,200 more on fresh
+seeds for the two pairings whose intervals touched an even split; 60 on one
+process for the times; and 60 of a person's seat against each level, on a
+paced table, for what a person waits.
+
+*Strength* — the share of games won by the second level named:
+
+| Pairing | Portal goblins | Bloomburrow Boros |
+| --- | --- | --- |
+| easy v intermediate | **58.8%** [55.5, 62.0], 400 games | **53.9%** [51.8, 56.0], 1,000 games |
+| intermediate v hard | **53.4%** [51.3, 55.5], 1,000 games | **54.3%** [51.2, 57.3], 400 games |
+| easy v hard | **62.5%** [59.3, 65.7], 400 games | **58.5%** [55.0, 62.0], 400 games |
+| easy v `production`, the brief's intermediate | 50.0% [50.0, 50.0], 400 games — every pair split | 47.5% [44.6, 50.4], 400 games |
+
+Every level beat the one below it on both decks, each interval clear of an
+even split, and hard beat easy by the most. The gaps are small, and the lobby
+says how small rather than implying more: most pairs split one each, which is
+the deal deciding and not the level (easy v hard with goblins: 53 pairs to
+hard, 144 split, 3 to easy). `production` plays exactly as easy does with
+goblins — no Portal card has an advisor, and card knowledge changed no
+decision in 400 games — and a shade worse with the Bloomburrow deck, so it
+could not be intermediate. The first 200 pairs of the two widened cells read
+52.5% and 53.0%, intervals touching 50%; the next 300 of each, on fresh seeds,
+read 54.8% and 53.7%.
+
+*Time to choose*, one process, nothing else running, 20 games a level a deck,
+over the choices with something to choose between (an affordable play the
+engine calls worth making, or a decision), median / p90 / slowest:
+
+| Level | Portal goblins | Bloomburrow Boros |
+| --- | --- | --- |
+| easy | 1.1 / 8.8 / 66 ms | 1.0 / 7.4 / 156 ms |
+| intermediate | 1.4 / 9.7 / 52 ms | 1.3 / 9.6 / 201 ms |
+| hard | 52 / 114 / 176 ms | 3.7 / 170 / 1,505 ms |
+
+A routine window on the other player's turn gets no rollouts, and a deck of
+instants has many of them, which is the likeliest reading of hard's low
+Bloomburrow median; the clock does not record the tier, so that is a reading
+and not a measurement. Hard's whole game of thinking came to 4.5 s at the
+median and 9.1 s at p90 with that deck, against a fifth of a second for easy.
+
+*What a person waits*, measured at the wire from a person's seat played by the
+plainest player (the first worthwhile play needing no target, else a pass),
+10 paced games a level a deck, request to reply. A `continue` is one of the
+engine's plays while the plate says it is thinking, with the room's pace on
+top; an `act` is the player's move and everything the engine does before the
+table next stops:
+
+| Level, deck | each `continue`: median / p90 / slowest | each `act` |
+| --- | --- | --- |
+| easy, goblins | 7 / 42 / 156 ms | 3 / 18 / 87 ms |
+| intermediate, goblins | 5 / 22 / 132 ms | 2 / 9 / 146 ms |
+| hard, goblins | 11 / 116 / 276 ms | 1 / 159 / 1,561 ms |
+| easy, Boros | 3 / 17 / 105 ms | 1 / 10 / 218 ms |
+| intermediate, Boros | 2 / 13 / 87 ms | 1 / 9 / 139 ms |
+| hard, Boros | 39 / 568 / 8,177 ms | 1 / 699 / 9,713 ms |
+
+Hard's p90 stays under the brief's two seconds on both decks, so the pace does
+not need to hide it. Its slowest does not: against a deck full of instants, a
+move that hands hard a string of windows to answer in can take ten seconds.
+That is what the two changes below the next heading are for.
+
+*The same game from the same seed.* The 72 games that more than one run
+played from the same seed and the same way round — one process against six,
+hard included — came out the same, winner and turn. `engine-live.test.js`
+plays hard against easy twice from one seed and holds the two to each other.
+
+**What was built.** In the process (`Server.kt`): `PROTOCOL` 4; `level` on a
+player in `new` (and the level's word as `ai`, the shape the brief sketched);
+each seat in the reply names the `level` it took and the Argentum `profile` it
+plays with; `hello.levels`; `profile` by id for a measurement, refused when the
+process does not list it; and `clock`. A person's seat keeps `current`'s
+responder for the decisions this protocol cannot ask yet, as before; an
+unknown level plays `current` and says `level: null`. In the room
+(`relay-engine.mjs`, `relay-server.mjs`): the level is a room setting —
+`POST /rooms { level }`, changed by a sit that names one until the deal —
+asked of the engine only at protocol 4 and only for a heuristic seat, and
+believed only as the engine's reply confirms it; `seated` after the deal says
+`level` (null where the engine took none), the engine's `seats` entry says it,
+and `GET /rooms/<code>` reports `level`, `played` and `profile`. A room nobody
+asked a level of asks for none, so a tab from before levels keeps the engine it
+had. In the app: `src/lib/engine/levels.js` (the words, the default, the
+forgiving read, the lines, the measured sentence, the log's line); the choice
+in the engine's lobby beside its seat, as three radios with a line each, and
+under them "These descriptions are this app's own." and the measured sentence;
+"Play the engine" opening the room at the remembered level; the sit carrying
+it; the log saying once "The engine is playing at the hard level." — or, where
+it is not, that this relay's engine is older than the levels, or that this
+relay is; the seat list saying "The engine · Hard"; and a lobby for a table
+already dealt saying its level rather than offering one.
+
+**Found by measuring, and fixed.** Two, both about a slow answer, which no
+level was slow enough to show until hard.
+
+1. *A second press reached the engine and landed on the next stop.* The stop a
+   press answers does not move until the engine answers it, so a second press
+   in the meantime passed the relay's stale check, was queued behind the
+   first, and was applied to whatever the engine offered next — a play nobody
+   chose. It predates M3 and needed a long answer to be likely; hard makes it
+   likely. The room now takes one move at a time and refuses the next, "The
+   engine is still answering your last move."; the client does not send it in
+   the first place and says the same. A test of the room's with the stand-in
+   engine held to a slow `act` (`slowActs`, new) failed before and passes
+   after.
+2. *Nothing on screen said a slow answer was coming.* The table stood as it
+   was, prompt and all, for up to ten seconds. Now an answer not back within
+   400 ms is the engine thinking: the plate says "The engine is thinking…" and
+   the prompt steps aside, exactly as at one of the engine's own paced stops.
+   400 ms because no easy or intermediate answer took longer than 218 ms: said
+   at once, it would flash up on every press.
+
+**Found by measuring, and not fixed: a cost with a choice in it.** Flamecache
+Gecko's "{1}{R}, Discard a card: Draw a card" is offered as affordable and
+worth making, glows as playable (M1b), and `act` has no way to say which card
+to discard, so Argentum refuses it: "Must choose 1 card(s) to discard". The
+table shows that refusal as it stands. It is the targets gap M2 found, for
+costs, and M4's ground: `HANDOFF.md` M4 now names it. The watch run's plainest
+player was refused 1,876 times, took the next offer each time as the capture
+script does, and every one of those refusals was this ability: the run was
+played again from its seeds and the refusals tallied, and the replay came to
+the same 1,876. Since the review the offer says so and the table holds it back
+rather than glow it (below, "What the review found", 1); asking which card is
+still M4's.
+
+**Where it departs from the brief's letter, and why.**
+
+1. *Intermediate is `production-raceclock`, not `PRODUCTION`*, and *hard is
+   `production-candidate-expiring`, not `PRODUCTION_CANDIDATE_TUNED`* — the
+   first measured no stronger than easy, and the second is what Argentum
+   itself fields now. Easy is `LEGACY_V0` rather than `CURRENT`, the same
+   player, for its promise never to change.
+2. *`level` is a key of its own on the player*, beside `ai`, which still names
+   the kind of player. A random seat has no level, and a separate key lets an
+   older engine ignore it and a relay see from the reply whether it was taken.
+   `ai: "hard"` is read as well.
+3. *The lines say what each level does and how long it takes, not "sensibly"*:
+   "sensibly" is not something the measurement shows. The strength is in one
+   sentence with its date, as ranges from one deck to the other.
+4. *The log's line is "The engine is playing at the hard level."*, not "The
+   engine plays hard."
+5. *The choice is in the engine's own lobby*, beside its seat, where the table
+   it applies to is; "Play the engine" in the solo lobby opens the room at the
+   remembered level, and the sit settles it.
+6. *More measured than asked*: 4,400 games between levels rather than ten, and
+   what a person waits as well as what a choice costs; and `clock`, which the
+   brief did not name, is how the second was measured.
+
+**The run in a browser.** `levels.spec.mjs` (new, the stand-in engine, so it
+runs everywhere): the three levels, intermediate chosen, the lines and the
+sentence, axe clean at 1280 wide and at 390, no sideways scroll, arrow keys,
+the choice kept across a reload, the room opened at it, the sit carrying hard
+to the engine for its own seat and not the person's, the log and the seat list
+naming it, the lobby of the dealt table saying it; then a slow answer — a
+second press refused in words, the plate thinking and the prompt aside, one
+press sent. `game-engine.spec.mjs` against the real engine: three offered,
+intermediate chosen, the room opened at it, easy chosen, the engine playing
+`v0` and the log and seat list saying so. Easy is chosen there because every
+seeded claim after it was written against that player. Screenshots looked at:
+the lobby's choice, the table naming the level, the table thinking through a
+slow answer (`levels-lobby.png`, `levels-table.png`, `levels-slow.png` in the
+system's temporary folder).
+
+**What the review found, and what was done.** The same day, a review of this
+milestone and of M1b's glows found thirteen faults, each confirmed by a second
+reading before anything was touched. All thirteen are fixed, each with a test
+that fails without its fix where a test could be written; the four in
+`useEngineRoom.js` were checked that way, by taking each fix out and watching
+its test fail.
+
+1. *A cost with a choice in it glowed, and M3's own note said the wire could
+   not tell.* It could: Argentum's `LegalAction` carries `additionalCostInfo`
+   and `requiresForage`, and `Server.kt` never sent them. It now sends
+   `additionalCost`, `additionalCostText` and `requiresForage`
+   (`engine/README.md`), and the table holds such an offer back where it holds
+   back one needing a target: no glow; the prompt names it ("Flamecache Gecko
+   needs a choice made for its cost, which this table cannot make yet. Pass to
+   go on."); a tap says why, with the cost in Argentum's words; the actions
+   panel lists it, not pressable, with the reason. Sacrificing the source and
+   paying life need nothing chosen (Argentum's `CostHandler`) and still glow.
+   Against the built engine, from seed 1, a deck of Mountains and Geckos
+   reaches a stop made for the Gecko's ability alone, its offer says
+   `DiscardCard`, and sending it bare is refused (`engine-live.test.js`).
+2. *A stop made only for a flashback said "Nothing to do here but pass."* The
+   prompt dropped every offer whose card was neither in hand nor on the
+   battlefield. It now names each with where it is ("You can play Think Twice
+   from your graveyard: find it under Actions, or pass."), and the pile's tile
+   wears the playable edge and says in its label that it holds one. The shape
+   was read off the live engine first: a `CastWithFlashback` offer, its card in
+   the graveyard, and stops in upkeep made for nothing else.
+3. *"The legal targets glow" was said over a table where none did*, for a
+   trigger aimed at a card in a graveyard (Gravedigger's). The zone browser
+   now draws the target edge on such a card and writes "a legal target" beside
+   its name, and a tap there answers the decision; so does a spell on the stack
+   that is a legal target; a pile holding one wears the edge on its tile and
+   says so in its label; and the prompt says where the targets are ("…the legal
+   targets are in your graveyard — open it to tap one."). At the engine's
+   table the stack is now read from every seat, since the engine files the one
+   stack under one seat's id, and its "Resolve" and "It was countered" buttons
+   are gone from there: the engine resolves the stack, and they were only ever
+   refused.
+4. *A permanent's ability was counted as "a card you can play".* The prompt
+   now says "The permanent with an ability you can use glows.", and names both
+   where both glow; `docs/TURN_STRUCTURE.md` keeps the three kinds of play
+   apart (117.4, 305.2, 505.6a–b).
+5. *Space after a mouse press pressed the control again.* Chromium marks the
+   focused control as focus-visible as soon as a key goes down, before any
+   listener runs, so the check made in the keydown always said "keyboard". A
+   probe on the pinned Chromium showed it: false at the click, true in the
+   keydown, and true at focus only after Tab. The table now notes how each
+   control came by its focus as it comes by it. The engine spec taps the
+   refused Hammer, presses Space with nothing blurred first, and the stop moves
+   on; then reaches a card in hand with Tab, presses Space, and the card is
+   played rather than the stop passed.
+6. *Keyboard focus on a glowing card all but vanished*: the accent ring 2 to 4
+   px out, drawn over a glow of the same colour reaching 5 px. A glowing card's
+   ring now stands 6 px out, in two tones — ink inside, light outside — so it
+   shows on the parchment mat and on the dark chrome alike. The engine spec
+   reaches a chosen attacker with the keyboard and reads the ring off it:
+   solid ink at 6 px and the light band beyond, neither the accent, none of it
+   there unfocused. Looked at in `engine-attack-focus.png`.
+7. *"The engine is thinking…" stayed on the plate for good after the wire
+   dropped under a press.* An enforced room does not outlive its relay, so that
+   answer never comes; the wire leaving now ends the wait.
+8. *"The engine is still answering your last move" stood through the engine's
+   paced turn after the answer came.* The refusal is now marked as the guard's
+   (`answering: true`, from the room as well as from the client) and taken down
+   at the next status, whoever's stop it is. Every other refusal still stands
+   through the engine's turn.
+9. *The lobby said a table's game was under way, one way only, while its engine
+   was still loading the corpus.* The room now reports `dealt` beside
+   `started`, and the lobby says "The engine is dealing this table's game,
+   asked to play at the easy level." until it has (`roomLevel` in `levels.js`,
+   which reads a room from before this as well). `levels.spec.mjs` holds the
+   stand-in's first answer back and looks at the lobby meanwhile.
+10. *The log said the engine was "older than the levels" at a table where it
+    plays at random, or plays nobody.* `seated` now says which kind of player
+    the engine fields (`ai`), and only a heuristic table has its level said; a
+    room from before that is read from the seats it sent first.
+11. *The live level tests only read back the process's own label.* Nothing
+    showed that a level reached the player. `engine-live.test.js` now plays one
+    seed four ways, each against easy: easy, intermediate and hard play three
+    different games, and easy plays exactly the game of a seat asked for no
+    level. Were the profile dropped on its way to `AIPlayer`, all four would be
+    the same game. Seeds 20260924 and 1 to 5 were tried first; every one parted
+    the three levels, and in every one "no level" played easy's game.
+12. *The prompt's sentence for a stop made for a targeted spell had one check,
+    and it was skipped without failing* whenever the stop offered other plays
+    too. A jsdom test (`tests/engine-prompt.test.jsx`, new) renders the prompt
+    against the captured run's stop for Volcanic Hammer alone, and the engine
+    spec now plays what else is offered until such a stop comes, rather than
+    noting on the console that it had not.
+13. *The relay's "one move at a time" test leaned on real time*: a 400 ms
+    busy-wait in the stand-in and a 50 ms sleep. The stand-in now holds an act
+    unanswered until the test releases it (`holdActs`, `release`), with every
+    later line waiting behind it as the real process makes them wait, and
+    `levels.spec.mjs`'s slow answer is held the same way rather than timed.
+    With the room's guard taken out the test fails, as it did before; what
+    changed is that with the guard in it can no longer fail because a loaded
+    machine answered the first press before the second one arrived, which
+    would have been refused as stale instead.
+
+What the review's fixes did not reach: the pile's tile marks, the sentences
+for a flashback and for targets in a pile are held by unit tests and not seen
+in a browser, because no seeded game here reaches a flashback or a trigger
+aimed into a graveyard; the focus ring was looked at
+(`engine-attack-focus.png`: the gold glow, then the ink ring, then the light
+one, clear on the parchment).
+
+The bar after the review: 1,824 unit tests across 90 files, 29 of them new; 35
+browser specs, 1,339 checks, none failed, in 766 s on the final build, the
+engine's own spec 122 of them against the real engine (seven new) and
+`levels.spec.mjs` 35 (five new); the live engine suite 23 of 23, two new; the
+token check clean. No JVM and no preview left running.
+
+**Not done, and where it goes.** No level is chosen per table once dealt: a new
+table takes a new choice. The measurement is two mirror decks; the engine's own
+deck (M5) will make other matchups, and the script takes any deck in its
+`DECKS`. A cost with a choice in it is held back, not asked — M4, above. A spell
+with an X in its cost is sent with whatever X the engine enumerated; nothing
+here has looked at that yet, and M4's decisions are where it belongs. Argentum
+moves its live profile often; each move of the pin should run
+`scripts/engine-levels.mjs` again and say here whether hard still is what
+Argentum fields.
+
+The bar at the end: 1,795 unit tests across 89 files, 25 of them new; 35
+browser specs, 1,327 checks, none failed, in 823 s on the final build, the new
+`levels.spec.mjs` 30 of them and the engine's own spec 115 against the real
+engine through the real relay; the live engine suite 21 of 21, six of them new,
+one short game at each level among them; the token check clean. The test of
+the room's that proves one move at a time failed before the fix and passes
+after. No JVM and no preview left running.
+
 ## Phase 3-alt — Writing the rules core ourselves
 
 Only if the owner wants the engine to be ours. `src/lib/engine/`, TypeScript,

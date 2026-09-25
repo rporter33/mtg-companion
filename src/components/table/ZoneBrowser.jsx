@@ -34,8 +34,14 @@ const order = (id) => {
  * The library is searchable here on purpose. It is exactly the thing an
  * enforced game will not let you do idly and a paper table always allows,
  * because at a paper table you are the one holding the deck.
+ *
+ * `glowOf` is what the engine is asking about a card right now, at the table
+ * it holds (src/lib/engine/glow.js): a card in a graveyard can be the legal
+ * target of a trigger, and is tapped here to answer it. Its edge is drawn and
+ * its words written beside its name, because a pile is a list and a glow on
+ * a list is easily missed.
  */
-export default function ZoneBrowser({ instances, cardFor, nameFor, selected, onSelect, label }) {
+export default function ZoneBrowser({ instances, cardFor, nameFor, selected, onSelect, label, glowOf = () => null }) {
   const [query, setQuery] = useState('')
 
   const groups = useMemo(() => {
@@ -88,17 +94,21 @@ export default function ZoneBrowser({ instances, cardFor, nameFor, selected, onS
             {label} <span className="chip tiny">{list.length}</span>
           </h3>
           <ul className="pile__cards" role="list">
-            {list.map((inst) => (
-              <li key={inst.id}>
-                <button
-                  className={`pile__card ${selected === inst.id ? 'pile__card--selected' : ''}`}
-                  onClick={() => onSelect(inst.id)}
-                  aria-pressed={selected === inst.id}
-                >
-                  {nameFor(inst)}
-                </button>
-              </li>
-            ))}
+            {list.map((inst) => {
+              const glow = glowOf(inst.id)
+              return (
+                <li key={inst.id}>
+                  <button
+                    className={`pile__card${selected === inst.id ? ' pile__card--selected' : ''}${glow?.kind === 'target' || glow?.kind === 'chosen' ? ' pile__card--target' : glow ? ' pile__card--playable' : ''}`}
+                    onClick={() => onSelect(inst.id)}
+                    aria-pressed={selected === inst.id}
+                  >
+                    {nameFor(inst)}
+                    {glow?.says && <span className="pile__glow"> · {glow.says}</span>}
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         </section>
       ))}

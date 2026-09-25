@@ -1,6 +1,7 @@
 package companion
 
 import com.wingedsheep.ai.engine.AIPlayer
+import com.wingedsheep.ai.engine.AiProfile
 import com.wingedsheep.engine.core.ActivateAbility
 import com.wingedsheep.engine.core.CardsDiscardedEvent
 import com.wingedsheep.engine.core.CardsDrawnEvent
@@ -88,7 +89,8 @@ import java.util.Random
  *    passes for it and says how many times it did (`autoPassed`).
  *  - **The seat opposite can be the engine's own player.** A seat with
  *    `ai: "heuristic"` or `"random"` is driven here, so solo play needs no
- *    second client.
+ *    second client. A heuristic seat plays at one of three levels, each one
+ *    of Argentum's own named AI profiles (`LEVELS` below says which, and why).
  *  - **Decisions the client cannot yet answer are answered here, and said.**
  *    Targets, yes/no and option choices go to the client. Everything else —
  *    ordering, damage assignment, mana sources — is answered by the engine's
@@ -106,7 +108,60 @@ import java.util.Random
 // takes the next step; and a delta view's log carries only its seat's new lines. An
 // engine at 2 has neither: it would ignore "pace" and refuse "continue" as an unknown op, so
 // a relay that reads protocol 2 must not ask for a pace.
-const val PROTOCOL = 3
+// 4: an engine's seat may be asked to play at a level — "level" on a player in "new", one of
+// the words in `LEVELS` — and the reply's seats say the level and the Argentum profile each one
+// plays with, so a relay can see what was taken rather than assume it. "hello" lists the levels.
+// An engine at 3 ignores "level", as it ignores every key it does not know, and plays its one
+// way (Argentum's CURRENT profile), so a relay reading 3 must not ask for one and must not say
+// the engine is playing at one. "clock" is new here too, for measuring what a level costs.
+const val PROTOCOL = 4
+
+/**
+ * The three strengths the app offers, each one of Argentum's own named profiles
+ * (`ai/…/engine/AiProfile.kt` at the pinned commit), chosen and measured for M3
+ * (docs/table-rebuild/PLAN.md, "M3: easy, intermediate, hard"). Nothing here tunes a
+ * profile: a level is only ever a name for one Argentum already publishes numbers about.
+ *
+ *  - **easy** is `LEGACY_V0`, the greedy one-move look Argentum keeps frozen as the reference
+ *    every one of its arena results is quoted against. It is the same player every engine
+ *    before protocol 4 fielded (`CURRENT` is `LEGACY_V0` under another id), so easy is exactly
+ *    the engine this table played before there were levels.
+ *  - **hard** is `PRODUCTION_CANDIDATE_EXPIRING`, the profile Argentum's own game server
+ *    (`EngineAiPlayerController`) plays its players with at the pinned commit: rollouts on a
+ *    four-tier budget, hidden cards guessed rather than read, and every evaluation fix that
+ *    has been promoted since.
+ *  - **intermediate** is `PRODUCTION_RACECLOCK`: Argentum's `PRODUCTION` (card knowledge and
+ *    the card advisors) plus the discounted race clock, the one evaluator fix Argentum's arena
+ *    measured as a strength gain on its own without rollouts. It answers as fast as easy does,
+ *    because it still looks one move ahead.
+ *
+ * What each one measured against the others, through this process, is in PLAN.md.
+ */
+private val LEVELS: Map<String, AiProfile> = linkedMapOf(
+    "easy" to AiProfile.LEGACY_V0,
+    "intermediate" to AiProfile.PRODUCTION_RACECLOCK,
+    "hard" to AiProfile.PRODUCTION_CANDIDATE_EXPIRING,
+)
+
+/**
+ * Argentum's named profiles, by their own ids, for a measurement that wants to set one against
+ * another (`scripts/engine-levels.mjs`): the candidates each level was chosen from, and the
+ * steps between them. The relay never sends a profile; it sends a level. A profile asked for by
+ * an id not here is refused, so a measurement never quietly plays a different agent.
+ */
+private val PROFILES: Map<String, AiProfile> = listOf(
+    AiProfile.LEGACY_V0,
+    AiProfile.CURRENT,
+    AiProfile.PRODUCTION,
+    AiProfile.PRODUCTION_RACECLOCK,
+    AiProfile.PRODUCTION_TUNED,
+    AiProfile.PRODUCTION_CANDIDATE,
+    AiProfile.PRODUCTION_CANDIDATE_TUNED,
+    AiProfile.PRODUCTION_CANDIDATE_COUNTERPATIENCE,
+    AiProfile.PRODUCTION_CANDIDATE_EXPIRING,
+    AiProfile.PHASE7,
+    AiProfile.PHASE8,
+).associateBy { it.id }
 
 private val json = Json { encodeDefaults = false; ignoreUnknownKeys = true }
 
@@ -118,7 +173,19 @@ private class Seat(
     val sideboardLeftOut: List<String> = emptyList(),
     /** Cards whose chosen printing the engine does not have, so they wear its own art. */
     val unknownPrintings: List<String> = emptyList(),
+    /** The Argentum profile a heuristic seat plays with; null for a person and for a random seat. */
+    val profile: AiProfile? = null,
+    /** The level that profile was asked for by, when it was asked for by one this engine has. */
+    val level: String? = null,
 )
+
+/**
+ * How long one of an engine seat's choices took, for `clock`. `meaningful` says whether there
+ * was anything to choose between — an affordable play the engine itself calls worth making —
+ * because most windows offer only a pass, and a median taken over those says nothing about a
+ * level. A decision the seat answered for itself is always a choice.
+ */
+private class Choice(val nanos: Long, val decision: Boolean, val meaningful: Boolean)
 
 /** Zones whose contents only their owner may know. */
 private val HIDDEN = setOf(Zone.HAND, Zone.LIBRARY)
@@ -217,7 +284,21 @@ private class Table(
 
     fun seat(id: EntityId): Seat = seats.first { it.id == id }
 
-    fun player(id: EntityId): AIPlayer = players.getOrPut(id) { AIPlayer.create(registry, id) }
+    /**
+     * The engine's player for a seat. A heuristic seat's is its level's profile; every other
+     * seat's — a person's, whose decisions this protocol cannot yet ask and so answers for them,
+     * and a random seat's — is `CURRENT`, the responder every engine before levels used.
+     */
+    fun player(id: EntityId): AIPlayer = players.getOrPut(id) { AIPlayer.create(registry, id, seat(id).profile ?: AiProfile.CURRENT) }
+
+    /** Every choice each engine seat made since the last `clock`, and how long it took. */
+    val clock = HashMap<EntityId, MutableList<Choice>>()
+    private inline fun <T> timed(id: EntityId, decision: Boolean, meaningful: Boolean, choose: () -> T): T {
+        val started = System.nanoTime()
+        val chosen = choose()
+        clock.getOrPut(id) { mutableListOf() } += Choice(System.nanoTime() - started, decision, meaningful)
+        return chosen
+    }
 
     /**
      * Runs the table forward until a human seat has to act, the game ends, or
@@ -249,7 +330,8 @@ private class Table(
                 // A decision answered here — the engine's own, or one this protocol cannot
                 // put to a human — belongs to the action that raised it, so a paced table
                 // does not stop for it: a step is one action and the answers it needed.
-                val response = player(actor).respondToDecision(env.state, decision)
+                val response = if (seat.ai == null) player(actor).respondToDecision(env.state, decision)
+                    else timed(actor, decision = true, meaningful = true) { player(actor).respondToDecision(env.state, decision) }
                 if (seat.ai == null) decided += describe(decision)
                 env.step(SubmitDecision(actor, response))
                 continue
@@ -261,10 +343,13 @@ private class Table(
             // decided first, so what the relay publishes is that seat having finished its go.
             if (acted != null) { pausedAfter = acted; return }
             if (seat.ai != null) {
-                val chosen = when (seat.ai) {
-                    "random" -> randoms.getOrPut(actor) { RandomActionSelector(Random(actor.value.hashCode().toLong())) }
-                        .selectAction(env.state, actions)
-                    else -> player(actor).chooseFrom(env.state, actions).action
+                val worthIt = actions.any { MeaningfulActionFilter.isMeaningful(it) && it.affordable }
+                val chosen = timed(actor, decision = false, meaningful = worthIt) {
+                    when (seat.ai) {
+                        "random" -> randoms.getOrPut(actor) { RandomActionSelector(Random(actor.value.hashCode().toLong())) }
+                            .selectAction(env.state, actions)
+                        else -> player(actor).chooseFrom(env.state, actions).action
+                    }
                 }
                 // Worth stopping to watch? The engine's own judgement, the same question Law 1
                 // asks on the player's behalf a few lines below: a priority pass, a land tapped
@@ -367,6 +452,32 @@ private class Table(
         }
     }
 
+    /**
+     * What each engine seat's choices have cost since the last time this was asked, in
+     * milliseconds, and the record is started again. For measuring a level (PLAN.md, M3):
+     * what a player waits on is the engine choosing, and this is that alone, without the
+     * rules applying the choice or the wire carrying it.
+     */
+    fun readClock(): JsonObject = buildJsonObject {
+        put("ok", true)
+        putJsonArray("seats") {
+            for (s in seats.filter { it.ai != null }) add(buildJsonObject {
+                put("id", s.id.value); put("ai", s.ai); put("level", s.level); put("profile", s.profile?.id)
+                putJsonArray("choices") {
+                    clock[s.id].orEmpty().forEach { c ->
+                        add(buildJsonObject {
+                            // Tenths of a millisecond: finer is noise from the clock itself.
+                            put("ms", (c.nanos / 100_000) / 10.0)
+                            if (c.decision) put("decision", true)
+                            put("meaningful", c.meaningful)
+                        })
+                    }
+                }
+            })
+        }
+        clock.clear()
+    }
+
     fun act(index: Int, params: JsonObject): JsonObject {
         val actor = env.agentToAct ?: throw Refused("The game is not waiting on anyone.")
         if (offeredTo != actor || offered.isEmpty()) throw Refused("No actions are on offer. Ask for the turn first.")
@@ -436,6 +547,14 @@ private class Table(
         put("meaningful", MeaningfulActionFilter.isMeaningful(a))
         put("manaCost", a.manaCostString)
         put("requiresTargets", a.requiresTargets)
+        // A cost with more in it than mana: Argentum's own kind for it and its words. Most such
+        // costs are a choice — which card to discard, which creature to sacrifice — and `act`
+        // carries no payment, so an offer like this is one the table must hold back, as it holds
+        // back one needing a target, until it can ask (found at M3: Flamecache Gecko's "Discard a
+        // card", refused as "Must choose 1 card(s) to discard"). Said only where there is one,
+        // so an older client reads the offer as it always has.
+        a.additionalCostInfo?.let { put("additionalCost", it.costType); put("additionalCostText", it.description) }
+        if (a.requiresForage) put("requiresForage", true)
         if (a.requiresTargets) {
             put("targetCount", a.targetCount)
             put("minTargets", a.minTargets)
@@ -622,6 +741,29 @@ private fun pacedBy(params: JsonObject): Boolean = when (val v = params["pace"])
     else -> false
 }
 
+/**
+ * Who plays a seat, from `new`'s player: nobody here (a person), a random player, or the
+ * engine's own at a level.
+ *
+ * `ai` is `"heuristic"` or `"random"`, as before levels; one of the level words is read as a
+ * heuristic seat at that level too, which is the shape HANDOFF.md first sketched. `level` picks
+ * the profile. A level this engine has not heard of — a newer relay's — is not a reason to
+ * refuse a game: the seat plays as a heuristic seat always has, and the reply says it was
+ * asked for no level it knows, so the relay can say so rather than name one. `profile` is for
+ * measurement and names an Argentum profile outright; an id not in `PROFILES` is refused.
+ */
+private fun playerOf(o: JsonObject): Triple<String?, AiProfile?, String?> {
+    val asked = o["ai"]?.jsonPrimitive?.contentOrNull ?: return Triple(null, null, null)
+    if (asked == "random") return Triple("random", null, null)
+    val level = (o["level"]?.jsonPrimitive?.contentOrNull ?: asked).takeIf { it in LEVELS }
+    val named = o["profile"]?.jsonPrimitive?.contentOrNull
+    if (named != null) {
+        val profile = PROFILES[named] ?: throw Refused("No AI profile \"$named\" here; these are: ${PROFILES.keys.joinToString(", ")}.")
+        return Triple("heuristic", profile, null)
+    }
+    return Triple("heuristic", level?.let(LEVELS::getValue) ?: AiProfile.CURRENT, level)
+}
+
 private fun newTable(corpus: Corpus, params: JsonObject): Table {
     val registry = corpus.registry
     val players = params["players"]?.jsonArray ?: throw Refused("\"players\" is required.")
@@ -675,7 +817,8 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
     env.restore(dealt.state, dealt.playerIds)
     val seats = env.playerIds.mapIndexed { i, id ->
         val o = players[i].jsonObject
-        Seat(id, configs[i].name, o["ai"]?.jsonPrimitive?.contentOrNull, o["autoPass"]?.jsonPrimitive?.boolean ?: false, leftOutOfSideboards[i], printingsMissed[i])
+        val (ai, profile, level) = playerOf(o)
+        Seat(id, configs[i].name, ai, o["autoPass"]?.jsonPrimitive?.boolean ?: false, leftOutOfSideboards[i], printingsMissed[i], profile, level)
     }
     return Table(registry, env, seats, seed, pacedBy(params), dealt.events)
 }
@@ -684,6 +827,9 @@ private fun seatsOf(table: Table): JsonArray = buildJsonArray {
     table.seats.forEach { s ->
         add(buildJsonObject {
             put("id", s.id.value); put("name", s.name); put("ai", s.ai); put("autoPass", s.autoPass)
+            // What the seat plays with, said only for a seat the engine plays: the level it
+            // took, if it was asked for one it has, and Argentum's own id for the profile.
+            if (s.profile != null) { put("level", s.level); put("profile", s.profile.id) }
             putJsonArray("sideboardLeftOut") { s.sideboardLeftOut.forEach { add(JsonPrimitive(it)) } }
             putJsonArray("unknownPrintings") { s.unknownPrintings.forEach { add(JsonPrimitive(it)) } }
         })
@@ -725,6 +871,9 @@ fun main() {
                             })
                         }
                     }
+                    // The levels a seat may be asked to play at, each with the Argentum profile
+                    // it plays with, in order from the weakest.
+                    putJsonObject("levels") { LEVELS.forEach { (word, profile) -> put(word, profile.id) } }
                     // Measured, not assumed: what loading the corpus took and holds.
                     putJsonObject("load") {
                         put("ms", corpus.loadMs); put("heapMb", corpus.heapMb); put("maxHeapMb", Runtime.getRuntime().maxMemory() / MB)
@@ -764,6 +913,9 @@ fun main() {
                 "continue" -> (table ?: throw Refused("No game yet. Send \"new\" first.")).resume()
                 "act" -> (table ?: throw Refused("No game yet.")).act(req["index"]?.jsonPrimitive?.int ?: throw Refused("\"index\" is required."), req)
                 "decide" -> (table ?: throw Refused("No game yet.")).decide(req)
+                // How long the engine's seats took to choose, since the last time this was
+                // asked. The relay never asks; scripts/engine-levels.mjs does.
+                "clock" -> (table ?: throw Refused("No game yet.")).readClock()
                 "view" -> {
                     val t = table ?: throw Refused("No game yet.")
                     val viewer = req["viewer"]?.jsonPrimitive?.contentOrNull ?: throw Refused("\"viewer\" is required.")

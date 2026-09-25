@@ -202,6 +202,9 @@ These are settled. Do not reopen them; build on them.
     sets, the load time and the heap measured. The printing choice is never
     steered towards the sets the engine has; a printing it lacks keeps the
     settled fallback (item 10).
+13. **Decided at M3, 2026-09-24.** A first game against the engine is played
+    at intermediate, with easy and hard a choice away in the lobby. The
+    choice is remembered with the player's other table preferences.
 
 ---
 
@@ -323,6 +326,20 @@ says so and offers the other table.
 *Size: small. Two things Moxgate does that the Grok preview named and this
 table does not yet do (`SOURCES.md`, "The Grok preview").*
 
+**Done, 2026-09-24, against the code M2 left rather than the code this was
+written for.** What was built, what was measured, where it departs from the
+letter below and why, and what is left are in `PLAN.md`, "M1b: the glows, and
+a preview that never covers Pass". In short: a spell or ability that needs a
+target does not glow as playable, because this table still cannot send a
+target (M2's finding; the tap now says so instead of drawing the engine's "no
+valid targets"); targets glow wherever a targets decision is asked, which
+today means a triggered ability's, and were watched live on a Sparkmage
+Apprentice; the preview keeps clear of the rail as well as the prompt, and
+stays a floating preview rather than an inspector column. No change to the
+wire and none to `Server.kt`.
+
+The rest of this section is the brief it was built to, kept as written.
+
 - **Playable cards glow.** At the engine's table, a card in hand with an
   affordable, meaningful offer (`offerFor(id)` in `Table.jsx`) gets a
   `bcard--playable` edge glow; a permanent with a non-mana ability offered
@@ -424,6 +441,31 @@ with the log filling in as it goes, and the wire carries deltas.
 
 *Size: small to medium. Mostly measurement.*
 
+**Done, 2026-09-24.** The owner's answer is §3 item 13: a first game is
+intermediate. What the profiles are at the pin, which three the levels are and
+why, what 4,400 games between them measured, what a person waits at each, what
+the measuring found and fixed, and where it departs from the letter below are
+in `PLAN.md`, "M3: easy, intermediate, hard". In short: easy is `v0` (the
+engine this table always had), intermediate `production-raceclock`, hard
+`production-candidate-expiring` (what Argentum fields itself); each beat the one
+below it on both decks measured, by 53–59%, and hard beat easy by 58–63%. The
+brief's `PRODUCTION` measured no stronger than easy, so is not intermediate.
+The level is a room setting, protocol 4 on the process's side; §7 has the wire.
+Hard can take ten seconds over a move against a deck of instants, which found a
+second press landing on the next stop (fixed in the room and the client) and a
+table saying nothing while it waited (it now says the engine is thinking once
+an answer is slow).
+
+**Reviewed the same day.** Thirteen faults were found in what M3 and M1b left,
+and all thirteen are fixed; `PLAN.md`, "M3", under "What the review found", has
+each with its test. The largest: an ability whose cost needs a choice now says
+so on the wire and is held back like a spell that needs a target (M4's note
+below is corrected); a stop made for a flashback, or for such an ability, now
+says so; Space after a mouse press passes as it was meant to; and the levels
+are held to what they play, not only to their names.
+
+The rest of this section is the brief it was built to, kept as written.
+
 Argentum's AI is a set of named profiles in
 `ai/src/main/kotlin/com/wingedsheep/ai/engine/AiProfile.kt`:
 
@@ -495,6 +537,37 @@ it (a burn spell for targets is already there; add a Fireball-style
 distribute, a discard-and-select, a first-strike damage assignment);
 adapter tests for any new event shapes; the engine spec exercises mulligan
 and one decision on screen.
+
+*Added at M1b (2026-09-24).* Three places hold back an offer that needs a
+target, each saying so, until a spell's or an ability's targets can be sent
+with `act`: `glowsAt` and `unaimed` in `src/lib/engine/glow.js` (no playable
+glow; the prompt names the card instead), `cannotAim` in `Table.jsx` (the tap
+says the table cannot choose one), and `EngineActions` (listed, not
+pressable). The target-picking step this milestone adds can reuse the target
+glow as it stands: `bcard--target` on every legal id, the plates for seats, and
+the prompt's "Aim at …" buttons.
+
+*Added at M3 (2026-09-24), corrected in its review the same day.* The same gap
+for costs. An ability whose cost has a choice in it — Flamecache Gecko's
+"{1}{R}, Discard a card: Draw a card" — is offered as affordable and worth
+making, and is refused by Argentum when sent bare ("Must choose 1 card(s) to
+discard"), because `act` has no way to say which card. Found by M3's
+measurement with a Bloomburrow deck (`scripts/engine-levels.mjs --watch`).
+M3's note here said the offer does not say its cost needs a choice; that was
+wrong. Argentum's `LegalAction` carries `additionalCostInfo` (its `costType`,
+its `description`, and the candidates for each kind: `validDiscardTargets`,
+`validSacrificeTargets` and the rest), and `requiresForage`;
+`Server.kt`'s `describe()` simply did not send them. It now sends
+`additionalCost`, `additionalCostText` and `requiresForage` (engine/README.md),
+and the table holds such an offer back in the same places as one needing a
+target: `heldBack`, `unpaid` and `glowsAt` in `glow.js` (no glow; the prompt
+names it), `cannotPay` in `Table.jsx` (the tap says the table cannot make the
+choice), and `EngineActions` (listed, not pressable, with the reason). A cost
+of sacrificing the source itself, or of life, needs nothing chosen and is not
+held back. What is left for this milestone is asking: the candidates are in
+`additionalCostInfo`, and the answer goes in the action's `costPayment`
+(`discardedCards` and its siblings), which `act` would have to fill as it fills
+`attackers`.
 
 ### M5 — The engine's own deck
 
@@ -713,8 +786,8 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 
 - M1: answered on 2026-09-21. Both: the lobby offers the engine without
   those cards, and the table alone (§3, item 10).
-- M3: which level is the default for a first game? The plan assumes
-  intermediate.
+- M3: answered on 2026-09-24. Intermediate, with easy and hard a choice
+  away in the lobby (§3, item 13).
 - M8: which provider, once `HOSTING.md` has verified notes for three.
 - M10: which desktop platform first (the owner's own), and whether a
   signed build matters yet.
@@ -724,11 +797,31 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 ## 7. Appendix — the wire, in one place
 
 Between the browser and the relay, over the room's socket, all
-`{ t: "engine", op }`: `sit { name, deck, sideboard?, seat?, deltas? }`,
+`{ t: "engine", op }`: `sit { name, deck, sideboard?, seat?, deltas?, level? }`,
 `act { stop, index, attackers?, blockers? }`, `decide { stop, … }`, `turn`,
-`resync`; back: `seated { seat, engineSeat, sideboardLeftOut, unknownPrintings }`,
-`seats`, `status`, `view { you, seq, state | delta, log }`, `refused`, `gone`.
+`resync`; back: `seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, level?, ai? }`,
+`seats`, `status`, `view { you, seq, state | delta, log }`, `refused { error, stale?, answering? }`, `gone`.
 Over HTTP, before any room: `POST /engine/check`.
+
+M3's review added three small things, each read forgivingly where it is
+missing. `seated` after the deal says `ai`, the kind of player the engine
+fields there (heuristic, random, or null for none), because only a heuristic
+one has levels and a null `level` means "plays one way" only where it could
+have had one. A refusal of the room's one-move guard says `answering: true`,
+and a client takes it down at the next status, since the answer on its way
+makes it untrue. And `GET /rooms/<code>` says `dealt` beside `started`: an
+engine is started some seconds before it deals, while the corpus loads.
+
+M3 added the level. It is a setting of the room: `POST /rooms { …, level }`,
+and a `sit` naming one changes it until the deal. The room asks the engine for
+it for its own seat only where the engine speaks protocol 4, and every
+`seated` after the deal (the one carrying an `engineSeat`) says `level`: the
+level the engine took, or null where it plays its one way. A `seated` from a
+relay older than levels has no `level` key at all, and the table says so rather
+than name the level chosen. The engine's entry in `seats` carries `level` too,
+and `GET /rooms/<code>` reports `level` (asked) and, once dealt, `played` and
+Argentum's `profile`. A room nobody asked a level of asks the engine for none,
+which is how a tab from before levels keeps the engine it had.
 
 M2 added `resync`, `deltas` on the sit, and the shape of a view. `deltas: true` on
 the sit asks for them; without it every view comes whole, which is what an
@@ -751,17 +844,20 @@ and `paced`.
 
 Between the relay and the process, JSON lines: `hello`, `cards`, `new`,
 `turn`, `act`, `decide`, `view`, `quit`; M1 added `check`, M2 `continue` and
-`pace` on `new`, M7 will add `snapshot` and `restore`. `engine/README.md` is
-the contract and is updated with every op added.
+`pace` on `new`, M3 `level` on a player in `new` (and `profile`, for
+measurement), `levels` in `hello` and `clock`; M7 will add `snapshot` and
+`restore`. `engine/README.md` is the contract and is updated with every op
+added. `PROTOCOL` is 4 since M3; an engine at 3 has no levels and ignores the
+key, so a relay reading 3 asks for none and says the engine plays its one way.
 
 `pace` on `new` is `true` or a number of milliseconds, and the reply says
 `paced: true` only where the engine took it. A paced table stops as soon as
 its own seat has made a play worth watching and answers `waiting: "engine"`;
 `{"op":"continue"}` takes the next step. The engine never sleeps: every wait in
-wall-clock time is the relay's. `PROTOCOL` is 3 and an engine at 2 has neither
-a pace nor a `continue`, so a relay reading 2 must ask for neither.
+wall-clock time is the relay's. The pace came with protocol 3, and an engine at
+2 has neither a pace nor a `continue`, so a relay reading 2 must ask for neither.
 
-The status shape, and what `meaningful`, `card`, `mana`, `autoPassed` and
-`decided` mean, is in `engine/README.md`. The board the screen draws is the
+The status shape, and what `meaningful`, `card`, `mana`, `additionalCost`,
+`autoPassed` and `decided` mean, is in `engine/README.md`. The board the screen draws is the
 one in `src/lib/board/model.js`, unchanged by any of this; `board.engine`
 carries what the model has no word for (priority, phase, over, winner).

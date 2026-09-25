@@ -56,16 +56,17 @@ One request per line, one reply per line, correlated by `id`:
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"engine":"argentum","protocol":3,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"load":{"ms":15207,"heapMb":110,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order |
+| `{"op":"hello"}` | `{"engine":"argentum","protocol":4,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"levels":{"easy":"v0","intermediate":"production-raceclock","hard":"production-candidate-expiring"},"load":{"ms":15207,"heapMb":110,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order; `levels` are the strengths an engine seat may play at, weakest first, each with the Argentum profile behind it |
 | `{"op":"cards"}` | `{"names":[…]}` — every name a deck may hold: no tokens and no back faces, though the engine knows both |
 | `{"op":"check","deck":{"Delver of Secrets // Insectile Aberration":4,"Made-Up Card":2},"sideboard":{…}}` | `{"known":4,"total":6,"unknown":["Made-Up Card"],"unknownSideboard":[]}` — which of a deck's cards the engine knows, before any game; unknown names come back exactly as sent |
-| `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic"}],"seed":20260921,"pace":true}` | the table's status (below) plus `seats` and the `seed` it was dealt from, and `paced` when the table was paced; each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got |
+| `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true},{"name":"Bot","deck":{…},"ai":"heuristic","level":"intermediate"}],"seed":20260921,"pace":true}` | the table's status (below) plus `seats` and the `seed` it was dealt from, and `paced` when the table was paced; each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got; a seat the engine plays with its own judgement also says the `level` it took (null for none) and the Argentum `profile` it plays with |
 | `{"op":"turn"}` | the table's status |
 | `{"op":"continue"}` | the next step of a paced table: the status once the engine's seat has made its next play |
 | `{"op":"act","index":3}` | the status after that action and everything that followed it |
 | `{"op":"act","index":0,"attackers":{"e16":"e1"}}` / `{"blockers":{"e20":["e16"]}}` | a declare-attackers or declare-blockers offer, filled in: which creatures, at whom |
 | `{"op":"decide","targets":{"0":["e12"]}}` / `{"yes":true}` / `{"option":1}` / `{"auto":true}` | likewise |
 | `{"op":"view","viewer":"<seat id>","delta":true}` | `{"state":ClientGameState,"log":[ClientEvent…]}` first, `{"delta":StateDelta,"log":[…]}` after; a full view's `log` is everything that seat has been told so far, a delta's only what is new since its last view |
+| `{"op":"clock"}` | `{"seats":[{"id":"e1","ai":"heuristic","level":"hard","profile":"production-candidate-expiring","choices":[{"ms":88.4,"meaningful":true},{"ms":0.1,"meaningful":false},{"ms":12.0,"decision":true,"meaningful":true}]}]}` — how long each of the engine's seats took over every choice since the last `clock`, which starts the record again; for measuring, and never sent by the relay |
 | `{"op":"quit"}` | `{"ok":true}` and the process ends |
 
 The status is where the table stands and what it is waiting for:
@@ -84,6 +85,21 @@ The status is where the table stands and what it is waiting for:
 stopping for (a mana ability is not, and is marked `mana`); a
 declare-attackers offer carries `validAttackers` and `validAttackTargets`,
 a declare-blockers one `validBlockers`.
+
+An offer whose cost has more in it than mana says so: `additionalCost` is
+Argentum's own kind for it (`DiscardCard`, `SacrificePermanent`,
+`SacrificeSelf`, `PayLife` and so on, from `LegalAction.additionalCostInfo`)
+and `additionalCostText` its words, and a forage cost adds `requiresForage`.
+`act` carries no payment, so an offer whose cost is a choice is refused when
+sent bare — Flamecache Gecko's `{"additionalCost":"DiscardCard",
+"additionalCostText":"Discard a card"}` comes back "Must choose 1 card(s) to
+discard", which `tests/engine-live.test.js` checks — and the table holds such
+an offer back as it holds back one with `requiresTargets`
+(`src/lib/engine/glow.js`, `heldBack`). Sacrificing the source itself and
+paying life need nothing chosen, and are not held back. The keys are said only
+where there is such a cost, so an older client reads every offer as before;
+they came after M3, in its review, without a new protocol number, because
+nothing that reads the status is asked to do anything new.
 
 `waiting` is `"action"` with `actions`, `"decision"` with `decision`,
 `"engine"` on a paced table that has stopped after one of the engine's own
@@ -141,6 +157,56 @@ every key it does not know — and refuses `continue` as an unknown op, so a
 relay reading `hello.protocol` below 3 must not ask for a pace and must never
 send `continue`. The reply to `new` says `paced` when the pace was taken, so a
 relay can see that it was rather than assume.
+
+**Levels, and `clock`.** An engine seat plays at one of three levels, each one of
+Argentum's own named AI profiles (`ai/…/engine/AiProfile.kt`), mapped in
+`LEVELS` in `Server.kt` and listed by `hello`: **easy** is `v0` (`LEGACY_V0`, the
+greedy one-move look Argentum keeps frozen as the reference for all its arena
+numbers, and the very player every engine before protocol 4 fielded, as
+`CURRENT`); **intermediate** is `production-raceclock` (card knowledge, the card
+advisors, and a race scored by how soon it ends, still one move deep and as
+quick as easy); **hard** is `production-candidate-expiring` (what Argentum's own
+game server plays people with at the pin: each option played out two turns
+ahead, three in combat or near lethal, on a four-tier budget; the cards it
+cannot see shuffled among themselves before it searches rather than read; and
+every evaluation fix promoted so far). Why these three, and what they measured against each
+other through this process, is in `docs/table-rebuild/PLAN.md`, "M3".
+
+A player in `new` asks for one with `level`; `ai` may also be the level's word
+(`"ai":"hard"`), read the same way. The reply's seat says the `level` it took
+and the `profile` it plays with. A level this engine does not know is not a
+reason to refuse a game: the seat plays as heuristic seats always have
+(`current`) and says `level: null`, so a relay can say so rather than name one.
+`profile`, naming an Argentum profile by its id, is for measurement
+(`scripts/engine-levels.mjs`), and an id the process does not list is refused,
+so a measurement never quietly plays a different agent. The relay sends only a
+level. A person's seat has no level: the decisions this protocol cannot yet
+ask of them are answered with `current`'s responder, as before.
+
+A seat's `level` and `profile` are this process's echo of what was asked, so
+`tests/engine-live.test.js` holds the levels to what they play as well: from
+one seed, each against easy, the three play three different games, and easy
+plays exactly the game of a seat asked for no level.
+
+Hard's search is budgeted in work, not time. Argentum's `TieredBudgetPolicy`
+names 0, 200, 2,000 and 5,000 ms for its four tiers (a window with nothing to
+choose, a routine one on the other player's turn, a main phase or a response,
+and combat or either side within reach of lethal), but those milliseconds are
+converted once into counts — 16 rollouts at the 2 s tier, 40 at 5 s, none below
+2 s — and the clock is only a safety stop a healthy decision never reaches.
+That is what keeps a seeded game the same game at hard, which
+`tests/engine-live.test.js` checks; it is also why a slow machine makes hard
+slower rather than weaker. What it costs in wall-clock time is measured, not
+taken from those names: PLAN.md, "M3".
+
+`clock` is how that was measured: every choice an engine seat made since the
+last `clock` (every priority window it was given and every decision it answered
+for itself), how long the choosing alone took, and whether there was anything
+to choose between. The relay never asks for it.
+
+Neither levels nor `clock` exist before protocol 4. An engine at 3 ignores
+`level`, as it ignores every key it does not know, and plays its one way, so a
+relay reading 3 must not ask for one and must not say the engine plays at one.
 
 **The log.** Each seat's log is Argentum's `ClientEvent`s for that seat, with
 three changes, all found in M1's run in a browser. Every line carries its

@@ -115,10 +115,15 @@ export function relay({ url, WebSocket: Socket = globalThis.WebSocket, onStatus 
 export function rooms(base) {
   const origin = String(base).replace(/\/$/, '')
   return {
-    async open({ seats = 2, enforced = false, ai = 'heuristic' } = {}) {
+    /**
+     * Opens a room. An enforced one may be given the level the engine is to
+     * play at, as a setting of the room's; a relay from before levels ignores
+     * the key, and the table then says the engine plays its one way.
+     */
+    async open({ seats = 2, enforced = false, ai = 'heuristic', level = null } = {}) {
       const res = await fetch(`${origin}/rooms`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(enforced ? { seats, enforced: true, ai } : { seats }),
+        body: JSON.stringify(enforced ? { seats, enforced: true, ai, ...(level ? { level } : {}) } : { seats }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))

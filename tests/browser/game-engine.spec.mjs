@@ -98,6 +98,13 @@ const CARDS = [
   c('hulk', 'Hulking Goblin', 'Creature — Goblin', { mana_cost: '{2}{R}', cmc: 3, power: '2', toughness: '2', collector_number: '135' }),
   c('hammer', 'Volcanic Hammer', 'Sorcery', { mana_cost: '{1}{R}', cmc: 2, oracle_text: 'Volcanic Hammer deals 3 damage to any target.', collector_number: '154' }),
   c('axe', 'Lava Axe', 'Sorcery', { mana_cost: '{4}{R}', cmc: 5, oracle_text: 'Lava Axe deals 5 damage to target player.', collector_number: '137' }),
+  // A creature whose arrival asks its controller for a target: the one way a
+  // targets decision reaches this table today (PLAN.md, M2). Ravnica's own
+  // printing, which the engine has (checked 2026-09-24).
+  c('spark', 'Sparkmage Apprentice', 'Creature — Human Wizard', {
+    mana_cost: '{1}{R}', cmc: 2, power: '1', toughness: '1', oracle_text: 'When this creature enters, it deals 1 damage to any target.',
+    set: 'rav', set_name: 'Ravnica: City of Guilds', collector_number: '144',
+  }),
   // No such cards exist, so the engine cannot know them: the deck gate's cases.
   c('madeup', 'Made-Up Goblin', 'Creature — Goblin', { power: '1', toughness: '1' }),
   c('madewish', 'Made-Up Wish', 'Sorcery'),
@@ -129,6 +136,15 @@ const STATE = {
     id: 'd3', name: 'Rift Goblins', formatId: 'standard', commanders: [], signatureSpell: null, categoryOrder: [], versions: [],
     main: [...GOBLINS, { cardId: 'rift', quantity: 2 }, { cardId: 'riftwalker', quantity: 1 }],
     sideboard: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+  }, {
+    // Dealt from the same seed, this deck's fifth turn casts a Sparkmage
+    // Apprentice with creatures on both sides of the table, and its arrival
+    // asks for a target among them and the two players. Played the same way
+    // each time — the first play the engine lists, else a pass — so it is the
+    // same game; tried against the engine directly before it was written here.
+    id: 'd4', name: 'Sparks', formatId: 'standard', commanders: [], signatureSpell: null, categoryOrder: [], versions: [],
+    main: [{ cardId: 'mountain', quantity: 14 }, { cardId: 'spark', quantity: 12 }, { cardId: 'goblin', quantity: 8 }],
+    sideboard: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
   }],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
   prefs: { relayUrl: RELAY, playerName: 'Robin', reduceMotion: true },
@@ -144,6 +160,19 @@ page.on('pageerror', (e) => errors.push(e.message))
 // hundred milliseconds, so this is where such a thing would show.
 const consoleErrors = []
 page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()) })
+// What the room told the page, as the page received it: the latest status, the
+// seats, and which engine seat is this one. The glows are held against the
+// engine's own offers, read here off the wire, rather than against this spec's
+// idea of which cards ought to be playable (HANDOFF.md, M1b).
+const wire = { status: null, seats: [], me: null }
+page.on('websocket', (ws) => ws.on('framereceived', ({ payload }) => {
+  let m
+  try { m = JSON.parse(typeof payload === 'string' ? payload : payload.toString()) } catch { return }
+  if (m?.t !== 'engine') return
+  if (m.op === 'status' && m.status) wire.status = m.status
+  if (m.op === 'seats' && Array.isArray(m.seats)) wire.seats = m.seats
+  if (m.op === 'seated' && m.engineSeat) wire.me = m.engineSeat
+}))
 await page.route('**/api.scryfall.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))
 await page.route('**/api.scryfall.com/cards/collection', (route) => route.fulfill({
   status: 200, contentType: 'application/json', body: JSON.stringify({ data: CARDS }) }))
@@ -166,6 +195,16 @@ check('opening a table the engine holds changes the address', await until(() => 
 const code = await page.evaluate(() => location.hash.match(/engine\/([A-Z0-9]{5})/)?.[1])
 check('the lobby says the rules are enforced', await until(() => page.locator('.lobby__mode').textContent().then((t) => /Rules enforced/.test(t ?? ''))))
 check('the seats panel names the engine as the seat opposite', await until(() => page.locator('.lobby__seats').textContent().then((t) => /The engine/.test(t ?? ''))))
+// How strongly it plays (HANDOFF.md, M3). levels.spec.mjs holds the choice
+// itself to account; here it is the real engine that has to take it. Easy is
+// chosen because easy is the engine every seeded claim below was written
+// against — the same Argentum profile the engine played before there were
+// levels — so the game dealt from SEED is the one it always was.
+const levels = page.getByRole('group', { name: 'How the engine plays' })
+check('the lobby offers three levels, intermediate for a first game', await until(() => levels.getByRole('radio').count().then((n) => n === 3))
+  && await levels.getByRole('radio', { name: /^Intermediate/ }).isChecked())
+check('and the room was opened at it', await fetch(`${RELAY}/rooms/${code}`).then((r) => r.json()).then((r) => r.level === 'intermediate'))
+await levels.getByRole('radio', { name: /^Easy/ }).check()
 
 console.log('\nThe deck gate')
 /** What axe finds on the page as it stands, at the WCAG levels a11y.spec.mjs holds the app to. */
@@ -228,6 +267,10 @@ check('the engine deals and stops at the first thing worth stopping for', await 
 const hand = () => page.locator('.tabletop__handcard .bcard').count()
 check('seven cards in hand', (await hand()) === 7, String(await hand()))
 check('the seat opposite is the engine', /The engine/.test(await page.locator('.game__them').textContent()))
+const dealtAt = await fetch(`${RELAY}/rooms/${code}`).then((r) => r.json())
+check('the engine took the level chosen in the lobby, as the profile it names', dealtAt.played === 'easy' && dealtAt.profile === 'v0', JSON.stringify({ played: dealtAt.played, profile: dealtAt.profile }))
+check('the log names it once, at the start', await page.locator('.gamelog').textContent().then((t) => (t ?? '').split('The engine is playing at the easy level.').length === 2), await page.locator('.gamelog').textContent())
+check('and the seat list beside the engine', /· Easy/.test(await page.locator('.game__seats').textContent() ?? ''))
 check('the plate says whose stop it is', /Your stop|Your attack|The engine asks/.test(await prompt.getAttribute('aria-label')))
 const land = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(/^Mountain/) }).first()
 check('a land is in hand to play', (await land.count()) === 1)
@@ -250,6 +293,182 @@ const tapHand = async (locator) => {
   if (!point) throw new Error('that hand card is fully covered')
   await page.mouse.click(point.x, point.y)
 }
+
+/**
+ * Which cards glow, and how, read off the screen: each glowing card's id (from
+ * the slot it sits in, in hand or on the battlefield) and its spoken label,
+ * and the plates that glow as targets.
+ */
+const glowing = () => page.evaluate(() => {
+  const read = (selector) => [...document.querySelectorAll(selector)].map((el) => ({
+    id: el.closest('[data-id]')?.dataset.id ?? null,
+    zone: el.closest('.tabletop__handcard') ? 'hand' : el.closest('.field__slot') ? 'battlefield' : 'elsewhere',
+    label: el.getAttribute('aria-label') ?? '',
+  }))
+  return {
+    playable: read('.bcard--playable'),
+    target: read('.bcard--target:not(.bcard--chosen)'),
+    chosen: read('.bcard--chosen'),
+    plates: [...document.querySelectorAll('.plate--target')].map((el) => ({ you: el.classList.contains('plate--you'), label: el.getAttribute('aria-label') ?? '' })),
+  }
+})
+const sameIds = (a, b) => a.length === b.length && [...a].sort().join('|') === [...b].sort().join('|')
+/** The offers a tap plays at this table: meaningful, affordable, not mana, and needing no target the table cannot send. */
+const offeredPlays = (status) => (status?.actions ?? []).filter((a) => typeof a.card === 'string' && a.affordable && a.meaningful && !a.mana && !a.requiresTargets)
+
+/**
+ * A glow's motion, read off a real glowing card in each state that matters:
+ * the app's own reduced-motion setting (on in this spec's saved preferences,
+ * so on the table's root), then without it, with the system's setting off and
+ * then on. Put back as it was after.
+ */
+const glowMotion = (selector) => page.evaluate(async (sel) => {
+  const el = document.querySelector(sel)
+  const root = document.querySelector('.game')
+  if (!el || !root) return null
+  const name = () => getComputedStyle(el).animationName
+  const app = name()
+  root.classList.remove('game--still')
+  const without = name()
+  root.classList.add('game--still')
+  return { app, without }
+}, selector)
+const glowMotionEverywhere = async (selector) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  const free = await glowMotion(selector)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const system = await glowMotion(selector)
+  await page.emulateMedia({ reducedMotion: null })
+  return { app: free?.app, moving: free?.without, system: system?.without }
+}
+
+/**
+ * Every card in hand looked at in turn, with Z held so the preview shows at
+ * once, and what the preview kept clear of each time: the prompt, its Pass,
+ * the rail and the pointer itself. Read after the card has lifted out of the
+ * fan, which the preview measures again when it settles.
+ */
+const previewEveryHandCard = async () => {
+  const cards = page.locator('.tabletop__handcard')
+  const seen = []
+  // The table is taller than the window here, and a point off the screen hits
+  // nothing: the hand is brought into view, and with it the prompt above it.
+  await page.locator('.game__hand').scrollIntoViewIfNeeded()
+  await page.keyboard.down('z')
+  for (let i = 0; i < await cards.count(); i++) {
+    // Off the hand first, so the card just read has settled back into the fan
+    // and is not covering the one after it.
+    await page.mouse.move(5, 5)
+    await page.waitForTimeout(200)
+    const p = await cards.nth(i).locator('.bcard').first().evaluate((el) => {
+      const slot = el.closest('.tabletop__handcard')
+      const box = slot.getBoundingClientRect()
+      const y = box.top + box.height / 2
+      let from = null
+      for (let x = box.left + 1; x < box.right; x += 1) {
+        const hit = document.elementFromPoint(x, y)
+        if (hit && slot.contains(hit)) { if (from === null) from = x } else if (from !== null) return { x: (from + x) / 2, y }
+      }
+      return from === null ? null : { x: (from + box.right) / 2, y }
+    })
+    if (!p) continue
+    await page.mouse.move(p.x, p.y)
+    await page.waitForTimeout(250)
+    seen.push(await page.evaluate((pointer) => {
+      const box = (el) => { const b = el?.getBoundingClientRect(); return b ? { left: b.left, top: b.top, right: b.right, bottom: b.bottom } : null }
+      const peek = document.querySelector('.facepeek')
+      return {
+        pointer,
+        peek: box(peek),
+        side: peek?.dataset.side ?? null,
+        prompt: box(document.querySelector('.prompt')),
+        pass: box([...document.querySelectorAll('.prompt button, .rail button')].find((b) => /Pass/.test(b.textContent ?? ''))),
+        rail: box(document.querySelector('.rail')),
+      }
+    }, p))
+  }
+  await page.keyboard.up('z')
+  await page.mouse.move(5, 5)
+  return seen
+}
+/** The next stop that is this seat's, once the room has published one after `before`. */
+const nextStop = (before) => until(() => {
+  const s = wire.status
+  return Boolean(s) && s.stop !== before && (s.over || (s.actor === wire.me && s.waiting !== 'engine'))
+}, 20000)
+const overlaps = (a, b) => Boolean(a && b) && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+const under = (box, p) => Boolean(box) && p.x >= box.left && p.x <= box.right && p.y >= box.top && p.y <= box.bottom
+console.log('\nThe cards the engine will take glow')
+// The status arrives before the view it belongs to, so the screen is read
+// until it has caught up with the wire, then held to it exactly.
+const handIds = () => page.locator('.tabletop__handcard').evaluateAll((els) => els.map((el) => el.dataset.id))
+const firstPlays = () => offeredPlays(wire.status).map((a) => a.card)
+check('exactly the cards the engine offers a play for glow, and no others',
+  await until(async () => { const g = await glowing(); return firstPlays().length > 0 && sameIds(g.playable.map((x) => x.id), firstPlays()) && !g.target.length && !g.chosen.length }),
+  JSON.stringify({ glowing: await glowing(), offered: firstPlays() }))
+check('every one of them a card in hand', await Promise.all([glowing(), handIds()]).then(([g, hand]) => g.playable.every((x) => x.zone === 'hand' && hand.includes(x.id))))
+check('and each says so in words, not only in light', (await glowing()).playable.every((x) => /, playable now$/.test(x.label)), JSON.stringify((await glowing()).playable.map((x) => x.label)))
+check('the prompt says what the glow means', /you can play glow/.test(await prompt.textContent() ?? ''), await prompt.textContent())
+await page.locator('.game__hand').scrollIntoViewIfNeeded()
+// A picture of the glow round a card still loading is a picture of black
+// rectangles; the faces are given a moment, and the pictures are taken either way.
+await page.waitForFunction(() => [...document.querySelectorAll('.tabletop__handcard img')].every((img) => img.complete), null, { timeout: 5000 }).catch(() => {})
+await page.screenshot({ path: SHOT('playable') })
+const glowColour = await page.evaluate(() => {
+  const card = document.querySelector('.bcard--playable')
+  const probe = document.createElement('span')
+  probe.style.color = 'var(--accent)'
+  card.parentElement.appendChild(probe)
+  const accent = getComputedStyle(probe).color
+  probe.remove()
+  return { accent, shadow: getComputedStyle(card).boxShadow }
+})
+check('the glow is the accent', glowColour.shadow.startsWith(glowColour.accent), JSON.stringify(glowColour))
+// The season's shell put on by hand rather than waited for, so this holds
+// whatever the date: Reality Fracture's theme makes the accent its cyan
+// (tokens.css, --rf-cyan), and the glow goes with it.
+const seasonGlow = await page.evaluate(() => {
+  const root = document.documentElement
+  const was = root.getAttribute('data-theme-set')
+  root.setAttribute('data-theme-set', 'fra')
+  const shadow = getComputedStyle(document.querySelector('.bcard--playable')).boxShadow
+  return { shadow, was }
+})
+await page.screenshot({ path: SHOT('playable-season') })
+await page.evaluate((was) => { const root = document.documentElement; if (was === null) root.removeAttribute('data-theme-set'); else root.setAttribute('data-theme-set', was) }, seasonGlow.was)
+check('which the season turns cyan', seasonGlow.shadow.startsWith('rgb(119, 228, 239)'), seasonGlow.shadow)
+const playableMotion = await glowMotionEverywhere('.bcard--playable')
+check('it breathes, and stands still under the app\'s reduced motion and the system\'s',
+  playableMotion.moving === 'bcard-playable' && playableMotion.app === 'none' && playableMotion.system === 'none', JSON.stringify(playableMotion))
+check('the table has no accessibility violations with the cards glowing', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
+check('the credit line names Scryfall, and at the engine\'s table the engine and its licence',
+  /Card data and imagery from Scryfall\./.test(await page.locator('.game__credit').textContent() ?? '')
+  && /Rules-enforced play is powered by Argentum, an independent open-source rules engine, used under the MIT licence\./.test(await page.locator('.game__credit').textContent() ?? ''),
+  await page.locator('.game__credit').textContent())
+
+console.log('\nThe preview never covers Pass')
+// Every card in hand, with the prompt and its Pass showing just above the
+// hand: the case the brief was written for (HANDOFF.md, M1b).
+const previews = await previewEveryHandCard()
+check('a preview shows for every card in hand', previews.length === 7 && previews.every((p) => p.peek), JSON.stringify(previews.map((p) => p.peek)))
+check('and none covers the prompt, or its Pass', previews.every((p) => p.prompt && !overlaps(p.peek, p.prompt) && !overlaps(p.peek, p.pass)),
+  JSON.stringify(previews.filter((p) => overlaps(p.peek, p.prompt)).map(({ peek, prompt: at }) => ({ peek, prompt: at }))))
+check('nor the rail beside the hand, with its own', previews.every((p) => !overlaps(p.peek, p.rail)), JSON.stringify(previews.filter((p) => overlaps(p.peek, p.rail))))
+check('nor sits under the pointer', previews.every((p) => !under(p.peek, p.pointer)))
+console.log(`  (placed ${Object.entries(previews.reduce((n, p) => ({ ...n, [p.side]: (n[p.side] ?? 0) + 1 }), {})).map(([side, n]) => `${side} ${n}`).join(', ')} of the hand's seven)`)
+{
+  // The picture of it: the middle card of the hand, being read, with the prompt beside it.
+  await page.locator('.game__hand').scrollIntoViewIfNeeded()
+  const middle = page.locator('.tabletop__handcard').nth(3)
+  const box = await middle.boundingBox()
+  await page.keyboard.down('z')
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: SHOT('peek-prompt') })
+  await page.keyboard.up('z')
+  await page.mouse.move(5, 5)
+}
+
 await tapHand(land)
 check('tapping a land plays it: the engine put it on the battlefield', await until(() => page.locator('.game__field .field .bcard--tile').count().then((n) => n === 1)))
 check('and the hand is one lighter', await until(() => hand().then((n) => n === 6)))
@@ -313,7 +532,29 @@ await page.evaluate(() => {
   look()
 })
 
-await passBtn.click()
+console.log('\nSpace passes')
+{
+  const stopBefore = wire.status?.stop
+  // Not in a field, where Space is a letter: the search over a pile is one.
+  const graveyard = page.getByRole('button', { name: /^Graveyard, \d+ cards?$/ })
+  await graveyard.click()
+  const find = page.locator('#find-graveyard')
+  await find.focus()
+  await page.keyboard.press('Space')
+  await sleep(600)
+  check('in a field Space is a letter, and nothing is passed',
+    wire.status?.stop === stopBefore && (await find.inputValue()) === ' ' && (await prompt.count()) === 1,
+    `stop ${stopBefore} then ${wire.status?.stop}, the field holds ${JSON.stringify(await find.inputValue())}`)
+  await graveyard.click()
+  await page.evaluate(() => document.activeElement?.blur())
+  check('the prompt says so, once, on its Pass', /or press Space/.test(await prompt.getByRole('button', { name: /Pass/ }).textContent() ?? ''))
+  check('and both buttons that pass say which key does it', await page.locator('[aria-keyshortcuts="Space"]').count() === 2)
+  await page.keyboard.press('Space')
+  check('anywhere else Space passes: the engine takes the pass and moves on', await until(() => wire.status?.stop !== stopBefore, 8000),
+    `stop ${stopBefore} then ${wire.status?.stop}`)
+  // Should it not have, the pass is made by hand so the game below still happens.
+  if (wire.status?.stop === stopBefore) await passBtn.click()
+}
 check('after a pass the engine comes back to the next stop', await until(() => prompt.count().then((n) => n === 1), 20000))
 check('the log says how many windows the engine passed for you', await until(() => logText().then((t) => /passed \d+ priority window/.test(t)), 20000))
 // The status arrives before the view it belongs to, so said as it arrived a
@@ -370,8 +611,60 @@ for (let i = 0; i < 24 && !attacked; i++) {
   if (label === 'Your attack') {
     const attacker = page.locator('.game__field .field .bcard--tile').filter({ hasText: /goblin/i }).first()
     if (!(await attacker.count())) { await page.getByRole('button', { name: 'No attack' }).click(); continue }
+    // What may attack is the engine's list, and exactly that glows.
+    const valid = (wire.status?.actions ?? []).find((a) => a.type === 'DeclareAttackers')?.validAttackers ?? []
+    check('the creatures that may attack glow, and nothing else does',
+      await until(async () => { const g = await glowing(); return valid.length > 0 && sameIds(g.target.map((x) => x.id), valid) && !g.playable.length && !g.chosen.length }),
+      JSON.stringify({ glowing: await glowing(), valid }))
+    check('each saying it can attack', (await glowing()).target.every((x) => /, can attack$/.test(x.label)), JSON.stringify((await glowing()).target))
+    const targetMotion = await glowMotionEverywhere('.bcard--target')
+    check('that glow breathes too, and stands still under either reduced-motion setting',
+      targetMotion.moving === 'bcard-target' && targetMotion.app === 'none' && targetMotion.system === 'none', JSON.stringify(targetMotion))
+    const picked = await attacker.evaluate((el) => el.closest('[data-id]')?.dataset.id ?? null)
     await attacker.click()
     check('tapping a creature draws its attack as an arrow', await until(() => page.locator('.game__field .field__arrow--attack').count().then((n) => n === 1)))
+    check('and it stays lit, more strongly, saying it is attacking',
+      await until(async () => { const g = await glowing(); return g.chosen.length === 1 && g.chosen[0].id === picked && /, attacking$/.test(g.chosen[0].label) }),
+      JSON.stringify(await glowing()))
+    check('standing still even where motion is free, since a choice made is not asking for anything',
+      await glowMotionEverywhere('.bcard--chosen').then((m) => m.moving === 'none'))
+    check('while the rest still glow as able to', sameIds((await glowing()).target.map((x) => x.id), valid.filter((id) => id !== picked)))
+    // Where the keyboard is, on a glowing card (found in M3's review): the
+    // plain focus ring was the accent 2–4 px out, drawn over the glow in the
+    // glow's own colour, and all but vanished. The chosen attacker is reached
+    // with the keyboard and its ring read, against the accent and against the
+    // same card unfocused.
+    const ringOf = () => page.evaluate((id) => {
+      const el = document.querySelector(`.game__field .field__slot[data-id="${id}"] .bcard`)
+      if (!el) return null
+      const style = getComputedStyle(el)
+      const after = getComputedStyle(el, '::after')
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--accent)'
+      el.parentElement.appendChild(probe)
+      const accent = getComputedStyle(probe).color
+      probe.remove()
+      return {
+        focused: el === document.activeElement && el.matches(':focus-visible'),
+        outline: `${style.outlineStyle} ${style.outlineColor}`, offset: style.outlineOffset, accent,
+        outer: after.content !== 'none' ? `${after.borderTopStyle} ${after.borderTopColor}` : null,
+      }
+    }, picked)
+    const unfocused = await ringOf()
+    await attacker.focus()
+    await page.keyboard.press('Shift+Tab')
+    await page.keyboard.press('Tab')
+    const focusedRing = await ringOf()
+    await page.screenshot({ path: SHOT('attack-focus') })
+    check('a chosen attacker the keyboard is on wears a ring outside its glow, in two tones and not the accent',
+      focusedRing?.focused && focusedRing.offset === '6px' && focusedRing.outline !== unfocused?.outline
+      && !focusedRing.outline.includes(focusedRing.accent) && /^solid rgb\(27, 20, 8\)/.test(focusedRing.outline)
+      && /^solid rgb\(253, 246, 227\)/.test(focusedRing.outer ?? '') && !unfocused?.outer,
+      JSON.stringify({ unfocused, focused: focusedRing }))
+    await page.evaluate(() => document.activeElement?.blur())
+    // Changing the emulated motion setting above starts the log's own fade-in
+    // over again, and a picture taken inside it shows the log half faded.
+    await sleep(300)
     await page.screenshot({ path: SHOT('attack') })
     await page.getByRole('button', { name: /Attack with 1/ }).click()
     // The engine may block, so damage is not promised; the attack being
@@ -527,6 +820,109 @@ check('the thinking pill breathes, and stops for somebody who asked for stillnes
 check('no console error through a paced turn', consoleErrors.length === errorsBeforeTheTurn,
   consoleErrors.slice(errorsBeforeTheTurn).join('\n'))
 
+console.log('\nA spell that needs a target')
+// Nothing above casts one: the loops play lands and creatures. The engine still
+// offers Volcanic Hammer, and stops for it, and this table cannot send the
+// target it needs (PLAN.md, M2). What the table does with it is checked at a
+// stop made for the Hammer alone — where nothing glows and the prompt's
+// sentence is the only reason given — found by playing whatever else is offered
+// and passing on. Until M3's review this took the first stop offering the
+// Hammer at all, and where that stop offered other plays too the sentence went
+// unchecked, with only a note on the console to say so.
+let aimedAt = null
+for (let i = 0; i < 40 && !aimedAt; i++) {
+  await until(() => prompt.count().then((n) => n === 1), 20000)
+  const s = wire.status
+  if (!s || s.over) break
+  const offer = (s.actions ?? []).find((a) => a.requiresTargets && a.affordable && a.meaningful && typeof a.card === 'string')
+  const others = offeredPlays(s).filter((a) => !/^Declare/.test(a.type))
+  if (offer && !others.length && await page.locator(`.tabletop__handcard[data-id="${offer.card}"]`).count()) { aimedAt = { offer, status: s }; break }
+  const label = await prompt.getAttribute('aria-label').catch(() => null)
+  const other = others.length ? page.locator(`.tabletop__handcard[data-id="${others[0].card}"]`) : null
+  if (label === 'Your attack') await page.getByRole('button', { name: 'No attack' }).click()
+  else if (label === 'Their attack') await page.getByRole('button', { name: /No blocks/ }).click()
+  else if (label === 'The engine asks') await page.getByRole('button', { name: /Let the engine choose|Yes/ }).first().click()
+  else if (other && await other.count()) await tapHand(other)
+  else if (await passBtn.isEnabled().catch(() => false)) await passBtn.click()
+  else break
+  await nextStop(s.stop)
+}
+check('a stop of yours comes, made for Volcanic Hammer alone', Boolean(aimedAt), JSON.stringify(wire.status).slice(0, 300))
+if (aimedAt) {
+  const card = page.locator(`.tabletop__handcard[data-id="${aimedAt.offer.card}"]`)
+  check('it does not glow, since a tap could not play it', await until(() => card.locator('.bcard--playable').count().then((n) => n === 0))
+    && !(await glowing()).playable.some((x) => x.id === aimedAt.offer.card))
+  check('and the prompt names it, since it is the only reason for the stop',
+    /Volcanic Hammer needs a target, which this table cannot choose yet\. Pass to go on\./.test(await prompt.textContent() ?? ''), await prompt.textContent())
+  const stopBefore = wire.status?.stop
+  const inHand = await hand()
+  await tapHand(card)
+  check('a tap on it says why it is not cast, rather than sending what the engine would refuse',
+    await until(() => page.locator('.banner--info', { hasText: 'needs a target' }).count().then((n) => n === 1)),
+    await page.locator('.banner').allTextContents().then((t) => t.join(' | ')))
+  check('in words that name it', /Volcanic Hammer needs a target, and this table cannot choose one for it yet\./.test(await page.locator('.banner--info', { hasText: 'needs a target' }).textContent() ?? ''))
+  await sleep(500)
+  check('and nothing went to the engine: the same stop, the card still in hand', wire.status?.stop === stopBefore && (await hand()) === inHand,
+    `stop ${stopBefore} then ${wire.status?.stop}, hand ${inHand} then ${await hand()}`)
+  await page.getByRole('button', { name: 'Actions', exact: true }).click()
+  const panel = page.locator('section.actions')
+  await until(() => panel.count().then((n) => n === 1))
+  check('the actions panel lists it but will not press it, and says why',
+    await panel.getByRole('button', { name: /Cast Volcanic Hammer/ }).first().isDisabled()
+    && /What needs a target cannot be played here yet/.test(await panel.textContent() ?? ''),
+    await panel.textContent())
+  await panel.getByRole('button', { name: 'Close' }).click()
+
+  // Space after the pointer, with nothing blurred first (found in M3's review):
+  // the refused Hammer, tapped again, keeps the focus the pointer gave it, and
+  // Space then passes rather than pressing the Hammer a second time. Until the
+  // review Chromium's own marking of that card as focus-visible, the moment a
+  // key went down, made every such Space a second tap.
+  await tapHand(card)
+  const heldBy = await page.evaluate(() => document.activeElement?.closest('.tabletop__handcard')?.dataset.id ?? null)
+  check('a card the pointer tapped keeps the focus', heldBy === aimedAt.offer.card, `focus on ${heldBy}`)
+  const beforeSpace = wire.status?.stop
+  await page.keyboard.press('Space')
+  check('and Space there passes, rather than tap the card again', await until(() => wire.status?.stop !== beforeSpace, 8000),
+    `stop ${beforeSpace} then ${wire.status?.stop}`)
+}
+
+console.log('\nSpace on a card the keyboard is on')
+{
+  // The other half: a card reached with Tab is pressed by Space, as every
+  // button is, and nothing is passed. Found at the next stop of the player's
+  // with a play in hand, reached by passing.
+  let at = null
+  for (let i = 0; i < 20 && !at; i++) {
+    await until(() => prompt.count().then((n) => n === 1), 20000)
+    const s = wire.status
+    if (!s || s.over) break
+    const play = offeredPlays(s).find((a) => !/^Declare/.test(a.type))
+    if (s.actor === wire.me && s.waiting === 'action' && play && await page.locator(`.tabletop__handcard[data-id="${play.card}"]`).count()) { at = { play, status: s }; break }
+    const label = await prompt.getAttribute('aria-label').catch(() => null)
+    if (label === 'Your attack') await page.getByRole('button', { name: 'No attack' }).click()
+    else if (label === 'Their attack') await page.getByRole('button', { name: /No blocks/ }).click()
+    else if (label === 'The engine asks') await page.getByRole('button', { name: /Let the engine choose|Yes/ }).first().click()
+    else if (await passBtn.isEnabled().catch(() => false)) await passBtn.click()
+    else break
+    await nextStop(s.stop)
+  }
+  check('a stop of yours comes with a card in hand to play', Boolean(at), JSON.stringify(wire.status).slice(0, 300))
+  if (at) {
+    const button = page.locator(`.tabletop__handcard[data-id="${at.play.card}"] .bcard`).first()
+    await button.scrollIntoViewIfNeeded()
+    // Reached by the keyboard: focused, then left and come back to with Tab.
+    await button.focus()
+    await page.keyboard.press('Shift+Tab')
+    await page.keyboard.press('Tab')
+    const on = await page.evaluate(() => ({ id: document.activeElement?.closest('.tabletop__handcard')?.dataset.id ?? null, shown: document.activeElement?.matches(':focus-visible') ?? false }))
+    check('Tab reaches the card, and shows that it has', on.id === at.play.card && on.shown, JSON.stringify(on))
+    await page.keyboard.press('Space')
+    check('and Space plays that card, rather than pass', await until(() => page.locator(`.tabletop__handcard[data-id="${at.play.card}"]`).count().then((n) => n === 0), 8000),
+      `stop ${at.status.stop} then ${wire.status?.stop}`)
+  }
+}
+
 console.log('\nComing back')
 await page.reload({ waitUntil: 'networkidle' })
 check('a reload lands back in the same seat', await until(() => page.locator('.game:not(.game--loading)').count().then((n) => n === 1), 20000))
@@ -562,8 +958,75 @@ check('a printing the engine has not got shows its own art, and the log says so 
 check('the sideboard card it does not know is left out, and the table says so', /Your sideboard is played without Made-Up Wish: the engine does not know it\./.test(await page.locator('.more').textContent() ?? '') && /Your sideboard is played without Made-Up Wish/.test(await logText()))
 check('no Made-Up Goblin reaches the hand', !/Made-Up Goblin/.test(await page.locator('.tabletop__handcard').allTextContents().then((ts) => ts.join(' '))))
 
+console.log('\nA target to choose')
+// A third table, with the deck whose arrival asks for a target. Played by the
+// engine's own list — the first play it offers, else a pass — which is how
+// the deck was tried against the engine before it was written here, so the
+// same stop comes on every run.
+await page.goto(`${TARGET}#/game`, { waitUntil: 'networkidle' })
+await page.getByRole('button', { name: 'Play the engine' }).click()
+await until(() => page.evaluate(() => /#\/game\/engine\/[A-Z0-9]{5}$/.test(location.hash)))
+check('the engine knows every card in the deck', await until(() => tile('Sparks').textContent().then((t) => /The engine knows all 34 cards\./.test(t ?? '')), ENGINE_START_MS))
+wire.status = null
+wire.me = null
+await tile('Sparks').click()
+await page.getByRole('button', { name: /Sit down with Sparks/ }).click()
+check('it sits down, and the engine deals', await until(() => prompt.count().then((n) => n === 1), ENGINE_START_MS))
+let asked = null
+for (let i = 0; i < 40 && !asked; i++) {
+  await until(() => prompt.count().then((n) => n === 1), 20000)
+  const s = wire.status
+  if (!s || s.over) break
+  if (s.waiting === 'decision' && s.actor === wire.me && s.decision?.type === 'ChooseTargets') { asked = s; break }
+  const label = await prompt.getAttribute('aria-label').catch(() => null)
+  if (label === 'The engine asks') await page.getByRole('button', { name: /Let the engine choose|Yes/ }).first().click()
+  else if (label === 'Your attack') await page.getByRole('button', { name: 'No attack' }).click()
+  else if (label === 'Their attack') await page.getByRole('button', { name: /No blocks/ }).click()
+  else {
+    const pick = offeredPlays(s).find((a) => !/^Declare/.test(a.type))
+    if (pick) await tapHand(page.locator(`.tabletop__handcard[data-id="${pick.card}"]`))
+    else { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Space') }
+  }
+  await nextStop(s.stop)
+}
+check('the engine asks this seat to aim Sparkmage Apprentice', Boolean(asked), JSON.stringify(wire.status).slice(0, 300))
+if (asked) {
+  const legal = asked.decision.requirements.flatMap((r) => r.legal ?? [])
+  const seatIds = wire.seats.map((s) => s.engineSeat).filter(Boolean)
+  const legalCards = legal.filter((id) => !seatIds.includes(id))
+  const legalSeats = legal.filter((id) => seatIds.includes(id))
+  check('exactly the legal targets glow, on both sides of the table, and nothing else does',
+    await until(async () => { const g = await glowing(); return sameIds(g.target.map((x) => x.id), legalCards) && !g.playable.length && !g.chosen.length }),
+    JSON.stringify({ glowing: (await glowing()).target.map((x) => x.id), legal: legalCards }))
+  check('among them the engine\'s own creatures', await page.locator('.game__theirfield .bcard--target').count() > 0)
+  check('and no land, and no card in hand', await page.locator('.tabletop__handcard .bcard--target').count() === 0
+    && (await glowing()).target.every((x) => !/Basic Land/.test(x.label)))
+  check('each saying so in words', (await glowing()).target.every((x) => /, a legal target$/.test(x.label)), JSON.stringify((await glowing()).target.map((x) => x.label)))
+  check('the seats that are legal targets glow too, and say so', await until(async () => {
+    const plates = (await glowing()).plates
+    return plates.length === legalSeats.length && plates.every((p) => /, a legal target$/.test(p.label))
+      && plates.some((p) => p.you) === legalSeats.includes(wire.me)
+  }), JSON.stringify({ plates: (await glowing()).plates, legalSeats }))
+  const plateMotion = await glowMotionEverywhere('.plate--target')
+  check('a plate\'s glow breathes as a card\'s does, and stands still under either reduced-motion setting',
+    plateMotion.moving === 'plate-target' && plateMotion.app === 'none' && plateMotion.system === 'none', JSON.stringify(plateMotion))
+  check('the prompt names what is being aimed, and what the glow means',
+    /Tap what Sparkmage Apprentice is aimed at: the legal targets glow\./.test(await prompt.textContent() ?? ''), await prompt.textContent())
+  check('and offers each seat by name, since a plate is not a card to tap',
+    await page.getByRole('button', { name: 'Aim at the engine' }).count() === 1 && await page.getByRole('button', { name: 'Aim at yourself' }).count() === 1)
+  check('the table has no accessibility violations while it asks', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
+  await page.locator('.game__field').scrollIntoViewIfNeeded()
+  await page.screenshot({ path: SHOT('targets') })
+  const lifeOf = () => page.locator('.game__them .plate__total').textContent().then((t) => Number(t))
+  const before = await lifeOf()
+  await page.getByRole('button', { name: 'Aim at the engine' }).click()
+  check('aiming at the engine answers it: the engine loses the one life, and the glows go out',
+    await until(async () => (await lifeOf()) === before - 1 && (await page.locator('.bcard--target, .plate--target').count()) === 0, 20000),
+    `the engine's life ${before} then ${await lifeOf()}`)
+}
+
 check('no console errors throughout', errors.length === 0, errors.join('\n'))
-console.log(`\nScreenshots: ${SHOT('gate')}, ${SHOT('gate-reasons')}, ${SHOT('attack')}${thinkingShot ? `, ${SHOT('thinking')}` : ''} and ${SHOT('table')}`)
+console.log(`\nScreenshots: ${SHOT('gate')}, ${SHOT('gate-reasons')}, ${SHOT('playable')}, ${SHOT('playable-season')}, ${SHOT('peek-prompt')}, ${SHOT('attack')}, ${SHOT('attack-focus')}${thinkingShot ? `, ${SHOT('thinking')}` : ''}, ${SHOT('table')} and ${SHOT('targets')}`)
 await browser.close()
 await relayServer.shutdown()
 console.log(`\n${pass} passed, ${fail} failed`)

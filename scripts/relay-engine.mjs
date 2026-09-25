@@ -10,12 +10,12 @@
  * file knows a rule of Magic either — it knows whose turn the engine says
  * it is, and forwards.
  *
- *   from a client        sit { name, deck: { "Mountain": 14, … }, sideboard?: { … }, seat?, deltas? }
+ *   from a client        sit { name, deck: { "Mountain": 14, … }, sideboard?: { … }, seat?, deltas?, level? }
  *                        act { stop, index, attackers?, blockers? }
  *                        decide { stop, … }        turn                    resync
  *   to every client      seats [ … ]               status { … }            gone { reason }
- *   to one client        seated { seat, engineSeat, sideboardLeftOut, unknownPrintings }
- *                        view { you, seq, state | delta, log }             refused { error }
+ *   to one client        seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, level?, ai? }
+ *                        view { you, seq, state | delta, log }             refused { error, stale?, answering? }
  *
  * `stop` is the number of the status a client is answering: an act sent
  * against a stale status is refused rather than landing on a different
@@ -36,8 +36,20 @@
  * its pace, asks for the next step, and repeats until a player is to act or
  * the game ends. The engine never sleeps — one process serves one table over
  * one line — so all the waiting in wall-clock time is here.
+ *
+ * How strongly the engine plays is a room setting too (HANDOFF.md, M3): one of
+ * the levels in `src/lib/engine/levels.js`, given when the room is opened
+ * (`POST /rooms { level }`) and changed by a sit that names one, until the
+ * deal. The room asks the engine for it only where the engine has levels
+ * (protocol 4), and believes the engine's reply as to whether it was taken:
+ * every `seated` after the deal says `level`, the level the engine is playing
+ * at, or null where it plays its one way, and `ai`, the kind of player the
+ * engine fields here, since only a heuristic one has levels to play at. A room
+ * nobody asked a level of asks the engine for none, which is how a tab from
+ * before levels plays as it did.
  */
 import { startEngine } from './engine-bridge.mjs'
+import { levelOf } from '../src/lib/engine/levels.js'
 
 export const OP = {
   sit: 'sit', act: 'act', decide: 'decide', turn: 'turn', resync: 'resync',
@@ -61,6 +73,8 @@ export const PACE_MS = 600
 
 /** The protocol that first had a pace, a `continue` and a log inside a delta. */
 const PACED_PROTOCOL = 3
+/** The protocol that first had levels, and said in its reply which one each seat took. */
+const LEVELLED_PROTOCOL = 4
 
 // A deck line is a count, or a printing with a count, or a list of those.
 const copiesOf = (v) => {
@@ -72,7 +86,7 @@ const copiesOf = (v) => {
 // counts: the printings are lost, but the game is dealt rather than refused.
 const forProtocol = (protocol, lines) => (!lines || protocol >= 2 ? lines : Object.fromEntries(Object.entries(lines).map(([name, v]) => [name, copiesOf(v)])))
 
-export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', engineCommand, seed = null, deliver, onStderr = null, paceMs = PACE_MS, wait = null }) {
+export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', level: askedLevel = null, engineCommand, seed = null, deliver, onStderr = null, paceMs = PACE_MS, wait = null }) {
   const humanSeats = Math.max(1, ai ? seatCount - 1 : seatCount)
   const seats = Array.from({ length: seatCount }, (_, i) => ({
     seat: `p${i + 1}`, name: null, here: false, ready: false, socket: null, deck: null, sideboard: null,
@@ -82,7 +96,21 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     // there said it can apply a delta.
     seq: 0, whole: false, deltas: false,
   }))
-  const seated = (seat) => ({ seat: seat.seat, engineSeat: seat.engineSeat, sideboardLeftOut: seat.sideboardLeftOut, unknownPrintings: seat.unknownPrintings })
+  // The level the room was asked for, until the deal; a word this build does
+  // not know is no level. After the deal, `played` is the engine's own word
+  // for what its seat is playing at, or null where it took none.
+  let level = levelOf(askedLevel)
+  let played = null
+  let profile = null
+  // The level is said only once there is a deal to have taken it: before that,
+  // a seated carries no `level`, rather than one the engine may yet refuse.
+  // With it goes the kind of player the engine fields here, `ai` — heuristic,
+  // random, or null for none — because only the first has levels, and a null
+  // `level` means "plays one way" only where it could have had one.
+  const seated = (seat) => ({
+    seat: seat.seat, engineSeat: seat.engineSeat, sideboardLeftOut: seat.sideboardLeftOut, unknownPrintings: seat.unknownPrintings,
+    ...(seat.engineSeat ? { level: played, ai: ai ?? null } : {}),
+  })
   const sockets = new Map()
   let engine = null
   // The last process this room started, kept even after the room has let it
@@ -102,7 +130,12 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
 
   const say = (socket, op, body = {}) => deliver(socket, { t: 'engine', op, ...body })
   const tell = (op, body = {}) => { for (const s of sockets.values()) say(s, op, body) }
-  const seatList = () => seats.map(({ seat, name, here, ready, ai: bot, engineSeat }) => ({ seat, name, here, ready: ready || Boolean(bot), ai: bot, engineSeat }))
+  // The engine's seat says the level it plays at: the room's setting until
+  // the deal, and what the engine took after it.
+  const seatList = () => seats.map(({ seat, name, here, ready, ai: bot, engineSeat }) => ({
+    seat, name, here, ready: ready || Boolean(bot), ai: bot, engineSeat,
+    ...(bot ? { level: engineSeat ? played : level } : {}),
+  }))
 
   /**
    * The room has lost its engine, said once. A process can be found to have
@@ -251,12 +284,19 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
       // The mirror is the whole deck, sideboard too, or a wish in it would be
       // a dead card on one side of the table only.
       const first = seats.find((s) => !s.ai && s.deck)
+      protocol = Number(hello?.protocol) || 0
+      // A level is asked only of an engine that has them, and only for the seat
+      // it plays with its own judgement: an older engine ignores the key and
+      // plays its one way, and a random player has no levels to play at.
+      const levelled = level && protocol >= LEVELLED_PROTOCOL
       const player = (s) => {
         const side = forProtocol(hello?.protocol, s.ai ? first?.sideboard : s.sideboard)
         const deck = forProtocol(hello?.protocol, s.ai ? (first?.deck ?? {}) : (s.deck ?? {}))
-        return { name: s.name ?? (s.ai ? 'The engine' : s.seat), deck, ...(side ? { sideboard: side } : {}), ai: s.ai, autoPass: !s.ai }
+        return {
+          name: s.name ?? (s.ai ? 'The engine' : s.seat), deck, ...(side ? { sideboard: side } : {}), ai: s.ai, autoPass: !s.ai,
+          ...(levelled && s.ai === 'heuristic' ? { level } : {}),
+        }
       }
-      protocol = Number(hello?.protocol) || 0
       // A pace is asked for only of an engine that has one: an older one ignores
       // the key and would then refuse the `continue` that followed it.
       const asking = paceMs > 0 && protocol >= PACED_PROTOCOL
@@ -278,6 +318,12 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
         seats[i].sideboardLeftOut = Array.isArray(es.sideboardLeftOut) ? es.sideboardLeftOut.filter((n) => typeof n === 'string') : []
         seats[i].unknownPrintings = Array.isArray(es.unknownPrintings) ? es.unknownPrintings.filter((n) => typeof n === 'string') : []
       })
+      // The level the engine says its seat took, and only where this room asked
+      // for that one: an older engine says none, and a word the room did not ask
+      // for is not one it can vouch for.
+      const bot = reply.seats.find((_, i) => seats[i]?.ai)
+      played = levelled && levelOf(bot?.level) === level ? level : null
+      profile = typeof bot?.profile === 'string' ? bot.profile : null
       status = reply
       tell(OP.seats, { seats: seatList() })
       for (const seat of seats) if (seat.socket) say(seat.socket, OP.seated, seated(seat))
@@ -301,7 +347,7 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     if (ready >= humanSeats) start()
   }
 
-  const sit = (socket, { name, seat: wanted, deck, sideboard, deltas }) => {
+  const sit = (socket, { name, seat: wanted, deck, sideboard, deltas, level: wantedLevel }) => {
     let seat = wanted ? seats.find((s) => s.seat === wanted && !s.ai) : null
     if (seat?.socket && seat.socket !== socket) { sockets.delete(seat.socket.id); seat.socket.terminate?.() }
     if (!seat) seat = seats.find((s) => !s.ai && !s.here) ?? null
@@ -320,6 +366,10 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
       seat.ready = true
     }
     socket.seat = seat.seat
+    // The level is the room's until the deal, and a sit that names one changes
+    // it: the lobby's choice travels with the sit. After the deal it is the
+    // game's, and a sit that comes back naming another is told what it is.
+    if (!engine && !starting && levelOf(wantedLevel)) level = levelOf(wantedLevel)
     say(socket, OP.seated, seated(seat))
     tell(OP.seats, { seats: seatList() })
     if (gone) { say(socket, OP.gone, { reason: gone }); return }
@@ -344,13 +394,27 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     sendView(seat, { whole: true })
   }
 
+  /*
+   * One move at a time. The stop a press answers does not move on until the
+   * engine has answered it, and against a level that searches (M3 measured up
+   * to ten seconds at hard) a second press in that time used to pass the stale
+   * check below, reach the engine after the first, and be applied to whatever
+   * it offered next: a play nobody chose. So while one is being answered, the
+   * next is refused and said, not sent.
+   */
+  let answering = false
   const forward = async (socket, op, message) => {
     const seat = seats.find((s) => s.socket === socket)
     if (!seat) { say(socket, OP.refused, { error: 'Sit down first.' }); return }
     if (!engine || !status) { say(socket, OP.refused, { error: gone ?? 'The game has not started.' }); return }
     if (status.actor !== seat.engineSeat) { say(socket, OP.refused, { error: 'It is not you the game is waiting on.' }); return }
     if (message.stop !== undefined && message.stop !== stop) { say(socket, OP.refused, { error: 'The table moved on; look again.', stale: true }); return }
+    // `answering` marks this refusal as the guard's, which the answer on its
+    // way makes untrue: a client drops it at the next status, where it keeps
+    // any other refusal standing through the engine's turn.
+    if (answering) { say(socket, OP.refused, { error: 'The engine is still answering your last move.', stale: true, answering: true }); return }
     const { t, op: _op, stop: _stop, ...params } = message
+    answering = true
     try {
       status = await engine.call(op, params)
       await publish()
@@ -358,6 +422,8 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
     } catch (e) {
       say(socket, OP.refused, { error: e.message })
       if (engine?.exited) lost(e.message)
+    } finally {
+      answering = false
     }
   }
 
@@ -388,7 +454,16 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', eng
       }
     },
     describe() {
-      return { mode: 'enforced', ai, seats: seatList(), started: Boolean(engine), over: Boolean(status?.over), pace: paceMs, paced }
+      // `level` is what the room was asked for; `played` what the engine took,
+      // once there is a deal, with Argentum's own id for the profile behind it.
+      // `started` is an engine process begun, which is some seconds before a
+      // deal — the whole corpus loads first — and `dealt` is the deal itself:
+      // a lobby that read "started" as "under way" said the game was being
+      // played, one way only, while it was still loading (found in M3's review).
+      return {
+        mode: 'enforced', ai, seats: seatList(), started: Boolean(engine), dealt: Boolean(engine && status), over: Boolean(status?.over), pace: paceMs, paced,
+        level, ...(engine && status ? { played, profile } : {}),
+      }
     },
     async close() {
       // The loop is told the room has gone before the engine is: a step asked

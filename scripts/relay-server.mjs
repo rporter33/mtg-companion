@@ -30,7 +30,7 @@
  *
  * The API, in full:
  *   POST /rooms            body: { seats?: 2..6, enforced?: true, ai?: 'heuristic' | 'random' | null,
- *                                  pace?: milliseconds | false }
+ *                                  pace?: milliseconds | false, level?: 'easy' | 'intermediate' | 'hard' }
  *                                                  -> { code, seats, mode }
  *   GET  /rooms/<code>                              -> { code, seats, seq, players }
  *   WS   /rooms/<code>/ws                           the protocol in src/lib/board/net.js
@@ -160,7 +160,7 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, MAX_PACE_MS) : pace
   }
 
-  const makeRoom = ({ seats = MIN_SEATS, enforced = false, ai = 'heuristic', pace: asked } = {}) => {
+  const makeRoom = ({ seats = MIN_SEATS, enforced = false, ai = 'heuristic', pace: asked, level = null } = {}) => {
     const n = Math.min(MAX_SEATS, Math.max(MIN_SEATS, Math.floor(Number(seats)) || MIN_SEATS))
     let code = makeCode()
     while (rooms.has(code)) code = makeCode()
@@ -175,7 +175,8 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
       const room = {
         code, mode: 'enforced', sockets: new Map(), touchedAt: now(), flushTimer: null,
         engine: createEngineRoom({
-          code, seats: n, ai: ai || null, engineCommand, seed: engineSeed, paceMs: paceFor(asked),
+          // The level is read by the room, which takes only a word it knows.
+          code, seats: n, ai: ai || null, level, engineCommand, seed: engineSeed, paceMs: paceFor(asked),
           deliver, onStderr: (line) => console.error(`[${code}] ${line}`),
         }),
       }

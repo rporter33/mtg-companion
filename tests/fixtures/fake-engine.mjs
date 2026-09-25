@@ -9,6 +9,13 @@
 // next step. How many plays it makes between one stop of the player's and the
 // next is the test's to say, with `plays` — the captured shots are stops of
 // the player's, and what the engine did between them was never in them.
+//
+// And it has levels (protocol 4): an engine seat dealt with `level` says in the
+// reply's seats which it took. FAKE_PROTOCOL=3 plays an engine from before them.
+//
+// It can be made to hold a request until the test lets it go (`holdActs`,
+// `release`, FAKE_HOLD_HELLO), which is how a test waits on "the engine is
+// still answering" without waiting on a clock.
 import { createInterface } from 'node:readline'
 import { readFileSync } from 'node:fs'
 
@@ -44,9 +51,30 @@ let stubborn = false
 // out looks like from the room.
 let dropViews = 0
 let sulking = false
+// `holdActs` makes the next `act` wait for the test, as the real process makes
+// a press wait while a hard level thinks: the act is taken and not answered,
+// and every line after it waits behind it — one request at a time, the next
+// read only after this one's reply — until `release` answers it and they go on
+// in order. The test says when the answer comes, so nothing leans on a clock.
+// `FAKE_HOLD_HELLO` does the same to the first `hello`, for a room caught while
+// its engine is still loading the corpus.
+let holding = false
+let held = null
+let waitingLines = []
+let helloHeld = Boolean(process.env.FAKE_HOLD_HELLO)
+let acts = 0
 // The last deal asked for, so a test can see exactly what the relay sent.
 let lastNew = null
-const protocol = () => Number(process.env.FAKE_PROTOCOL) || 3
+const protocol = () => Number(process.env.FAKE_PROTOCOL) || 4
+// Protocol 4's levels, as the real engine names them in hello. An engine seat
+// asked for one of these takes it and says so; asked for anything else, or by a
+// fake playing an older engine, it plays its one way and names no level.
+const LEVELS = { easy: 'v0', intermediate: 'production-raceclock', hard: 'production-candidate-expiring' }
+const played = (p) => {
+  if (!p?.ai || p.ai === 'random' || protocol() < 4) return {}
+  const level = p.level in LEVELS ? p.level : null
+  return { level, profile: level ? LEVELS[level] : 'current' }
+}
 // The one rule the fake has for which cards it knows, used by check and new
 // alike: a name the real engine would resolve is not its business. The real
 // resolution is tested against the real engine, in engine-live.test.js.
@@ -119,6 +147,15 @@ const deltaOf = (prev, next) => {
 lines.on('line', (line) => {
   let req
   try { req = JSON.parse(line) } catch { say({ id: null, ok: false, error: 'not json' }); return }
+  // A request held (`holdActs`, FAKE_HOLD_HELLO) keeps every line after it
+  // waiting, as a process busy on one request reads no other. Two get
+  // through: the test's `release`, and `quit`, so a room closed mid-hold
+  // ends its stand-in at once rather than after the bridge's wait for it.
+  if (held && req.op !== 'release' && req.op !== 'quit') { waitingLines.push(req); return }
+  handle(req)
+})
+
+function handle(req) {
   const { id } = req
   switch (req.op) {
     // The real engine's shape: every set it knows, in release order, and what
@@ -127,15 +164,19 @@ lines.on('line', (line) => {
     // marks incomplete, and its date is Argentum's, not Scryfall's.
     // FAKE_PROTOCOL plays an older engine, to test what the relay sends one;
     // FAKE_NO_SETS one whose hello lists no sets.
-    case 'hello': say({
-      id, ok: true, engine: 'fake', protocol: protocol(), cards: 3,
-      ...(process.env.FAKE_NO_SETS ? {} : { sets: [
-        { code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false },
-        { code: 'TRC', name: 'Star Trek Commander', released: '2026-01-23', incomplete: true },
-        { code: 'HOB', name: 'The Hobbit', released: '2026-08-14', incomplete: false },
-      ] }),
-      load: { ms: 0, heapMb: 0, maxHeapMb: 0 },
-    }); break
+    case 'hello':
+      if (helloHeld && !req.released) { helloHeld = false; held = req; return }
+      say({
+        id, ok: true, engine: 'fake', protocol: protocol(), cards: 3,
+        ...(protocol() >= 4 ? { levels: LEVELS } : {}),
+        ...(process.env.FAKE_NO_SETS ? {} : { sets: [
+          { code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false },
+          { code: 'TRC', name: 'Star Trek Commander', released: '2026-01-23', incomplete: true },
+          { code: 'HOB', name: 'The Hobbit', released: '2026-08-14', incomplete: false },
+        ] }),
+        load: { ms: 0, heapMb: 0, maxHeapMb: 0 },
+      })
+      break
     case 'cards': say({ id, ok: true, names: [...new Set(shots.flatMap((s) => Object.values(s.view.cards).map((c) => c.name)))].sort() }); break
     case 'check': {
       if (!req.deck || typeof req.deck !== 'object') { say({ id, ok: false, error: '"deck" is required.' }); break }
@@ -165,7 +206,7 @@ lines.on('line', (line) => {
         id,
         ...status(),
         ...(paced ? { paced: true } : {}),
-        seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(req.players?.[i]?.deck) })),
+        seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(req.players?.[i]?.deck), ...played(req.players?.[i]) })),
       })
       break
     }
@@ -176,11 +217,27 @@ lines.on('line', (line) => {
     // the player's stops alone, so what it does between them is said here.
     case 'plays': plays = Math.max(0, Number(req.count) || 0); say({ id, ok: true, plays }); break
     // Test-only: what this engine has been asked for and where it stands.
-    case 'tally': say({ id, ok: true, continues, steps, pending, paced, plays }); break
+    case 'tally': say({ id, ok: true, continues, steps, pending, paced, plays, acts }); break
+    // Test-only: the next act is taken and not answered until `release`.
+    case 'holdActs': holding = true; say({ id, ok: true }); break
+    case 'release': {
+      // The held request is answered first, as the process would have answered
+      // it, then this line, then whatever waited behind them, in order.
+      const was = held
+      held = null
+      if (was) handle({ ...was, released: true })
+      say({ id, ok: true, released: Boolean(was) })
+      const later = waitingLines
+      waitingLines = []
+      for (const r of later) { if (held) waitingLines.push(r); else handle(r) }
+      break
+    }
     // Test-only faults, above.
     case 'dropViews': dropViews = Math.max(0, Number(req.count) || 0); say({ id, ok: true, dropViews }); break
     case 'sulk': sulking = true; say({ id, ok: true }); break
     case 'act': {
+      if (!req.released) acts++
+      if (holding && !req.released) { holding = false; held = req; return }
       if (pending > 0) { say({ id, ok: false, error: 'The game is not waiting on anyone.' }); break }
       if (at < 0 || at >= shots.length) { say({ id, ok: false, error: 'The game is not waiting on anyone.' }); break }
       const offered = shots[at].status.actions ?? []
@@ -236,4 +293,4 @@ lines.on('line', (line) => {
     case 'quit': say({ id, ok: true }); if (!stubborn) process.exit(0); break
     default: say({ id, ok: false, error: `Unknown op "${req.op}".` })
   }
-})
+}

@@ -12,10 +12,10 @@
  * The views are the captured run (tests/fixtures/engine-views.json), so what
  * arrives here is what the engine really sent.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import useEngineRoom from '../src/features/game/useEngineRoom.js'
+import useEngineRoom, { SLOW_MS } from '../src/features/game/useEngineRoom.js'
 // Imported rather than read off disk: this file runs in a browser-shaped
 // environment, where a path is not a thing there is.
 import FIXTURE from './fixtures/engine-views.json'
@@ -36,6 +36,8 @@ class FakeSocket {
 
   send(text) { this.sent.push(JSON.parse(text)) }
   close() { this.readyState = 3 }
+  /** The connection lost from the other end, as a relay restarting loses it. */
+  drop() { this.readyState = 3; this.onclose?.({ code: 1006 }) }
   /** A message from the room, as the relay would put it on the wire. */
   deliver(message) { this.onmessage?.({ data: JSON.stringify(message) }) }
 }
@@ -52,12 +54,12 @@ let root = null
 let container = null
 function Probe(props) { room = useEngineRoom(props); return null }
 
-const mount = async () => {
+const mount = async ({ level = null } = {}) => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
   await act(async () => {
-    root.render(<Probe address="http://relay.test" code="ABCD" name="You" deck={DECK} deckLookup={lookup} cardsReady />)
+    root.render(<Probe address="http://relay.test" code="ABCD" name="You" deck={DECK} deckLookup={lookup} cardsReady level={level} />)
   })
   return FakeSocket.live[FakeSocket.live.length - 1]
 }
@@ -96,6 +98,73 @@ describe('sitting down at an enforced room', () => {
     const sit = socket.sent.find((m) => m.op === 'sit')
     expect(sit).toMatchObject({ t: 'engine', op: 'sit', name: 'You', deltas: true })
     expect(sit.deck).toEqual({ Mountain: { count: 14, set: 'por', number: '208' }, 'Raging Goblin': { count: 6, set: 'por', number: '134' } })
+  })
+})
+
+describe('the level the engine plays at', () => {
+  it('goes with the sit, and the log names the one the room says was taken, once', async () => {
+    const socket = await mount({ level: 'hard' })
+    expect(socket.sent.find((m) => m.op === 'sit')).toMatchObject({ level: 'hard' })
+    // The seated that answers the sit comes before the deal and says nothing of it.
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: null })
+    expect(room.level).toBeUndefined()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: 'hard' }, ...stop(RUN.views[0], 1))
+    expect(room.level).toBe('hard')
+    // A reconnect is seated again, and the line is not said twice.
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: 'hard' })
+    expect(said().filter((t) => /level/.test(t))).toEqual(['The engine is playing at the hard level.'])
+  })
+
+  it('says so when the engine took none, rather than name the one chosen', async () => {
+    const socket = await mount({ level: 'easy' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null }, ...stop(RUN.views[0], 1))
+    expect(room.level).toBeNull()
+    expect(said().filter((t) => /level/.test(t))).toEqual(["This relay's engine is older than the levels and plays one way only, so it is not playing at the easy level you chose."])
+  })
+
+  it('says so when the relay is older than levels and never said', async () => {
+    const socket = await mount({ level: 'intermediate' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+    expect(room.level).toBeNull()
+    expect(said().filter((t) => /level/.test(t))).toEqual(['This relay is older than the levels, so the engine plays the one way it always has there, not at the intermediate level you chose.'])
+  })
+
+  it('says nothing of levels at a table whose engine player is random, or where it fields none', async () => {
+    // Both are sent `level: null`, which elsewhere means an engine older than
+    // the levels; here it means a player that has no levels to play at.
+    for (const ai of ['random', null]) {
+      const socket = await mount({ level: 'intermediate' })
+      await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai }, ...stop(RUN.views[0], 1))
+      expect(room.level).toBeNull()
+      expect(said().filter((t) => /level/.test(t))).toEqual([])
+      await act(async () => { root.unmount() })
+      container.remove()
+      root = null
+    }
+  })
+
+  it('reads the kind of player from the seats where a room from before it does not say', async () => {
+    // A room from M3 sends the seats, the engine's with its kind, before the
+    // seated after the deal, and no `ai` on the seated itself.
+    const socket = await mount({ level: 'hard' })
+    await deliver(socket,
+      { op: 'seats', seats: [{ seat: 'p1', engineSeat: YOU, ai: null }, { seat: 'p2', engineSeat: 'e1', ai: 'random', level: null }] },
+      { op: 'seated', seat: 'p1', engineSeat: YOU, level: null },
+      ...stop(RUN.views[0], 1))
+    expect(said().filter((t) => /level/.test(t))).toEqual([])
+  })
+
+  it('names the level at a heuristic table that says so', async () => {
+    const socket = await mount({ level: 'hard' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: 'hard', ai: 'heuristic' }, ...stop(RUN.views[0], 1))
+    expect(said().filter((t) => /level/.test(t))).toEqual(['The engine is playing at the hard level.'])
+  })
+
+  it('reads a word it does not know from the room as no level it can name', async () => {
+    const socket = await mount({ level: 'hard' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: 'grandmaster' }, ...stop(RUN.views[0], 1))
+    expect(room.level).toBeNull()
+    expect(said().filter((t) => /level/.test(t))).toEqual(['The engine is playing at a level this version of the app has no name for.'])
   })
 })
 
@@ -210,6 +279,94 @@ describe('the status on the way through', () => {
     expect(room.refusal?.message).toBe('It is not your stop.')
     await deliver(socket, { op: 'status', status: { waiting: 'action', actor: YOU, stop: 9, autoPassed: 0, decided: [] } })
     expect(room.refusal).toBeNull()
+  })
+
+  it('sends one press at a time, and says so rather than send a second while the first is being answered', async () => {
+    // Measured at M3: against hard the engine can take seconds over what
+    // follows a move, and a second press sent then used to land on the next
+    // stop's offers. The room refuses it too; this spares the trip.
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+    const acts = () => socket.sent.filter((m) => m.op === 'act')
+    act(() => { room.act(1) })
+    expect(room.answering).toBe(true)
+    act(() => { room.act(2) })
+    expect(acts()).toHaveLength(1)
+    expect(room.refusal).toMatchObject({ message: 'The engine is still answering your last move.' })
+    // Any status is the answer, whoever's stop it is.
+    await deliver(socket, { op: 'status', status: { waiting: 'engine', actor: 'e1', stop: 2, autoPassed: 0, decided: [] } })
+    expect(room.answering).toBe(false)
+    await deliver(socket, { op: 'status', status: { waiting: 'action', actor: YOU, stop: 3, autoPassed: 0, decided: [] } })
+    act(() => { room.act(0) })
+    expect(acts()).toHaveLength(2)
+    // A refusal is an answer too.
+    await deliver(socket, { op: 'refused', error: 'The engine refused that: Must choose 1 card(s) to discard' })
+    expect(room.answering).toBe(false)
+  })
+
+  it('takes "still answering" down once the answer comes, even at one of the engine\'s own stops', async () => {
+    // Any other refusal stands through the engine's paced turn; this one is
+    // made untrue by the answer itself. Kept, it said the engine was still
+    // answering through every play of the turn the answer began.
+    const socket = await mount()
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+    act(() => { room.act(1) })
+    act(() => { room.act(1) })
+    expect(room.refusal).toMatchObject({ message: 'The engine is still answering your last move.' })
+    await deliver(socket, { op: 'status', status: { waiting: 'engine', actor: 'e1', stop: 2, autoPassed: 0, decided: [] } })
+    expect(room.refusal).toBeNull()
+    // The room's own refusal of the same kind says so, and goes the same way.
+    await deliver(socket, { op: 'refused', error: 'The engine is still answering your last move.', stale: true, answering: true })
+    expect(room.refusal?.message).toBe('The engine is still answering your last move.')
+    await deliver(socket, { op: 'status', status: { waiting: 'engine', actor: 'e1', stop: 3, autoPassed: 0, decided: [] } })
+    expect(room.refusal).toBeNull()
+    // A room from before the mark says only the words, and its refusal stands
+    // through the engine's turn as any other does.
+    await deliver(socket, { op: 'refused', error: 'The engine is still answering your last move.', stale: true })
+    await deliver(socket, { op: 'status', status: { waiting: 'engine', actor: 'e1', stop: 4, autoPassed: 0, decided: [] } })
+    expect(room.refusal?.message).toBe('The engine is still answering your last move.')
+  })
+
+  it('stops saying the engine is thinking when the wire drops under an unanswered press', async () => {
+    // An enforced room does not outlive its relay, so the answer to a press
+    // outstanding when the wire went will never come on it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const socket = await mount()
+      await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+      act(() => { room.act(1) })
+      act(() => { vi.advanceTimersByTime(SLOW_MS) })
+      expect(room.slow).toBe(true)
+      act(() => { socket.drop() })
+      expect(room.wireStatus).toBe('reconnecting')
+      expect(room.slow).toBe(false)
+      expect(room.answering).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('calls an answer slow only once it has been a while coming, so an ordinary press shows nothing', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const socket = await mount()
+      await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+      act(() => { room.act(1) })
+      act(() => { vi.advanceTimersByTime(SLOW_MS - 1) })
+      expect(room.slow).toBe(false)
+      // Answered in time: nothing was ever said, and nothing is left to go off.
+      await deliver(socket, { op: 'status', status: { waiting: 'action', actor: YOU, stop: 2, autoPassed: 0, decided: [] } })
+      act(() => { vi.advanceTimersByTime(SLOW_MS * 10) })
+      expect(room.slow).toBe(false)
+      // Not answered in time: slow until the answer comes.
+      act(() => { room.act(0) })
+      act(() => { vi.advanceTimersByTime(SLOW_MS) })
+      expect(room.slow).toBe(true)
+      await deliver(socket, { op: 'status', status: { waiting: 'engine', actor: 'e1', stop: 3, autoPassed: 0, decided: [] } })
+      expect(room.slow).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('carries the engine\'s own paused stop through, so the plate can say so', async () => {

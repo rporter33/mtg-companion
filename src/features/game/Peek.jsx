@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
 import { imageUrl } from '../../components/CardImage.jsx'
+import { placePeek, PEEK_W } from './peekPlace.js'
 
 /**
  * Reading a card without picking it up.
@@ -9,7 +10,8 @@ import { imageUrl } from '../../components/CardImage.jsx'
  * two taps moves to something that costs nothing. Rest the pointer on a card
  * for a moment and its printed face appears, large, beside it; press Z and
  * it appears at once; move away and it goes. It never sits under the
- * pointer, so it never covers the thing you were about to do.
+ * pointer, and it never covers the prompt panel or the rail, where Pass is:
+ * those are where the next press goes (peekPlace.js says how).
  *
  * The preview is decoration for a sighted pointer user and is hidden from
  * everyone else. The same card is one press from "Read it" in the actions
@@ -39,6 +41,13 @@ export function usePeek({ enabled = true } = {}) {
     else timer.current = setTimeout(show, REST_MS)
   }, [show])
 
+  /**
+   * `at` is the element the pointer is resting on, or failing that its
+   * rectangle. An element is read again each time the preview is placed, so
+   * the card is measured where it is then — lifted out of the fan, which it
+   * is not yet at the moment the pointer arrives — and a card that has left
+   * the table takes its preview with it.
+   */
   const enter = useCallback((card, at) => {
     if (!enabled || !card) return
     hovering.current = { card, at }
@@ -79,27 +88,46 @@ export function usePeek({ enabled = true } = {}) {
   return { peek, enter, leave }
 }
 
-/** The preview itself: the printed face, beside the pointer, inside the viewport. */
-export default function Peek({ peek }) {
-  if (!peek?.card) return null
-  const src = imageUrl(peek.card, 'normal') ?? imageUrl(peek.card, 'large')
-  if (!src) return null
-  const w = 280
-  const h = Math.round(w * 88 / 63)
-  const vw = typeof window !== 'undefined' ? window.innerWidth : 1000
-  const vh = typeof window !== 'undefined' ? window.innerHeight : 800
-  // Above the card when it sits low on the screen — a card in hand, whose
-  // neighbours the preview would otherwise cover — else to its right if
-  // there is room, else to its left; and never off any edge.
-  const above = peek.at.top - h - 12 >= 8 && peek.at.top > vh * 0.55
-  const left = above
-    ? Math.max(8, Math.min(vw - w - 8, peek.at.left + peek.at.width / 2 - w / 2))
-    : peek.at.right + 16 + w <= vw ? peek.at.right + 16 : Math.max(8, peek.at.left - 16 - w)
-  const top = above
-    ? peek.at.top - h - 12
-    : Math.max(8, Math.min(vh - h - 8, peek.at.top + peek.at.height / 2 - h / 2))
+/** Where the card is now: an element read afresh, or the rectangle it was given. */
+function rectOf(at) {
+  if (at && typeof at.getBoundingClientRect === 'function') return at.isConnected ? at.getBoundingClientRect() : null
+  return at ?? null
+}
+
+const same = (a, b) => a === b || (a && b && a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height)
+
+/**
+ * The preview itself: the printed face, beside the card, inside the viewport,
+ * and clear of whatever `avoid` returns — rectangles read at the moment of
+ * placing, not remembered, because the prompt comes and goes with every stop.
+ * It is placed again after every render of the table, before the browser
+ * paints, so a prompt that appears while a card is being read moves the
+ * preview off it rather than being covered by it for a frame.
+ */
+export default function Peek({ peek, avoid }) {
+  const [spot, setSpot] = useState(null)
+  const src = peek?.card ? imageUrl(peek.card, 'normal') ?? imageUrl(peek.card, 'large') : null
+  // A card in hand lifts out of the fan as the pointer arrives, and the
+  // preview shown at once for Z is placed while it is still rising; once it
+  // has settled it is measured again, so the preview is clear of where the
+  // card ended up rather than of where it was on the way.
+  const [, settled] = useReducer((n) => n + 1, 0)
+  useEffect(() => {
+    const el = peek?.at
+    if (!el || typeof el.addEventListener !== 'function') return undefined
+    el.addEventListener('transitionend', settled)
+    return () => el.removeEventListener('transitionend', settled)
+  }, [peek?.at])
+  useLayoutEffect(() => {
+    const at = src ? rectOf(peek.at) : null
+    const next = at
+      ? placePeek({ at, view: { width: window.innerWidth, height: window.innerHeight }, avoid: avoid?.() ?? [], width: PEEK_W })
+      : null
+    setSpot((was) => (same(was, next) ? was : next))
+  })
+  if (!src || !spot) return null
   return (
-    <div className="facepeek" style={{ left, top, width: w, height: h }} aria-hidden="true">
+    <div className="facepeek" style={{ left: spot.left, top: spot.top, width: spot.width, height: spot.height }} data-side={spot.side} aria-hidden="true">
       <img className="facepeek__face" src={src} alt="" draggable="false" />
     </div>
   )

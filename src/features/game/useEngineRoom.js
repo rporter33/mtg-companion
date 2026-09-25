@@ -3,6 +3,7 @@ import { relay } from '../../lib/board/relay.js'
 import { boardFromView, eventsBetween, standIn } from '../../lib/engine/board.js'
 import { nothingHeld, receiveView } from '../../lib/engine/stream.js'
 import { leaveOut, nameList, seatDeck } from '../../lib/engine/deck.js'
+import { levelLine, levelOf } from '../../lib/engine/levels.js'
 
 /**
  * A seat at a table the engine holds.
@@ -33,7 +34,21 @@ import { leaveOut, nameList, seatDeck } from '../../lib/engine/deck.js'
  * the view it belongs to. Said as it arrives, "passed 4 priority windows"
  * would sit above the land that was played before those windows. So it is
  * held until the view's own lines are in the log and added after them.
+ *
+ * The level the player chose in the lobby goes with the sit, and the room
+ * says after the deal what the engine is really playing at. The log says that
+ * once, in the room's words rather than the lobby's: the level taken, or that
+ * this engine or this relay is older than levels and plays its one way.
  */
+/**
+ * How long a press may go unanswered before the table says the engine is
+ * thinking. Measured at M3 against a person's seat on this machine: easy and
+ * intermediate answered every press within 218 ms, and hard nine in ten within
+ * 700 ms and the slowest in 9.7 s (PLAN.md). So an ordinary answer never shows
+ * it, and hard's long ones do.
+ */
+export const SLOW_MS = 400
+
 const memoryKey = (code) => `mtg-companion:engine:${code}`
 const remember = (code, value) => { try { localStorage.setItem(memoryKey(code), JSON.stringify(value)) } catch { /* private mode */ } }
 const recall = (code) => { try { return JSON.parse(localStorage.getItem(memoryKey(code)) ?? 'null') } catch { return null } }
@@ -49,7 +64,7 @@ export function agreeToLeaveOut(code, deckId, names) {
   remember(code, { ...(recall(code) ?? {}), without: { deckId, names } })
 }
 
-export default function useEngineRoom({ address, code, name, deck, deckLookup, cardsReady }) {
+export default function useEngineRoom({ address, code, name, deck, deckLookup, cardsReady, level: chosen = null }) {
   const [wireStatus, setWireStatus] = useState('connecting')
   const [seat, setSeat] = useState(null)
   const [seats, setSeats] = useState([])
@@ -57,6 +72,22 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   const [run, setRun] = useState(null)
   const [refusal, setRefusal] = useState(null)
   const [gone, setGone] = useState(null)
+  // A press sent and not yet answered. Against a level that searches, the
+  // engine can take seconds over what follows a move (PLAN.md, M3), and with
+  // nothing on screen changing a player presses again. So a second press is
+  // not sent, and once an answer is slow — past SLOW_MS, which no easy or
+  // intermediate answer reached when measured — `slow` lets the table say the
+  // engine is thinking. Said at once, it would flash up on every press.
+  const [answering, setAnswering] = useState(false)
+  const [slow, setSlow] = useState(false)
+  const slowTimer = useRef(null)
+  const answered = useCallback(() => {
+    clearTimeout(slowTimer.current)
+    slowTimer.current = null
+    setAnswering(false)
+    setSlow(false)
+  }, [])
+  useEffect(() => () => clearTimeout(slowTimer.current), [])
   const wire = useRef(null)
   const board = useRef(null)
   // The run of views this seat has been sent: the last one whole, its number,
@@ -88,6 +119,10 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   // Named by the engine when it deals: sideboard cards it does not know, left
   // out rather than refused, which the table then says.
   const [sideboardLeftOut, setSideboardLeftOut] = useState([])
+  // What the engine is playing at, once the room has said: a level, or null
+  // where it plays its one way; undefined until the deal.
+  const [level, setLevel] = useState(undefined)
+  const levelNoted = useRef(false)
   const sat = useRef(false)
   const sideNoted = useRef(false)
   const printingsNoted = useRef(false)
@@ -108,11 +143,23 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
 
   useEffect(() => {
     if (!address || !code || !deckNames) return undefined
-    const line = relay({ url: `${address.replace(/\/$/, '').replace(/^http/, 'ws')}/rooms/${encodeURIComponent(code)}/ws`, onStatus: (s) => setWireStatus(s) })
+    // A press outstanding when the wire drops will never be answered on that
+    // wire: an enforced room does not outlive its relay, and one that does
+    // resends the status when this seat sits again. Left waiting, "The engine
+    // is thinking…" stood on the plate for good beside "Reconnecting…" (found
+    // in M3's review). The room's own one-move guard still stops a second
+    // press reaching the engine while the first is being answered.
+    const line = relay({
+      url: `${address.replace(/\/$/, '').replace(/^http/, 'ws')}/rooms/${encodeURIComponent(code)}/ws`,
+      onStatus: (s) => { setWireStatus(s); if (s !== 'open') answered() },
+    })
     const side = Object.keys(deckNames.sideboard ?? {}).length ? { sideboard: deckNames.sideboard } : {}
     // `deltas` says this build can apply one. A room asks it of every sit,
     // because the tab at a seat may be a newer build than the one before it.
-    line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, deltas: true, ...side }))
+    // The level rides along each time: before the deal it is the room's to
+    // take, and after it the room keeps the one the game was dealt with.
+    const asked = levelOf(chosen)
+    line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, deltas: true, ...side, ...(asked ? { level: asked } : {}) }))
     line.onMessage((m) => {
       if (m?.t !== 'engine') return
       switch (m.op) {
@@ -132,6 +179,24 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
           if (missed.length && !printingsNoted.current) {
             printingsNoted.current = true
             note(`The engine does not have your printing of ${nameList(missed, Infinity)}, so ${missed.length === 1 ? 'it shows' : 'they show'} the engine's own art.`)
+          }
+          // The seated after the deal is the one with an engine seat in it, and the
+          // one that can say what the engine took. A relay from before levels never
+          // sends the key at all, which is a different thing from sending null.
+          //
+          // Said only at a table where the engine plays a seat with its own
+          // judgement, the one kind of player that has levels. A random player,
+          // or no engine player at all, is sent `level: null` too, and the line
+          // for that — "this relay's engine is older than the levels" — was
+          // untrue there (found in M3's review). The room says which kind it
+          // fields (`ai` on the seated); a room from before that is read from
+          // the seats it sent, and where neither has said, as it always was.
+          if (m.engineSeat && !levelNoted.current) {
+            levelNoted.current = true
+            setLevel(levelOf(m.level))
+            const kind = 'ai' in m ? m.ai : seating.current.length ? seating.current.find((x) => x.ai)?.ai ?? null : undefined
+            const said = kind === undefined || kind === 'heuristic' ? levelLine('level' in m ? m.level : undefined, levelOf(chosen)) : null
+            if (said) note(said)
           }
           if (!sat.current) {
             if (leftOut.length) {
@@ -155,13 +220,21 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
           if (s?.autoPassed > 0) hold(`The engine passed ${s.autoPassed} priority window${s.autoPassed === 1 ? '' : 's'} for you: nothing was affordable.`)
           for (const d of s?.decided ?? []) hold(`Decided for you — ${d.prompt}${d.source ? ` (${d.source})` : ''}.`)
           setStatus(s)
+          // Any status is the room having answered, whoever's stop it is.
+          answered()
           // A refusal stands until the table is the player's to answer again.
           // A paced room publishes a status for each of the engine's own plays
           // — one every few hundred milliseconds — and none of them is an
           // answer to anything this seat pressed, so clearing on those would
           // take the banner away inside a pace: too fast to read, and for a
           // screen reader a live region cut off mid-sentence.
+          //
+          // Except "still answering your last move": any status is that answer,
+          // so it has stopped being true however the table goes on. Kept, it
+          // said the engine was still answering through every paced step of
+          // the turn the answer began (found in M3's review).
           if (s?.waiting !== 'engine') setRefusal(null)
+          else setRefusal((r) => (r?.answering ? null : r))
           break
         }
         case 'view': {
@@ -188,11 +261,15 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
           setRun({ board: board.current, events: events.current, restored: false, past: [], refusal: null })
           break
         }
-        case 'refused': setRefusal({ message: m.error, stale: Boolean(m.stale) }); break
+        // `answering` is the room saying the refusal is its one-move guard,
+        // which the next status makes untrue; a room from before it says only
+        // the words, and its refusal then stands as any other does.
+        case 'refused': setRefusal({ message: m.error, stale: Boolean(m.stale), ...(m.answering === true ? { answering: true } : {}) }); answered(); break
         case 'gone': {
           // Nothing more is coming, so anything held is said now: the log is
           // the record of the game, and a table that has gone still has one.
           flush()
+          answered()
           setRun((r) => (r ? { ...r, events: events.current } : r))
           setGone(m.reason ?? 'The engine has gone.')
           break
@@ -209,9 +286,18 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   const send = useCallback((op, params = {}) => {
     const line = wire.current
     if (!line || !status) return false
+    // The room refuses a second press while the first is being answered, in
+    // these words; saying so here spares the round trip.
+    if (answering) { setRefusal({ message: 'The engine is still answering your last move.', stale: true, answering: true }); return false }
     setRefusal(null)
-    return line.send({ t: 'engine', op, stop: status.stop, ...params })
-  }, [status])
+    const sent = line.send({ t: 'engine', op, stop: status.stop, ...params })
+    if (sent) {
+      setAnswering(true)
+      clearTimeout(slowTimer.current)
+      slowTimer.current = setTimeout(() => setSlow(true), SLOW_MS)
+    }
+    return sent
+  }, [status, answering])
   const act = useCallback((index, extra = {}) => send('act', { index, ...extra }), [send])
   const decide = useCallback((params) => send('decide', params), [send])
 
@@ -228,7 +314,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   }, [])
 
   return {
-    run, seat, seats, status, refusal, gone, wireStatus, unloaded, leftOut, sideboardLeftOut,
+    run, seat, seats, status, refusal, gone, wireStatus, unloaded, leftOut, sideboardLeftOut, level, answering, slow,
     act, decide, cardFor, moveCard,
     refuse: (message) => setRefusal({ message }),
     clearRefusal: () => setRefusal(null),

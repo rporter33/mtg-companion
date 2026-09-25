@@ -234,6 +234,11 @@
 }
 .pile__card:hover, .pile__card:focus-visible { border-color: var(--accent); }
 .pile__card--selected { border-color: var(--accent); background: var(--accent-soft); }
+/* What the engine asks about a card in a pile (ZoneBrowser's `glowOf`): the
+   target edge, heavier than a hover's, and the words beside the name. */
+.pile__card--target { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.pile__card--playable { border-color: var(--accent); }
+.pile__glow { color: var(--text-muted); font-size: 0.72rem; }
 
 .life__row { align-items: center; gap: var(--space-2); }
 .life__total { font-size: 1.6rem; font-variant-numeric: tabular-nums; min-width: 2.5ch; text-align: center; }
@@ -573,6 +578,8 @@
 .stackshelf__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column-reverse; gap: 2px; }
 .stackshelf__item { display: flex; align-items: baseline; gap: var(--space-2); font-size: 0.85rem; }
 .stackshelf__item--top strong { color: var(--accent); }
+/* A spell on the stack the engine asks this seat to aim at: tapped here, with the target edge. */
+.stackshelf__pick { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 
 /* --- the turn tracker ----------------------------------------------------- */
 
@@ -932,3 +939,74 @@
 /* A selected card is ringed outside its own border rather than inside the
    art, which a printed border would otherwise swallow. */
 .bcard--photo.bcard--selected { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+
+/* --- what the engine offers, on the cards themselves --------------------- */
+/*
+ * At the engine's table a card glows when a tap on it does something the
+ * engine will take (src/lib/engine/glow.js; HANDOFF.md, M1b): the cards in
+ * hand that can be played, as Moxgate outlines them (TARGET.md §11), and,
+ * while something is being aimed or declared, the cards it may be aimed at or
+ * declared with. Both are the accent, which the season turns cyan, and never
+ * appear together: a stop is either a play or a question.
+ *
+ * The two differ by weight rather than by colour: playable is a fine ring
+ * with a soft light, a target a heavier ring with more, and a card chosen —
+ * an attacker picked — the heaviest, standing still. Each ring has a thin
+ * line of ink outside it, because the accent is gold until the season, and
+ * gold on the parchment mat all but vanishes; the ink keeps the edge on paper
+ * and is lost harmlessly on the dark chrome around the hand. What a glow
+ * means is also in the card's spoken label and in the prompt's words, so
+ * nothing rests on seeing it.
+ *
+ * The light breathes, slowly, and stands still for anybody who has asked for
+ * less motion: the system's setting below, and the app's own on the table's
+ * root. Two classes each, so they win over the one-class rules of selection
+ * and arrival they sit beside.
+ */
+.bcard.bcard--playable {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 3.5px #1b14088c, 0 0 14px 3px color-mix(in srgb, var(--accent) 50%, transparent);
+  animation: bcard-playable 2.4s ease-in-out infinite;
+}
+.bcard.bcard--target {
+  box-shadow: 0 0 0 2.5px var(--accent), 0 0 0 4px #1b1408a6, 0 0 16px 4px color-mix(in srgb, var(--accent) 60%, transparent);
+  animation: bcard-target 1.6s ease-in-out infinite;
+}
+.bcard.bcard--chosen {
+  box-shadow: 0 0 0 3.5px var(--accent), 0 0 0 5px #1b1408bf, 0 0 20px 5px color-mix(in srgb, var(--accent) 70%, transparent);
+  animation: none;
+}
+@keyframes bcard-playable {
+  50% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 3.5px #1b14088c, 0 0 20px 5px color-mix(in srgb, var(--accent) 70%, transparent); }
+}
+@keyframes bcard-target {
+  50% { box-shadow: 0 0 0 2.5px var(--accent), 0 0 0 4px #1b1408a6, 0 0 24px 7px color-mix(in srgb, var(--accent) 80%, transparent); }
+}
+.game--still .bcard--playable, .game--still .bcard--target { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .bcard.bcard--playable, .bcard.bcard--target { animation: none; }
+}
+/*
+ * Keyboard focus on a glowing card. The glows are rings of shadow reaching up
+ * to 5 px out (a chosen attacker's), and the plain focus ring is the accent 2
+ * to 4 px out: drawn over a glow in the glow's own colour, it all but vanished,
+ * and on the battlefield it was the only sign of where the keyboard was (found
+ * in M3's review). So a glowing card's ring stands clear of the glow, 6 px out,
+ * and is two tones rather than the accent — ink inside, light outside — because
+ * the card may lie on the parchment mat, where ink shows and light does not, or
+ * on the dark chrome round the hand, where the reverse holds. It does not move.
+ * Three classes, to win over `.bcard:focus-visible`.
+ */
+.bcard.bcard--playable:focus-visible, .bcard.bcard--target:focus-visible {
+  position: relative;
+  outline: 2px solid #1b1408;
+  outline-offset: 6px;
+}
+.bcard.bcard--playable:focus-visible::after, .bcard.bcard--target:focus-visible::after {
+  /* Measured from the padding box, inside the card's 1 px border: 8 to 10 px
+     outside that border, just beyond the ink. */
+  content: '';
+  position: absolute; inset: -11px;
+  border: 2px solid #fdf6e3;
+  border-radius: 16px;
+  pointer-events: none;
+}

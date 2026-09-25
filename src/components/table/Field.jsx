@@ -22,7 +22,7 @@ const TILE_W = 0.16
 
 export default function Field({
   fieldRef, board, lookup, player = 'you', selectedId, drag, aiming, onBegin, onSelect, onContext, onHover, onNudge, onBackground,
-  images = true, tile = false, mirror = false,
+  images = true, tile = false, mirror = false, glowOf = null,
 }) {
   const cards = stacked(board, player)
   // The seat opposite is seen from across the table: their lands at the far
@@ -74,7 +74,7 @@ export default function Field({
             key={inst.id}
             data-id={inst.id}
             className={`field__slot${aiming && aiming.id !== inst.id ? ' field__slot--aimable' : ''}${live ? ' field__slot--carried' : ''}`}
-            onPointerEnter={onHover ? (e) => { if (e.pointerType === 'mouse') onHover(inst.id, e.currentTarget.getBoundingClientRect()) } : undefined}
+            onPointerEnter={onHover ? (e) => { if (e.pointerType === 'mouse') onHover(inst.id, e.currentTarget) } : undefined}
             onPointerLeave={onHover ? () => onHover(null) : undefined}
             style={{ left: `${(live?.x ?? inst.x) * 100}%`, top: `${yOf(live?.y ?? inst.y) * 100}%`, zIndex: live ? 999 : inst.z }}
           >
@@ -89,6 +89,7 @@ export default function Field({
                 dragging={Boolean(live)}
                 size={tile ? 'tile' : 'field'}
                 arrived={tile && inst.enteredOnTurn === board.turn}
+                glow={glowOf?.(inst.id) ?? null}
                 onPointerDown={(e) => onBegin(e, { id: inst.id, from: 'battlefield' })}
                 onClick={() => onSelect(inst.id)}
                 onContextMenu={onContext ? (e) => { e.preventDefault(); onContext(inst.id) } : undefined}

@@ -352,12 +352,12 @@ describe('an enforced room', () => {
   const DECK = { Mountain: 14, 'Raging Goblin': 6 }
 
   /** A client at an enforced room: the raw messages, kept. */
-  async function join(code, name, { deck = DECK, seat = null, sideboard = null, deltas = false } = {}) {
+  async function join(code, name, { deck = DECK, seat = null, sideboard = null, deltas = false, level = null } = {}) {
     const api = roomsApi(base)
     const got = []
     const wire = relay({ url: api.socketUrl(code), WebSocket })
     wire.onMessage((m) => got.push(m))
-    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat, ...(sideboard ? { sideboard } : {}), ...(deltas ? { deltas: true } : {}) }))
+    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat, ...(sideboard ? { sideboard } : {}), ...(deltas ? { deltas: true } : {}), ...(level ? { level } : {}) }))
     const last = (op) => [...got].reverse().find((m) => m.t === 'engine' && m.op === op) ?? null
     await until(() => last('seated'))
     return { got, wire, last, send: (m) => wire.send({ t: 'engine', ...m }), leave: () => wire.close() }
@@ -453,6 +453,125 @@ describe('an enforced room', () => {
     you.leave()
   })
 
+  describe('how strongly the engine plays', () => {
+    /** The seated after the deal: the one with an engine seat in it. */
+    const dealtSeat = (who) => [...who.got].reverse().find((m) => m.op === 'seated' && m.engineSeat) ?? null
+    const engineAt = (code) => relayServer.rooms.get(code).engine.engine
+
+    it('is a setting of the room, asked of the engine for its own seat at the deal, and said once taken', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true, level: 'hard' })
+      const before = await api.peek(code)
+      expect(before).toMatchObject({ level: 'hard', started: false })
+      expect(before).not.toHaveProperty('played')
+      expect(before.seats[1]).toMatchObject({ ai: 'heuristic', level: 'hard' })
+      const you = await join(code, 'Robin')
+      // The seated that answers the sit comes before any deal and names no level.
+      expect(you.got.find((m) => m.op === 'seated')).not.toHaveProperty('level')
+      await until(() => dealtSeat(you), 5000)
+      expect(dealtSeat(you).level).toBe('hard')
+      const sent = (await engineAt(code).call('lastNew')).request
+      expect(sent.players[1]).toMatchObject({ ai: 'heuristic', level: 'hard' })
+      // The person's seat is not the engine's to play, so it is asked no level.
+      expect(sent.players[0]).not.toHaveProperty('level')
+      const after = await api.peek(code)
+      expect(after).toMatchObject({ level: 'hard', played: 'hard', profile: 'production-candidate-expiring', started: true })
+      expect(after.seats[1].level).toBe('hard')
+      you.leave()
+    })
+
+    it('takes the level a sit brings until the deal, and keeps the game\'s after it', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      expect((await api.peek(code)).level).toBeNull()
+      const you = await join(code, 'Robin', { level: 'easy' })
+      await until(() => dealtSeat(you), 5000)
+      expect((await engineAt(code).call('lastNew')).request.players[1].level).toBe('easy')
+      expect(dealtSeat(you).level).toBe('easy')
+      you.leave()
+      // Back with another level chosen since: the game is the one it was dealt as.
+      const again = await join(code, 'Robin', { seat: 'p1', level: 'hard' })
+      await until(() => dealtSeat(again), 5000)
+      expect(dealtSeat(again).level).toBe('easy')
+      expect(await api.peek(code)).toMatchObject({ level: 'easy', played: 'easy' })
+      again.leave()
+    })
+
+    it('reads a level it does not know as none, and a room asked for none asks the engine for none', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true, level: 'grandmaster' })
+      expect((await api.peek(code)).level).toBeNull()
+      const you = await join(code, 'Robin', { level: 'expert' })
+      await until(() => dealtSeat(you), 5000)
+      // A tab from before levels asks for none, and plays as it always did.
+      expect((await engineAt(code).call('lastNew')).request.players[1]).not.toHaveProperty('level')
+      expect(dealtSeat(you).level).toBeNull()
+      you.leave()
+    })
+
+    it('never asks an older engine for a level, and says it is playing at none', async () => {
+      // The environment is read when the relay starts that room's engine, at the sit.
+      process.env.FAKE_PROTOCOL = '3'
+      try {
+        const api = roomsApi(base)
+        const { code } = await api.open({ seats: 2, enforced: true, level: 'hard' })
+        const you = await join(code, 'Robin', { level: 'hard' })
+        await until(() => dealtSeat(you), 5000)
+        expect((await engineAt(code).call('lastNew')).request.players[1]).not.toHaveProperty('level')
+        expect(dealtSeat(you).level).toBeNull()
+        expect(await api.peek(code)).toMatchObject({ level: 'hard', played: null })
+        expect((await api.peek(code)).seats[1].level).toBeNull()
+        you.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
+    })
+
+    it('asks no level for a seat played at random, which has none, and says which kind of player it fields', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true, ai: 'random', level: 'hard' })
+      const you = await join(code, 'Robin')
+      await until(() => dealtSeat(you), 5000)
+      expect((await engineAt(code).call('lastNew')).request.players[1]).toMatchObject({ ai: 'random' })
+      expect((await engineAt(code).call('lastNew')).request.players[1]).not.toHaveProperty('level')
+      // A null level here is not "an engine older than the levels": a random
+      // player has none, and the seated says which kind the room fields.
+      expect(dealtSeat(you)).toMatchObject({ level: null, ai: 'random' })
+      you.leave()
+    })
+
+    it('says a heuristic engine player is one in the seated after the deal', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true, level: 'easy' })
+      const you = await join(code, 'Robin')
+      await until(() => dealtSeat(you), 5000)
+      expect(dealtSeat(you)).toMatchObject({ level: 'easy', ai: 'heuristic' })
+      // The seated before the deal says nothing of either.
+      expect(you.got.find((m) => m.op === 'seated')).not.toHaveProperty('ai')
+      you.leave()
+    })
+
+    it('tells a room whose engine is still loading from one that has dealt', async () => {
+      // The stand-in holds its first hello, as the real engine takes seconds to
+      // load the corpus before it answers. A lobby that read "started" as "under
+      // way" said the game was being played, one way only, in that time.
+      process.env.FAKE_HOLD_HELLO = '1'
+      try {
+        const api = roomsApi(base)
+        const { code } = await api.open({ seats: 2, enforced: true, level: 'hard' })
+        const you = await join(code, 'Robin')
+        await until(() => relayServer.rooms.get(code).engine.engine, 5000)
+        const loading = await api.peek(code)
+        expect(loading).toMatchObject({ started: true, dealt: false, level: 'hard' })
+        expect(loading).not.toHaveProperty('played')
+        await engineAt(code).call('release')
+        await until(() => dealtSeat(you), 5000)
+        expect(await api.peek(code)).toMatchObject({ started: true, dealt: true, level: 'hard', played: 'hard' })
+        you.leave()
+      } finally {
+        delete process.env.FAKE_HOLD_HELLO
+      }
+    })
+  })
+
   it('lets the seat the engine is waiting on act, refuses the rest, and refuses a stale offer', async () => {
     const api = roomsApi(base)
     const { code } = await api.open({ seats: 3, enforced: true })
@@ -478,6 +597,37 @@ describe('an enforced room', () => {
     await until(() => you.last('refused'))
     expect(you.last('refused')).toMatchObject({ stale: true })
     you.leave(); them.leave()
+  })
+
+  it('takes one move at a time: a second press while the engine is still answering the first is refused, not sent', async () => {
+    // Measured at M3: against hard, with a deck of instants, the engine took up
+    // to 9.7 s to answer a move. The stop a press answers does not change until
+    // that answer comes, so a second press in the meantime used to pass the
+    // stale check and reach the engine, which then applied it to whatever it
+    // offered next — a play nobody chose.
+    // The stand-in holds the first act unanswered until this test lets it go,
+    // so the second press is certain to arrive while the first is outstanding
+    // rather than inside a window of real time a loaded machine could miss.
+    const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+    const you = await join(code, 'Robin')
+    await until(() => you.last('view'), 5000)
+    const engine = relayServer.rooms.get(code).engine.engine
+    await engine.call('holdActs')
+    const { stop } = you.last('status').status
+    you.send({ op: 'act', stop, index: 0 })
+    you.send({ op: 'act', stop, index: 0 })
+    await until(() => you.last('refused'), 5000)
+    // Marked as the guard's, which the answer on its way makes untrue.
+    expect(you.last('refused')).toMatchObject({ error: 'The engine is still answering your last move.', stale: true, answering: true })
+    expect(you.last('status').status.stop).toBe(stop)
+    await engine.call('release')
+    await until(() => you.last('status').status.stop === stop + 1, 5000)
+    expect((await engine.call('tally')).acts).toBe(1)
+    // And once it has answered, the next press is taken as usual.
+    you.send({ op: 'act', stop: stop + 1, index: 0 })
+    await until(() => you.last('status').status.stop === stop + 2, 5000)
+    expect((await engine.call('tally')).acts).toBe(2)
+    you.leave()
   })
 
   it('gives a seat back to someone who comes back for it, with the table as it stands', async () => {

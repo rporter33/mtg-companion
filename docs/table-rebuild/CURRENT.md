@@ -54,6 +54,69 @@ and every later one a delta against the one before it, with the engine's own
 whole state kept beside four of them so the deltas can be held against it.
 `--views` is the dial if it grows again.
 
+Added at M1b (2026-09-24), what the engine offers drawn on the cards, and a
+preview that keeps clear of the next press:
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/engine/glow.js` | 110 | `glowsAt`: which cards (and seats) glow at the engine's table and the words each glow adds to a spoken label — the hand cards with a meaningful, affordable offer, a permanent's non-mana ability, the legal targets of a targets decision, the creatures that may attack or block and the ones chosen. `unaimed`: the offers held back because they need a target the table cannot send. `GLOW_SAYS`. Pure; reads an older engine's status without throwing. |
+| `src/features/game/peekPlace.js` | 98 | `placePeek`: where the card preview goes — never over the prompt or the rail, never over the card, never off the screen; the nearest place that keeps all three, in the order the preview always had; smaller, then not at all, as last resorts. Pure. |
+| `tests/engine-glow.test.js` | 177 | The glow held against every stop of the captured run, with the board each belongs to rebuilt from its deltas; a targets decision in `Server.kt`'s shape; the torn and the old. |
+| `tests/peek-place.test.js` | 120 | The placement's cases, and a sweep of card positions over four layouts that it never covers what it keeps clear of. |
+
+Changed with them: `Peek.jsx` places the preview with `placePeek` after every
+render of the table, from rectangles read at that moment, and measures the
+card again when it settles; `BoardCard.jsx` and `Field.jsx` carry a `glow`;
+`Table.jsx` computes the glows, lights the plates of seats that are targets,
+names the source of a targets decision and offers seats by name, passes on
+Space, and names Scryfall and Argentum in its credit line.
+
+Added at M3 (2026-09-24), how strongly the engine plays:
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/engine/levels.js` | 72 | `LEVELS` (easy, intermediate, hard), `DEFAULT_LEVEL` (intermediate, the owner's choice), `levelOf` and `chosenLevel` (a level read forgivingly from storage or the wire), `LEVEL_NAMES`, `LEVEL_LINES` and `LEVELS_MEASURED` (the app's own words and the measured sentence), and `levelLine`, the log's one line about the level in each way a room can answer. Shared by the relay and the app. Pure. |
+| `scripts/engine-levels.mjs` | 275 | Plays the levels against each other through the process, a seed each way round, and summarises by pairs with a 95% interval; the per-choice times from `clock`; `--watch` for what a person's seat waits on a paced table; `--from` to put saved runs together. PLAN.md's M3 numbers are its output. |
+| `tests/engine-levels.test.js` | 60 | The words, the default, the forgiving read, and the log's line in every case. |
+| `tests/browser/levels.spec.mjs` | 183 | The choice in the lobby against the stand-in engine, so it runs everywhere: three levels, the default, the words, axe at two widths, kept across a reload, carried to the engine and named back; and a slow answer, refused twice and shown as thinking. |
+
+Changed with them: `Server.kt` is protocol 4 — `level` (and `profile`, for
+measuring) on a player in `new`, the level and profile each seat took in the
+reply, `hello.levels`, and `clock`; the room (`relay-engine.mjs`) holds the level
+as a setting, asks only an engine at 4 for it, says what was taken, and takes
+one move at a time; `relay.js` opens a room with a level; `Seats.jsx` offers the
+choice beside the engine's seat and says the level of a table already dealt;
+`useEngineRoom.js` sits with the level, notes it once, holds a second press
+while the first is answered and calls an answer slow after `SLOW_MS`; `Table.jsx`
+names the level in the seat list and says the engine is thinking through a slow
+answer, with the prompt stepped aside; the stand-in engine
+(`tests/fixtures/fake-engine.mjs`) has levels and a slow `act`.
+
+Added in M3's review (2026-09-24), thirteen faults fixed (PLAN.md, "M3", "What
+the review found"):
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `tests/engine-prompt.test.jsx` | 173 | The prompt panel rendered against the captured run's stop for Volcanic Hammer alone, and `stopLine` and the targets sentence against statuses in `Server.kt`'s shape: a permanent's ability beside a card in hand, a flashback in the graveyard, a cost with a choice in it, targets in a pile or on the stack; `placeWords`. |
+
+Changed with it: `Server.kt` sends an offer's `additionalCost`,
+`additionalCostText` and `requiresForage`; `glow.js` (now 169 lines) gains
+`heldBack`, `unpaid` and `offeredElsewhere`, and glows nothing whose cost needs
+a choice; `Table.jsx` exports `EnginePrompt`, `stopLine` and `placeWords`,
+refuses such a tap in words, names plays from a pile and where targets are,
+marks a pile's tile that holds either, reads the stack from every seat at the
+engine's table without the by-hand resolve buttons there, and notes how a
+control came by its focus so Space after a mouse press passes;
+`ZoneBrowser.jsx` draws the engine's glow on a card in a pile, with its words;
+`table.css` gives a glowing card a two-tone focus ring outside its glow;
+`useEngineRoom.js` ends the wait when the wire drops, takes "still answering"
+down at the next status, and says the level only at a heuristic table;
+`relay-engine.mjs` marks that refusal `answering`, says the kind of engine
+player in `seated`, and reports `dealt`; `levels.js` (95 lines) gains
+`roomLevel`, which `Seats.jsx` uses to say a table is still dealing; the
+stand-in engine holds an act, or its first hello, until released, in place of
+the slow `act`.
+
 ## `src/lib/board/` — the rules-free table
 
 | File | Lines | What it holds |

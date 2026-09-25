@@ -32,6 +32,8 @@ import Printings from '../../components/Printings.jsx'
 import Confirm from '../../components/Confirm.jsx'
 import { nameList } from '../../lib/engine/deck.js'
 import { THINKING, thinkingAt } from '../../lib/engine/board.js'
+import { glowsAt, heldBack, offeredElsewhere, unaimed, unpaid, GLOW_SAYS } from '../../lib/engine/glow.js'
+import { chosenLevel, LEVEL_NAMES, levelOf } from '../../lib/engine/levels.js'
 import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
 import useEngineRoom from './useEngineRoom.js'
@@ -76,6 +78,42 @@ const TILE_LABELS = { library: 'Lib', command: 'Cmd', graveyard: 'GY', exile: 'E
 /** The zones anyone at the table may look through. A hand and a library are not among them. */
 const PUBLIC_PILES = ['graveyard', 'exile']
 const COMBAT_STEPS = ['beginCombat', 'attackers', 'blockers', 'firstStrike', 'damage', 'endCombat']
+/** The words a pile's tile adds to its label when something in it is part of what the engine asks now. */
+const PILE_SAYS = {
+  target: 'holds a legal target',
+  play: 'holds a card you can play, under Actions',
+  use: 'holds a card whose ability you can use, under Actions',
+}
+/**
+ * Said when a tap reaches an offer that needs a target. Sent as it is, the
+ * engine would refuse it saying there are no valid targets, which is not so:
+ * it is this table that sends none yet (lib/engine/glow.js; HANDOFF.md, M4).
+ */
+const cannotAim = (name) => `${name} needs a target, and this table cannot choose one for it yet.`
+/**
+ * Said when a tap reaches an offer whose cost has a choice in it: which card to
+ * discard, which creature to sacrifice. Sent bare, the engine would refuse it
+ * ("Must choose 1 card(s) to discard"), because `act` carries no payment yet
+ * (lib/engine/glow.js; HANDOFF.md, M4). The cost is named in Argentum's words.
+ */
+const cannotPay = (name, cost) => `${name} needs a choice made for its cost${typeof cost === 'string' && cost ? ` (${cost.charAt(0).toLowerCase()}${cost.slice(1)})` : ''}, and this table cannot make one for it yet.`
+/** Why a tap on this offer is not sent, in words, for whichever reason holds it back. */
+const cannotDo = (offer, name) => (heldBack(offer) === 'cost' ? cannotPay(name, offer.additionalCostText) : cannotAim(name))
+const NO_GLOW = new Map()
+
+/**
+ * Where a card is, as the end of a sentence: "in your graveyard", "in exile",
+ * "on the stack". Null for the hand and the battlefield, where a glowing card is
+ * already in sight, and for a card the board cannot place.
+ */
+export function placeWords(place, me, nameOfSeat = () => null) {
+  if (!place?.zone || place.zone === 'hand' || place.zone === 'battlefield') return null
+  const whose = place.owner === me ? 'your' : `${(nameOfSeat(place.owner) ?? 'their').replace(/^The engine$/, 'the engine')}'s`
+  if (place.zone === 'stack') return 'on the stack'
+  if (place.zone === 'exile') return 'in exile'
+  if (place.zone === 'command') return 'in the command zone'
+  return `in ${whose} ${ZONE_LABELS[place.zone]?.toLowerCase() ?? place.zone}`
+}
 
 export default function Table({ deck: initialDeck, onOpenCard, room = null, engine = null }) {
   // The deck is kept here because choosing a printing rewrites it, and the
@@ -151,6 +189,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     deck,
     deckLookup,
     cardsReady: ready,
+    // The level chosen in the lobby, kept with the player's other table
+    // preferences; read forgivingly, since any build may have written it.
+    level: chosenLevel(prefs.engineLevel),
   })
   const away = Boolean(room || engine)
   // A card the deck knows, else one fetched for the table, else what the
@@ -317,8 +358,21 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   // What the engine offers this seat right now, if it is this seat's stop.
   const status = engine ? held.status : null
   const myStop = Boolean(status && status.actor === me && !status.over)
-  const offers = myStop && status.waiting === 'action' ? status.actions : []
-  const offerFor = (id) => offers.find((a) => a.card === id && a.meaningful && a.affordable) ?? offers.find((a) => a.card === id && a.affordable) ?? null
+  const offers = myStop && status.waiting === 'action' && Array.isArray(status.actions) ? status.actions : []
+  // The offer a tap on this card acts: a meaningful one before any other, and
+  // one the table can carry out before one it cannot yet — needing a target it
+  // cannot send, or a choice in its cost it cannot make (lib/engine/glow.js) —
+  // which is kept last so the tap can say why.
+  const offerFor = (id) => {
+    const mine = offers.filter((a) => a.card === id && a.affordable)
+    return mine.find((a) => a.meaningful && !heldBack(a)) ?? mine.find((a) => !heldBack(a)) ?? mine[0] ?? null
+  }
+  // Space passes (HANDOFF.md, M1b): the pass on offer now, read by the key's
+  // handler below through a ref so that one listener serves every stop.
+  const passOffer = useRef(null)
+  passOffer.current = engine ? offers.find((a) => a.type === 'PassPriority') ?? null : null
+  const actRef = useRef(null)
+  actRef.current = held.act
   // Combat is declared by tapping: attackers gathered until "Attack", a
   // blocker then the attacker it blocks. Both are cleared at the next stop.
   const [chosen, setChosen] = useState(() => new Set())
@@ -350,7 +404,8 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     if (!inst) return
     if (engine) {
       const offer = offerFor(id)
-      if (offer) held.act(offer.index)
+      if (offer && heldBack(offer)) held.refuse(cannotDo(offer, nameOf(board, id, lookup)))
+      else if (offer) held.act(offer.index)
       else held.refuse(myStop ? 'The engine does not offer that card now.' : 'It is not your stop.')
       return
     }
@@ -360,7 +415,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
       ? { type: 'move', id, zone: 'stack' }
       : { type: 'move', id, zone: 'battlefield', ...point })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [board, deckLookup, doAction, engine, offers, myStop, held])
+  }, [board, deckLookup, doAction, engine, offers, myStop, held, lookup])
 
   /*
    * A released card goes where the most specific thing under the pointer
@@ -396,6 +451,64 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   useTravel(rootRef, { board, reduced, me })
   // Resting the pointer on a card shows its printed face; Z shows it at once.
   const { peek, enter: peekAt, leave: peekOff } = usePeek({ enabled: showImages })
+  // Where the next press goes, which the preview must leave uncovered: the
+  // prompt panel with its Pass, and the rail with its own (HANDOFF.md, M1b).
+  // Read each time the preview is placed rather than once, because the prompt
+  // comes and goes with every stop.
+  const pressable = useCallback(() => {
+    const root = rootRef.current
+    return root ? [...root.querySelectorAll('.prompt, .rail')].map((el) => el.getBoundingClientRect()) : []
+  }, [])
+
+  /*
+   * Space passes, when a pass is on offer (HANDOFF.md, M1b; the Grok pack's
+   * prototype). Not while a field has focus, where Space is a letter, nor in a
+   * dialog; and not while the keyboard is on a control, where Space presses
+   * that control — a person tabbing through their hand expects Space to play
+   * the card they are on, as every button does. A control the pointer last
+   * pressed has focus without showing it, and there Space passes: after
+   * tapping a land, the next thing Space is for is the pass. A key held down
+   * repeats, and a repeat is not a second decision to pass. Z stays the zoom.
+   *
+   * Which of the two a control is, is noted when it takes focus, not asked in
+   * the keydown: by then Chromium already counts the focused control as
+   * focus-visible, because a key has gone down, so a control the pointer had
+   * pressed looked keyboard-focused to every Space and was pressed again — a
+   * refused card refused again rather than a pass (found in M3's review, with a
+   * probe on the pinned Chromium). What the browser showed as focus arrived is
+   * what the person saw. A control focused before this was listening counts as
+   * the pointer's.
+   */
+  useEffect(() => {
+    if (!engine) return undefined
+    const byKeyboard = new WeakMap()
+    const onFocus = (e) => {
+      const el = e.target
+      if (!(el instanceof Element)) return
+      let shown = false
+      try { shown = el.matches(':focus-visible') } catch { /* a browser without it shows no ring to go by */ }
+      byKeyboard.set(el, shown)
+    }
+    const onKey = (e) => {
+      if (e.key !== ' ' || e.repeat || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.defaultPrevented) return
+      const pass = passOffer.current
+      if (!pass) return
+      const at = document.activeElement
+      if (at && at !== document.body) {
+        if (at.isContentEditable || /^(input|textarea|select)$/i.test(at.tagName)) return
+        if (at.closest?.('[role="dialog"], dialog')) return
+        if (byKeyboard.get(at)) return
+      }
+      e.preventDefault()
+      actRef.current?.(pass.index)
+    }
+    document.addEventListener('focusin', onFocus, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('focusin', onFocus, true)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [engine])
 
   const nudge = useCallback((id, dx, dy) => {
     const inst = board?.cards[id]
@@ -464,6 +577,32 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     return shared.seats.find((s) => s.seat === p) ?? null
   }
   const nameOfSeat = (p) => seatOf(p)?.name ?? (engine ? 'The engine' : `Seat ${p.replace(/^p/, '')}`)
+  // What glows, and what each glow says (lib/engine/glow.js). Only the
+  // engine's table has any: the table played by hand knows nothing of what a
+  // card can do, and says so rather than guessing.
+  const glows = engine ? glowsAt({ status, me, zoneOf: (id) => board.cards[id]?.zone, chosen, blocks, blocker }) : NO_GLOW
+  const glowOf = (id) => glows.get(id) ?? null
+  // Where a card is and whose it is, for the words that say where something is.
+  const placeOf = (id) => { const inst = board.cards[id]; return inst ? { zone: inst.zone, owner: inst.owner ?? inst.controller ?? null } : null }
+  // Plays the engine offers for a card in a pile rather than in hand or on the
+  // battlefield: a flashback in the graveyard. No tap on the table reaches
+  // them, so the prompt names them and the pile's tile says it holds one.
+  const elsewhere = engine ? offeredElsewhere(status, (id) => board.cards[id]?.zone) : []
+  /**
+   * What a pile's tile says it holds, when something in it is part of what the
+   * engine is asking now: a legal target (a trigger aimed at a card in a
+   * graveyard), or a card with a play on offer. The tile is where a player
+   * looks for a pile, and the cards inside glow only once it is opened, so the
+   * tile carries the edge and the words.
+   */
+  const pileHolds = (who, zone) => {
+    if (!engine) return null
+    const ids = board.zones[who]?.[zone] ?? []
+    if (ids.some((id) => glows.get(id)?.kind === 'target')) return 'target'
+    const here = elsewhere.filter(({ offer }) => ids.includes(offer.card))
+    if (!here.length) return null
+    return here.some(({ offer }) => offer.type !== 'ActivateAbility') ? 'play' : 'use'
+  }
 
   /*
    * One tap. In hand it plays the card; on the battlefield it taps it; in a
@@ -515,15 +654,18 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
           return
         }
       }
-      const ability = offers.find((a) => a.card === id && a.type === 'ActivateAbility' && !a.mana && a.affordable)
+      const abilities = offers.filter((a) => a.card === id && a.type === 'ActivateAbility' && !a.mana && a.affordable)
+      const ability = abilities.find((a) => !heldBack(a))
       if (ability) { held.act(ability.index); return }
+      if (abilities.length) { held.refuse(cannotDo(abilities[0], nameOf(board, id, lookup))); return }
     }
     setPanel('actions')
   }
   // The long way in: pick the card up without doing anything to it.
   const hold = (id) => { setSelected(id); setAiming(null); setPanel('actions') }
   holdRef.current = hold
-  const hoverCard = (id, rect) => { if (id && board.cards[id]) peekAt(cardFor(board.cards[id]), rect); else peekOff() }
+  // `at` is the element under the pointer, which the preview measures afresh each time it is placed.
+  const hoverCard = (id, at) => { if (id && board.cards[id]) peekAt(cardFor(board.cards[id]), at); else peekOff() }
   const aimAt = (mode) => { setAiming({ id: selected, mode }); setPanel(null) }
 
   const choosePrinting = (print, finish) => {
@@ -548,7 +690,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   const [zoneOpen, zoneWho] = panel?.startsWith('zone:') ? panel.slice(5).split('@') : [null, null]
 
   return (
-    <div className={`game${drag ? ' game--carrying' : ''}${away ? ' game--shared' : ''}${engine ? ' game--held' : ''}`} ref={rootRef}>
+    // `game--still` is the app's own reduced-motion setting, which the
+    // stylesheet cannot read the way it reads the system's.
+    <div className={`game${drag ? ' game--carrying' : ''}${away ? ' game--shared' : ''}${engine ? ' game--held' : ''}${reduced ? ' game--still' : ''}`} ref={rootRef}>
       {drag && drag.moved && drag.from !== 'battlefield' && board.cards[drag.id] && (
         <div className="carried" style={{ left: `${drag.x}px`, top: `${drag.y}px` }} aria-hidden="true">
           <BoardCard card={cardFor(board.cards[drag.id])} name={nameFor(board.cards[drag.id])} inst={board.cards[drag.id]} size="hand" dragging />
@@ -574,8 +718,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
         // A paced table stops after each of the engine's plays and says it is
         // waiting on itself; the plate says so in words, where the seat's own
         // state is already read, and the prompt panel says nothing, as
-        // Moxgate's does (docs/MOXGATE_STUDY.md; HANDOFF.md, M2).
-        const thinking = thinkingAt(status, them)
+        // Moxgate's does (docs/MOXGATE_STUDY.md; HANDOFF.md, M2). It says the
+        // same once a press of yours has gone unanswered for a while: at a
+        // level that searches, what follows a move can take seconds (M3), and
+        // it is the engine's seat that is taking them.
+        const thinking = thinkingAt(status, them) || Boolean(engine && held.slow && sitting?.ai && !status?.over)
         const theirHand = handOf(board, them).length
         const theirCommander = zoneOf(board, them, 'command')[0]
         const face = theirCommander && showImages ? artUrl(cardFor(theirCommander)) : null
@@ -586,6 +733,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
               status={thinking ? THINKING : !sitting ? 'Open seat' : !sitting.here ? 'Away' : board.active === them ? 'Their turn' : 'Waiting'}
               thinking={thinking}
               active={board.active === them}
+              target={glows.get(them)?.kind === 'target'}
               name={nameOfSeat(them)}
               life={sitting ? board.life[them] : null}
             />
@@ -602,6 +750,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                 const n = zone === 'library' ? librarySize(board, them) : zoneOf(board, them, zone).length
                 const open = PUBLIC_PILES.includes(zone)
                 const Tag = open ? 'button' : 'span'
+                const holds = pileHolds(them, zone)
                 return (
                   <Tag
                     key={zone}
@@ -611,10 +760,10 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                     // picture of a pile with a count, and says so, or its
                     // label is thrown away (found by the axe sweep, 2026-09-22).
                     role={open ? undefined : 'img'}
-                    className={`ztile${open ? '' : ' ztile--closed'}${zoneOpen === zone && zoneWho === them ? ' ztile--open' : ''}`}
+                    className={`ztile${open ? '' : ' ztile--closed'}${zoneOpen === zone && zoneWho === them ? ' ztile--open' : ''}${holds ? ` ztile--${holds === 'target' ? 'target' : 'playable'}` : ''}`}
                     onClick={open ? () => openZone(zone, them) : undefined}
                     aria-expanded={open ? zoneOpen === zone && zoneWho === them : undefined}
-                    aria-label={`${nameOfSeat(them)}'s ${ZONE_LABELS[zone].toLowerCase()}, ${n} card${n === 1 ? '' : 's'}`}
+                    aria-label={`${nameOfSeat(them)}'s ${ZONE_LABELS[zone].toLowerCase()}, ${n} card${n === 1 ? '' : 's'}${holds ? `, ${PILE_SAYS[holds]}` : ''}`}
                   >
                     <span className="ztile__label" aria-hidden="true">{TILE_LABELS[zone]}</span>
                     <span className={`ztile__face${zone === 'library' && n ? ' ztile__face--back' : ''}`} style={zone === 'command' && face ? { backgroundImage: `url("${face}")` } : undefined} aria-hidden="true">
@@ -642,6 +791,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                 images={showImages}
                 tile
                 mirror
+                glowOf={glowOf}
               />
             </div>
           </div>
@@ -695,6 +845,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
           onBackground={() => { if (!justDragged()) { setAiming(null); if (panel === 'actions') setPanel(null) } }}
           images={showImages}
           tile
+          glowOf={glowOf}
         />
         {aiming && (
           <div className="banner banner--info row row--wrap game__aim" role="status">
@@ -709,7 +860,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
         {!kept && hand.length > 0 && (
           <OpeningHand count={hand.length} mulligans={mulligans} onMulligan={mulligan} onKeep={() => setKept(true)} />
         )}
-        {engine && status && (
+        {/* A slow answer is the engine thinking, and the prompt says nothing
+            while it does, as it says nothing at one of the engine's own stops. */}
+        {engine && status && !held.slow && (
           <EnginePrompt
             status={status}
             me={me}
@@ -719,7 +872,12 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             blocker={blocker}
             declaring={declaring}
             blocking={blocking}
+            glows={glows}
+            elsewhere={elsewhere}
+            placeOf={placeOf}
+            players={board.players}
             nameOf={(id) => nameOf(board, id, lookup)}
+            nameOfSeat={nameOfSeat}
             onAct={(index, extra) => held.act(index, extra)}
             onDecide={(params) => held.decide(params)}
           />
@@ -733,6 +891,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             who="you"
             status={myTurn ? step.name : 'Waiting'}
             active={myTurn}
+            target={glows.get(me)?.kind === 'target'}
             name={away ? (prefs.playerName || 'You') : 'You'}
             life={board.life[me]}
             onLife={engine ? undefined : (delta) => doAction({ type: 'life', delta })}
@@ -757,6 +916,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                 onClick={() => { const pass = offers.find((a) => a.type === 'PassPriority'); if (pass) held.act(pass.index) }}
                 disabled={!offers.some((a) => a.type === 'PassPriority')}
                 title={myStop ? undefined : 'The engine is not waiting on you.'}
+                aria-keyshortcuts="Space"
               >
                 → Pass
               </button>
@@ -798,7 +958,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                   key={inst.id}
                   data-id={inst.id}
                   style={{ '--angle': `${spread.cards[i].angle}deg`, '--drop': spread.cards[i].drop, '--badge': spread.cards[i].badge, '--i': i }}
-                  onPointerEnter={(e) => { if (e.pointerType === 'mouse') hoverCard(inst.id, e.currentTarget.getBoundingClientRect()) }}
+                  onPointerEnter={(e) => { if (e.pointerType === 'mouse') hoverCard(inst.id, e.currentTarget) }}
                   onPointerLeave={() => hoverCard(null)}
                 >
                   <HandCost card={cardFor(inst)} pool={pool} />
@@ -809,6 +969,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                     size="hand"
                     tilt={!reduced}
                     images={showImages}
+                    glow={glowOf(inst.id)}
                     selected={selected === inst.id}
                     onPointerDown={(e) => begin(e, { id: inst.id, from: 'hand' })}
                     onClick={() => touch(inst.id)}
@@ -826,14 +987,15 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             const n = zone === 'library' ? librarySize(board, me) : zoneOf(board, me, zone).length
             const face = zone === 'command' && showImages ? artUrl(commander) : null
             const isOpen = zoneOpen === zone && zoneWho === me
+            const holds = pileHolds(me, zone)
             return (
               <button
                 key={zone}
                 data-zone={zone}
-                className={`ztile${isOpen ? ' ztile--open' : ''}`}
+                className={`ztile${isOpen ? ' ztile--open' : ''}${holds ? ` ztile--${holds === 'target' ? 'target' : 'playable'}` : ''}`}
                 onClick={() => openZone(zone)}
                 aria-expanded={isOpen}
-                aria-label={`${ZONE_LABELS[zone]}, ${n} card${n === 1 ? '' : 's'}`}
+                aria-label={`${ZONE_LABELS[zone]}, ${n} card${n === 1 ? '' : 's'}${holds ? `, ${PILE_SAYS[holds]}` : ''}`}
               >
                 <span className="ztile__label" aria-hidden="true">{TILE_LABELS[zone]}</span>
                 <span className={`ztile__face${zone === 'library' && n ? ' ztile__face--back' : ''}`} style={face ? { backgroundImage: `url("${face}")` } : undefined} aria-hidden="true">
@@ -857,7 +1019,8 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                 return (
                   <li key={p} className={`game__seatrow${p === me ? ' game__seatrow--you' : ''}${s && !s.here ? ' game__seatrow--away' : ''}`}>
                     <span className="game__dot" aria-hidden="true" />
-                    <span>{p === me ? 'You' : s ? s.name : 'Open seat'}</span>
+                    {/* The engine's seat says the level the room says it plays at, and nothing where it named none. */}
+                    <span>{p === me ? 'You' : s ? s.name : 'Open seat'}{s?.ai && levelOf(s.level) ? ` · ${LEVEL_NAMES[s.level]}` : ''}</span>
                     <span className="faint tiny">{!s ? '' : !s.here ? 'away' : board.active === p ? (p === me ? 'your turn' : 'their turn') : ''}</span>
                   </li>
                 )
@@ -884,16 +1047,22 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
 
         <StackShelf
           board={board}
-          player={me}
+          // The engine keeps one stack for the table, filed under one seat's
+          // id; at a table played by hand each seat's is its own.
+          players={engine ? board.players : [me]}
           nameFor={nameFor}
           cardFor={cardFor}
-          onResolve={(inst) => {
+          glowOf={glowOf}
+          onSelect={touch}
+          // The engine resolves the stack itself; a button saying otherwise
+          // would only be refused.
+          onResolve={engine ? null : (inst) => {
             const card = cardFor(inst)
             doAction(card && isPermanent(card, inst)
               ? { type: 'move', id: inst.id, zone: 'battlefield' }
               : { type: 'move', id: inst.id, zone: 'graveyard' })
           }}
-          onCounter={(inst) => doAction({ type: 'move', id: inst.id, zone: 'graveyard' })}
+          onCounter={engine ? null : (inst) => doAction({ type: 'move', id: inst.id, zone: 'graveyard' })}
         />
 
         {panel === 'actions' && engine && (
@@ -967,6 +1136,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                 nameFor={nameFor}
                 selected={selected}
                 onSelect={touch}
+                glowOf={glowOf}
               />
             )}
           </section>
@@ -995,12 +1165,16 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
           that the printed card carries. So the screen carries them instead:
           the artist beside each selected card, the rest here.
         */}
+        {/* The sources named as well, in the shape Moxgate's own footer names
+            Scryfall and its engine (SOURCES.md, "The Grok handoff pack"). */}
         <p className="faint tiny game__credit">
           Card art and names are the property of Wizards of the Coast and the artists named on each card,
-          shown under the Fan Content Policy. Unofficial, and not endorsed by Wizards.
+          shown under the Fan Content Policy. Unofficial, and not endorsed by Wizards. Card data and imagery
+          from Scryfall.
+          {engine && ' Rules-enforced play is powered by Argentum, an independent open-source rules engine, used under the MIT licence.'}
         </p>
       </aside>
-      <Peek peek={peek} />
+      <Peek peek={peek} avoid={pressable} />
 
       {/* The house style: the title is the situation, the body the consequence, the buttons what they do. */}
       <Confirm
@@ -1044,10 +1218,18 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
  * announced one after another would talk over a player reading their hand.
  * What the engine did is in the log, which is a record to be read rather
  * than an announcement.
+ *
+ * `target` is the seat being a legal target of what the engine is asking to
+ * aim (lib/engine/glow.js): the plate wears the target edge the cards do, and
+ * says so in its label; the prompt offers the seat by name, since a plate is
+ * not a card to tap.
  */
-function Plate({ who, status, active = false, thinking = false, name, life, onLife, children }) {
+function Plate({ who, status, active = false, thinking = false, target = false, name, life, onLife, children }) {
   return (
-    <section className={`plate plate--${who}${active ? ' plate--active' : ''}`} aria-label={`${name}: ${status}${life == null ? '' : `, ${life} life`}`}>
+    <section
+      className={`plate plate--${who}${active ? ' plate--active' : ''}${target ? ' plate--target' : ''}`}
+      aria-label={`${name}: ${status}${life == null ? '' : `, ${life} life`}${target ? ', a legal target' : ''}`}
+    >
       <span className={`plate__status${active ? ' plate__status--turn' : ''}${thinking ? ' plate__status--thinking' : ''}`}>{status}</span>
       <span className="plate__name">{name}</span>
       <div className="plate__life">
@@ -1079,8 +1261,16 @@ function Plate({ who, status, active = false, thinking = false, name, life, onLi
  * name the engine's seat as the actor, so this says nothing through the whole
  * of the engine's turn — Moxgate's own behaviour. What is happening is on the
  * engine's plate, and what happened is in the log.
+ *
+ * Exported for its tests, which render it against statuses the engine sent.
+ * `glows` is the table's (lib/engine/glow.js); `elsewhere` the plays offered
+ * for cards in a pile (`offeredElsewhere`); `placeOf` says where a card is and
+ * whose, so a sentence about a target or a play can say where to find it.
  */
-function EnginePrompt({ status, me, step, chosen, blocks, blocker, declaring, blocking, nameOf, onAct, onDecide }) {
+export function EnginePrompt({
+  status, me, step, chosen = new Set(), blocks = {}, blocker = null, declaring = null, blocking = null,
+  glows = NO_GLOW, elsewhere = [], placeOf = () => null, players = [], nameOf, nameOfSeat, onAct, onDecide,
+}) {
   if (status.over) {
     return (
       <div className="prompt" role="status" aria-label="Game over">
@@ -1094,14 +1284,45 @@ function EnginePrompt({ status, me, step, chosen, blocks, blocker, declaring, bl
   if (status.actor !== me) return null
   if (status.waiting === 'decision' && status.decision) {
     const d = status.decision
+    // A target being chosen: the legal cards glow, and are tapped; a seat that
+    // is a legal target is offered here by name, because a plate is not a card
+    // to tap. The first requirement a seat is legal for takes it, as a tapped
+    // card's does (touchHeld).
+    const aimed = d.type === 'ChooseTargets' && Array.isArray(d.requirements) ? d.requirements : []
+    const seats = players
+      .map((p) => ({ p, req: aimed.find((r) => Array.isArray(r?.legal) && r.legal.includes(p)) }))
+      .filter((s) => s.req)
+    // Where the legal cards are. On the battlefield and in hand they glow in
+    // sight; in a pile or on the stack they glow only once the pile is opened
+    // or the stack read, so the sentence says where they are rather than
+    // promising a glow nobody can see (found in M3's review: a trigger aimed at
+    // a card in a graveyard said "the legal targets glow" over a table where
+    // nothing did).
+    const legal = [...new Set(aimed.flatMap((r) => (Array.isArray(r?.legal) ? r.legal : [])).filter((id) => typeof id === 'string' && !players.includes(id)))]
+    const away = [...new Set(legal.map((id) => placeWords(placeOf(id), me, nameOfSeat)).filter(Boolean))]
+    const inSight = seats.length > 0 || legal.some((id) => !placeWords(placeOf(id), me, nameOfSeat))
+    const piles = away.filter((w) => w !== 'on the stack')
+    const reach = piles.length ? `open ${piles.length === 1 ? 'it' : 'them'} to tap one` : 'tap one there'
+    const aimLine = !away.length
+      ? `Tap what ${d.source || 'it'} is aimed at: the legal targets glow.`
+      : inSight
+        ? `Tap what ${d.source || 'it'} is aimed at: the legal targets glow, and some are ${nameList(away, Infinity)} — ${reach}.`
+        : `Tap what ${d.source || 'it'} is aimed at: the legal targets are ${nameList(away, Infinity)} — ${reach}.`
     return (
       <div className="prompt" role="group" aria-label="The engine asks">
         <div className="prompt__lead">
           <strong className="prompt__title">{d.prompt}</strong>
           <span className="prompt__sub">
-            {d.type === 'ChooseTargets' ? 'Tap the card it is aimed at.' : d.source ? `From ${d.source}.` : 'The engine is asking.'}
+            {d.type === 'ChooseTargets'
+              ? aimLine
+              : d.source ? `From ${d.source}.` : 'The engine is asking.'}
           </span>
         </div>
+        {seats.map(({ p, req }) => (
+          <button key={p} className="btn btn--sm prompt__btn" onClick={() => onDecide({ targets: { [req.index]: [p] } })}>
+            {p === me ? 'Aim at yourself' : `Aim at ${(nameOfSeat?.(p) ?? 'them').replace(/^The engine$/, 'the engine')}`}
+          </button>
+        ))}
         {d.type === 'YesNo' && (
           <>
             <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onDecide({ yes: true })}>{d.yesText ?? 'Yes'}</button>
@@ -1151,17 +1372,78 @@ function EnginePrompt({ status, me, step, chosen, blocks, blocker, declaring, bl
       </div>
     )
   }
-  const pass = status.actions.find((a) => a.type === 'PassPriority')
-  const plays = status.actions.filter((a) => a.meaningful && a.affordable).length
+  const pass = (status.actions ?? []).find((a) => a.type === 'PassPriority')
+  const sub = stopLine({ status, me, glows, elsewhere, placeOf, nameOf, nameOfSeat })
   return (
     <div className="prompt" role="group" aria-label="Your stop">
       <div className="prompt__lead">
         <strong className="prompt__title">{step.name}</strong>
-        <span className="prompt__sub">{plays ? `${plays} thing${plays === 1 ? '' : 's'} you could do. Tap a card, or pass.` : 'Nothing to do here but pass.'}</span>
+        <span className="prompt__sub">{sub}</span>
       </div>
-      {pass && <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onAct(pass.index)}>Pass →</button>}
+      {pass && (
+        <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onAct(pass.index)} aria-keyshortcuts="Space">
+          Pass →
+          {/* Said once, here, rather than on every button that passes. */}
+          <span className="prompt__hint prompt__key">or press Space</span>
+        </button>
+      )}
     </div>
   )
+}
+
+/**
+ * What a stop of the player's is for, in words, so the glow is not the only
+ * thing saying it (HANDOFF.md, M1b). Every kind of reason the engine stopped
+ * is said as what it is: a card in hand that can be played, and a permanent
+ * whose ability can be used, which is not a card being played —
+ * docs/TURN_STRUCTURE.md keeps casting a spell, playing a land and activating
+ * an ability apart (117.4, 305.2, 505.6a–b); a play offered for a card in a
+ * pile, which no tap on the table reaches and the actions panel does; and,
+ * where nothing else is offered, the plays this table cannot carry out yet
+ * with the reason for each, so a stop made for one of those alone still says
+ * why it is a stop at all.
+ *
+ * Pure, and exported for its tests.
+ */
+export function stopLine({ status, me, glows = NO_GLOW, elsewhere = [], placeOf = () => null, nameOf = (id) => id, nameOfSeat }) {
+  const lit = [...glows.values()].filter((g) => g?.kind === 'playable')
+  const plays = lit.filter((g) => g.says === GLOW_SAYS.play).length
+  const uses = lit.length - plays
+  const named = (list) => [...new Set(list.map((a) => (a.card ? nameOf(a.card) : a.description)).filter(Boolean))]
+  const lines = []
+
+  if (lit.length) {
+    const parts = []
+    if (plays) parts.push(plays === 1 ? 'the card you can play' : `the ${plays} cards you can play`)
+    if (uses) parts.push(uses === 1 ? 'the permanent with an ability you can use' : `the ${uses} permanents with abilities you can use`)
+    const said = parts.join(' and ')
+    lines.push(`${said.charAt(0).toUpperCase()}${said.slice(1)} ${lit.length === 1 ? 'glows' : 'glow'}. Tap ${lit.length === 1 ? 'it' : 'one'}, or pass.`)
+  }
+
+  if (elsewhere.length) {
+    const items = [...new Set(elsewhere.map(({ offer }) => {
+      const name = nameOf(offer.card)
+      const what = offer.type === 'ActivateAbility' ? `use an ability of ${name}` : `play ${name}`
+      const where = placeWords(placeOf(offer.card), me, nameOfSeat)
+      return where ? `${what} ${where.replace(/^(in|on) /, 'from ')}` : what
+    }))]
+    const them = elsewhere.length === 1 ? 'it' : 'them'
+    lines.push(lit.length
+      ? `You can also ${nameList(items, Infinity)}: find ${them} under Actions.`
+      : `You can ${nameList(items, Infinity)}: find ${them} under Actions, or pass.`)
+  }
+  if (lines.length) return lines.join(' ')
+
+  const aimless = named(unaimed(status))
+  const costly = named(unpaid(status))
+  if (aimless.length || costly.length) {
+    if (aimless.length) lines.push(`${nameList(aimless, Infinity)} ${aimless.length === 1 ? 'needs' : 'need'} a target, which this table cannot choose yet.`)
+    if (costly.length) lines.push(`${nameList(costly, Infinity)} ${costly.length === 1 ? 'needs a choice made for its cost' : 'need a choice made for their costs'}, which this table cannot make yet.`)
+    return `${lines.join(' ')} Pass to go on.`
+  }
+  // Anything else the engine counts as a play and no card carries.
+  const loose = (status?.actions ?? []).some((a) => a && a.meaningful && a.affordable && !a.mana && !a.card && !heldBack(a) && a.type !== 'PassPriority')
+  return loose ? 'Something is offered under Actions, or pass.' : 'Nothing to do here but pass.'
 }
 
 /**
@@ -1174,11 +1456,21 @@ function EngineActions({ offers, selected, name, card, myStop, onAct, onInspect,
   const mine = selected ? listed.filter((a) => a.card === selected.id) : []
   const rest = listed.filter((a) => !mine.includes(a))
   const mana = offers.filter((a) => a.mana).length
-  const row = (a) => (
-    <button key={a.index} className={`btn btn--sm ${a.meaningful && a.affordable ? '' : 'btn--ghost'}`} disabled={!a.affordable} onClick={() => onAct(a.index)} title={a.affordable ? undefined : 'Not affordable now'}>
-      {a.description}{a.manaCost ? ` · ${a.manaCost}` : ''}
-    </button>
-  )
+  // An offer needing a target, or with a choice in its cost, is listed, so
+  // nothing the engine offers is hidden, but not pressable: this table sends
+  // neither yet, and the engine would refuse it (lib/engine/glow.js).
+  const row = (a) => {
+    const held = heldBack(a)
+    const why = !a.affordable ? 'Not affordable now'
+      : held === 'target' ? 'Needs a target, which this table cannot choose yet'
+        : held === 'cost' ? 'Needs a choice made for its cost, which this table cannot make yet'
+          : undefined
+    return (
+      <button key={a.index} className={`btn btn--sm ${a.meaningful && !why ? '' : 'btn--ghost'}`} disabled={Boolean(why)} onClick={() => onAct(a.index)} title={why}>
+        {a.description}{a.manaCost ? ` · ${a.manaCost}` : ''}
+      </button>
+    )
+  }
   return (
     <section className="actions" aria-label={name ? `Actions for ${name}` : 'Actions'}>
       <div className="row row--wrap">
@@ -1191,6 +1483,12 @@ function EngineActions({ offers, selected, name, card, myStop, onAct, onInspect,
       {mine.length > 0 && <div className="row row--wrap">{mine.map(row)}</div>}
       {rest.length > 0 && <div className="row row--wrap">{rest.map(row)}</div>}
       {!listed.length && <p className="faint tiny m0">{myStop ? 'Nothing but passing is offered here.' : 'The engine is not waiting on you.'}</p>}
+      {listed.some((a) => a.affordable && heldBack(a) === 'target') && (
+        <p className="faint tiny m0">What needs a target cannot be played here yet: this table does not choose targets for a spell or an ability.</p>
+      )}
+      {listed.some((a) => a.affordable && heldBack(a) === 'cost') && (
+        <p className="faint tiny m0">What needs a choice made for its cost cannot be played here yet: this table does not choose what a cost takes, such as a card to discard or a creature to sacrifice.</p>
+      )}
       {mana > 0 && <p className="faint tiny m0">{mana} mana abilit{mana === 1 ? 'y' : 'ies'} the engine pays with itself.</p>}
     </section>
   )
@@ -1217,8 +1515,8 @@ function OpeningHand({ count, mulligans, onMulligan, onKeep }) {
  * The stack, as a shelf. The last thing on is the first to resolve, and
  * nothing here resolves on the player's behalf.
  */
-function StackShelf({ board, player, nameFor, cardFor, onResolve, onCounter }) {
-  const waiting = zoneOf(board, player, 'stack')
+function StackShelf({ board, players, nameFor, cardFor, glowOf = () => null, onSelect, onResolve, onCounter }) {
+  const waiting = players.flatMap((p) => zoneOf(board, p, 'stack'))
   if (!waiting.length) return null
   const top = waiting[waiting.length - 1]
   return (
@@ -1229,18 +1527,29 @@ function StackShelf({ board, player, nameFor, cardFor, onResolve, onCounter }) {
         <span className="faint tiny">Last on, first to happen</span>
       </div>
       <ol className="stackshelf__list" role="list">
-        {waiting.slice().reverse().map((inst, i) => (
-          <li key={inst.id} className={`stackshelf__item${i === 0 ? ' stackshelf__item--top' : ''}`}>
-            <span className="chip tiny">{i === 0 ? 'top' : `${i + 1}`}</span>
-            <strong>{nameFor(inst)}</strong>
-            <span className="faint tiny">{cardFor(inst)?.type_line ?? ''}</span>
-          </li>
-        ))}
+        {waiting.slice().reverse().map((inst, i) => {
+          // A spell on the stack that the engine is asking this seat to aim at
+          // is tapped here, as a card on the table is, and says so in words.
+          const glow = glowOf(inst.id)
+          return (
+            <li key={inst.id} className={`stackshelf__item${i === 0 ? ' stackshelf__item--top' : ''}`}>
+              <span className="chip tiny">{i === 0 ? 'top' : `${i + 1}`}</span>
+              {glow?.kind === 'target' && onSelect ? (
+                <button type="button" className="btn btn--sm stackshelf__pick" onClick={() => onSelect(inst.id)}>
+                  {nameFor(inst)}<span className="pile__glow"> · {glow.says}</span>
+                </button>
+              ) : <strong>{nameFor(inst)}</strong>}
+              <span className="faint tiny">{cardFor(inst)?.type_line ?? ''}</span>
+            </li>
+          )
+        })}
       </ol>
-      <div className="row row--wrap">
-        <button className="btn btn--sm" onClick={() => onResolve(top)}>Resolve {nameFor(top)}</button>
-        <button className="btn btn--ghost btn--sm" onClick={() => onCounter(top)}>It was countered</button>
-      </div>
+      {(onResolve || onCounter) && (
+        <div className="row row--wrap">
+          {onResolve && <button className="btn btn--sm" onClick={() => onResolve(top)}>Resolve {nameFor(top)}</button>}
+          {onCounter && <button className="btn btn--ghost btn--sm" onClick={() => onCounter(top)}>It was countered</button>}
+        </div>
+      )}
     </section>
   )
 }

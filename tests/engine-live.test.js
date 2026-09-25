@@ -27,7 +27,9 @@ describe.skipIf(!command)('the engine on the wire', () => {
 
   it('says who it is, and knows the whole corpus rather than one set', async () => {
     expect(hello.engine).toBe('argentum')
-    expect(hello.protocol).toBe(3)
+    expect(hello.protocol).toBe(4)
+    // The levels, weakest first, each Argentum's own profile (Server.kt, LEVELS).
+    expect(hello.levels).toEqual({ easy: 'v0', intermediate: 'production-raceclock', hard: 'production-candidate-expiring' })
     expect(hello.cards).toBeGreaterThan(12_000)
     expect(hello.sets.length).toBeGreaterThan(100)
     expect(hello.sets.find((s) => s.code === 'POR')).toEqual({ code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false })
@@ -300,8 +302,10 @@ describe.skipIf(!command)('the engine on the wire', () => {
   // The human seat these tests play: the first thing worth doing that needs no
   // target, else a pass. The same choice as every other game here, so a paced
   // game and an unpaced one are played by the same player.
+  // The first play the table itself could make — nothing needing a target, and
+  // no cost with a choice in it, since `act` carries neither — else a pass.
   const plainest = (status) =>
-    status.actions.find((a) => a.meaningful && a.affordable && !a.requiresTargets)
+    status.actions.find((a) => a.meaningful && a.affordable && !a.requiresTargets && !a.additionalCost)
       ?? status.actions.find((a) => a.type === 'PassPriority')
 
   it('stops after each of the engine\'s plays when the table is paced, and says whose they are', async () => {
@@ -422,6 +426,142 @@ describe.skipIf(!command)('the engine on the wire', () => {
     expect(plain.engineStops).toBe(0)
     expect(paced.engineStops).toBeGreaterThan(5)
   }, 420_000)
+
+  describe('at each level', () => {
+    // One short game at each, against the plainest player there is: the seat
+    // says which level and which of Argentum's profiles it took, the clock says
+    // that profile did the choosing, and the engine plays its side of the table.
+    for (const level of ['easy', 'intermediate', 'hard']) {
+      it(`plays at ${level}, with the profile the level names`, async () => {
+        let status = await engine.call('new', {
+          players: [{ name: 'You', deck, autoPass: true }, { name: 'Bot', deck, ai: 'heuristic', level }],
+          seed: 20260924,
+          pace: true,
+        })
+        const [you, bot] = status.seats
+        expect(bot).toMatchObject({ ai: 'heuristic', level, profile: hello.levels[level] })
+        // A person's seat is not the engine's to play, and says nothing of either.
+        expect(you).not.toHaveProperty('level')
+        expect(you).not.toHaveProperty('profile')
+        let engineStops = 0
+        for (let steps = 0; !status.over && steps < 60; steps++) {
+          if (status.waiting === 'engine') { engineStops++; status = await engine.call('continue') }
+          else if (status.waiting === 'decision') status = await engine.call('decide', { auto: true })
+          else if (status.waiting === 'action') status = await engine.call('act', { index: plainest(status).index })
+          else break
+        }
+        // The engine made plays of its own that the table stopped to show.
+        expect(engineStops).toBeGreaterThan(3)
+        const clock = await engine.call('clock')
+        expect(clock.seats).toHaveLength(1)
+        expect(clock.seats[0]).toMatchObject({ id: bot.id, ai: 'heuristic', level, profile: hello.levels[level] })
+        expect(clock.seats[0].choices.filter((c) => c.meaningful).length).toBeGreaterThan(3)
+        expect(clock.seats[0].choices.every((c) => typeof c.ms === 'number' && c.ms >= 0)).toBe(true)
+        // Asked again, the clock has started over.
+        expect((await engine.call('clock')).seats[0].choices).toEqual([])
+        // Its plays are in the log, said by the engine for the other seat.
+        const { log } = await engine.call('view', { viewer: you.id })
+        expect(log.some((l) => l.type === 'permanentEntered' && l.controllerId === bot.id)).toBe(true)
+      }, 300_000)
+    }
+
+    it('plays as every engine before levels did when asked for none, or for one it has not got', async () => {
+      for (const asked of [{}, { level: 'grandmaster' }]) {
+        const status = await engine.call('new', {
+          players: [{ name: 'You', deck, autoPass: true }, { name: 'Bot', deck, ai: 'heuristic', ...asked }],
+          seed: 3,
+        })
+        // CURRENT is LEGACY_V0 under another id: the one way the engine played until now.
+        expect(status.seats[1]).toMatchObject({ ai: 'heuristic', level: null, profile: 'current' })
+      }
+      // A level's word as the kind of player is read as that level, the shape M3 first sketched.
+      const sketched = await engine.call('new', { players: [{ name: 'You', deck, autoPass: true }, { name: 'Bot', deck, ai: 'hard' }], seed: 3 })
+      expect(sketched.seats[1]).toMatchObject({ ai: 'heuristic', level: 'hard', profile: 'production-candidate-expiring' })
+      // A random player has no levels, and says none.
+      const random = await engine.call('new', { players: [{ name: 'You', deck, autoPass: true }, { name: 'Bot', deck, ai: 'random', level: 'hard' }], seed: 3 })
+      expect(random.seats[1].ai).toBe('random')
+      expect(random.seats[1]).not.toHaveProperty('level')
+    }, 60_000)
+
+    it('refuses a profile it does not have, naming those it has, so a measurement never plays another', async () => {
+      await expect(engine.call('new', {
+        players: [{ name: 'A', deck, ai: 'heuristic', profile: 'made-up' }, { name: 'B', deck, ai: 'heuristic' }],
+      })).rejects.toThrow(/No AI profile "made-up" here; these are: .*production-candidate-expiring/)
+    }, 60_000)
+
+    it('plays a different game at each level, and easy the very game the engine played before levels', async () => {
+      // The label on the seat is Server.kt's own echo of what was asked, and a
+      // level that reached AIPlayer as another profile would still carry it. So
+      // the levels are held to what they do: from one seed, each against easy,
+      // intermediate and hard each play a game of their own, and easy plays
+      // exactly the game a seat asked for no level plays — the one way every
+      // engine before protocol 4 fielded, `current`, which is `v0` under
+      // another id. Were the profile dropped on the way to the player, all four
+      // would be the same game. Seed 20260924 was checked to part them on
+      // 2026-09-24; the whole log is compared, so any one choice made
+      // differently shows.
+      const game = async (level) => {
+        const seat = (name, asked) => ({ name, deck, ai: 'heuristic', ...(asked ? { level: asked } : {}) })
+        const status = await engine.call('new', { players: [seat('A', level), seat('B', 'easy')], seed: 20260924 })
+        expect(status.over).toBe(true)
+        const { log } = await engine.call('view', { viewer: status.seats[0].id })
+        await engine.call('clock')
+        return { winner: status.winner, turn: status.turn, lines: log.map((l) => l.description) }
+      }
+      const none = await game(null)
+      const easy = await game('easy')
+      const intermediate = await game('intermediate')
+      const hard = await game('hard')
+      expect(easy).toEqual(none)
+      expect(intermediate.lines).not.toEqual(easy.lines)
+      expect(hard.lines).not.toEqual(easy.lines)
+      expect(hard.lines).not.toEqual(intermediate.lines)
+    }, 300_000)
+
+    it('plays a whole game between two levels inside one "new", the same game from the same seed', async () => {
+      // The measurement's own shape (scripts/engine-levels.mjs): both seats the
+      // engine's, the game played before the reply, and the clock read after.
+      const game = async () => {
+        const status = await engine.call('new', {
+          players: [{ name: 'A', deck, ai: 'heuristic', level: 'hard' }, { name: 'B', deck, ai: 'heuristic', level: 'easy' }],
+          seed: 20260924,
+        })
+        const clock = await engine.call('clock')
+        return { over: status.over, winner: status.winner, turn: status.turn, choices: clock.seats.map((s) => [s.profile, s.choices.length]) }
+      }
+      const first = await game()
+      expect(first.over).toBe(true)
+      expect(first.winner).toMatch(/^e/)
+      expect(first.choices.map(([p]) => p)).toEqual(['production-candidate-expiring', 'v0'])
+      expect(first.choices.every(([, n]) => n > 10)).toBe(true)
+      // Hard's search is budgeted in work rather than time (Argentum's
+      // SearchAllowances), so its choices come out the same on a second run.
+      expect(await game()).toEqual(first)
+    }, 300_000)
+  })
+
+  it('says when an offer\'s cost has a choice in it, which a bare act cannot make', async () => {
+    // Found by M3's measurement: Flamecache Gecko's "{1}{R}, Discard a card:
+    // Draw a card" is offered as affordable and worth making, so the engine
+    // stops the player for it, and `act` has no way to say which card goes.
+    // The offer now says so, in Argentum's own words, and the table holds it
+    // back as it holds back one needing a target (lib/engine/glow.js).
+    const gecko = { Mountain: 20, 'Flamecache Gecko': 20 }
+    let status = await engine.call('new', { players: [{ name: 'You', deck: gecko, autoPass: true }, { name: 'Bot', deck: gecko, ai: 'heuristic' }], seed: 1 })
+    let offer = null
+    for (let steps = 0; !status.over && steps < 400 && !offer; steps++) {
+      if (status.waiting === 'decision') { status = await engine.call('decide', { auto: true }); continue }
+      if (status.waiting !== 'action') break
+      offer = status.actions.find((a) => a.type === 'ActivateAbility' && a.affordable && !a.mana && a.additionalCost)
+      if (!offer) status = await engine.call('act', { index: plainest(status).index })
+    }
+    expect(offer).toMatchObject({ description: '{1}{R}, Discard a card: Draw a card', meaningful: true, requiresTargets: false, additionalCost: 'DiscardCard', additionalCostText: 'Discard a card' })
+    // The stop was made for it alone, which is why the prompt has to say so.
+    expect(status.actions.filter((a) => a.meaningful && a.affordable).every((a) => a.additionalCost)).toBe(true)
+    await expect(engine.call('act', { index: offer.index })).rejects.toThrow(/Must choose 1 card\(s\) to discard/)
+    // An offer with no such cost says nothing of one.
+    expect(status.actions.filter((a) => a.type === 'PassPriority' || a.mana).every((a) => !('additionalCost' in a))).toBe(true)
+  }, 120_000)
 
   it('refuses to be continued at a table that was never paced', async () => {
     await engine.call('new', {

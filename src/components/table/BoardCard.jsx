@@ -25,10 +25,15 @@ import { typeLineOf } from '../../lib/formats.js'
  * It is a real button with a spoken label, because rotating a card ninety
  * degrees says "tapped" to someone who can see it and nothing at all to
  * anyone else.
+ *
+ * `glow` is what the engine offers or asks about this card right now, at the
+ * table it holds (src/lib/engine/glow.js): `{ kind, says }`, where the kind is
+ * the edge drawn — playable, a target, or chosen — and `says` the same thing
+ * in words, added to the spoken label for the same reason "tapped" is.
  */
 export default function BoardCard({
   card, inst, name, size = 'field', selected = false, onPointerDown, onClick, onContextMenu,
-  dragging = false, tilt = false, images = true, arrived = false,
+  dragging = false, tilt = false, images = true, arrived = false, glow = null,
 }) {
   const art = artUrl(card)
   const type = inst?.custom?.typeLine ?? typeLineOf(card ?? {})
@@ -45,7 +50,7 @@ export default function BoardCard({
     return (
       <Tile
         card={card} inst={inst} name={name} type={type} stats={stats} art={images ? art : null}
-        counters={counters} finish={finish} treatment={treatment} selected={selected} arrived={arrived}
+        counters={counters} finish={finish} treatment={treatment} selected={selected} arrived={arrived} glow={glow}
         onPointerDown={onPointerDown} onClick={onClick} onContextMenu={onContextMenu} dragging={dragging}
       />
     )
@@ -65,6 +70,7 @@ export default function BoardCard({
     // The treatments shape the drawn card. On the real one the frame is the
     // treatment, so saying it again would only fight the picture.
     !photo && treatment && !inst?.faceDown ? `bcard--${treatment.replace(/\s+/g, '')}` : '',
+    glowClasses(glow),
   ].filter(Boolean).join(' ')
 
   return (
@@ -73,7 +79,7 @@ export default function BoardCard({
       className={classes}
       data-identity={identityOf(card)}
       aria-pressed={selected}
-      aria-label={describe({ card, inst, name, type, stats, counters, finish, treatment })}
+      aria-label={describe({ card, inst, name, type, stats, counters, finish, treatment, glow })}
       onPointerDown={onPointerDown}
       onClick={onClick}
       onContextMenu={onContextMenu}
@@ -125,7 +131,7 @@ export default function BoardCard({
  * for the turn rather than fading, because "came in this turn" is the one
  * thing the board knows about summoning sickness, and it is worth reading.
  */
-function Tile({ card, inst, name, type, stats, art, counters, finish, treatment, selected, arrived, onPointerDown, onClick, onContextMenu, dragging }) {
+function Tile({ card, inst, name, type, stats, art, counters, finish, treatment, selected, arrived, glow, onPointerDown, onClick, onContextMenu, dragging }) {
   const classes = [
     'bcard', 'bcard--tile',
     inst?.tapped ? 'bcard--tapped' : '',
@@ -135,6 +141,7 @@ function Tile({ card, inst, name, type, stats, art, counters, finish, treatment,
     arrived ? 'bcard--tile-arrived' : '',
     // A foil is a foil on a tile too: the sheen runs over the cropped art.
     finish !== 'normal' && !inst?.faceDown ? `bcard--${finish}` : '',
+    glowClasses(glow),
   ].filter(Boolean).join(' ')
   const shown = inst?.faceDown ? 'Face down' : (name ?? card?.name ?? 'Card')
   return (
@@ -143,7 +150,7 @@ function Tile({ card, inst, name, type, stats, art, counters, finish, treatment,
       className={classes}
       data-identity={identityOf(card)}
       aria-pressed={selected}
-      aria-label={describe({ card, inst, name, type, stats, counters, finish, treatment })}
+      aria-label={describe({ card, inst, name, type, stats, counters, finish, treatment, glow })}
       onPointerDown={onPointerDown}
       onClick={onClick}
       onContextMenu={onContextMenu}
@@ -199,8 +206,10 @@ function faceUrls(card) {
  * said out loud, because a sheen that only exists as a moving highlight is
  * not something everyone can see.
  */
-function describe({ card, inst, name, type, stats, counters, finish, treatment }) {
-  if (inst?.faceDown) return 'A face-down card'
+function describe({ card, inst, name, type, stats, counters, finish, treatment, glow }) {
+  // What the engine offers for a card is said even of one face down: a
+  // morph can be a target, and the glow is drawn on it all the same.
+  if (inst?.faceDown) return glow?.says ? `A face-down card, ${glow.says}` : 'A face-down card'
   const parts = [name ?? card?.name ?? 'Card']
   if (stats) parts.push(stats)
   if (type) parts.push(type)
@@ -209,7 +218,20 @@ function describe({ card, inst, name, type, stats, counters, finish, treatment }
   if (inst?.tapped) parts.push('tapped')
   for (const [label, n] of counters) parts.push(`${n} ${label} counter${Math.abs(n) === 1 ? '' : 's'}`)
   if (inst?.note) parts.push(`note: ${inst.note}`)
+  if (glow?.says) parts.push(glow.says)
   return parts.join(', ')
+}
+
+/**
+ * The edge a glow draws. A chosen card keeps the target edge it had and adds
+ * its own on top: an attacker once picked stays lit rather than going dark,
+ * and says it is attacking (HANDOFF.md, M1b).
+ */
+function glowClasses(glow) {
+  if (glow?.kind === 'playable') return 'bcard--playable'
+  if (glow?.kind === 'target') return 'bcard--target'
+  if (glow?.kind === 'chosen') return 'bcard--target bcard--chosen'
+  return ''
 }
 
 /** The finish, as long as the printing could actually exist in it. */

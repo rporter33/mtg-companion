@@ -106,6 +106,25 @@
 .lobby__seat--open .lobby__avatar { background: transparent; border: 1px dashed var(--border-strong); color: var(--text-faint); }
 .lobby__notice { margin: 0; color: var(--text-muted); }
 
+/* How the engine plays: three levels, each a radio with its own line. The
+   chosen one is marked by its border as well as by the radio's own dot, and
+   the radio is what a keyboard and a screen reader use. */
+.lobby__levels {
+  display: grid; gap: var(--space-1);
+  margin: 0; padding: var(--space-2) 0 0; border: 0; border-top: 1px solid var(--border);
+}
+.lobby__levels legend { padding: 0; margin-bottom: var(--space-1); }
+.lobby__level {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--space-2); align-items: baseline;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.lobby__level input { margin: 0; accent-color: var(--accent); }
+.lobby__level--on { border-color: var(--accent); background: var(--bg-input); }
+.lobby__levelname { font-weight: 600; }
+.lobby__levelline { grid-column: 2; }
+
 /* --- the foot ------------------------------------------------------------- */
 
 .lobby__foot {
@@ -195,6 +214,17 @@
   background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius);
 }
 .plate--active { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok), 0 0 14px #4ea87a44; }
+/* A seat that is a legal target, drawn with the edge a targeted card wears
+   (table.css, "what the engine offers"), still for anybody who asked for less
+   motion. Its label says so in words, and the prompt offers it by name. */
+.plate.plate--target {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 16px 3px color-mix(in srgb, var(--accent) 55%, transparent);
+  animation: plate-target 1.6s ease-in-out infinite;
+}
+@keyframes plate-target { 50% { box-shadow: 0 0 0 2px var(--accent), 0 0 22px 6px color-mix(in srgb, var(--accent) 75%, transparent); } }
+.game--still .plate--target { animation: none; }
+@media (prefers-reduced-motion: reduce) { .plate.plate--target { animation: none; } }
 .plate--them { border-style: dashed; }
 .plate--them .plate__status, .plate--them .plate__total { color: var(--text-muted); }
 .plate__status {
@@ -281,6 +311,19 @@
 }
 .ztile:hover .ztile__face, .ztile:focus-visible .ztile__face, .ztile--open .ztile__face { border-color: var(--accent); }
 .ztile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+/*
+ * A pile holding something the engine is asking about now (Table.jsx,
+ * `pileHolds`): a legal target, or a card with a play on offer. The cards in a
+ * pile glow only once it is opened, so the tile wears the edge the cards do —
+ * the target's heavier, with the same band of ink — and its label says what it
+ * holds. It stands still: a tile is small, and one breathing beside the hand
+ * would pull the eye from the cards that do.
+ */
+.ztile--target .ztile__face {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 3.5px #1b1408a6, 0 0 12px 3px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.ztile--playable .ztile__face { border-color: var(--accent); box-shadow: 0 0 0 1.5px var(--accent), 0 0 0 3px #1b14088c; }
 .ztile__count {
   position: absolute; top: 0.85rem; right: -0.35rem;
   min-width: 1.3rem; padding: 0 4px; border-radius: 999px;
@@ -305,6 +348,8 @@
 .prompt__btn { display: grid; gap: 0; justify-items: center; line-height: 1.2; }
 .prompt__hint { font-size: 0.65rem; font-weight: 400; color: var(--text-muted); }
 .btn--primary .prompt__hint { color: inherit; }
+/* A key to press means nothing on a screen with no keyboard to press it on. */
+@media (hover: none) and (pointer: coarse) { .prompt__key { display: none; } }
 
 .game__aim { margin: 0; }
 /* The field's own "drag a card up" line would show through under the prompt. */
