@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { startEngine, findEngine } from '../scripts/engine-bridge.mjs'
+import { validateDeck } from '../src/lib/deck.js'
 
 const command = findEngine()
 // Portal goblins: creatures to attack with and a burn spell that needs a target,
@@ -27,7 +28,13 @@ describe.skipIf(!command)('the engine on the wire', () => {
 
   it('says who it is, and knows the whole corpus rather than one set', async () => {
     expect(hello.engine).toBe('argentum')
-    expect(hello.protocol).toBe(6)
+    expect(hello.protocol).toBe(8)
+    // The formats an engine's seat can be dealt a deck of its own in (protocol 7):
+    // every one ConstructedDeckGenerator builds to, and since protocol 8 Commander,
+    // which CommanderDeckGenerator builds, at a Commander table.
+    expect(hello.decks.formats).toEqual(['standard', 'pioneer', 'modern', 'legacy', 'vintage', 'pauper', 'premodern', 'commander'])
+    // The games it deals (protocol 8).
+    expect(hello.formats).toEqual(['standard', 'commander'])
     // The levels, weakest first, each Argentum's own profile (Server.kt, LEVELS).
     expect(hello.levels).toEqual({ easy: 'v0', intermediate: 'production-raceclock', hard: 'production-candidate-expiring' })
     // What a person may choose (protocol 5): what `act` takes, the costs it can
@@ -41,6 +48,9 @@ describe.skipIf(!command)('the engine on the wire', () => {
     expect(hello.sets.find((s) => s.code === 'POR')).toEqual({ code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false })
     expect(hello.load.ms).toBeGreaterThan(0)
     expect(hello.load.heapMb).toBeGreaterThan(0)
+    // What stamping the cards with their formats cost, which a deck of the engine's own reads (M5).
+    expect(hello.load.legalitiesMs).toBeGreaterThan(0)
+    expect(hello.load.legalitiesMs).toBeLessThan(hello.load.ms)
     const { names } = await engine.call('cards')
     expect(names).toContain('Raging Goblin')
     expect(names).toContain('Monastery Swiftspear')
@@ -1073,6 +1083,306 @@ describe.skipIf(!command)('the engine on the wire', () => {
       expect(kept.course).toEqual(plain.course)
       expect(kept.winner).toBe(plain.winner)
     }, 300_000)
+  })
+
+  /**
+   * A deck of the engine's own (protocol 7, HANDOFF.md M5): built by Argentum's
+   * ConstructedDeckGenerator, seeded from the game, and held here to the app's
+   * own validator (src/lib/deck.js), which reads the deck by its names. The
+   * validator's card records are made from what the engine says of each card —
+   * its type line and the formats Argentum's copy of Scryfall's legalities
+   * lists it in — since a test here reaches no network; what they check that
+   * the generator's own filter does not is the size, the four-copy limit and
+   * the basics, and that the deck dealt is the deck built.
+   */
+  describe('a deck of the engine\'s own (protocol 7)', () => {
+    const player = { name: 'You', deck, autoPass: true }
+    const own = (asked) => ({ name: 'Bot', ai: 'heuristic', level: 'easy', deck: 'own', ...asked })
+    // Every format Argentum knows, as the app's records name them: legal where the engine says so.
+    const KEYS = ['standard', 'pioneer', 'modern', 'legacy', 'vintage', 'commander', 'brawl', 'standardbrawl', 'pauper', 'premodern']
+    /** The engine's deck as the app holds a deck, and its cards as the app holds a card, by name. */
+    const asApp = (list, formatId) => {
+      const cards = new Map(list.cards.map((c) => [c.name, {
+        id: c.name, name: c.name, type_line: c.typeLine,
+        legalities: Object.fromEntries(KEYS.map((k) => [k, c.legal.includes(k) ? 'legal' : 'not_legal'])),
+      }]))
+      const copies = (v) => (Array.isArray(v) ? v.reduce((n, x) => n + copies(x), 0) : typeof v === 'number' ? v : v.count)
+      const main = Object.entries(list.deck).map(([name, v]) => ({ cardId: name, quantity: copies(v) }))
+      return { deck: { formatId, main, sideboard: [], commanders: [], signatureSpell: null }, cards }
+    }
+    const zoneOf = (state, owner, type) => state.zones.find((z) => z.zoneId.zoneType === type && z.zoneId.ownerId === owner)
+    // The date the validator judges release against, fixed rather than the day the test runs.
+    const NOW = '2026-09-25'
+
+    it('builds a deck legal in the format, of its size, from the sets asked, and deals that deck', async () => {
+      const status = await engine.call('new', { players: [player, own({ format: 'standard', sets: ['blb', 'dsk'] })], seed: 5 })
+      const bot = status.seats[1]
+      // In the app's own spelling, lower case, as the lobby sends them; said back in Argentum's.
+      expect(bot.deck).toMatchObject({ asked: 'own', played: 'own', format: 'standard', formatName: 'Standard', from: 'sets', cards: 60 })
+      expect(bot.deck.sets).toEqual([{ code: 'BLB', name: 'Bloomburrow' }, { code: 'DSK', name: 'Duskmourn: House of Horror' }])
+      expect(bot.deck).not.toHaveProperty('fellBack')
+      expect(bot.deck.colours.length).toBeGreaterThan(0)
+      const list = await engine.call('decklist', { seat: bot.id })
+      const { deck: appDeck, cards } = asApp(list, 'standard')
+      const verdict = validateDeck(appDeck, cards, { now: NOW })
+      expect(verdict.violations.filter((v) => v.severity === 'error')).toEqual([])
+      expect(verdict.legal).toBe(true)
+      expect(verdict.counts.total).toBe(60)
+      // Dealt as built: seven in hand, the rest in the library, nothing lost on the way.
+      const { state } = await engine.call('view', { viewer: bot.id })
+      expect(zoneOf(state, bot.id, 'Hand').cardIds.length + zoneOf(state, bot.id, 'Library').size).toBe(60)
+      // Its colours are its basics' (Server.kt, coloursOf): the colours of the basic
+      // lands in the deck dealt, by the engine's own card data, and none of its cards is said.
+      const basics = list.cards.filter((c) => /^Basic Land/.test(c.typeLine))
+      expect(basics.length).toBeGreaterThan(0)
+      expect(bot.deck.colours).toEqual(['W', 'U', 'B', 'R', 'G'].filter((c) => basics.some((b) => b.identity.includes(c))))
+      expect(Object.keys(bot.deck)).not.toContain('names')
+    }, 120_000)
+
+    it('names a deck by the colours its basics make, where its spells say another (M5)', async () => {
+      // A list whose lands are green and whose only spell is red: named green, as a
+      // deck of the engine's own is, since every one Argentum builds has a manabase
+      // of basics alone and its spells can say more than it can cast (PLAN.md, M5).
+      // Named by its spells, as it was before M5's fix, it would be red.
+      const status = await engine.call('new', { players: [player, { name: 'Bot', ai: 'heuristic', level: 'easy', deck: { Forest: 20, 'Raging Goblin': 14 } }], seed: 5 })
+      expect(status.seats[1].deck).toMatchObject({ asked: 'deck', played: 'deck', cards: 34, colours: ['G'] })
+    }, 60_000)
+
+    it('builds from the whole format where no sets are asked, legal there too', async () => {
+      for (const [format, formatId] of [['modern', 'modern'], ['pauper', 'pauper']]) {
+        const status = await engine.call('new', { players: [player, own({ format })], seed: 6 })
+        expect(status.seats[1].deck).toMatchObject({ played: 'own', from: 'format', format })
+        expect(status.seats[1].deck).not.toHaveProperty('sets')
+        const { deck: appDeck, cards } = asApp(await engine.call('decklist', { seat: status.seats[1].id }), formatId)
+        const verdict = validateDeck(appDeck, cards, { now: NOW })
+        expect(verdict.violations.filter((v) => v.severity === 'error')).toEqual([])
+        expect(verdict.counts.total).toBeGreaterThanOrEqual(60)
+      }
+    }, 120_000)
+
+    it('builds another deck from another seed, and the same deck from the same one', async () => {
+      const listFor = async (seed) => {
+        const status = await engine.call('new', { players: [player, own({ format: 'legacy', sets: ['por'] })], seed })
+        return (await engine.call('decklist', { seat: status.seats[1].id })).deck
+      }
+      const one = await listFor(21)
+      expect(await listFor(21)).toEqual(one)
+      expect(await listFor(22)).not.toEqual(one)
+    }, 120_000)
+
+    it('falls back in words rather than refuse the game: to the whole format, then to a copy of the person\'s deck', async () => {
+      // Sets it has not got, or none at all, are no pool: the whole format instead.
+      let status = await engine.call('new', { players: [player, own({ format: 'standard', sets: ['zzz'] })], seed: 7 })
+      expect(status.seats[1].deck).toMatchObject({ asked: 'own', played: 'own', from: 'format', fellBack: 'sets', missingSets: ['zzz'] })
+      status = await engine.call('new', { players: [player, own({ format: 'standard', sets: [] })], seed: 7 })
+      expect(status.seats[1].deck).toMatchObject({ played: 'own', from: 'format', fellBack: 'sets' })
+      // Portal holds no card legal in Standard: too few to build from, in Argentum's words.
+      status = await engine.call('new', { players: [player, own({ format: 'standard', sets: ['por'] })], seed: 7 })
+      expect(status.seats[1].deck).toMatchObject({ played: 'own', from: 'format', fellBack: 'thin' })
+      expect(status.seats[1].deck.why).toMatch(/Standard-legal|short of 60/)
+      const { deck: appDeck, cards } = asApp(await engine.call('decklist', { seat: status.seats[1].id }), 'standard')
+      expect(validateDeck(appDeck, cards, { now: NOW }).legal).toBe(true)
+      // A format it builds no deck to: the person's own, as a copy, and why.
+      status = await engine.call('new', { players: [player, own({ format: 'commander', sets: ['blb'] })], seed: 7 })
+      expect(status.seats[1].deck).toMatchObject({ asked: 'own', played: 'mirror', format: 'commander', fellBack: 'format', cards: 34 })
+      expect((await engine.call('decklist', { seat: status.seats[1].id })).deck).toEqual(deck)
+      status = await engine.call('new', { players: [player, own({})], seed: 7 })
+      expect(status.seats[1].deck).toMatchObject({ played: 'mirror', fellBack: 'format' })
+    }, 120_000)
+
+    it('plays a copy of the person\'s deck when asked, sideboard and printings with it', async () => {
+      const printed = { Mountain: { count: 14, set: 'por', number: '208' }, 'Raging Goblin': 20 }
+      const status = await engine.call('new', {
+        players: [{ name: 'You', deck: printed, sideboard: { 'Lava Axe': 2 } }, { name: 'Bot', ai: 'heuristic', deck: 'mirror' }],
+        seed: 8,
+      })
+      expect(status.seats[1].deck).toEqual({ asked: 'mirror', played: 'mirror', cards: 34, colours: ['R'] })
+      expect((await engine.call('decklist', { seat: status.seats[1].id })).deck).toEqual(printed)
+      // A seat that brings names says it plays them, as every seat always has.
+      const named = await engine.call('new', { players: [player, { name: 'Bot', ai: 'heuristic', deck }], seed: 8 })
+      expect(named.seats[1].deck).toMatchObject({ asked: 'deck', played: 'deck', cards: 34 })
+      // A person's seat says nothing of it, and a person may not ask for either.
+      expect(named.seats[0]).not.toHaveProperty('deck')
+      await expect(engine.call('new', { players: [{ name: 'You', deck: 'own', format: 'standard' }, { name: 'Bot', ai: 'heuristic', deck }] })).rejects.toThrow(/You has no deck/)
+    }, 120_000)
+
+    it('refuses a deck word it does not know, and a copy with no person\'s deck to copy', async () => {
+      await expect(engine.call('new', { players: [player, { name: 'Bot', ai: 'heuristic', deck: 'surprise' }] })).rejects.toThrow(/neither a list of cards, "mirror" nor "own"/)
+      await expect(engine.call('new', { players: [{ name: 'A', ai: 'heuristic', deck: 'mirror' }, { name: 'B', ai: 'heuristic', deck: 'mirror' }] })).rejects.toThrow(/nobody at the table brought one/)
+    }, 60_000)
+  })
+
+  /**
+   * A Commander game (protocol 8, HANDOFF.md M6): Argentum's own Format.Commander,
+   * both seats driven here so every step is the test's to take. Rhys the Redeemed
+   * leads both decks: a legendary creature the engine knows, castable for one
+   * mana of either of its colours, so the commander is cast from the command zone
+   * on the first turn; a hundred cards each, the rest basics, which Commander
+   * allows any number of (903.5b). None of the app's example Commander decks can
+   * be played here at the pin: the engine knows none of their commanders
+   * (PLAN.md, M6), which the browser spec shows in the lobby.
+   */
+  describe('a Commander game (protocol 8)', () => {
+    const LIBRARY = { Forest: 50, Plains: 49 }
+    const RHYS = { name: 'Rhys the Redeemed', set: 'shm', number: '237' }
+    const person = (name, extra = {}) => ({ name, deck: LIBRARY, commander: RHYS, autoPass: true, ...extra })
+    const zoneOf = (state, owner, type) => state.zones.find((z) => z.zoneId.zoneType === type && z.zoneId.ownerId === owner)
+    // The same records the M5 tests make of the engine's cards, with their colour identity (CR 903.4).
+    const KEYS = ['standard', 'pioneer', 'modern', 'legacy', 'vintage', 'commander', 'brawl', 'standardbrawl', 'pauper', 'premodern']
+    const NOW = '2026-09-25'
+    const asCommanderDeck = (list) => {
+      const cards = new Map(list.cards.map((c) => [c.name, {
+        id: c.name, name: c.name, type_line: c.typeLine, color_identity: c.identity,
+        legalities: Object.fromEntries(KEYS.map((k) => [k, c.legal.includes(k) ? 'legal' : 'not_legal'])),
+      }]))
+      const copies = (v) => (Array.isArray(v) ? v.reduce((n, x) => n + copies(x), 0) : typeof v === 'number' ? v : v.count)
+      const main = Object.entries(list.deck).map(([name, v]) => ({ cardId: name, quantity: copies(v) }))
+      return { deck: { formatId: 'commander', main, sideboard: [], commanders: [list.commander], signatureSpell: null }, cards }
+    }
+
+    it('deals one: 40 life each, a hundred cards, each commander face up in its owner\'s command zone', async () => {
+      // What the deal costs is measured by scripts/engine-commander.mjs (PLAN.md, M6),
+      // not held here against a clock, which a loaded machine could fail.
+      const status = await engine.call('new', { format: 'commander', players: [person('A'), person('B')], seed: 3 })
+      expect(status.format).toBe('commander')
+      expect(status.seats.map((s) => s.commander)).toEqual(['Rhys the Redeemed', 'Rhys the Redeemed'])
+      const [a, b] = status.seats.map((s) => s.id)
+      const { state } = await engine.call('view', { viewer: a })
+      expect(state.players.map((p) => p.life)).toEqual([40, 40])
+      for (const who of [a, b]) {
+        const command = zoneOf(state, who, 'Command')
+        expect(command.cardIds).toHaveLength(1)
+        expect(state.cards[command.cardIds[0]]).toMatchObject({ name: 'Rhys the Redeemed', isCommander: true })
+        expect(zoneOf(state, who, 'Library').size + (zoneOf(state, who, 'Hand')?.size ?? 0) + command.cardIds.length).toBe(100)
+      }
+      // The printing named for the commander is the one dealt, where the engine has it.
+      expect(status.seats[0].unknownPrintings).toEqual([])
+      // The game dealt by the ordinary rules says nothing of a format, as every engine before this.
+      const plain = await engine.call('new', { players: [{ name: 'A', deck }, { name: 'B', deck }], seed: 3 })
+      expect(plain).not.toHaveProperty('format')
+      expect(plain.seats[0]).not.toHaveProperty('commander')
+      expect((await engine.call('view', { viewer: plain.seats[0].id })).state.players.map((p) => p.life)).toEqual([20, 20])
+    }, 60_000)
+
+    it('casts a commander from the command zone, asks where it goes when it dies (903.9a), and charges the tax next time (903.8)', async () => {
+      let s = await engine.call('new', { format: 'commander', players: [person('A'), person('B')], seed: 3 })
+      const [A, B] = s.seats.map((x) => x.id)
+      const offers = []
+      const questions = []
+      let blocked = false
+      for (let i = 0; i < 300 && !s.over && s.turn <= 8; i++) {
+        const who = s.actor
+        if (s.waiting === 'decision') {
+          questions.push({ who, turn: s.turn, ...s.decision })
+          // A puts its commander back in the command zone; B leaves its in the graveyard.
+          s = await engine.call('decide', { yes: who === A })
+          continue
+        }
+        expect(s.waiting).toBe('action')
+        const land = s.actions.find((a) => a.type === 'PlayLand')
+        const cast = s.actions.find((a) => a.type === 'CastSpell' && a.affordable)
+        const attack = s.actions.find((a) => a.type === 'DeclareAttackers' && a.meaningful)
+        const block = s.actions.find((a) => a.type === 'DeclareBlockers' && a.meaningful)
+        if (land) { s = await engine.call('act', { index: land.index }); continue }
+        if (cast) { offers.push({ who, turn: s.turn, ...cast }); s = await engine.call('act', { index: cast.index }); continue }
+        if (attack) {
+          // A attacks on its turns 3 and 7; B never does.
+          const go = who === A && (s.turn === 3 || s.turn === 7)
+          s = await engine.call('act', { index: attack.index, attackers: go ? Object.fromEntries(attack.validAttackers.map((id) => [id, B])) : {} })
+          continue
+        }
+        if (block) {
+          // B blocks A's first attack with its own commander, and the two trade.
+          const { state } = await engine.call('view', { viewer: B })
+          const attacker = state.combat?.attackers?.[0]?.creatureId
+          const want = who === B && !blocked && attacker
+          blocked = blocked || Boolean(want)
+          s = await engine.call('act', { index: block.index, blockers: want ? { [block.validBlockers[0]]: [attacker] } : {} })
+          continue
+        }
+        s = await engine.call('act', { index: s.actions.find((a) => a.type === 'PassPriority').index })
+      }
+      // Each commander cast from the command zone on its owner's first turn, for its own cost.
+      expect(offers.slice(0, 2).map((o) => [o.who, o.turn, o.manaCost, o.from, o.commanderTax])).toEqual([
+        [A, 1, '{G/W}', 'command', { casts: 0, generic: 0 }],
+        [B, 2, '{G/W}', 'command', { casts: 0, generic: 0 }],
+      ])
+      // Both died in the block, and each owner was asked, in Argentum's words, where its commander is.
+      expect(questions.map((q) => [q.who, q.type, q.commanderZone, q.yesText])).toEqual([
+        [A, 'YesNo', 'graveyard', 'Command zone'],
+        [B, 'YesNo', 'graveyard', 'Command zone'],
+      ])
+      expect(questions[0].prompt).toBe('Put Rhys the Redeemed into the command zone instead of leaving it in the graveyard?')
+      // A's, back in the command zone, costs {2} more for the one cast before (903.8); B's stayed in its graveyard.
+      expect(offers[2]).toMatchObject({ who: A, turn: 5, manaCost: '{2}{G/W}', from: 'command', commanderTax: { casts: 1, generic: 2 } })
+      expect(offers.filter((o) => o.who === B)).toHaveLength(1)
+      // A's attack on turn 7 met no blocker: one combat damage from a commander, tallied against B (903.10a).
+      const { state } = await engine.call('view', { viewer: A })
+      const tally = state.players.find((p) => p.playerId === B).commanderDamage
+      expect(tally).toEqual([expect.objectContaining({ commanderName: 'Rhys the Redeemed', controllerId: A, amount: 1, threshold: 21 })])
+      expect(state.players.find((p) => p.playerId === A)).not.toHaveProperty('commanderDamage')
+      const graveyard = zoneOf(state, B, 'Graveyard')
+      expect(graveyard.cardIds.map((id) => state.cards[id]?.name)).toContain('Rhys the Redeemed')
+    }, 120_000)
+
+    it('builds a Commander deck of its own, a commander chosen first, legal by the app\'s own validator', async () => {
+      const status = await engine.call('new', { format: 'commander', players: [person('You'), { name: 'Bot', ai: 'heuristic', level: 'easy', deck: 'own', format: 'commander' }], seed: 1 })
+      const bot = status.seats[1]
+      expect(bot.deck).toMatchObject({ asked: 'own', played: 'own', cards: 100, format: 'commander', formatName: 'Commander', from: 'format' })
+      expect(bot.deck.commander).toBe(bot.commander)
+      const list = await engine.call('decklist', { seat: bot.id })
+      expect(list.commander).toBe(bot.commander)
+      // Named by its commander's colours (CR 903.4).
+      const leader = list.cards.find((c) => c.name === list.commander)
+      expect(bot.deck.colours).toEqual(['W', 'U', 'B', 'R', 'G'].filter((c) => leader.identity.includes(c)))
+      const { deck: appDeck, cards } = asCommanderDeck(list)
+      const verdict = validateDeck(appDeck, cards, { now: NOW })
+      expect(verdict.violations.filter((v) => v.severity === 'error')).toEqual([])
+      expect(verdict.counts.total).toBe(100)
+      // Dealt as built: the commander in the command zone, ninety-nine in hand and library.
+      const { state } = await engine.call('view', { viewer: bot.id })
+      expect(zoneOf(state, bot.id, 'Command').cardIds.map((id) => state.cards[id].name)).toEqual([list.commander])
+      expect(zoneOf(state, bot.id, 'Hand').size + zoneOf(state, bot.id, 'Library').size).toBe(99)
+    }, 120_000)
+
+    it('builds the same Commander deck from the same seed, another from another, and from the sets asked where it can', async () => {
+      const own = (seed, sets) => engine.call('new', { format: 'commander', players: [person('You'), { name: 'Bot', ai: 'heuristic', deck: 'own', format: 'commander', ...(sets ? { sets } : {}) }], seed })
+      // The whole deck, commander and ninety-nine, read straight after each deal:
+      // `decklist` reads the table as it stands, so read later it would be the last game's.
+      const listFor = async (seed) => {
+        const bot = (await own(seed)).seats[1]
+        const { deck, commander } = await engine.call('decklist', { seat: bot.id })
+        return { deck, commander, said: bot.commander }
+      }
+      const first = await listFor(31)
+      expect(first.commander).toBe(first.said)
+      expect(await listFor(31)).toEqual(first)
+      const other = await listFor(32)
+      expect(other.commander === first.commander && JSON.stringify(other.deck) === JSON.stringify(first.deck)).toBe(false)
+      const fromSets = (await own(33, ['blb', 'dsk'])).seats[1]
+      expect(fromSets.deck).toMatchObject({ played: 'own', from: 'sets', sets: [{ code: 'BLB', name: 'Bloomburrow' }, { code: 'DSK', name: 'Duskmourn: House of Horror' }] })
+      // Portal has no legendary creature to lead a deck: the whole format instead, and why.
+      const thin = (await own(34, ['por'])).seats[1]
+      expect(thin.deck).toMatchObject({ played: 'own', from: 'format', fellBack: 'thin' })
+      expect(thin.deck.why).toMatch(/commander/i)
+    }, 120_000)
+
+    it('copies the person\'s commander with their deck, and plays another deck\'s with it', async () => {
+      const mirror = await engine.call('new', { format: 'commander', players: [person('You'), { name: 'Bot', ai: 'heuristic', deck: 'mirror' }], seed: 2 })
+      expect(mirror.seats[1].commander).toBe('Rhys the Redeemed')
+      expect(mirror.seats[1].deck).toMatchObject({ asked: 'mirror', played: 'mirror', cards: 100, colours: ['W', 'G'], commander: 'Rhys the Redeemed' })
+      const theirs = await engine.call('new', { format: 'commander', players: [person('You'), { name: 'Bot', ai: 'heuristic', deck: { Forest: 99 }, commander: "Sythis, Harvest's Hand" }], seed: 2 })
+      expect(theirs.seats[1]).toMatchObject({ commander: "Sythis, Harvest's Hand", deck: { asked: 'deck', played: 'deck', cards: 100 } })
+      // A Commander deck of its own asked for at a table dealt by the ordinary rules is the copy, as it was before Commander.
+      const plain = await engine.call('new', { players: [{ name: 'You', deck }, { name: 'Bot', ai: 'heuristic', deck: 'own', format: 'commander' }], seed: 2 })
+      expect(plain.seats[1].deck).toMatchObject({ asked: 'own', played: 'mirror', fellBack: 'format', why: 'A "commander" deck of its own is built only for a Commander game.' })
+    }, 120_000)
+
+    it('refuses a Commander game with a player who has no commander or one it does not know, and a game it does not deal', async () => {
+      await expect(engine.call('new', { format: 'commander', players: [{ name: 'You', deck: LIBRARY }, person('B')] })).rejects.toThrow('You has no commander, and every player in a Commander game has one.')
+      await expect(engine.call('new', { format: 'commander', players: [person('You', { commander: 'Made-Up Legend' }), person('B')] })).rejects.toThrow("The engine does not know You's commander, Made-Up Legend.")
+      await expect(engine.call('new', { format: 'brawl', players: [person('A'), person('B')] })).rejects.toThrow('The engine deals no "brawl" game; it deals "standard" and "commander".')
+    }, 60_000)
   })
 
   it('refuses to be continued at a table that was never paced', async () => {

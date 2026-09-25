@@ -104,6 +104,8 @@ export default function ZoneBrowser({ instances, cardFor, nameFor, selected, onS
                     aria-pressed={selected === inst.id}
                   >
                     {nameFor(inst)}
+                    {/* A commander the engine marks (M6), in a graveyard as much as in the command zone. */}
+                    {inst.commander && <span className="pile__glow"> · a commander</span>}
                     {glow?.says && <span className="pile__glow"> · {glow.says}</span>}
                   </button>
                 </li>

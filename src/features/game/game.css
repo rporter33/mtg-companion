@@ -263,6 +263,10 @@
 }
 .plate__step:hover, .plate__step:focus-visible { color: var(--text); border-color: var(--accent); }
 .plate__mana { display: grid; gap: 2px; padding-top: var(--space-1); border-top: 1px solid var(--border); margin-top: var(--space-1); }
+/* Commander damage (M6; CR 903.10a), under the life total once any is dealt: in
+   words, each commander by name and its count out of the threshold, so nothing
+   about it rests on a colour or a picture. */
+.plate__cmd { margin: 0; max-width: 16rem; font-size: var(--text-xs); line-height: 1.35; color: var(--text-muted); }
 .plate__label { font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); }
 
 /* --- the actions rail ----------------------------------------------------- */

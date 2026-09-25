@@ -225,6 +225,40 @@ These are settled. Do not reopen them; build on them.
     engine's attacks and blocks, and each spell it aims, are now stops of a
     paced table, so its turn plays a little slower and it pauses in yours when
     it blocks.
+16. **Decided 2026-09-25, for M5.** The lobby offers the engine's deck as a
+    copy of your deck, one of your decks, or one the engine builds. When the
+    engine builds one, a switch in the lobby chooses its card pool: by default
+    it builds only from the sets the player's own deck uses — a fair fight —
+    and the switch lets it build from the whole format instead.
+17. **Taken as defaults at M5, and the owner's to overturn:** a first game
+    against the engine is still a copy of the player's deck, as every table
+    before it, with the other two a choice away, and the choice is remembered
+    with the player's other table preferences; "the sets the player's deck
+    uses" are the sets of its main-deck printings, basic lands left out (a
+    precon's Plains would otherwise bring the whole precon into the pool); a
+    deck of its own that cannot be built from those sets — none the engine has,
+    or too few legal cards in them — is built from the whole format instead, and
+    one it cannot build at all — the Commander family, until M6 — is the copy,
+    each said in the log and beside the seat; a deck of the player's that the
+    engine does not wholly know cannot be picked for it; the engine's deck is
+    named by the colours its basic lands make, never by its cards.
+18. **Taken as defaults at M6, and the owner's to overturn:** only the Commander
+    format is dealt as a Commander game — Duel Commander, Brawl and Oathbreaker
+    are dealt as every deck of the family was before, by the ordinary rules and
+    without the commander, which the lobby says; a Commander deck the engine
+    cannot lead — its commander unknown, two commanders, or none — is offered the
+    owner's M1 answer as far as it goes: the rest of the deck by the ordinary
+    rules (20 life, no command zone), or the whole deck alone, each said, and 903.3
+    cited; a tap on the command zone casts the commander where the engine offers
+    it (Law 2), and a right-click or a hold opens the zone instead (and, since
+    M6's review, Shift+Enter from the keyboard); the engine's
+    command zone can be looked through at its table, being public; the engine's
+    commander is named in the lobby's seat line and the log, a commander being
+    face up from the start (903.6); its Commander deck of its own is built from the
+    sets the player's deck uses by default, M5's switch and fallbacks unchanged;
+    commander damage is said on the plate under the life total once any is dealt,
+    903.10a cited; and the 903.9a question is asked of the player in Argentum's own
+    words, a yes or no with no "Let the engine choose", as every yes or no has had.
 
 ---
 
@@ -652,6 +686,26 @@ as Argentum's own client does.
 
 *Size: small.*
 
+**Done, 2026-09-25.** The owner's answer is §3 item 16, the defaults taken §3
+item 17. What was built, what was measured, where it departs from the letter
+below and why, and what is left are in `PLAN.md`, "M5: the engine's own deck".
+In short: protocol 7. `new` takes `deck: "mirror" | "own"` on an engine's seat
+beside a list of names, and "own" is built by Argentum's own
+`ConstructedDeckGenerator`, seeded from the game, to the format and from the
+sets asked; where it cannot be built from them it is built from the whole
+format, and where it cannot be built at all the seat plays the copy, each said
+(`fellBack`). The lobby's seats panel offers the three, a switch for the pool
+off by default; the sit carries the choice (`engineDeck`); the seats panel and
+the log say what was dealt — "The engine, with a deck of its own: green-blue
+from Portal", measured against the real engine. The one thing the brief did not
+foresee: a card definition carries no legalities, so every format's pool was
+empty until the process stamped them as Argentum's game server does. Two
+things of Argentum's were measured and said rather than worked round: a pool of
+120 spells or fewer builds the same deck from every seed, and a fifth of its
+builds hold a spell their lands cannot cast.
+
+The rest of this section is the brief it was built to, kept as written.
+
 `ConstructedDeckGenerator` (`ai/src/main/kotlin/com/wingedsheep/ai/engine/deck/`)
 has `generate(setCodes: List<String>, format: DeckFormat): Map<String, Int>`
 and `generate(format)`, with `DeckFormat.STANDARD … COMMANDER` in
@@ -672,6 +726,32 @@ that "own" produces a legal deck of the format's size (the app's own
 ### M6 — Commander
 
 *Size: medium to large. The app's centre; second by the owner's order.*
+
+**Done, 2026-09-25, but for the example decks themselves, which the engine at
+the pin cannot deal.** What was built, measured and found, where it departs from
+the letter below and why, and what is left are in `PLAN.md`, "M6: Commander"; the
+defaults taken are §3 item 18. In short: protocol 8. `new` takes `format:
+"commander"` and a `commander` for every player, and deals Argentum's own
+`Format.Commander` — 40 life, a hundred cards, each commander in its owner's
+command zone, the tax and the tally of commander damage. The engine's seat is
+given one too: a copy's, another deck's, or one `CommanderDeckGenerator` chooses
+first for a Commander deck of its own. A cast from the command zone says so and
+says its tax; the 903.9a question says where the commander is. The table casts a
+commander by a tap on the command zone, which glows and says so; says the tax,
+each rule cited by number; puts commander damage on the plate; and asks the
+903.9a question with the rule that asks it. The Done-when below is met for a
+Commander deck the engine knows, which the engine spec plays through a commander
+cast from the command zone against the real engine. It is not met for the app's
+four example Commander decks: at the pin the engine knows 45 to 55 of each one's
+hundred cards and none of their four commanders (Final Fantasy Commander and
+Commander Masters, where Scryfall prints three of them, are not in it, and
+Kaldheim, Esika's, only in part), so the lobby says so, citing 903.3, and offers
+the rest by the ordinary rules or the whole deck alone. That waits on the pin
+moving (§3 item 12). A review the same day made fifteen findings, which were
+twelve faults, all fixed; what each was and what was done is in `PLAN.md`, M6,
+"What the review found".
+
+The rest of this section is the brief it was built to, kept as written.
 
 Argentum has `Format.Commander` (`mtg-sdk/…/core/Format.kt`: 21 commander
 damage, 100 cards, 40 life, `alwaysDivertToCommand` off so the owner
@@ -697,6 +777,14 @@ Build:
 5. The 903.9a question arrives as a `YesNoDecision`, already askable.
 6. The engine's "own" deck for Commander: `DeckFormat.COMMANDER` through
    the generator, *verify* it names a commander.
+
+   *Verified at M5 (2026-09-25):* `ConstructedDeckGenerator` refuses every
+   commander-shaped format outright ("Use CommanderDeckGenerator instead"), and
+   `deckFor` in `Server.kt` falls back to the copy with `fellBack: "format"`.
+   The path is `CommanderDeckGenerator` beside it (same package), which returns a
+   `GeneratedDeck` of a list and a `commander` chosen first, as Argentum's
+   `RandomDeckResolver` uses it; the list excludes the commander. Its pool is
+   `FormatCardPool`, which reads each card's `legalFormats`, stamped since M5.
 
 Tests: the live test plays a short Commander game; adapter tests for the
 command zone and commander damage on a captured view; the engine spec sits
@@ -867,6 +955,25 @@ names), and leave it out of the lobby's copy, per the owner's rule.
   those cards, and the table alone (§3, item 10).
 - M3: answered on 2026-09-24. Intermediate, with easy and hard a choice
   away in the lobby (§3, item 13).
+- M5: answered on 2026-09-25. A copy, one of your decks, or one the engine
+  builds, from your deck's sets by default and the whole format by a switch
+  (§3, item 16). The defaults the answer left open are item 17.
+- M6: three things the defaults in §3 item 18 leave open. Whether a Commander
+  deck whose commander the engine does not know should be offered with another
+  legendary creature from it leading instead — the Commodore Guff example holds
+  one the engine knows in Guff's own colours, Narset, Enlightened Master — which
+  is a different deck, and so the owner's to allow. Whether Duel Commander and
+  Brawl should be dealt as Commander games at their own life totals, which
+  Argentum's `Format.Commander` can take. And whether moving the pin for the
+  example decks' sets (§3 item 12) should come before M7. And one found by
+  M6's review: the table cites the Comprehensive Rules' section 903 — 903.3,
+  903.6 to 903.8, 903.9a, 903.9b and 903.10a — where `HOUSE-RULES.md` asks that
+  rules of play be cited from `docs/TURN_STRUCTURE.md`, which transcribes the
+  turn and not the Commander format. Whether section 903 should be transcribed
+  into `docs/` (beside the turn, or in a document of its own, with a test like
+  `tests/turn-structure.test.js`) so the table cites it from there, is the
+  owner's; until then the lines say it from the rules directly, and PLAN.md's M6
+  records the departure.
 - M8: which provider, once `HOSTING.md` has verified notes for three.
 - M10: which desktop platform first (the owner's own), and whether a
   signed build matters yet.
@@ -876,11 +983,53 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 ## 7. Appendix — the wire, in one place
 
 Between the browser and the relay, over the room's socket, all
-`{ t: "engine", op }`: `sit { name, deck, sideboard?, seat?, deltas?, level?, answers?, mulligans? }`,
+`{ t: "engine", op }`: `sit { name, deck, sideboard?, seat?, deltas?, level?, answers?, mulligans?, engineDeck?, format?, commander? }`,
 `act { stop, index, attackers?, blockers?, targets?, x?, damage?, cost?, auto?, cards? }`, `decide { stop, … }`, `turn`,
-`resync`; back: `seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, level?, ai?, choices? }`,
+`resync`; back: `seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, level?, ai?, choices?, engineDeck?, format? }`,
 `seats`, `status`, `view { you, seq, state | delta, log }`, `refused { error, stale?, answering? }`, `gone`.
 Over HTTP, before any room: `POST /engine/check`.
+
+M6 added Commander (protocol 8 on the process's side). A sit with a Commander
+deck says `format: "commander"` and brings its commander apart from its library,
+`commander: { name, set?, number? }`; every other deck's sit says `format:
+"standard"` and no commander (since M6's review: a sit that said nothing left an
+earlier Commander request standing). The room keeps both until the deal with the
+deck they came with, seat by seat — a sit with a deck and no game it can read
+asks for the ordinary rules — and the game asked is Commander where any person
+sitting with a deck asked for it. It asks the engine for a Commander game
+(`format: "commander"` on `new`, `commander` on every player) only where the
+engine speaks 8 and every person brought a commander. The engine's seat is given one: a copy's is the person's,
+another deck's comes in `engineDeck` as `commander` (one that came without is
+not sent, and the copy is, `fellBack: "commander"`), and a deck of its own is a
+Commander deck the engine builds. Every `seated` after the deal says `format:
+{ asked, played, fellBack? }` — `played` is `commander` or `standard`, and
+`fellBack` is `engine` (an engine older than 8) or `commander` (a person with no
+commander to bring) — and the engine's `engineDeck` names its `commander`. `GET
+/rooms/<code>` says `format`, asked until the deal and dealt after. The status
+passes an offer's `from` and `commanderTax` and a `YesNo`'s `commanderZone`
+through untouched, and the view the engine's command zones and commander damage.
+A `seated` with no `format` is a relay from before it, which dealt the ordinary
+game without the commander.
+
+M5 added the engine's deck (protocol 7 on the process's side). A sit may say
+`engineDeck`: `{ kind: "mirror" }`, `{ kind: "deck", name, deck, sideboard? }`
+with the names the lobby checked, or `{ kind: "own", format, sets }`, `sets` a
+list of Scryfall codes or null for the whole format. The room keeps the last
+until the deal, as it keeps the level, and reads anything else as no ask. A copy
+and another deck go to the engine as names, which every engine reads; "own" goes
+as `deck: "own"` with `format` and `sets`, and only to an engine at 7 — an older
+one is dealt the copy. Every `seated` after the deal where the engine plays a
+seat says `engineDeck`: `asked` and `played` (each `mirror`, `deck` or `own`;
+`played` null where an engine asked for its own deck said nothing readable),
+`cards`, `colours`, and for a deck of its own `format`, `formatName`, `from`
+(`sets` or `format`), `sets`, `missingSets` and `fellBack` (`engine` from the
+room, for an engine too old; `format`, `sets`, `thin` or `failed` from the
+engine) with `why`; for another deck, its `name`. Never a card of it. `GET
+/rooms/<code>` says the same once dealt, and before that `{ asked, name?, pool?,
+format? }` where a sit asked, `format` the one a deck of its own is to be built
+to (since M6's review, so a lobby can say the copy while the engine deals where
+it builds none). A `seated` with no `engineDeck` is a relay from before it,
+which dealt the copy.
 
 M4's second half added the opening hand (protocol 6 on the process's side). A
 sit says `mulligans: true` where that build can show a mulligan; the room keeps
@@ -955,10 +1104,18 @@ measurement), `levels` in `hello` and `clock`; M4 `answers` on a player in
 `new` and `asked` on its seat in the reply, `choices` in `hello`, `targets`,
 `x`, `damage`, `cost` and `auto` on `act`, and a `decide` shape for each
 decision it can ask; M4's second half `mulligans` on `new` and in its reply,
-and `cards` on `act`; M7 will add `snapshot` and `restore`. `engine/README.md`
-is the contract and is updated with every op added. `PROTOCOL` is 6 since M4's
-second half; an engine at 5 ignores `mulligans`, so a relay reading 5 asks for
-none. An engine at 4 ignores every key choosing travels in, so a relay reading 4
+and `cards` on `act`; M5 `deck: "mirror" | "own"` with `format` and `sets` on
+an engine's player in `new` and `deck` on its seat in the reply, `decks` and
+`load.legalitiesMs` in `hello`, and `decklist`, for measuring; M6 `format` on
+`new` and `commander` on a player, `format` in the reply and `commander` on each
+seat and in the engine's `deck`, `formats` in `hello`, `from` and `commanderTax`
+on an offer, `commanderZone` on a yes or no, and `commander` and `identity` in
+`decklist`; M7 will add `snapshot` and `restore`. `engine/README.md` is the
+contract and is updated with every op added. `PROTOCOL` is 8 since M6; an engine
+at 7 ignores `format` and `commander` and deals the ordinary game, so a relay
+reading 7 sends the decks without their commanders and says why. An engine at 6
+refuses a `deck` that is not a list as no deck, so a relay reading 6 sends names. An engine at 5 ignores
+`mulligans`, so a relay reading 5 asks for none. An engine at 4 ignores every key choosing travels in, so a relay reading 4
 sends no `answers` and tells no seat it may choose. An engine at 3 has no
 levels and ignores the key, so a relay reading 3 asks for none and says the
 engine plays its one way.

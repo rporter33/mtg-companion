@@ -3,6 +3,7 @@ import { ZONE_LABELS } from '../../lib/board/model.js'
 import { nameList } from '../../lib/engine/deck.js'
 import { heldBack, unaimed, unpaid, GLOW_SAYS } from '../../lib/engine/glow.js'
 import { NO_CHOICES, advance, beginBottom, beginDecision, pickable, ready, setAmount, setX, stepOf } from '../../lib/engine/choose.js'
+import { commanderZoneRule, taxWords } from '../../lib/engine/commander.js'
 
 /*
  * The prompt panel at the engine's table, out of Table.jsx since M4 made it
@@ -427,9 +428,12 @@ function DecisionPrompt({ decision: d, players, me, nameOf, nameOfSeat, onDecide
   const from = d.source ? `From ${d.source}.` : 'The engine is asking.'
 
   if (d.type === 'YesNo') {
+    // The question of the command zone at a Commander table (M6), said with the
+    // rule that asks it, by where the commander is (Server.kt, `commanderZone`).
+    const rule = commanderZoneRule(d.commanderZone)
     return (
       <div className="prompt" role="group" aria-label="The engine asks">
-        {lead(d.hint ? `${from} ${d.hint}` : from)}
+        {lead([from, d.hint, rule].filter(Boolean).join(' '))}
         <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onDecide({ yes: true })}>{d.yesText ?? 'Yes'}</button>
         <button className="btn btn--sm prompt__btn" onClick={() => onDecide({ yes: false })}>{d.noText ?? 'No'}</button>
       </div>
@@ -607,7 +611,9 @@ function DecisionPrompt({ decision: d, players, me, nameOf, nameOfSeat, onDecide
  * is said as what it is: a card in hand that can be played, and a permanent
  * whose ability can be used, which is not a card being played —
  * docs/TURN_STRUCTURE.md keeps casting a spell, playing a land and activating
- * an ability apart (117.4, 305.2, 505.6a–b); a play offered for a card in a
+ * an ability apart (117.4, 305.2, 505.6a–b); a commander that can be cast
+ * from the command zone, reached by a tap on that zone, with what the commander
+ * tax adds to its cost (903.8, M6); a play offered for a card in a
  * pile, which no tap on the table reaches and the actions panel does; and,
  * where nothing else is offered, the plays this seat cannot carry out with the
  * reason for each, so a stop made for one of those alone still says why it is
@@ -617,17 +623,27 @@ function DecisionPrompt({ decision: d, players, me, nameOf, nameOfSeat, onDecide
  */
 export function stopLine({ status, me, glows = NO_GLOW, elsewhere = [], placeOf = () => null, nameOf = (id) => id, nameOfSeat, can = NO_CHOICES }) {
   const lit = [...glows.values()].filter((g) => g?.kind === 'playable')
-  const plays = lit.filter((g) => g.says === GLOW_SAYS.play).length
-  const uses = lit.length - plays
+  // A commander that can be cast from the command zone (M6) is said on its own:
+  // it is reached by a tap on that zone, and its cost says the commander tax.
+  const commanded = (status?.actions ?? []).filter((a) => a && typeof a.card === 'string' && a.type === 'CastSpell' && glows.get(a.card)?.says === GLOW_SAYS.command)
+    .filter((a, i, all) => all.findIndex((b) => b.card === a.card) === i)
+  const onTable = lit.filter((g) => g.says !== GLOW_SAYS.command)
+  const plays = onTable.filter((g) => g.says === GLOW_SAYS.play).length
+  const uses = onTable.length - plays
   const named = (list) => [...new Set(list.map((a) => (a.card ? nameOf(a.card) : a.description)).filter(Boolean))]
   const lines = []
 
-  if (lit.length) {
+  if (onTable.length) {
     const parts = []
     if (plays) parts.push(plays === 1 ? 'the card you can play' : `the ${plays} cards you can play`)
     if (uses) parts.push(uses === 1 ? 'the permanent with an ability you can use' : `the ${uses} permanents with abilities you can use`)
     const said = parts.join(' and ')
-    lines.push(`${said.charAt(0).toUpperCase()}${said.slice(1)} ${lit.length === 1 ? 'glows' : 'glow'}. Tap ${lit.length === 1 ? 'it' : 'one'}, or pass.`)
+    lines.push(`${said.charAt(0).toUpperCase()}${said.slice(1)} ${onTable.length === 1 ? 'glows' : 'glow'}. Tap ${onTable.length === 1 ? 'it' : 'one'}${commanded.length ? '' : ', or pass'}.`)
+  }
+  for (const a of commanded) {
+    const tax = taxWords(a)
+    const cost = typeof a.manaCost === 'string' && a.manaCost ? ` for ${a.manaCost}` : ''
+    lines.push(`Your commander, ${nameOf(a.card)}, can be cast from the command zone${cost}${tax ? `: ${tax}` : ''}. Tap the command zone to cast it, or pass.`)
   }
 
   if (elsewhere.length) {
@@ -638,7 +654,7 @@ export function stopLine({ status, me, glows = NO_GLOW, elsewhere = [], placeOf 
       return where ? `${what} ${where.replace(/^(in|on) /, 'from ')}` : what
     }))]
     const them = elsewhere.length === 1 ? 'it' : 'them'
-    lines.push(lit.length
+    lines.push(lit.length || commanded.length
       ? `You can also ${nameList(items, Infinity)}: find ${them} under Actions.`
       : `You can ${nameList(items, Infinity)}: find ${them} under Actions, or pass.`)
   }

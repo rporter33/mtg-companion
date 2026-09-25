@@ -56,10 +56,13 @@ One request per line, one reply per line, correlated by `id`:
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"engine":"argentum","protocol":6,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"levels":{"easy":"v0","intermediate":"production-raceclock","hard":"production-candidate-expiring"},"choices":{"act":["targets","x","damage","cost","auto","cards"],"costs":["DiscardCard",…],"decisions":["ChooseTargets","YesNo","ChooseOption","SelectCards",…]},"load":{"ms":15207,"heapMb":110,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order; `levels` are the strengths an engine seat may play at, weakest first, each with the Argentum profile behind it; `choices` is what a person may choose over this protocol (below) |
+| `{"op":"hello"}` | `{"engine":"argentum","protocol":8,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"levels":{"easy":"v0","intermediate":"production-raceclock","hard":"production-candidate-expiring"},"choices":{"act":["targets","x","damage","cost","auto","cards"],"costs":["DiscardCard",…],"decisions":["ChooseTargets","YesNo","ChooseOption","SelectCards",…]},"formats":["standard","commander"],"decks":{"formats":["standard","pioneer","modern","legacy","vintage","pauper","premodern","commander"]},"load":{"ms":27342,"legalitiesMs":601,"heapMb":127,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order; `levels` are the strengths an engine seat may play at, weakest first, each with the Argentum profile behind it; `choices` is what a person may choose over this protocol (below); `formats` the games it deals (protocol 8, below); `decks.formats` the formats an engine's seat can be dealt a deck of its own in (protocol 7, below; Commander's only at a Commander table); `load.legalitiesMs` what stamping every card with the formats it is legal in took, of `load.ms` |
 | `{"op":"cards"}` | `{"names":[…]}` — every name a deck may hold: no tokens and no back faces, though the engine knows both |
 | `{"op":"check","deck":{"Delver of Secrets // Insectile Aberration":4,"Made-Up Card":2},"sideboard":{…}}` | `{"known":4,"total":6,"unknown":["Made-Up Card"],"unknownSideboard":[]}` — which of a deck's cards the engine knows, before any game; unknown names come back exactly as sent |
 | `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true,"answers":["SelectCards","CombatResolution"]},{"name":"Bot","deck":{…},"ai":"heuristic","level":"intermediate"}],"seed":20260921,"pace":true,"mulligans":true}` | the table's status (below) plus `seats` and the `seed` it was dealt from, `paced` when the table was paced, and `mulligans` when it was dealt with the hands to keep (protocol 6, below); each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got; a seat the engine plays with its own judgement also says the `level` it took (null for none) and the Argentum `profile` it plays with; a person's seat says `asked`, the decisions it will be put rather than have answered for it |
+| `{"op":"new","players":[{"name":"You","deck":{…}},{"name":"Bot","ai":"heuristic","deck":"own","format":"standard","sets":["blb","dsk"]}],…}` / `"deck":"mirror"` | as above, and the engine's seat says what it was dealt as `deck`: `{"asked":"own","played":"own","cards":60,"colours":["W","G"],"format":"standard","formatName":"Standard","from":"sets","sets":[{"code":"BLB","name":"Bloomburrow"},…],"missingSets":[…]?,"fellBack":…?,"why":…?}` — a seat the engine plays may bring no deck and ask for a copy of the first person's or one of its own (protocol 7, below) |
+| `{"op":"new","format":"commander","players":[{"name":"You","deck":{"Forest":50,"Plains":49},"commander":{"name":"Rhys the Redeemed","set":"shm","number":"237"}},{"name":"Bot","ai":"heuristic","deck":"own","format":"commander"}]}` | as above, dealt as a Commander game (protocol 8, below): the reply says `"format":"commander"`, each seat its `commander`, and a seat the engine plays says its commander in its `deck` too, with `cards` counting it — `{"asked":"own","played":"own","cards":100,"colours":["W"],"commander":"Jareth, Leonine Titan","format":"commander",…}` |
+| `{"op":"decklist","seat":"e1"}` | `{"commander":"Jareth, Leonine Titan","deck":{"Plains":{"count":17,"set":"BLB","number":"262"},…},"cards":[{"name":"Plains","typeLine":"Basic Land — Plains","manaCost":"","colours":[],"identity":["W"],"legal":["standard",…]},…]}` — the deck a seat was dealt, with what the engine's own card data says of each card, its colour identity among it; at a Commander table the commander, apart from the deck as it was dealt apart; for measuring and tests, and never sent by the relay, since the engine's deck is as hidden as any opponent's |
 | `{"op":"turn"}` | the table's status |
 | `{"op":"continue"}` | the next step of a paced table: the status once the engine's seat has made its next play |
 | `{"op":"act","index":3}` | the status after that action and everything that followed it |
@@ -231,10 +234,148 @@ and the cards put on the bottom as "You put … on the bottom of your library",
 to their owner alone.
 
 An engine at 5 ignores `mulligans` and deals every hand kept, so a relay reading
-5 must not tell a client a mulligan is coming. The relay asks for the phase only
+5 must not tell a client a mulligan is coming.
+
+**The engine's own deck (protocol 7, M5).** A seat the engine plays need not
+bring a list. Its `deck` in `new` may be `"mirror"`, the first person's deck and
+sideboard as they were sent, printings and all; or `"own"`, a deck Argentum's
+`ConstructedDeckGenerator` builds for it (`ai/…/engine/deck/`, the builder its
+own game server seats against people who bring no deck). `format` is Scryfall's
+word for the format, as the app's formats name their legality key; `sets` the
+Scryfall codes of the sets to build from, in either case. A list, even an empty
+one, asks for those sets; no list asks for the whole format. The owner's choice
+(HANDOFF.md §3 item 16): the lobby asks, by default, for the sets the person's
+own deck uses — a fair fight — and a switch asks for the whole format.
+
+The generator builds a sixty-card deck of basics and the format's legal cards
+from those sets' own cards and reprints, through Draftsim's ratings (weighted
+sampling of 120 cards, four of each, then Argentum's port of Draftsim's
+autobuilder), and falls back to its random builder where that builds nothing.
+Its randomness is seeded from the game's seed (and the seat's place), so the
+same seed builds the same deck and any game can still be played again exactly,
+and every game the relay starts without a seed builds another. Two things were
+found in measuring it, both Argentum's and said here rather than worked around:
+a pool of no more than 120 spells leaves the sampling nothing to choose, so it
+builds the same deck from every seed (Portal's commons in Pauper: one deck in 20
+seeds); and 21 of 100 of its builds, over five pools, hold a spell of a colour none of its basics
+make (PLAN.md, M5).
+
+What makes the legal pool is each card's `legalFormats`, which a card
+definition does not carry: game-server stamps them at start-up from the
+Scryfall legalities Argentum ships (`LegalityData`), and so does this process
+now, for every card it registers. Without them every format's pool was empty,
+which is how the first build answered "No Standard-legal cards available".
+Measured on the owner's machine on 2026-09-25: 0.6–0.8 s of a load that took
+27–34 s that day, and a heap of 126 MB after it where M1 measured 110.
+
+What was dealt is held to what this table can deal: at least 60 cards, each a
+name a deck may hold. Where it cannot be, the seat falls back rather than
+refuse a game somebody sat down to, and its `deck` says why in `fellBack`, with
+Argentum's own words in `why` where it gave any:
+
+| `fellBack` | What happened | Dealt instead |
+| --- | --- | --- |
+| `format` | no format given, or one it builds no deck to: the Commander family at a table dealt by the ordinary rules (`ConstructedDeckGenerator` refuses it, and a Commander deck needs a Commander game), and anything but Commander at a Commander table (protocol 8, below) | a copy of the person's deck |
+| `sets` | none of the sets asked is one the engine has, or none was asked in a list | a deck from the whole format |
+| `thin` | the format's legal cards in those sets could not fill a deck — Argentum's "No Standard-legal cards available in POR", or its random builder coming back short | a deck from the whole format; if that fails too, the copy |
+| `failed` | anything else the generator did | as `thin` |
+
+A set asked for that the engine has not got is left out and named in
+`missingSets`, in the words it was asked in. `colours` are the colours the
+deck's basic lands make, and for a deck with none, the colours of its spells:
+Argentum's builder gives every deck a manabase of basics for the two colours it
+plays, and its spells can say more than that — a hybrid card counts as both its
+colours, and a spell its lands cannot cast is still in the deck. The seat never
+names a card of its deck: `decklist` does, for measuring, and the relay never
+asks for it.
+
+An engine at 6 reads a `deck` that is not a list as no deck and refuses the
+game, so a relay reading 6 sends the person's own names for a copy, and deals
+the copy where a deck of its own was asked (`scripts/relay-engine.mjs` says so
+to the client). A seat that brings names says `{"asked":"deck","played":"deck"}`,
+whatever the relay meant by them. The relay asks for the phase only
 where every person at the table said in their sit that their client can show
 one (`mulligans: true`), since a seat that cannot would be offered keeping and
 bottoming it has no prompt for, and the game would wait on it for good.
+
+**Commander (protocol 8, M6).** `new` takes `format`: `"commander"` deals the
+game as Argentum's own `Format.Commander` stands at the pin — each player at 40
+life (CR 903.7), a hundred cards, each commander face up in its owner's command
+zone at the start (903.6), castable from there for {2} more for each time before
+(903.8), and 21 combat damage from one commander losing the game (903.10a) — and
+`"standard"`, or no key at all, the ordinary rules every engine before this
+dealt, whatever the decks' own format. Any other word is refused: "The engine
+deals no \"brawl\" game; it deals \"standard\" and \"commander\"." `hello.formats`
+lists them. Argentum's `alwaysDivertToCommand` is left off, as Argentum leaves it,
+so the question of CR 903.9a is the commander's owner's to answer (below).
+
+Every player in a Commander game has a `commander`: a name, or `{"name", "set",
+"number"}` where a printing was chosen for it, dealt in that printing as a deck
+line's is. It is dealt into the command zone, not the library, and a deck line
+naming it too would deal a second copy into the library, so a client sends a
+Commander deck's library alone; the app's decks keep their commanders apart
+already. A player with none is refused ("You has no commander, and every player
+in a Commander game has one."), as Argentum's `GameInitializer` refuses one, and
+so is a commander the engine does not know ("The engine does not know You's
+commander, Made-Up Legend."). One commander each: Argentum's `PlayerConfig` takes
+one, partners being later work upstream. At a table dealt by the ordinary rules
+a `commander` sent is not read.
+
+A seat the engine plays is given one the same way: a list of names brings its own
+`commander`; `"mirror"` copies the first person's with their deck; and `"own"`
+with `format: "commander"` is a Commander deck of its own, built by Argentum's
+`CommanderDeckGenerator` — the builder its own game server uses for a seat that
+brings no commander deck — which chooses the commander first, weighted towards
+the cards Draftsim rates highly and towards narrow colour identities, then fills a
+singleton library inside that identity along a curve, with a manabase of basics
+alone. It is seeded from the game as a constructed deck of its own is, held to a
+hundred cards exactly, and falls back as that does: from sets it has not got, or
+none asked in a list, to the whole format (`sets`); from sets holding no legal
+commander with colours to build around — Portal has no legendary creature — to
+the whole format (`thin`); and to a copy of the person's deck, commander and all,
+where that fails too, or where the word is not `commander` (`format`). At a table
+dealt by the ordinary rules a Commander deck of its own is not built, and the
+copy is dealt, as before (`format`, "A \"commander\" deck of its own is built
+only for a Commander game.").
+
+The reply says `format: "commander"` where the game is Commander, said only when
+on, as `paced` and `mulligans` are, and each seat its `commander`, the engine's
+too: a commander begins the game face up (903.6), so it is no secret, where the
+rest of a deck is. The engine's `deck` counts its commander among its `cards`
+(903.5a) and names it, and its `colours` are the commander's colour identity
+(903.4), which every card in the deck fits inside (903.5c).
+
+The view is Argentum's own: `ClientGameState` lists each player's `Command`
+zone, public to every seat, and a commander card says `isCommander` wherever it
+goes; each `ClientPlayer` carries `commanderDamage`, one entry per commander that
+has dealt that player combat damage — `commanderId`, `commanderName`,
+`controllerId`, `amount` and `threshold` (21) — left off where there is none, as
+`encodeDefaults = false` leaves off an empty list. A delta carries `players`
+whole, so the tally travels in every one.
+
+A commander cast from the command zone is an offer like any other, `card` its
+id, with two more keys said only for it: `from: "command"`, and `commanderTax`,
+`{"casts": 1, "generic": 2}` — how many times its owner has cast it from there,
+read off Argentum's own `CommanderComponent`, and the generic mana that adds,
+{2} apiece. Argentum has already put the tax in the offer's `manaCost`
+(`CostCalculator`), so `{G/W}` becomes `{2}{G/W}` after one cast; the key says
+why. Argentum offers the cast only where it is affordable.
+
+When a commander goes to a graveyard or exile, Argentum's state-based action
+(`CommanderZoneChoiceCheck`) asks its owner, as a `YesNo` in its own words —
+"Put Rhys the Redeemed into the command zone instead of leaving it in the
+graveyard?", "Command zone" or "Leave in the graveyard" — which every client can
+answer. It asks the same of a commander in a hand or a library, where the rules
+make it a replacement instead (903.9b). The decision says `commanderZone`, where
+the commander is — `graveyard`, `exile`, `hand` or `library` — read off the
+continuation Argentum suspended with the question, as `ReorderLibrary`'s
+`placement` is, so a client can cite the rule that asks it. The engine's seat
+answers by its own responder.
+
+An engine at 7 ignores `format` and `commander`, and deals the decks as sent by
+the ordinary rules, so a relay reading 7 must not tell anybody a Commander game
+is coming (`scripts/relay-engine.mjs` deals it without the commanders, as every
+room before M6 did, and says why).
 
 `waiting` is `"action"` with `actions`, `"decision"` with `decision`,
 `"engine"` on a paced table that has stopped after one of the engine's own

@@ -236,14 +236,18 @@ describe('what reads the stamp', () => {
     // count, because a name is all the deck knows.
     expect(seat.deck['Grizzly Bears']).toEqual({ count: 1, set: 'hob', number: '12' })
     expect(seat.unloaded).toBe(0)
-    expect(seat.total).toBe(2)
+    // A Commander deck's commander goes apart from its library, to the command
+    // zone, and counts among its cards (M6; CR 903.5a).
+    expect(seat.commander).toEqual({ name: 'Legendary Bear' })
+    expect(seat.deck).not.toHaveProperty('Legendary Bear')
+    expect(seat.total).toBe(3)
   })
 
   it('the engine\'s deck, which still counts a card with no name at all as unloaded', () => {
     const deck = addCard(built(), 'never-seen', 3)
     const seat = seatDeck(deck, withoutScholar)
     expect(seat.unloaded).toBe(3)
-    expect(seat.total).toBe(5)
+    expect(seat.total).toBe(6)
   })
 
   it('the engine\'s deck, sending a name the engine can read', () => {

@@ -101,13 +101,54 @@ function countNames(entries, lookup, stamped) {
  * A card whose record is gone but whose name the deck stamped still goes, by
  * that name (see countNames), so a deck built in a preview season can be
  * played after Scryfall discards one of its ids.
+ *
+ * A Commander deck (M6) is dealt as a Commander game, and its commander goes
+ * apart from its library, as `commander` — its name and the printing chosen, as
+ * a deck line names one — to be dealt into the command zone (CR 903.6). `game`
+ * says which game the deck asks for, `leaders` how many commanders it has (the
+ * engine deals one, as Argentum's `PlayerConfig` does), and `total` counts the
+ * commander, as the format counts it (903.5a). A commander that has not loaded
+ * and has no stamped name is counted in `unloaded`, as any card is. Every other
+ * deck, the rest of the Commander family included, is exactly what it was.
  */
 export function seatDeck(deck, lookup) {
   const stamped = stampedNames(deck)
-  const main = countNames(deck?.main, lookup, stamped)
+  const commanderGame = deck?.formatId === 'commander'
+  const leaders = commanderGame ? [...new Set((Array.isArray(deck?.commanders) ? deck.commanders : []).filter((id) => typeof id === 'string' && id))] : []
+  // The library alone: a commander listed in the main deck too is not one of the ninety-nine.
+  const main = countNames(commanderGame ? (Array.isArray(deck?.main) ? deck.main : []).filter((e) => !leaders.includes(e?.cardId)) : deck?.main, lookup, stamped)
   const allowed = getFormat(deck?.formatId)?.sideboard?.max > 0
   const side = allowed ? countNames(deck?.sideboard, lookup, stamped) : { out: {}, unloaded: 0 }
-  return { deck: main.out, sideboard: side.out, total: main.total, unloaded: main.unloaded, sideboardUnloaded: side.unloaded }
+  const seat = { deck: main.out, sideboard: side.out, total: main.total, unloaded: main.unloaded, sideboardUnloaded: side.unloaded }
+  if (!commanderGame) return seat
+  const commander = leaders.length === 1 ? leaderLine(leaders[0], lookup, stamped) : null
+  const commanderUnloaded = leaders.length === 1 && !commander ? 1 : 0
+  return { ...seat, game: 'commander', leaders: leaders.length, commander, commanderUnloaded, total: main.total + leaders.length, unloaded: main.unloaded + commanderUnloaded }
+}
+
+/** A commander as the sit sends it: its name, and the printing chosen where one was; null where it has no name to go by. */
+function leaderLine(cardId, lookup, stamped) {
+  const card = lookup?.(cardId)
+  const name = engineName(card) ?? stampedEngineName(stamped?.get(cardId))
+  if (!name) return null
+  const set = card?.set || null
+  const number = card?.collector_number || null
+  return { name, ...(set && number ? { set, number } : {}) }
+}
+
+/**
+ * The names a seat asks the engine about: its library, and its commander with
+ * it, since the engine has to know that card too to deal the deck (M6). An
+ * engine from before Commander answers about it as about any card.
+ */
+export function checkedDeck(seat) {
+  const deck = { ...(seat?.deck ?? {}) }
+  const lead = seat?.commander
+  if (lead?.name) {
+    const line = lead.set && lead.number ? { count: 1, set: lead.set, number: lead.number } : 1
+    deck[lead.name] = lead.name in deck ? [deck[lead.name], line].flat().map((l) => (typeof l === 'number' ? { count: l } : l)) : line
+  }
+  return deck
 }
 
 /**
@@ -118,13 +159,22 @@ export function seatDeck(deck, lookup) {
 export function leaveOut(seat, names) {
   const deck = { ...seat.deck }
   const left = []
+  let commander = seat.commander ?? null
   for (const name of Array.isArray(names) ? names : []) {
-    if (typeof name !== 'string' || !(copiesOf(deck[name]) > 0)) continue
+    if (typeof name !== 'string') continue
+    // A commander the engine does not know is left out too (M6): the deck then
+    // has none, and the room deals the ordinary game, which the table says.
+    if (commander && name === commander.name && !(copiesOf(deck[name]) > 0)) {
+      left.push({ name, count: 1, commander: true })
+      commander = null
+      continue
+    }
+    if (!(copiesOf(deck[name]) > 0)) continue
     left.push({ name, count: copiesOf(deck[name]) })
     delete deck[name]
   }
   const gone = left.reduce((sum, l) => sum + l.count, 0)
-  return { seat: { ...seat, deck, total: seat.total - gone }, left }
+  return { seat: { ...seat, deck, total: seat.total - gone, ...('commander' in seat ? { commander } : {}) }, left }
 }
 
 /**
@@ -224,6 +274,11 @@ export function verdictOf(seat, reply, records = null) {
   const sets = setListOf(reply.engineSets)
   const recordsOf = (name) => (records instanceof Map ? records.get(name) : null)
   const unknown = lines(seat.deck, reply.unknown).map((u) => ({ ...u, reason: reasonFor(recordsOf(u.name), sets) }))
+  // A Commander deck's commander was asked about beside its library
+  // (`checkedDeck`), and is laid against it the same way, first, and marked.
+  const lead = seat.commander?.name
+  const commanderUnknown = Boolean(lead) && reply.unknown.includes(lead) && !(lead in (seat.deck ?? {}))
+  if (commanderUnknown) unknown.unshift({ name: lead, count: 1, commander: true, reason: reasonFor(recordsOf(lead), sets) })
   const missing = unknown.reduce((sum, u) => sum + u.count, 0)
   return {
     state: unknown.length || seat.unloaded ? 'short' : 'complete',
@@ -231,6 +286,7 @@ export function verdictOf(seat, reply, records = null) {
     known: seat.total - seat.unloaded - missing,
     unknown,
     unknownSideboard: lines(seat.sideboard, reply.unknownSideboard),
+    ...(lead ? { commanderUnknown } : {}),
   }
 }
 
@@ -262,6 +318,13 @@ export function reasonText(reason, many = false) {
     default: return 'Not known'
   }
 }
+
+/**
+ * A name with its indefinite article, as a sentence says it: "a Brawl", "an
+ * Oathbreaker". Chosen by the first letter, which holds for the name of every
+ * format the app knows (found in M6's review, which read "a Oathbreaker deck").
+ */
+export const withArticle = (name) => `${/^[aeiou]/i.test(String(name ?? '')) ? 'an' : 'a'} ${name}`
 
 /** A few names, as a sentence says them: "A", "A and B", "A, B and C", "A, B, C and 2 more". */
 export function nameList(names, max = 3) {

@@ -27,6 +27,25 @@
 // one, since the captured views hold one hand. FAKE_PROTOCOL=5 plays an engine
 // from before them.
 //
+// And decks of its own (protocol 7): an engine seat dealt `deck: "own"` says in
+// the reply what it built, in Server.kt's shape, by one rule of the fake's own —
+// the formats Server.kt builds to, from the sets in its hello (Trek, which
+// Argentum marks incomplete, standing for sets with too few cards), else from the
+// whole format, else a copy of the person's deck — and a seat dealt names says
+// it plays them. FAKE_PROTOCOL=6 plays an engine from before them, which refuses
+// a deck that is not a list, as the real one does.
+//
+// And Commander (protocol 8): dealt `format: "commander"` with a commander for
+// every player, in Server.kt's words where one is missing or unknown, it deals a
+// Commander table of its own making over the captured views — 40 life, each
+// commander in its owner's command zone, and before each captured stop a main
+// phase of the first seat's that offers to cast its commander from there, with
+// the commander tax Server.kt says (`from`, `commanderTax`). Casting it puts it
+// on the battlefield; `commanderTo` moves it anywhere else, as a test needs, and
+// a yes to a decision carrying `commanderZone` (asked with `ask`) sends it home.
+// `commanderDamage` sets the tally a player's view carries. FAKE_PROTOCOL=7
+// plays an engine from before it, which deals the decks by the ordinary rules.
+//
 // It can be made to hold a request until the test lets it go (`holdActs`,
 // `release`, FAKE_HOLD_HELLO), which is how a test waits on "the engine is
 // still answering" without waiting on a clock.
@@ -82,7 +101,7 @@ let acts = 0
 let lastNew = null
 let lastAct = null
 let lastDecide = null
-const protocol = () => Number(process.env.FAKE_PROTOCOL) || 6
+const protocol = () => Number(process.env.FAKE_PROTOCOL) || 8
 // Protocol 5's choices, as the real engine names them in hello (Server.kt);
 // protocol 6 adds the cards put on the bottom after a mulligan to what act takes.
 const ALWAYS_ASKED = ['ChooseTargets', 'YesNo', 'ChooseOption']
@@ -102,6 +121,59 @@ const played = (p) => {
   if (!p?.ai || p.ai === 'random' || protocol() < 4) return {}
   const level = p.level in LEVELS ? p.level : null
   return { level, profile: level ? LEVELS[level] : 'current' }
+}
+// Protocol 7's decks. The formats are Server.kt's (every DeckFormat but the
+// Commander family); the sets are the fake's hello's, Trek standing for a set too
+// thin to build from; the colours are the fake's own, one pair for each pool.
+const BUILDS = ['standard', 'pioneer', 'modern', 'legacy', 'vintage', 'pauper', 'premodern']
+const SETS = { POR: 'Portal', HOB: 'The Hobbit', TRC: 'Star Trek Commander' }
+const FORMAT_NAMES = { standard: 'Standard', pioneer: 'Pioneer', modern: 'Modern', legacy: 'Legacy', vintage: 'Vintage', pauper: 'Pauper', premodern: 'Premodern', commander: 'Commander' }
+const count = (deck) => Object.values(deck ?? {}).reduce((sum, v) => sum + copiesOf(v), 0)
+/** A commander as `new` carries one (protocol 8): a name, or {name, set, number}. */
+const commanderName = (v) => (typeof v === 'string' ? v : typeof v?.name === 'string' ? v.name : null)
+/** The commander the fake's own Commander deck is led by, a real card the real engine knows. */
+const OWN_COMMANDER = "Sythis, Harvest's Hand"
+/**
+ * What an engine seat plays, as Server.kt says it: `deck` on the seat in the
+ * reply to `new`. FAKE_DECK_REPORT=noisy plays an engine that says more than
+ * that, and some of it badly — its cards by name, a count that is no count,
+ * colours as a word, sets with no code — so a test can see the room keep to
+ * what a client may be told (`reportOf`, scripts/relay-engine.mjs).
+ */
+const built = (p, players, commanderGame = false) => {
+  const said = plainlyBuilt(p, players, commanderGame)
+  if (process.env.FAKE_DECK_REPORT !== 'noisy' || !said.deck) return said
+  return { deck: {
+    ...said.deck,
+    names: ['Raging Goblin', 'Mountain'], list: { 'Raging Goblin': 20 }, cards: -1, colours: 'RG',
+    sets: [...(said.deck.sets ?? []), { name: 'No code at all' }, 'BLB', { code: 7, name: 'Seven' }, { code: 'A CODE LONGER THAN FORTY LETTERS, WHICH NONE IS', name: 'Too long' }],
+    missingSets: [3, null], commander: { name: 'Not a name' }, fellBack: 12,
+  } }
+}
+const plainlyBuilt = (p, players, commanderGame = false) => {
+  if (!p?.ai || protocol() < 7) return {}
+  const person = (players ?? []).find((x) => !x.ai && x.deck && typeof x.deck === 'object')
+  // A Commander deck counts its commander, and is named by its colours (Server.kt, coloursOf).
+  const led = (name) => (commanderGame && name ? { commander: name } : {})
+  const plus = (name) => (commanderGame && name ? 1 : 0)
+  if (p.deck && typeof p.deck === 'object') return { deck: { asked: 'deck', played: 'deck', cards: count(p.deck) + plus(commanderName(p.commander)), colours: ['R'], ...led(commanderName(p.commander)) } }
+  const mirror = (extra) => ({ deck: { asked: p.deck, played: 'mirror', cards: count(person?.deck) + plus(commanderName(person?.commander)), colours: ['R'], ...extra, ...led(commanderName(person?.commander)) } })
+  if (p.deck === 'mirror') return mirror({})
+  const format = typeof p.format === 'string' ? p.format.toLowerCase() : null
+  if (commanderGame) {
+    if (format !== 'commander') return mirror({ ...(format ? { format } : {}), fellBack: 'format', why: `A Commander game is dealt a Commander deck of its own, and "${format}" is not one.` })
+    const known = Array.isArray(p.sets) ? p.sets.map((s) => String(s).toUpperCase()).filter((s) => s in SETS) : []
+    return { deck: { asked: 'own', played: 'own', cards: 100, colours: ['W', 'G'], commander: OWN_COMMANDER, format, formatName: 'Commander', from: 'format', ...(Array.isArray(p.sets) ? { fellBack: known.length ? 'thin' : 'sets' } : {}) } }
+  }
+  if (!BUILDS.includes(format)) return mirror({ ...(format ? { format } : {}), fellBack: 'format', why: format === 'commander' ? 'A "commander" deck of its own is built only for a Commander game.' : `The engine builds no "${format}" deck of its own.` })
+  const own = { asked: 'own', played: 'own', cards: 60, format, formatName: FORMAT_NAMES[format] }
+  if (!Array.isArray(p.sets)) return { deck: { ...own, colours: ['B', 'G'], from: 'format' } }
+  const known = p.sets.map((s) => String(s).toUpperCase()).filter((s) => s in SETS)
+  const missingSets = p.sets.filter((s) => !(String(s).toUpperCase() in SETS))
+  const missing = missingSets.length ? { missingSets } : {}
+  if (!known.length) return { deck: { ...own, colours: ['B', 'G'], from: 'format', ...missing, fellBack: 'sets' } }
+  if (known.includes('TRC') && known.length === 1) return { deck: { ...own, colours: ['B', 'G'], from: 'format', ...missing, fellBack: 'thin', why: 'The deck came to 12 cards, short of 60.' } }
+  return { deck: { ...own, colours: ['R', 'G'], from: 'sets', sets: known.map((code) => ({ code, name: SETS[code] })), ...missing } }
 }
 // The one rule the fake has for which cards it knows, used by check and new
 // alike: a name the real engine would resolve is not its business. The real
@@ -141,6 +213,64 @@ let asking = []
 // where the deal did not ask for one: how many mulligans the first seat has
 // taken, and whether it has kept.
 let mulligan = null
+// A Commander table (protocol 8), or null: each seat's commander by name, where
+// it is, how often it has been cast from the command zone, the commander damage
+// each player has been dealt, and whether the first seat is at the main phase
+// the fake puts before each captured stop.
+let commanders = null
+const COMMAND_ID = (seat) => `cmd-${seat}`
+/** The commander's card as the engine's view carries one: public, and marked as a commander. */
+const commanderCard = (seat, name, zone) => ({
+  id: COMMAND_ID(seat), name, manaCost: '{G/W}', manaValue: 1, typeLine: 'Legendary Creature — Elf Warrior', cardTypes: ['CREATURE'], subtypes: ['Elf', 'Warrior'],
+  colors: ['GREEN', 'WHITE'], oracleText: '', power: 1, toughness: 1, basePower: 1, baseToughness: 1, keywords: [], counters: {},
+  isTapped: false, hasSummoningSickness: zone === 'Battlefield', controllerId: seat, ownerId: seat, isToken: false, zone: { ownerId: seat, zoneType: zone },
+  attachments: [], isFaceDown: false, isCommander: true,
+})
+const ZONE_TYPES = { command: 'Command', battlefield: 'Battlefield', graveyard: 'Graveyard', exile: 'Exile', hand: 'Hand', library: 'Library' }
+/** The captured view as a Commander table shows it: 40 life, the commanders where they are, the tally. */
+const commanderView = (view) => {
+  if (!commanders) return view
+  const cards = { ...view.cards }
+  const zones = view.zones.map((z) => ({ ...z, cardIds: [...(z.cardIds ?? [])] }))
+  for (const [seat, c] of Object.entries(commanders.seats)) {
+    const type = ZONE_TYPES[c.where]
+    // A commander in a hidden zone is out of every view but its owner's, as any card there is.
+    const hidden = (type === 'Hand' || type === 'Library') && seat !== view.viewingPlayerId
+    if (!hidden) cards[COMMAND_ID(seat)] = commanderCard(seat, c.name, type)
+    let zone = zones.find((z) => z.zoneId?.ownerId === seat && z.zoneId?.zoneType === type)
+    if (!zone) { zone = { zoneId: { ownerId: seat, zoneType: type }, cardIds: [], size: 0, isVisible: true }; zones.push(zone) }
+    if (!hidden) zone.cardIds.push(COMMAND_ID(seat))
+    zone.size += 1
+    if (type !== 'Command' && !zones.some((z) => z.zoneId?.ownerId === seat && z.zoneId?.zoneType === 'Command')) zones.push({ zoneId: { ownerId: seat, zoneType: 'Command' }, cardIds: [], size: 0, isVisible: true })
+  }
+  const players = view.players.map((p) => {
+    const dealt = Object.entries(commanders.damage[p.playerId] ?? {}).filter(([, n]) => n > 0)
+    return {
+      ...p, life: p.life + 20,
+      ...(dealt.length ? { commanderDamage: dealt.map(([seat, amount]) => ({ commanderId: COMMAND_ID(seat), commanderName: commanders.seats[seat].name, controllerId: seat, amount, threshold: 21 })) } : {}),
+    }
+  })
+  const main = commanders.main ? { currentPhase: 'PRECOMBAT_MAIN', currentStep: 'PRECOMBAT_MAIN', combat: null } : {}
+  return { ...view, ...main, cards, zones, players }
+}
+/** The main phase the fake puts before a captured stop at a Commander table: a pass, and the commander from the command zone. */
+const mainStop = () => {
+  const seat = FIXTURE.seats[0].id
+  const c = commanders.seats[seat]
+  const casts = c.casts
+  const home = c.where === 'command'
+  return {
+    ok: true, over: false, winner: null, turn: shot().status.turn, phase: 'PRECOMBAT_MAIN', step: 'PRECOMBAT_MAIN', actor: seat, waiting: 'action',
+    actions: [
+      { index: 0, type: 'PassPriority', description: 'Pass priority', affordable: true, meaningful: false },
+      ...(home ? [{
+        index: 1, type: 'CastSpell', description: `Cast ${c.name}`, card: COMMAND_ID(seat), affordable: true, meaningful: true,
+        manaCost: casts ? `{${2 * casts}}{G/W}` : '{G/W}', from: 'command', commanderTax: { casts, generic: 2 * casts }, requiresTargets: false,
+      }] : []),
+    ],
+    autoPassed: 0, decided: [],
+  }
+}
 /** The first seat's hand in the first shot: what it keeps, and what it puts on the bottom from. */
 const openingHand = () => shots[0].view.zones.find((z) => z.zoneId?.zoneType === 'Hand' && z.zoneId?.ownerId === FIXTURE.seats[0].id)?.cardIds ?? []
 /** Server.kt's offers for the mulligan phase, numbers and all, for a two-player game. */
@@ -160,6 +290,7 @@ const status = () => {
     const { actions, ...rest } = shots[at].status
     return { ...rest, ok: true, waiting: 'decision', actor: FIXTURE.seats[0].id, decision: asking[0] }
   }
+  if (commanders?.main && at >= 0 && at < shots.length) return mainStop()
   return at >= shots.length ? ended() : { ...shots[at].status, ok: true }
 }
 /** The log so far: one line a step, each carrying its words and its step, as M1 left them. */
@@ -224,6 +355,8 @@ function handle(req) {
         id, ok: true, engine: 'fake', protocol: protocol(), cards: 3,
         ...(protocol() >= 4 ? { levels: LEVELS } : {}),
         ...(protocol() >= 5 ? { choices: choices() } : {}),
+        ...(protocol() >= 7 ? { decks: { formats: protocol() >= 8 ? [...BUILDS, 'commander'] : BUILDS } } : {}),
+        ...(protocol() >= 8 ? { formats: ['standard', 'commander'] } : {}),
         ...(process.env.FAKE_NO_SETS ? {} : { sets: [
           { code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false },
           { code: 'TRC', name: 'Star Trek Commander', released: '2026-01-23', incomplete: true },
@@ -248,8 +381,32 @@ function handle(req) {
       break
     }
     case 'new': {
-      const missing = (req.players ?? []).flatMap((p) => Object.keys(p.deck ?? {}).filter(unknownName))
+      // A deck that is not a list is a deck of the engine's own or a copy, from
+      // protocol 7; an older engine reads it as no deck, as the real one does.
+      const listless = (req.players ?? []).find((p) => !p.deck || typeof p.deck !== 'object')
+      if (listless && (protocol() < 7 || !listless.ai || !['own', 'mirror'].includes(listless.deck))) { say({ id, ok: false, error: `${listless.name ?? 'A player'} has no deck.` }); break }
+      const missing = (req.players ?? []).flatMap((p) => Object.keys(p.deck && typeof p.deck === 'object' ? p.deck : {}).filter(unknownName))
       if (missing.length) { say({ id, ok: false, error: `The engine does not know ${missing.length} cards: ${missing.join(', ')}` }); break }
+      // The game (protocol 8), refused in Server.kt's words where it deals no such
+      // game, where a player has no commander, and where it does not know one. An
+      // older engine has never heard of the key and deals the ordinary game.
+      const format = protocol() >= 8 && typeof req.format === 'string' ? req.format.toLowerCase() : 'standard'
+      if (!['standard', 'commander'].includes(format)) { say({ id, ok: false, error: `The engine deals no "${format}" game; it deals "standard" and "commander".` }); break }
+      const commanderGame = format === 'commander'
+      const leaders = (req.players ?? []).map((p, i) => {
+        if (!commanderGame) return null
+        if (!p.ai) return commanderName(p.commander)
+        return built(p, req.players, true).deck?.commander ?? null
+      })
+      if (commanderGame) {
+        const i = leaders.findIndex((n) => !n)
+        if (i >= 0) { say({ id, ok: false, error: `${req.players[i].name ?? 'A player'} has no commander, and every player in a Commander game has one.` }); break }
+        const j = leaders.findIndex((n) => unknownName(n))
+        if (j >= 0) { say({ id, ok: false, error: `The engine does not know ${req.players[j].name ?? 'a player'}'s commander, ${leaders[j]}.` }); break }
+      }
+      commanders = commanderGame
+        ? { seats: Object.fromEntries(FIXTURE.seats.map((s, i) => [s.id, { name: leaders[i], where: 'command', casts: 0 }])), damage: {}, main: true }
+        : null
       at = 0; steps = 0; pending = 0
       lastView.clear(); sentLines.clear()
       lastNew = req
@@ -264,7 +421,8 @@ function handle(req) {
         ...status(),
         ...(paced ? { paced: true } : {}),
         ...(mulligan ? { mulligans: true } : {}),
-        seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(req.players?.[i]?.deck), ...played(req.players?.[i]), ...asked(req.players?.[i]) })),
+        ...(commanderGame ? { format: 'commander' } : {}),
+        seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(typeof req.players?.[i]?.deck === 'object' ? req.players[i].deck : null), ...played(req.players?.[i]), ...asked(req.players?.[i]), ...built(req.players?.[i], req.players, commanderGame), ...(leaders[i] ? { commander: leaders[i] } : {}) })),
       })
       break
     }
@@ -291,6 +449,23 @@ function handle(req) {
       const later = waitingLines
       waitingLines = []
       for (const r of later) { if (held) waitingLines.push(r); else handle(r) }
+      break
+    }
+    // Test-only, at a Commander table: a seat's commander moved to another zone
+    // (a graveyard, before the 903.9a question is asked), and the commander damage
+    // a player has been dealt by a seat's commander.
+    case 'commanderTo': {
+      const c = commanders?.seats?.[req.seat]
+      if (!c || !(req.zone in ZONE_TYPES)) { say({ id, ok: false, error: 'No such commander, or no such zone.' }); break }
+      c.where = req.zone; steps++
+      say({ id, ok: true })
+      break
+    }
+    case 'commanderDamage': {
+      if (!commanders) { say({ id, ok: false, error: 'Not a Commander table.' }); break }
+      commanders.damage[req.to] = { ...(commanders.damage[req.to] ?? {}), [req.from]: Number(req.amount) || 0 }
+      steps++
+      say({ id, ok: true })
       break
     }
     // Test-only faults, above.
@@ -322,9 +497,22 @@ function handle(req) {
       }
       if (pending > 0) { say({ id, ok: false, error: 'The game is not waiting on anyone.' }); break }
       if (at < 0 || at >= shots.length) { say({ id, ok: false, error: 'The game is not waiting on anyone.' }); break }
+      // The main phase before a captured stop at a Commander table: a pass goes on
+      // to the captured stop, and the commander cast from the command zone goes to
+      // the battlefield, one more cast for its tax, and then on as well.
+      if (commanders?.main) {
+        const offer = mainStop().actions[req.index]
+        if (!offer) { say({ id, ok: false, error: `No action ${req.index}; ${mainStop().actions.length} were offered.` }); break }
+        if (offer.type === 'CastSpell') { const c = commanders.seats[FIXTURE.seats[0].id]; c.where = 'battlefield'; c.casts++ }
+        commanders.main = false
+        steps++
+        say({ id, ...status() })
+        break
+      }
       const offered = shots[at].status.actions ?? []
       if (!(req.index >= 0 && req.index < offered.length)) { say({ id, ok: false, error: `No action ${req.index}; ${offered.length} were offered.` }); break }
       at++; steps++
+      if (commanders) commanders.main = true
       // Then the engine's own turn, one play at a time, if this table is paced
       // and there is anything in it to watch.
       if (paced && plays > 0) { pending = plays; steps++ }
@@ -333,9 +521,17 @@ function handle(req) {
     }
     case 'decide': {
       lastDecide = req
-      if (asking.length) { asking.shift(); steps++; say({ id, ...status() }); break }
+      if (asking.length) {
+        // The CR 903.9a question at a Commander table: yes, or the engine's own
+        // choice, which is yes, sends the commander to its command zone.
+        const d = asking[0]
+        const seat = typeof d?.player === 'string' ? d.player : FIXTURE.seats[0].id
+        if (commanders && d?.commanderZone && commanders.seats[seat] && (req.yes === true || req.auto === true)) commanders.seats[seat].where = 'command'
+        asking.shift(); steps++; say({ id, ...status() }); break
+      }
       if (at < 0) { say({ id, ok: false, error: 'There is no decision to make.' }); break }
       at++; steps++
+      if (commanders) commanders.main = true
       if (paced && plays > 0) { pending = plays; steps++ }
       say({ id, ...status() })
       break
@@ -355,7 +551,7 @@ function handle(req) {
     case 'view': {
       const here = shot()
       const seatId = req.viewer ?? here.view.viewingPlayerId
-      const next = { ...here.view, viewingPlayerId: seatId }
+      const next = commanderView({ ...here.view, viewingPlayerId: seatId })
       const before = lastView.get(seatId)
       lastView.set(seatId, next)
       const all = logSoFar()

@@ -184,6 +184,92 @@ twice for the bottom, the process's own refusals of `cost`, Prophetic Bolt's
 order to the bottom — and holds the combat split, the pacing count and the
 wrong-order targets (Boulder Dash) tighter.
 
+Added at M5 (2026-09-25), the engine's own deck (PLAN.md, "M5: the engine's own
+deck"):
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/engine/opponent.js` | 178 | What the engine's seat plays, as the lobby offers it and the table says it: `OPPONENT_KINDS` (mirror, deck, own), `DEFAULT_OPPONENT` (a copy, built from your sets when its own), `chosenOpponent` (read forgivingly from preferences), `setsOf` (the sets a deck's main-deck printings come from, basic lands left out), `formatWord` and `buildsFor`, and the words: `colourWords`, `seatWords`, `engineDeckLine` (the log's one line, every fallback with its reason), `insteadLine`. Shared by the lobby and the table's seat. Pure. |
+| `tests/engine-opponent.test.js` | 168 | `opponent.js`: forgiving reads, the sets of a deck, the colours in words, every seat line and log line, and every reason a deck chosen for the engine was not sent. |
+| `tests/browser/engine-deck.spec.mjs` | 244 | The lobby's choice against the stand-in engine: the three, the default, the switch and its words, a deck the engine does not know not pickable, a Commander table, the keyboard, a reload, axe at two widths; and each choice to the engine and back into the log and the seat list, a fallback included. Runs everywhere. |
+
+And these grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `engine/src/main/kotlin/companion/Server.kt` | 1,845 | Protocol 7: `deckFor` gives an engine's seat a list of names, a copy (`"mirror"`) or a deck of its own (`"own"`) from Argentum's `ConstructedDeckGenerator`, seeded from the game, falling back to the whole format and then the copy, each said (`Built.fellBack`); `coloursOf`; every card stamped with its legalities (`LegalityData`), timed in `hello`; a `BoosterGenerator` of every set; `decks` in `hello`, `deck` on the engine's seat in the reply to `new`, and `decklist`. |
+| `scripts/relay-engine.mjs` | 677 | Keeps a sit's `engineDeck` until the deal (`engineDeckOf`), sends a copy or another deck as names and "own" only to an engine at 7, and says what was dealt in every `seated` after the deal and in `describe()` (`reportOf`), never a card. |
+| `src/features/game/Seats.jsx` | 337 | `EngineDeckChoice`: the three as radios, the shelf's decks in a `<select>`, the pool's switch; the engine's seat named by what it plays; a fallback said beside it. |
+| `src/features/game/Lobby.jsx` | 580 | Holds the choice (`engineOpponent` in preferences), records with the table what the sit is to send (`engineDeckRecord`), and waits for the engine's chosen deck's check as for the player's. |
+| `src/features/game/useEngineCheck.js` | 125 | Each answer carries the names it asked about (`seat`) and the deck's sets (`sets`). |
+| `src/features/game/useEngineRoom.js` | 411 | `chooseEngineDeck`; the sit carries `engineDeck` (`engineDeckFor`); the log says once what the room reports was dealt, and why a deck chosen could not be sent. |
+| `src/features/game/Table.jsx` | 1,710 | Passes the kept choice to the seat. |
+| `tests/fixtures/fake-engine.mjs` | 418 | Protocol 7: a deck of its own in Server.kt's shape, by a rule of its own, and a refusal of a deck that is not a list from an engine at 6. |
+
+`tests/relay-server.test.js` (1,504 lines) gains the three shapes, the
+fallbacks, an older engine, the ask kept until the deal and one it cannot read;
+`tests/engine-room.test.jsx` (508) what the sit carries and the log says;
+`tests/engine-live.test.js` (1,214) six tests of a deck of the engine's own,
+each held to the app's `validateDeck`.
+
+Added at M6 (2026-09-25), Commander at the engine's table (PLAN.md, "M6:
+Commander"):
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/engine/commander.js` | 152 | Which game a deck asks the engine for (`gameOf`, `COMMANDER_GAME`; `leaderlessFamily` for the rest of the Commander family), and every word said about it, each rule by its number: the game dealt and why (`formatLine`), the lobby's line (`COMMANDER_TABLE`, `leaderlessLine`), the tax (`taxWords`, 903.8), the rule behind the question of the command zone (`commanderZoneRule`, 903.9a and 903.9b), commander damage read off a player and said (`commanderDamageOf`, `damageWords`, 903.10a), and why a Commander deck cannot be led against the engine (`leaderProblem`, `leaderWords`, 903.3). Pure; reads the wire forgivingly. |
+| `scripts/engine-commander.mjs` | 154 | Measures a hundred-card Commander game against the engine beside two sixty-card ones: the deal, each paced step, the engine's turns, and the size of a whole view and a delta. PLAN.md's M6 numbers are its output. |
+| `tests/engine-commander.test.js` | 228 | The deck as a Commander sit sends it, the lobby's verdict and leaving an unknown commander out, the words, the glow and the stop's line for a commander in the command zone, and the board laid from a view with a command zone and commander damage. |
+| `tests/browser/engine-commander.spec.mjs` | 264 | Commander on screen against the stand-in engine: the lobby's lines, an unknown commander's gate and the ordinary game dealt instead, a Commander game — 40 life, the command zone glowing and cast from by the keyboard, the commander on the battlefield said to be one, commander damage on the plate, the 903.9a question with its rule, the tax said on the next cast, the zone opened by a right-click — and axe at two widths. Runs everywhere. |
+
+And these grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `engine/src/main/kotlin/companion/Server.kt` | 2,035 | Protocol 8: `format` on `new` (`GAME_FORMATS`, Argentum's `Format.Commander`), a `commander` for every player dealt into the command zone, refused in words where missing or unknown; a Commander deck of the engine's own by `CommanderDeckGenerator` (`generateCommander`), a copy's commander copied (`Brought`); `from` and `commanderTax` on a cast from the command zone (`taxOf`); `commanderZone` on the 903.9a yes or no (`commanderGoing`); a Commander deck named by its commander's colours; `format`, `commander` and `formats` on the wire; `commander` and `identity` in `decklist`. |
+| `scripts/relay-engine.mjs` | 755 | Keeps a sit's `format` and `commander` until the deal (`formatOf`, `commanderOf`), asks for a Commander game only of an engine at 8 with every person's commander, gives the engine's seat the copy's or another deck's, and says the game dealt in every `seated` after the deal and in `describe()`. |
+| `src/lib/engine/deck.js` | 327 | `seatDeck` sends a Commander deck's commander apart from its library and counts it; `checkedDeck` asks the engine about it with the library; `verdictOf` names an unknown commander first; `leaveOut` leaves it out. |
+| `src/lib/engine/glow.js` | 225 | A commander in the command zone glows as castable, and its zone says so (`pileHolding`'s `cast`). |
+| `src/lib/engine/board.js` | 354 | `board.engine.commanderDamage`, and a commander card marked as one. |
+| `src/lib/engine/opponent.js` | 190 | The engine's commander named beside its deck; a Commander deck of its own offered. |
+| `src/features/game/Table.jsx` | 1,741 | The command zone at the engine's table: the engine's commander on its tile, named, cast by a tap (a right-click opens it), looked through on the engine's side; commander damage on the plates. |
+| `src/features/game/EnginePrompt.jsx` | 673 | The stop's line for a commander in the command zone, with its tax; the 903.9a question with its rule. |
+| `src/features/game/Lobby.jsx`, `Seats.jsx` | 608, 345 | A Commander deck's commander checked and said on its tile; the gate for one the engine cannot lead, with the ordinary game offered; the lobby's lines for Commander and the rest of its family; a Commander deck chosen for the engine goes with its commander. |
+| `src/features/game/useEngineRoom.js`, `useEngineCheck.js` | 443, 126 | The sit asks for Commander and brings the commander; the log says once which game was dealt. The check asks about the commander too. |
+| `src/components/table/BoardCard.jsx`, `ZoneBrowser.jsx` | 313, 119 | A commander is said to be one, on the table and in a pile. |
+| `tests/fixtures/fake-engine.mjs` | 560 | Protocol 8: a Commander table of its own making over the captured views, and `commanderTo` and `commanderDamage` for tests. |
+
+`tests/engine-live.test.js` (1,385 lines) gains six tests of a Commander game
+against the built engine; `tests/relay-server.test.js` (1,665) ten of the room's;
+`tests/engine-room.test.jsx` (584) seven of the seat's; `tests/engine-choosing.test.jsx`
+(392) two of the 903.9a prompt; `tests/browser/game-engine.spec.mjs` (1,300) a
+Commander section against the real engine — the four example decks checked, and
+a commander cast from the command zone; `tests/browser/engine-deck.spec.mjs`
+(256) the Commander tab's switch and the Brawl tab's words.
+
+Added and changed by M6's review (2026-09-25, PLAN.md, M6, "What the review
+found"):
+
+| File | Lines | What it holds, or what changed |
+| --- | --- | --- |
+| `src/components/table/useHold.js` | 79 | New. A finger's hold on a control that is not a card, at `useDrag`'s own wait and travel (`HOLD_MS`, `THRESHOLD`, now exported), swallowing the click and the contextmenu around its lift until the next press. The command zone's tile uses it. |
+| `tests/use-hold.test.jsx` | 101 | New. The hold on a fake clock: the wait, a finger that lifts or moves first, a mouse left to its right-click, and what it swallows. |
+| `src/lib/engine/opponent.js` | 277 | `engineDeckRecord` (what the sit sends, moved from `Lobby.jsx`), `plannedWords` (the seat line before the deal, from it) and `dealingWords` (while the engine deals); `engineDeckLine` reads the game dealt, for a Commander deck of its own not built at the ordinary game. |
+| `src/lib/engine/commander.js` | 188 | The 903.9a line without "instead"; `damageWords` says whose each commander is where names are shared; `damageRule` replaces the unused `DAMAGE_RULE`; the Oathbreaker line names its signature spell. |
+| `src/lib/engine/deck.js` | 334 | `withArticle`: "a Brawl", "an Oathbreaker". |
+| `src/features/game/Table.jsx` | 1,770 | The command zone's tile opened by a hold, a right-click or Shift+Enter while a tap casts, each in its label, with no `aria-expanded` then; the plate's commander damage told apart by whose, with the rule beside it. |
+| `src/features/game/Seats.jsx`, `Lobby.jsx` | 353, 594 | The seat line from what the sit will send; the lobby records through `engineDeckRecord`. |
+| `src/features/game/useEngineRoom.js` | 448 | Every sit names its game (`gameOf`); the log's deck line reads the game dealt. |
+| `scripts/relay-engine.mjs` | 761 | The game asked for kept with each seat's deck, not from the last sit to name one; `describe()` says the format a deck of its own is asked to. |
+| `tests/fixtures/fake-engine.mjs` | 576 | `FAKE_DECK_REPORT=noisy`, an engine that says more of its deck than a client may be told. |
+
+`tests/relay-server.test.js` gains four (a Brawl deck of its own, the noisy
+report, the gate's path with "own", a sit again with a sixty-card deck);
+`tests/engine-live.test.js` one (a deck named by its basics) and two rewritten
+(the same Commander deck from a seed, no clock); `tests/engine-opponent.test.js`
+four, `tests/engine-commander.test.js` one, `tests/engine-room.test.jsx` one;
+`engine-commander.spec.mjs` seven checks and `engine-deck.spec.mjs` three.
+
 ## `src/lib/board/` — the rules-free table
 
 | File | Lines | What it holds |

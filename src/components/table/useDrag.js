@@ -14,9 +14,9 @@ import { pointToField } from '../../lib/board/geometry.js'
  * own click, so every card stays a real button: keyboard and screen reader
  * users get the same actions without a pointer ever being involved.
  */
-const THRESHOLD = 6 // pixels of travel before a press counts as a drag
+export const THRESHOLD = 6 // pixels of travel before a press counts as a drag
 /** How long a finger rests before a press means "pick it up" rather than tap or drag. */
-const HOLD_MS = 450
+export const HOLD_MS = 450
 
 /**
  * `onDrop(session, point)`, when given, decides everything about where a

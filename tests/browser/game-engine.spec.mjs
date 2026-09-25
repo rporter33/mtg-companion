@@ -9,7 +9,10 @@
  * against the engine's own player, with the log saying what the engine did on
  * their behalf. Then a reload, which has to land back in the same seat at the
  * same table; and at a table of its own, a mulligan taken and a card put on
- * the bottom, by the keyboard.
+ * the bottom, by the keyboard. And Commander (M6): the app's four example
+ * Commander decks checked by the real engine, which knows none of their
+ * commanders at the pin and says so, and a Commander game with a deck made from
+ * one of them, its commander cast from the command zone by a tap.
  *
  * Needs the built engine (scripts/engine-build.sh). Where there is none
  * this says so and passes nothing, rather than pretending: a JVM is not
@@ -20,6 +23,7 @@
 import { chromium } from 'playwright'
 import { createRelay } from '../../scripts/relay-server.mjs'
 import { findEngine } from '../../scripts/engine-bridge.mjs'
+import { EXAMPLE_DECKS } from '../../src/data/example-decks.js'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1167,8 +1171,129 @@ check('and the game has begun, at this seat\'s first stop', await until(() => pr
 await page.locator('.game__hand').scrollIntoViewIfNeeded()
 await page.screenshot({ path: SHOT('six') })
 
+console.log('\nCommander: the example decks, and a commander cast from the command zone')
+// HANDOFF.md, M6. The app's four example Commander decks go on the shelf as a
+// player would have them, by name, and the real engine is asked about each. At
+// the pin it knows none of their commanders (PLAN.md, M6), so none can be dealt
+// a Commander game, and the lobby says so and why. The Commander game is then
+// played with what the engine can hold of one of them: the Esika example's
+// green-white cards the engine knows, led by the legendary creature among them
+// that fits those colours, Rhys the Redeemed, and basics to make a hundred —
+// a deck made for this spec, and named as one.
+const exampleDeck = (ex) => {
+  const cardNames = {}
+  const main = ex.main.map((e, i) => { const cardId = `ex-${ex.id}-${i}`; cardNames[cardId] = e.name; return { cardId, quantity: e.quantity } })
+  const commanders = ex.commanders.map((name, i) => { const cardId = `ex-${ex.id}-c${i}`; cardNames[cardId] = name; return cardId })
+  // Stamped names alone, as a deck whose records have not loaded carries them (src/lib/deck.js, stampNames).
+  return { id: `ex-${ex.id}`, name: ex.name, formatId: 'commander', commanders, signatureSpell: null, categoryOrder: [], versions: [], main, sideboard: [], cardNames, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }
+}
+// What the engine knows of each at the pin, measured on 2026-09-25 against the built engine (PLAN.md, M6).
+const EXAMPLE_KNOWN = { "Y'shtola, Night's Blessed": 50, 'Esika, God of the Tree': 54, 'Anikthea, Hand of Erebos': 55, 'Commodore Guff': 45 }
+// Rhys's deck: each card as the engine describes it (decklist, 2026-09-25), with no printing named, so the engine deals its own.
+const g = (id, name, type_line, mana_cost, color_identity) => c(id, name, type_line, { mana_cost, color_identity, colors: color_identity, set: undefined, set_name: undefined, collector_number: undefined, legalities: { commander: 'legal' } })
+const RHYS_CARDS = [
+  g('rx-rhys', 'Rhys the Redeemed', 'Legendary Creature — Elf Warrior', '{G/W}', ['G', 'W']),
+  g('rx-forest', 'Forest', 'Basic Land — Forest', '', ['G']), g('rx-plains', 'Plains', 'Basic Land — Plains', '', ['W']),
+  g('rx-signet', 'Arcane Signet', 'Artifact', '{2}', []), g('rx-bark', 'Barkchannel Pathway', 'Land', '', ['G']),
+  g('rx-whisperer', 'Beast Whisperer', 'Creature — Elf Druid', '{2}{G}{G}', ['G']), g('rx-within', 'Beast Within', 'Instant', '{2}{G}', ['G']),
+  g('rx-branch', 'Branchloft Pathway', 'Land', '', ['G']), g('rx-bright', 'Brightclimb Pathway', 'Land', '', ['W']),
+  g('rx-lantern', 'Chromatic Lantern', 'Artifact', '{3}', []), g('rx-tower', 'Command Tower', 'Land', '', []),
+  g('rx-wilds', 'Evolving Wilds', 'Land', '', []), g('rx-orchard', 'Exotic Orchard', 'Land', '', []),
+  g('rx-farseek', 'Farseek', 'Sorcery', '{1}{G}', ['G']), g('rx-fellwar', 'Fellwar Stone', 'Artifact', '{2}', []),
+  g('rx-project', 'Guardian Project', 'Enchantment', '{3}{G}', ['G']), g('rx-harmonize', 'Harmonize', 'Sorcery', '{2}{G}{G}', ['G']),
+  g('rx-henge', 'Hengegate Pathway', 'Land', '', ['W']), g('rx-golem', 'Meteor Golem', 'Artifact Creature — Golem', '{7}', []),
+  g('rx-ancestry', 'Path of Ancestry', 'Land', '', []), g('rx-groves', 'Scattered Groves', 'Land — Forest Plains', '', ['G', 'W']),
+  g('rx-sol', 'Sol Ring', 'Artifact', '{1}', []), g('rx-expanse', 'Terramorphic Expanse', 'Land', '', []),
+  g('rx-map', 'Treasure Map', 'Artifact', '{2}', []), g('rx-blast', "Urza's Ruinous Blast", 'Legendary Sorcery', '{4}{W}', ['W']),
+  g('rx-grove', 'Vivid Grove', 'Land', '', ['G']), g('rx-zetalpa', 'Zetalpa, Primal Dawn', 'Legendary Creature — Elder Dinosaur', '{6}{W}{W}', ['W']),
+]
+CARDS.push(...RHYS_CARDS)
+const RHYS_DECK = {
+  id: 'rhys', name: 'Rhys, from Esika', formatId: 'commander', commanders: ['rx-rhys'], signatureSpell: null, categoryOrder: [], versions: [],
+  // Esika's own green-white cards the engine knows — 24 others, and 3 Forests and a Plains — and basics to a hundred with Rhys.
+  main: RHYS_CARDS.filter((x) => x.id !== 'rx-rhys').map((x) => ({ cardId: x.id, quantity: x.id === 'rx-forest' ? 38 : x.id === 'rx-plains' ? 37 : 1 })),
+  sideboard: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+}
+// Each deck is a document of its own once the app has loaded its store (src/lib/storage.js), so each is added as one.
+await page.evaluate((decks) => {
+  for (const deck of decks) localStorage.setItem(`mtg-companion:v1:deck:${deck.id}`, JSON.stringify(deck))
+}, [...EXAMPLE_DECKS.map(exampleDeck), RHYS_DECK])
+await page.goto(`${TARGET}#/game`, { waitUntil: 'networkidle' })
+await page.reload({ waitUntil: 'networkidle' })
+await page.getByRole('button', { name: 'Play the engine' }).click()
+await until(() => page.evaluate(() => /#\/game\/engine\/[A-Z0-9]{5}$/.test(location.hash)))
+const commanderCode = await page.evaluate(() => location.hash.match(/engine\/([A-Z0-9]{5})/)?.[1])
+// The shelf opens on Commander now that there are Commander decks on it.
+for (const ex of EXAMPLE_DECKS) {
+  const leader = ex.commanders[0]
+  const known = EXAMPLE_KNOWN[leader]
+  check(`the example deck ${ex.name}: the engine knows ${known} of its 100 cards, and not its commander, so it cannot deal a Commander game with it`,
+    await until(() => tile(ex.name).textContent().then((t) => (t ?? '').includes(`The engine knows ${known} of 100 cards.`)
+      && (t ?? '').includes(`It does not know the commander, ${leader}, and every Commander deck has one (903.3), so it cannot deal a Commander game with this deck.`)), ENGINE_START_MS),
+    await tile(ex.name).textContent())
+}
+check('the lobby says what a Commander deck is dealt as, citing the rules',
+  /A Commander deck is dealt as a Commander game, by Argentum's own Commander rules: 40 life each \(903\.7\)/.test(await page.locator('.lobby__seats').textContent() ?? ''))
+check('the Commander shelf, checked by the real engine, has no accessibility violations', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
+await page.screenshot({ path: SHOT('examples') })
+await tile('Commodore Guff').click()
+await page.getByRole('button', { name: /Sit down with Commodore Guff/ }).click()
+const guffGate = page.getByRole('dialog', { name: 'The engine does not know every card in Commodore Guff' })
+check('sitting with an example deck says so instead, its commander first among what the engine does not know',
+  await until(() => guffGate.count().then((n) => n === 1)) && /^\s*.*1 Commodore Guff, its commander/.test(await guffGate.getByRole('list', { name: 'Cards the engine does not know' }).textContent() ?? ''),
+  await guffGate.textContent())
+check('and offers the other 45 cards by the ordinary rules, the whole deck alone, or another deck',
+  (await guffGate.textContent() ?? '').includes('Without them, the engine deals the other 45 cards by the ordinary rules: 20 life each, and no command zone.')
+  && await guffGate.getByRole('button', { name: 'Play the engine without them' }).count() === 1)
+await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'))
+await page.screenshot({ path: SHOT('example-gate') })
+await guffGate.getByRole('button', { name: 'Choose another deck' }).click()
+await until(() => guffGate.count().then((n) => n === 0))
+
+check('the Commander deck made from it, led by Rhys, is one the engine knows whole, commander and all',
+  await until(() => tile('Rhys, from Esika').textContent().then((t) => (t ?? '').includes('The engine knows all 100 cards.')), ENGINE_START_MS), await tile('Rhys, from Esika').textContent())
+wire.status = null
+wire.me = null
+await tile('Rhys, from Esika').click()
+await page.getByRole('button', { name: /Sit down with Rhys, from Esika/ }).click()
+const commanderStart = Date.now()
+const keepIt = page.getByRole('group', { name: 'Your opening hand' })
+check('the engine deals a Commander game and asks whether to keep the hand', await until(() => keepIt.count().then((n) => n === 1), ENGINE_START_MS))
+const commanderDealMs = Date.now() - commanderStart
+await keepIt.getByRole('button', { name: /^Keep this hand/ }).click()
+check('the log says it is played by the Commander rules, citing them',
+  await until(() => logText().then((t) => t.includes("Played by the Commander rules: 40 life each (903.7), and each commander begins in its owner's command zone (903.6)."))), await logText())
+check('both plates say 40 life', await until(async () => /, 40 life/.test(await page.locator('.plate--you').getAttribute('aria-label') ?? '') && /, 40 life/.test(await page.locator('.plate--them').getAttribute('aria-label') ?? '')))
+const myCommand = page.locator('.game__you .ztile[data-zone="command"]')
+check('your command zone holds your commander, named', /^Command zone, 1 card: Rhys the Redeemed/.test(await myCommand.getAttribute('aria-label') ?? ''), await myCommand.getAttribute('aria-label'))
+check('and the engine\'s holds its own, a copy of yours', /^The engine's command zone, 1 card: Rhys the Redeemed$/.test(await page.locator('.game__them .ztile[data-zone="command"]').getAttribute('aria-label') ?? ''))
+// A basic land first, then the commander for the one mana it makes.
+const basic = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(/^(Forest|Plains),/) }).first()
+check('a Forest or a Plains is in hand to play', await until(() => basic.count().then((n) => n === 1), 20_000))
+await until(() => wire.status?.actor === wire.me && wire.status?.waiting === 'action' && wire.status.actions.some((a) => a.type === 'PlayLand'), 20_000)
+await tapHand(basic)
+check('the command zone glows once the commander can be cast, and says a tap casts it and how else it is opened',
+  await until(() => myCommand.getAttribute('aria-label').then((l) => l === 'Command zone, 1 card: Rhys the Redeemed, your commander can be cast now: a tap casts it, and a hold, a right-click or Shift+Enter opens the zone'), 20_000)
+  && /ztile--playable/.test(await myCommand.getAttribute('class')), await myCommand.getAttribute('aria-label'))
+const castOffer = wire.status?.actions?.find((a) => a.from === 'command')
+check('the engine offered it from the command zone, for its own cost and no tax yet', castOffer?.manaCost === '{G/W}' && castOffer?.commanderTax?.casts === 0, JSON.stringify(castOffer))
+check('and the prompt says so in words', /Your commander, Rhys the Redeemed, can be cast from the command zone for \{G\/W\}\./.test(await prompt.textContent() ?? ''), await prompt.textContent())
+check('the table has no accessibility violations', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
+await page.locator('.game__you').scrollIntoViewIfNeeded()
+await page.screenshot({ path: SHOT('command') })
+await myCommand.click()
+const rhysOnField = page.locator('.game__field .field__slot [aria-label^="Rhys the Redeemed"]').first()
+check('a tap on the command zone casts it, and it is on the battlefield, said to be a commander',
+  await until(() => rhysOnField.getAttribute('aria-label').then((l) => /, a commander/.test(l ?? '')).catch(() => false), 20_000), await rhysOnField.getAttribute('aria-label').catch(() => 'none'))
+check('the command zone is empty behind it', await until(() => myCommand.getAttribute('aria-label').then((l) => l === 'Command zone, 0 cards')))
+check('the log says it was cast from the command zone, in the engine\'s words', await until(() => logText().then((t) => /You cast Rhys the Redeemed \(from command zone, paid 1 mana\)/.test(t))), await logText())
+check('the room dealt a Commander game', await fetch(`${RELAY}/rooms/${commanderCode}`).then((r) => r.json()).then((r) => r.format?.played === 'commander'))
+await page.locator('.game__field').scrollIntoViewIfNeeded()
+await page.screenshot({ path: SHOT('commander-cast') })
+console.log(`        (from Sit to the hand to keep: ${commanderDealMs} ms)`)
+
 check('no console errors throughout', errors.length === 0, errors.join('\n'))
-console.log(`\nScreenshots: ${SHOT('gate')}, ${SHOT('gate-reasons')}, ${SHOT('playable')}, ${SHOT('playable-season')}, ${SHOT('peek-prompt')}, ${SHOT('attack')}, ${SHOT('attack-focus')}${thinkingShot ? `, ${SHOT('thinking')}` : ''}, ${SHOT('aim')}, ${SHOT('aimed')}, ${SHOT('table')}, ${SHOT('targets')}, ${SHOT('mulligan')}, ${SHOT('bottom')} and ${SHOT('six')}`)
+console.log(`\nScreenshots: ${SHOT('gate')}, ${SHOT('gate-reasons')}, ${SHOT('playable')}, ${SHOT('playable-season')}, ${SHOT('peek-prompt')}, ${SHOT('attack')}, ${SHOT('attack-focus')}${thinkingShot ? `, ${SHOT('thinking')}` : ''}, ${SHOT('aim')}, ${SHOT('aimed')}, ${SHOT('table')}, ${SHOT('targets')}, ${SHOT('mulligan')}, ${SHOT('bottom')}, ${SHOT('six')}, ${SHOT('examples')}, ${SHOT('example-gate')}, ${SHOT('command')} and ${SHOT('commander-cast')}`)
 await browser.close()
 await relayServer.shutdown()
 console.log(`\n${pass} passed, ${fail} failed`)

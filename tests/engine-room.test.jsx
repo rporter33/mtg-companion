@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import useEngineRoom, { SLOW_MS } from '../src/features/game/useEngineRoom.js'
+import useEngineRoom, { SLOW_MS, agreeToLeaveOut, chooseEngineDeck } from '../src/features/game/useEngineRoom.js'
 import { ANSWERS, NO_CHOICES } from '../src/lib/engine/choose.js'
 // Imported rather than read off disk: this file runs in a browser-shaped
 // environment, where a path is not a thing there is.
@@ -55,12 +55,12 @@ let root = null
 let container = null
 function Probe(props) { room = useEngineRoom(props); return null }
 
-const mount = async ({ level = null } = {}) => {
+const mount = async ({ level = null, opponent = undefined, deck = DECK } = {}) => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
   await act(async () => {
-    root.render(<Probe address="http://relay.test" code="ABCD" name="You" deck={DECK} deckLookup={lookup} cardsReady level={level} />)
+    root.render(<Probe address="http://relay.test" code="ABCD" name="You" deck={deck} deckLookup={lookup} cardsReady level={level} opponent={opponent} />)
   })
   return FakeSocket.live[FakeSocket.live.length - 1]
 }
@@ -214,6 +214,186 @@ describe('the level the engine plays at', () => {
     await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: 'grandmaster' }, ...stop(RUN.views[0], 1))
     expect(room.level).toBeNull()
     expect(said().filter((t) => /level/.test(t))).toEqual(['The engine is playing at a level this version of the app has no name for.'])
+  })
+})
+
+/**
+ * What the engine's seat plays (M5). The lobby records the choice with the
+ * table when the player sits; the sit carries it; the log says once what the
+ * room reports was dealt.
+ */
+describe('what the engine\'s seat plays (M5)', () => {
+  const deckLines = () => said().filter((t) => /deck|copy of yours/.test(t))
+
+  it('asks for a copy where nothing was chosen, and says nothing of it where the relay says nothing', async () => {
+    const socket = await mount()
+    expect(socket.sent.find((m) => m.op === 'sit').engineDeck).toEqual({ kind: 'mirror' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic' }, ...stop(RUN.views[0], 1))
+    expect(room.engineDeck).toBeNull()
+    expect(deckLines()).toEqual([])
+  })
+
+  it('asks for a deck of its own from the sets this deck uses, by default, and says once what was built', async () => {
+    const socket = await mount({ opponent: { kind: 'own', deckId: null, pool: 'sets' } })
+    expect(socket.sent.find((m) => m.op === 'sit').engineDeck).toEqual({ kind: 'own', format: 'standard', sets: ['por'] })
+    const report = { asked: 'own', played: 'own', cards: 60, colours: ['R', 'G'], format: 'standard', from: 'sets', sets: [{ code: 'POR', name: 'Portal' }] }
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic', engineDeck: report }, ...stop(RUN.views[0], 1))
+    // Back again, as a reconnect sits: the line is not said twice.
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic', engineDeck: report })
+    expect(room.engineDeck).toEqual(report)
+    expect(deckLines()).toEqual(["The engine plays a deck of its own, built by Argentum's deck builder: red-green, from Portal."])
+  })
+
+  it('asks for the whole format where the switch is on, sending no sets', async () => {
+    const socket = await mount({ opponent: { kind: 'own', deckId: null, pool: 'format' } })
+    expect(socket.sent.find((m) => m.op === 'sit').engineDeck).toEqual({ kind: 'own', format: 'standard', sets: null })
+  })
+
+  it('takes what the lobby recorded for this table over the kept choice, and sends a deck of the player\'s by its checked names', async () => {
+    chooseEngineDeck('ABCD', { kind: 'deck', deckId: 'd2', name: 'Elves', deck: { Forest: 20, 'Llanowar Elves': 20 } })
+    const socket = await mount({ opponent: { kind: 'own', deckId: null, pool: 'sets' } })
+    expect(socket.sent.find((m) => m.op === 'sit').engineDeck).toEqual({ kind: 'deck', name: 'Elves', deck: { Forest: 20, 'Llanowar Elves': 20 } })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic', engineDeck: { asked: 'deck', played: 'deck', cards: 40, colours: ['G'], name: 'Elves' } }, ...stop(RUN.views[0], 1))
+    expect(deckLines()).toEqual(['The engine plays your deck Elves.'])
+  })
+
+  it('says why a deck chosen for the engine went as the copy, and a deck with no names recorded is never sent as nothing', async () => {
+    chooseEngineDeck('ABCD', { kind: 'mirror', instead: 'short', name: 'Elves' })
+    let socket = await mount()
+    expect(socket.sent.find((m) => m.op === 'sit').engineDeck).toEqual({ kind: 'mirror' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic', engineDeck: { asked: 'mirror', played: 'mirror', cards: 20, colours: ['R'] } }, ...stop(RUN.views[0], 1))
+    expect(deckLines()).toEqual(['The engine does not know every card in Elves, so it plays a copy of yours.', 'The engine plays a copy of your deck.'])
+    await act(async () => { root.unmount() }); container.remove(); root = null
+    localStorage.clear()
+    // Kept as "one of your decks", with nothing recorded for this table: no names to send.
+    socket = await mount({ opponent: { kind: 'deck', deckId: 'd2', pool: 'sets' } })
+    expect(socket.sent.find((m) => m.op === 'sit').engineDeck).toEqual({ kind: 'mirror' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic', engineDeck: { asked: 'mirror', played: 'mirror' } }, ...stop(RUN.views[0], 1))
+    expect(deckLines()[0]).toBe("The deck chosen for the engine was not sent from this device's lobby, so it plays a copy of yours.")
+  })
+
+  it('reads a record written by another build forgivingly', async () => {
+    chooseEngineDeck('ABCD', { kind: 'deck', deck: 'Elves' })
+    const socket = await mount()
+    expect(socket.sent.find((m) => m.op === 'sit').engineDeck).toEqual({ kind: 'mirror' })
+  })
+
+  it('says a relay older than the choice dealt the copy where something else was asked', async () => {
+    const socket = await mount({ opponent: { kind: 'own', deckId: null, pool: 'sets' } })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic' }, ...stop(RUN.views[0], 1))
+    expect(deckLines()).toEqual(["This relay is older than the choice of the engine's deck, so the engine plays a copy of yours."])
+  })
+
+  it('says nothing of the engine\'s deck at a table where the engine plays no seat', async () => {
+    const socket = await mount({ opponent: { kind: 'own', deckId: null, pool: 'sets' } })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: null }, ...stop(RUN.views[0], 1))
+    expect(deckLines()).toEqual([])
+  })
+})
+
+/**
+ * A Commander game (M6). A Commander deck's sit asks for one and brings the
+ * commander apart from the library; the log says once which game the room
+ * reports was dealt, and a sixty-card deck's sit says nothing new at all.
+ */
+describe('a Commander game (M6)', () => {
+  const COMMANDER = {
+    id: 'c1', formatId: 'commander', commanders: ['rhys'],
+    main: [{ cardId: 'f', quantity: 50 }, { cardId: 'p', quantity: 49 }],
+  }
+  CARDS.rhys = { name: 'Rhys the Redeemed', set: 'shm', collector_number: '237' }
+  CARDS.f = { name: 'Forest', set: 'por', collector_number: '211' }
+  CARDS.p = { name: 'Plains', set: 'por', collector_number: '196' }
+  const gameLines = () => said().filter((t) => /rules|Commander/.test(t))
+  const seated = (extra = {}) => ({ op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic', ...extra })
+
+  it('asks for one, with the commander apart from the library and its printing named', async () => {
+    const socket = await mount({ deck: COMMANDER })
+    const sit = socket.sent.find((m) => m.op === 'sit')
+    expect(sit).toMatchObject({ format: 'commander', commander: { name: 'Rhys the Redeemed', set: 'shm', number: '237' } })
+    expect(Object.keys(sit.deck)).toEqual(['Forest', 'Plains'])
+  })
+
+  it('says once that it was dealt by the Commander rules, citing them', async () => {
+    const socket = await mount({ deck: COMMANDER })
+    await deliver(socket, seated({ format: { asked: 'commander', played: 'commander' } }), ...stop(RUN.views[0], 1))
+    await deliver(socket, seated({ format: { asked: 'commander', played: 'commander' } }))
+    expect(room.game).toEqual({ asked: 'commander', played: 'commander' })
+    expect(gameLines()).toEqual(["Played by the Commander rules: 40 life each (903.7), and each commander begins in its owner's command zone (903.6)."])
+  })
+
+  it('says why the ordinary game was dealt instead: an engine older than Commander, or no commander to deal', async () => {
+    let socket = await mount({ deck: COMMANDER })
+    await deliver(socket, seated({ format: { asked: 'commander', played: 'standard', fellBack: 'engine' } }), ...stop(RUN.views[0], 1))
+    expect(gameLines()).toEqual(["This relay's engine is older than Commander, so the game is played by the ordinary rules: 20 life each, and no commander dealt."])
+    await act(async () => { root.unmount() }); container.remove(); root = null
+    socket = await mount({ deck: COMMANDER })
+    await deliver(socket, seated({ format: { asked: 'commander', played: 'standard', fellBack: 'commander' } }), ...stop(RUN.views[0], 1))
+    expect(gameLines()[0]).toMatch(/^With no commander to deal there is no Commander game, since every Commander deck has one \(903\.3\)/)
+  })
+
+  it('says a relay older than Commander dealt the ordinary game', async () => {
+    const socket = await mount({ deck: COMMANDER })
+    await deliver(socket, seated(), ...stop(RUN.views[0], 1))
+    expect(room.game).toBeNull()
+    expect(gameLines()).toEqual(['This relay is older than Commander, so the game is played by the ordinary rules: 20 life each, and no commander dealt.'])
+  })
+
+  it('sends a deck with two commanders with neither, and says the engine deals one', async () => {
+    CARDS.sythis = { name: "Sythis, Harvest's Hand", set: 'mh2', collector_number: '214' }
+    const socket = await mount({ deck: { ...COMMANDER, commanders: ['rhys', 'sythis'] } })
+    const sit = socket.sent.find((m) => m.op === 'sit')
+    expect(sit.format).toBe('commander')
+    expect(sit).not.toHaveProperty('commander')
+    await deliver(socket, seated({ format: { asked: 'commander', played: 'standard', fellBack: 'commander' } }), ...stop(RUN.views[0], 1))
+    expect(gameLines()).toEqual(['The engine deals one commander, and this deck has two, so the game is played by the ordinary rules: 20 life each, and no command zone.'])
+  })
+
+  it('says why a Commander deck of the engine\'s own was not built where the deck was played without its commander', async () => {
+    // The lobby's gate: the commander the engine does not know left out, and the rest played by the ordinary rules.
+    agreeToLeaveOut('ABCD', 'c1', ['Rhys the Redeemed'])
+    const socket = await mount({ deck: COMMANDER, opponent: { kind: 'own', deckId: null, pool: 'format' } })
+    const sit = socket.sent.find((m) => m.op === 'sit')
+    expect(sit).toMatchObject({ format: 'commander', engineDeck: { kind: 'own', format: 'commander', sets: null } })
+    expect(sit).not.toHaveProperty('commander')
+    await deliver(socket, seated({
+      format: { asked: 'commander', played: 'standard', fellBack: 'commander' },
+      engineDeck: { asked: 'own', played: 'mirror', cards: 99, colours: ['W', 'G'], format: 'commander', formatName: 'Commander', fellBack: 'format', why: 'A "commander" deck of its own is built only for a Commander game.' },
+    }), ...stop(RUN.views[0], 1))
+    // Not "builds no Commander deck of its own", which stopped being true at protocol 8.
+    const why = 'The engine builds a Commander deck of its own only for a Commander game, and this one is played by the ordinary rules, so it plays a copy of yours.'
+    expect(said()).toContain(why)
+    expect(said().some((t) => /builds no Commander deck/.test(t))).toBe(false)
+    // A deck with two commanders sits the same way, with neither, and is told the same.
+    await act(async () => { root.unmount() }); container.remove(); root = null
+    localStorage.clear()
+    CARDS.sythis = { name: "Sythis, Harvest's Hand", set: 'mh2', collector_number: '214' }
+    const again = await mount({ deck: { ...COMMANDER, commanders: ['rhys', 'sythis'] }, opponent: { kind: 'own', deckId: null, pool: 'format' } })
+    expect(again.sent.find((m) => m.op === 'sit')).not.toHaveProperty('commander')
+    await deliver(again, seated({
+      format: { asked: 'commander', played: 'standard', fellBack: 'commander' },
+      engineDeck: { asked: 'own', played: 'mirror', cards: 99, colours: ['W', 'G'], format: 'commander', formatName: 'Commander', fellBack: 'format', why: 'A "commander" deck of its own is built only for a Commander game.' },
+    }), ...stop(RUN.views[0], 1))
+    expect(said()).toContain(why)
+    expect(said()).toContain('The engine deals one commander, and this deck has two, so the game is played by the ordinary rules: 20 life each, and no command zone.')
+  })
+
+  it('sends another Commander deck of the player\'s with its commander, as the lobby recorded it', async () => {
+    chooseEngineDeck('ABCD', { kind: 'deck', deckId: 'd2', name: 'Enchantress', deck: { Forest: 99 }, commander: { name: "Sythis, Harvest's Hand" } })
+    const socket = await mount({ deck: COMMANDER })
+    expect(socket.sent.find((m) => m.op === 'sit').engineDeck).toEqual({ kind: 'deck', name: 'Enchantress', deck: { Forest: 99 }, commander: { name: "Sythis, Harvest's Hand" } })
+    await deliver(socket, seated({ engineDeck: { asked: 'deck', played: 'deck', cards: 100, colours: ['W', 'G'], name: 'Enchantress', commander: "Sythis, Harvest's Hand" } }), ...stop(RUN.views[0], 1))
+    expect(said()).toContain("The engine plays your deck Enchantress, led by Sythis, Harvest's Hand.")
+  })
+
+  it('says nothing new of a sixty-card deck\'s game, and its sit asks for the ordinary rules', async () => {
+    const socket = await mount()
+    const sit = socket.sent.find((m) => m.op === 'sit')
+    // Said, not left out: a sit naming no game left a room's earlier Commander request standing (M6's review).
+    expect(sit.format).toBe('standard')
+    expect(sit).not.toHaveProperty('commander')
+    await deliver(socket, seated({ format: { asked: 'standard', played: 'standard' } }), ...stop(RUN.views[0], 1))
+    expect(gameLines()).toEqual([])
   })
 })
 

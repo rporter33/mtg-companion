@@ -3,6 +3,9 @@ package companion
 import com.wingedsheep.ai.engine.AIPlayer
 import com.wingedsheep.ai.engine.AiProfile
 import com.wingedsheep.ai.engine.EngineAiPlayerController
+import com.wingedsheep.ai.engine.deck.CommanderDeckGenerator
+import com.wingedsheep.ai.engine.deck.ConstructedDeckGenerator
+import com.wingedsheep.ai.draftsim.DraftsimDeckShape
 import com.wingedsheep.ai.llm.BottomCardsInfo
 import com.wingedsheep.ai.llm.CardSummary
 import com.wingedsheep.ai.llm.MulliganInfo
@@ -19,6 +22,7 @@ import com.wingedsheep.engine.core.ChooseModeDecision
 import com.wingedsheep.engine.core.ChooseNumberDecision
 import com.wingedsheep.engine.core.ChooseOptionDecision
 import com.wingedsheep.engine.core.ColorChosenResponse
+import com.wingedsheep.engine.core.CommanderZoneChoiceContinuation
 import com.wingedsheep.engine.core.CombatResolutionDecision
 import com.wingedsheep.engine.core.CombatResolutionResponse
 import com.wingedsheep.engine.core.DamageEdgeAmount
@@ -64,7 +68,9 @@ import com.wingedsheep.engine.legalactions.AdditionalCostData
 import com.wingedsheep.engine.legalactions.LegalAction
 import com.wingedsheep.engine.legalactions.MeaningfulActionFilter
 import com.wingedsheep.engine.legalactions.TargetInfo
+import com.wingedsheep.engine.limited.BoosterGenerator
 import com.wingedsheep.engine.state.components.identity.CardComponent
+import com.wingedsheep.engine.state.components.identity.CommanderComponent
 import com.wingedsheep.engine.state.components.player.MulliganStateComponent
 import com.wingedsheep.engine.state.components.stack.ChosenTarget
 import com.wingedsheep.engine.registry.CardRegistry
@@ -78,8 +84,11 @@ import com.wingedsheep.engine.view.StateDiffCalculator
 import com.wingedsheep.gym.GameEnvironment
 import com.wingedsheep.gym.RandomActionSelector
 import com.wingedsheep.mtg.sets.MtgSetCatalog
+import com.wingedsheep.mtg.sets.legality.LegalityData
 import com.wingedsheep.mtg.sets.tokens.PredefinedTokens
 import com.wingedsheep.sdk.core.Color
+import com.wingedsheep.sdk.core.DeckFormat
+import com.wingedsheep.sdk.core.Format
 import com.wingedsheep.sdk.core.Step
 import com.wingedsheep.sdk.core.Zone
 import com.wingedsheep.sdk.model.CardDefinition
@@ -125,7 +134,7 @@ import java.util.Random
  * back `{"id": n, "ok": true, ...}` or `{"id": n, "ok": false, "error": "..."}`.
  *
  * The rules are Argentum's (`docs/table-rebuild/ENGINE.md`). This file only
- * decides three things the engine leaves open, all of them from FRICTION.md:
+ * decides what the engine leaves open, and says each thing it decides:
  *
  *  - **Law 1, server-side.** A human seat with `autoPass` is never stopped at
  *    a priority window where it has nothing affordable to do; the server
@@ -153,6 +162,16 @@ import java.util.Random
  *    this (`mulliganing`): a person is offered keeping, a mulligan and then the
  *    cards to put on the bottom, and the engine's seat answers by Argentum's own
  *    mulligan responder, the one its game server plays with.
+ *  - **The engine's seat may play a deck of its own.** Asked for one, it is
+ *    built by Argentum's own `ConstructedDeckGenerator` from the sets and the
+ *    format the relay names, seeded from the game (`deckFor`); where that cannot
+ *    be done it falls back to the whole format, then to a copy of the person's
+ *    deck, and the reply says which and why rather than refuse the game.
+ *  - **A game may be Commander.** Argentum's own `Format.Commander` — 40 life, the
+ *    commander in the command zone, commander tax, 21 combat damage from one commander —
+ *    with the CR 903.9a question left to the commander's owner, as Argentum leaves it by
+ *    default. Every player then names a commander, and the engine's seat may have one of its
+ *    own built by Argentum's `CommanderDeckGenerator`.
  *  - **What is worth watching is Law 1's question turned around.** A paced
  *    table stops after each of the engine's own plays so they can be seen
  *    happening, but not after a priority pass or a mana ability: the same
@@ -185,7 +204,23 @@ import java.util.Random
 // cards chosen ("cards"); the engine's seat decides by Argentum's own mulligan responder. The reply
 // says "mulligans": true where the phase was dealt. An engine at 5 ignores the key and deals every
 // hand kept, as every engine before it did, so a relay reading 5 must not ask for one.
-const val PROTOCOL = 6
+// 7: an engine's seat need not bring a deck. Its "deck" in "new" may be "mirror", a copy of the first
+// person's deck and sideboard, or "own", a deck Argentum's ConstructedDeckGenerator builds for it to
+// the "format" given (Scryfall's word) from the "sets" given, or from the whole format where none
+// are; a list of names is taken as before. The reply's seat says what it plays and how it came to
+// ("deck"), falling back in words where a deck of its own could not be built. "hello" lists the
+// formats it builds to ("decks"), and "decklist" is new, for measuring. An engine at 6 reads a
+// "deck" that is not a list as no deck and refuses the game, so a relay reading 6 sends names.
+// 8: a game may be Commander. "new" takes "format": "commander", and every player a "commander", a
+// name or {name, set, number}; the game is Argentum's Format.Commander, the commanders dealt into the
+// command zone. An engine's seat asked for "own" at such a table is built a Commander deck, commander
+// and all, by CommanderDeckGenerator, and "mirror" copies the person's commander with their deck. An
+// offer cast from the command zone says so ("from") and what the commander tax adds ("commanderTax"),
+// and the CR 903.9a yes or no says where the commander is ("commanderZone"). The reply says "format"
+// where the game is Commander, and each seat its commander. "hello" lists the game formats
+// ("formats"). An engine at 7 ignores "format" and "commander" and deals the decks as sent, by the
+// ordinary rules, so a relay reading 7 must not tell anybody a Commander game is coming.
+const val PROTOCOL = 8
 
 /**
  * The decisions put to a person whatever their client said, because every client since the
@@ -237,6 +272,46 @@ private val ACT_TAKES = listOf("targets", "x", "damage", "cost", "auto", "cards"
 
 /** The offers of the mulligan phase, by Argentum's own names for the actions (GameAction.kt). */
 private val MULLIGAN_OFFERS = setOf("KeepHand", "TakeMulligan", "BottomCards")
+
+/**
+ * The formats an engine's seat can be given a deck of its own in (protocol 7, HANDOFF.md M5), by
+ * Scryfall's word for each, which is the word the app sends: every one of Argentum's `DeckFormat`s
+ * that `ConstructedDeckGenerator` builds to. It refuses the Commander family outright and points at
+ * `CommanderDeckGenerator`, which builds that shape with a commander chosen first (`COMMANDER_BUILDS`).
+ */
+private val BUILDS: Map<String, DeckFormat> = DeckFormat.entries.filterNot { it.isCommanderShape }.associateBy { it.scryfallKey }
+
+/**
+ * The game formats this process deals (protocol 8, HANDOFF.md M6), by the word `new` takes: the
+ * ordinary rules, Argentum's `Format.Standard` — what every table before this was dealt, whatever the
+ * decks' own format — and Commander, Argentum's `Format.Commander` as it stands: 40 life, a hundred
+ * cards, the commander in the command zone, commander tax, and 21 combat damage from one commander.
+ * Its `alwaysDivertToCommand` is left off, as Argentum leaves it, so the CR 903.9a question is the
+ * commander's owner's to answer, a yes or no every client can already put on screen.
+ */
+private val GAME_FORMATS: Map<String, Format> = linkedMapOf("standard" to Format.Standard, "commander" to Format.Commander())
+
+/**
+ * The formats an engine's seat can be built a Commander deck of its own in, at a Commander table:
+ * Commander alone, the one commander-shaped game this process deals. `CommanderDeckGenerator` builds
+ * Brawl's shapes too, and a Brawl game is not one this process deals.
+ */
+private val COMMANDER_BUILDS: Map<String, DeckFormat> = mapOf(DeckFormat.COMMANDER.scryfallKey to DeckFormat.COMMANDER)
+
+/**
+ * How many cards a Commander deck of the engine's own holds, its commander counted (CR 903.5a):
+ * `Format.Commander`'s own deck size. `CommanderDeckGenerator` fills its library with basics to reach
+ * it exactly, and a deck of another size is one it could not build.
+ */
+private val COMMANDER_SIZE = Format.Commander().deckSize
+
+/**
+ * How many cards a deck of the engine's own must hold to be dealt: Draftsim's constructed shape, the
+ * size `ConstructedDeckGenerator` checks its own build against (36 spells and 24 lands). Its random
+ * fallback stops short when a pool runs out of cards to add, and says nothing, so the size is
+ * checked here and a short deck is a deck that could not be built.
+ */
+private val OWN_SIZE = DraftsimDeckShape.CONSTRUCTED.let { it.nonlandCount + it.landCount }
 
 /**
  * The three strengths the app offers, each one of Argentum's own named profiles
@@ -304,6 +379,12 @@ private class Seat(
      * answers, and those of `ASKABLE` their client said it can show. Empty for an engine's seat.
      */
     val asks: Set<String> = ALWAYS_ASKED,
+    /** The deck this seat was dealt, as lines: for `decklist`, which is for measuring. */
+    val dealt: List<Line> = emptyList(),
+    /** For a seat the engine plays, what deck it was asked for and what it plays (protocol 7). */
+    val built: Built? = null,
+    /** At a Commander table, this seat's commander by the name the engine knows it by (protocol 8). */
+    val commander: String? = null,
 ) {
     /** Whether this decision is put to the person in this seat, rather than answered here. */
     fun asked(d: PendingDecision): Boolean = ai == null && d.kind() in asks
@@ -402,6 +483,8 @@ private class Table(
     dealt: List<GameEvent> = emptyList(),
     /** Whether the game was dealt with a mulligan phase (protocol 6), rather than every hand kept. */
     val opening: Boolean = false,
+    /** The game format it was dealt in, by `GAME_FORMATS`' word (protocol 8). */
+    val format: String = "standard",
 ) {
     val transformer = ClientStateTransformer(registry)
     val lastView = HashMap<EntityId, ClientGameState>()
@@ -942,6 +1025,15 @@ private class Table(
         put("affordable", a.affordable)
         put("meaningful", MeaningfulActionFilter.isMeaningful(a))
         put("manaCost", a.manaCostString)
+        // A commander cast from the command zone (protocol 8): said, since a tap on the command
+        // zone is how a person reaches it, with what the commander tax adds to the cost above, which
+        // Argentum has already put in it (CR 903.8): {2} for each time before this that its owner cast
+        // it from there, read off the card's own count. Said only for the command zone, so an offer
+        // from anywhere else reads as it always has.
+        if (a.sourceZone == Zone.COMMAND.name) {
+            put("from", "command")
+            (a.action as? CastSpell)?.let { taxOf(it.cardId) }?.let { put("commanderTax", it) }
+        }
         put("requiresTargets", a.requiresTargets)
         // A cost with more in it than mana: Argentum's own kind for it and its words. Most such
         // costs are a choice — which card to discard, which creature to sacrifice — and sent bare
@@ -1024,6 +1116,28 @@ private class Table(
         return frame.answer as? MoveCollectionOrderContinuation
     }
 
+    /**
+     * What the commander tax adds to a commander cast from the command zone now (CR 903.8), in
+     * Argentum's own count, which its cost calculator reads for the tax: how many times its owner
+     * has cast it from there, and the generic mana that adds, {2} apiece.
+     */
+    private fun taxOf(id: EntityId): JsonObject? {
+        val commander = env.state.getEntity(id)?.get<CommanderComponent>() ?: return null
+        return buildJsonObject { put("casts", commander.castsFromCommandZone); put("generic", 2 * commander.castsFromCommandZone) }
+    }
+
+    /**
+     * The zone a commander is in while its owner is asked whether to put it into the command zone,
+     * read off the continuation Argentum suspended with the question (`CommanderZoneChoiceCheck`,
+     * its CR 903.9a state-based action); null unless that question is this decision. Argentum asks
+     * it for a commander in a graveyard or exile, and in a hand or a library too.
+     */
+    private fun commanderGoing(d: YesNoDecision): Zone? {
+        val frame = env.state.peekContinuation() as? Suspension ?: return null
+        if (frame.question.id != d.id) return null
+        return (frame.answer as? CommanderZoneChoiceContinuation)?.currentZone
+    }
+
     private fun describe(d: PendingDecision, full: Boolean = false): JsonObject = buildJsonObject {
         put("id", d.id)
         put("type", d::class.simpleName?.removeSuffix("Decision"))
@@ -1044,7 +1158,12 @@ private class Table(
                     }
                 }
             }
-            is YesNoDecision -> { put("yesText", d.yesText); put("noText", d.noText); put("hint", d.hint) }
+            // The commander's owner asked whether it goes to the command zone (protocol 8): where it
+            // is now, by the board's word for the zone, so a client can say which rule asks it.
+            is YesNoDecision -> {
+                put("yesText", d.yesText); put("noText", d.noText); put("hint", d.hint)
+                commanderGoing(d)?.let { put("commanderZone", it.name.lowercase()) }
+            }
             is ChooseOptionDecision -> putJsonArray("options") { d.options.forEach { add(JsonPrimitive(it)) } }
             is SelectCardsDecision -> {
                 put("min", d.minSelections); put("max", d.maxSelections)
@@ -1229,7 +1348,15 @@ private class Corpus(
     val sets: List<MtgSet>,
     /** What a deck may hold: every set's cards and basic lands. Not a token, not a back face, not a meld result. */
     val deckable: Set<String>,
+    /**
+     * Every set as Argentum's deck generators read one, by its code (protocol 7): its own cards,
+     * its reprint rows and its basic lands. Nothing here opens a booster; the constructed
+     * generator reads a set's pool and its basics from this, as game-server's does from its own.
+     */
+    val boosters: BoosterGenerator,
     val loadMs: Long,
+    /** Of `loadMs`, what stamping every card with the formats it is legal in took (protocol 7). */
+    val legalMs: Long,
     val heapMb: Long,
 )
 
@@ -1238,14 +1365,39 @@ private const val MB = 1024L * 1024L
 private fun corpus(): Corpus {
     val started = System.nanoTime()
     val sets = MtgSetCatalog.all
+    // Stamped once, for the registry and the generators alike: a copy of every card twice over
+    // would be twice the corpus for nothing. With the formats each card is legal in, as
+    // game-server stamps them (`withLegalities`), from the Scryfall legalities Argentum ships
+    // (LegalityData): a card definition carries none of its own, and without them every format's
+    // pool is empty to a deck generator, which reads nothing else (FormatCardPool).
+    val withSets = sets.associateWith { set -> set.cards.stamped(set) }
+    // Timed on its own, so what the legalities cost to load is a number in `hello` rather than a guess.
+    val legalStarted = System.nanoTime()
+    val stamped = withSets.mapValues { (_, cards) -> cards.map(LegalityData::stamp) }
+    val basics = sets.associateWith { set -> (set.basicLands + set.basicLandsFallback?.basicLands.orEmpty()).map(LegalityData::stamp) }
+    val legalMs = (System.nanoTime() - legalStarted) / 1_000_000
     val registry = CardRegistry().apply {
         register(PredefinedTokens.allTokens)
         for (set in sets) {
-            register(set.cards.stamped(set))
-            register(set.basicLands)
-            set.basicLandsFallback?.let { register(it.basicLands) }
+            register(stamped.getValue(set))
+            register(basics.getValue(set))
         }
     }
+    // As game-server builds its own (GameBeansConfig.toBoosterSetConfig), less what only a
+    // booster needs: the set's cards, its reprint rows, which FormatCardPool resolves through the
+    // registry so a set that is mostly reprints is not taken for an empty one, and its basics,
+    // or the set's own fallback for them, whose art a deck built from the set is dealt with.
+    val boosters = BoosterGenerator(sets.associate { set ->
+        set.code to BoosterGenerator.SetConfig(
+            setCode = set.code,
+            setName = set.displayName,
+            cards = stamped.getValue(set),
+            basicLands = (set.basicLandsFallback ?: set).basicLands,
+            incomplete = set.incomplete,
+            releaseDate = set.releaseDate,
+            printings = set.printings,
+        )
+    })
     // A meld result is registered, so melding finds it, but never dealt from a deck: Argentum
     // keeps it out of every pool of cards a player can own (CardDefinition.meldResult), and
     // Scryfall lists it as a card of its own that a player could add in the editor.
@@ -1262,7 +1414,7 @@ private fun corpus(): Corpus {
     // loading it threw away.
     System.gc()
     val rt = Runtime.getRuntime()
-    return Corpus(registry, printings, sets, deckable, loadMs, (rt.totalMemory() - rt.freeMemory()) / MB)
+    return Corpus(registry, printings, sets, deckable, boosters, loadMs, legalMs, (rt.totalMemory() - rt.freeMemory()) / MB)
 }
 
 private fun List<CardDefinition>.stamped(set: MtgSet): List<CardDefinition> = map { card ->
@@ -1369,16 +1521,264 @@ private fun playerOf(o: JsonObject): Triple<String?, AiProfile?, String?> {
     return Triple("heuristic", level?.let(LEVELS::getValue) ?: AiProfile.CURRENT, level)
 }
 
+/**
+ * What a seat the engine plays was dealt, and how it came to be (protocol 7, HANDOFF.md M5).
+ *
+ * `asked` is what the relay asked for: `deck`, a list of names as every seat has always been
+ * sent; `mirror`, a copy of the first person's deck; or `own`, one Argentum builds for it. `played`
+ * is what it plays, which differs from `asked` only where a deck of its own could not be built and
+ * a copy of the person's was dealt instead. `fellBack` says why, whenever what was dealt is not
+ * what was asked — that includes a deck of its own built from the whole format rather than the
+ * sets asked — and `why` carries Argentum's own words for it where it gave any.
+ *
+ * `fellBack` is one of: `format`, a format the generator does not build to (the Commander family,
+ * or a word it has no format for); `sets`, none of the sets asked is one the engine has; `thin`,
+ * the cards legal in the format among those asked for could not fill a deck; `failed`, anything
+ * else the generator did, said in its own words.
+ */
+private class Built(
+    val asked: String,
+    val played: String,
+    val lines: List<Line>,
+    val sideboard: List<Line> = emptyList(),
+    /** For a deck of its own: the format it was built to, as asked and as Argentum has it. */
+    val formatWord: String? = null,
+    val format: DeckFormat? = null,
+    /** For a deck of its own: `sets` where it was built from the sets asked, `format` from the whole format. */
+    val from: String? = null,
+    val sets: List<BoosterGenerator.SetConfig> = emptyList(),
+    /** The sets asked for that the engine has not got, so were not drawn from; in the words they were asked in. */
+    val missingSets: List<String> = emptyList(),
+    val fellBack: String? = null,
+    val why: String? = null,
+    /** At a Commander table, the seat's commander: the person's, copied, or one Argentum chose first (protocol 8). */
+    val commander: Line? = null,
+)
+
+/** A deck line from what a generator wrote. */
+private fun generatedLine(key: String, count: Int): Line {
+    // Argentum pins a generated deck's basics to the set it was built from as
+    // "Plains#BLB-262" (BoosterGenerator.withBasicLandArt), and its random builder as
+    // "Plains#262", a number with no set to find it in. The first is a printing this
+    // process deals as any deck's named printing is dealt; the second names none.
+    val name = key.substringBefore('#')
+    val printing = key.substringAfter('#', "")
+    val set = printing.substringBefore('-', "").takeIf { it.isNotEmpty() }
+    val number = printing.substringAfter('-', "").takeIf { set != null && it.isNotEmpty() }
+    return Line(name, count, set, number)
+}
+
+/** The outcome of asking Argentum's generator for a deck: its lines, and for a Commander deck, its commander. */
+private sealed class Generated {
+    class Dealt(val lines: List<Line>, val commander: Line? = null) : Generated()
+    class Failed(val code: String, val why: String?) : Generated()
+}
+
+/**
+ * A deck Argentum's `ConstructedDeckGenerator` builds to [format], from [codes] or from every card
+ * the format allows where there are none. Its randomness is seeded from the game's, so the same
+ * seed builds the same deck — any game can still be played again exactly — and a game dealt with
+ * another seed, as every game the relay starts without one is, builds another.
+ *
+ * What comes back is held to what this table can deal: at least `OWN_SIZE` cards, each a name a
+ * deck may hold. The generator refuses a pool with no legal cards in words, and its random fallback
+ * can come back short with none, so both are a deck it could not build.
+ */
+private fun generate(corpus: Corpus, codes: List<String>, format: DeckFormat, seed: Long): Generated {
+    val list = try {
+        ConstructedDeckGenerator(corpus.boosters, corpus.registry, kotlin.random.Random(seed)).generate(codes, format)
+    } catch (e: IllegalArgumentException) {
+        return Generated.Failed("thin", e.message)
+    } catch (e: IllegalStateException) {
+        return Generated.Failed("thin", e.message)
+    } catch (e: Exception) {
+        return Generated.Failed("failed", "${e::class.simpleName}: ${e.message}")
+    }
+    val lines = list.map { (key, n) -> generatedLine(key, n) }
+    val size = lines.sumOf { it.count ?: 0 }
+    if (size < OWN_SIZE) return Generated.Failed("thin", "The deck came to $size cards, short of $OWN_SIZE.")
+    val strange = lines.map { it.name }.distinct().filter { resolveName(corpus, it) == null }
+    if (strange.isNotEmpty()) return Generated.Failed("failed", "It chose ${strange.joinToString(", ")}, which a deck here cannot hold.")
+    return Generated.Dealt(lines)
+}
+
+/**
+ * A Commander deck Argentum's `CommanderDeckGenerator` builds (protocol 8, HANDOFF.md M6): a commander
+ * chosen first, as its game server's `RandomDeckResolver` uses it, and a singleton library inside its
+ * colour identity, from [codes] or from every card the format allows where there are none. Seeded
+ * from the game, as a constructed deck of its own is (`generate`).
+ *
+ * The generator returns no deck where the pool holds no legal commander with colours to build
+ * around ("no Commander deck from three Portal sets", in its own words), which is a pool too thin;
+ * and it refuses a set it has not got in words. What comes back is held to what this table can deal:
+ * a commander and a library that come to `COMMANDER_SIZE` exactly, every card a name a deck may hold.
+ */
+private fun generateCommander(corpus: Corpus, codes: List<String>, format: DeckFormat, seed: Long): Generated {
+    val built = try {
+        CommanderDeckGenerator(corpus.boosters, corpus.registry, kotlin.random.Random(seed)).generate(codes, format)
+    } catch (e: IllegalArgumentException) {
+        return Generated.Failed("thin", e.message)
+    } catch (e: IllegalStateException) {
+        return Generated.Failed("thin", e.message)
+    } catch (e: Exception) {
+        return Generated.Failed("failed", "${e::class.simpleName}: ${e.message}")
+    } ?: return Generated.Failed("thin", "No legal commander with colours to build around.")
+    val commander = built.commander ?: return Generated.Failed("failed", "It built a deck with no commander.")
+    val lines = built.deckList.map { (key, n) -> generatedLine(key, n) }
+    val size = lines.sumOf { it.count ?: 0 } + 1
+    if (size != COMMANDER_SIZE) return Generated.Failed("thin", "The deck came to $size cards, where Commander takes $COMMANDER_SIZE.")
+    val strange = (lines.map { it.name } + commander).distinct().filter { resolveName(corpus, it) == null }
+    if (strange.isNotEmpty()) return Generated.Failed("failed", "It chose ${strange.joinToString(", ")}, which a deck here cannot hold.")
+    return Generated.Dealt(lines, Line(commander, 1, null, null))
+}
+
+/**
+ * A seat's commander, from `new`'s player (protocol 8): a name, or `{"name", "set", "number"}` when a
+ * printing was chosen for it, as a deck line names one. Null where none was sent.
+ */
+private fun commanderOf(v: JsonElement?): Line? = when (v) {
+    is JsonPrimitive -> v.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }?.let { Line(it, 1, null, null) }
+    is JsonObject -> (v["name"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        Line(it, 1, (v["set"] as? JsonPrimitive)?.contentOrNull, (v["number"] as? JsonPrimitive)?.contentOrNull)
+    }
+    else -> null
+}
+
+/**
+ * The deck a seat the engine plays is dealt (protocol 7).
+ *
+ * A list of names is taken as it always was. `"mirror"` is the first person's deck and sideboard,
+ * printings and all, which is what the relay has always sent as names. `"own"` asks Argentum to
+ * build one: to the `format` given, from the `sets` given — the owner's fair fight, the sets the
+ * person's own deck uses — or from the whole format where none are. Where it cannot, it falls back
+ * rather than refuse a game somebody sat down to, and says so (`Built.fellBack`): from sets it has
+ * not got, or too few cards in them, to the whole format; from a format it does not build to, or a
+ * whole format it cannot build from either, to a copy of the person's deck.
+ *
+ * At a Commander table (protocol 8) every seat has a commander: a list of names brings its own as
+ * `commander`, a copy is the person's with theirs, and a deck of its own is a Commander deck, its
+ * commander chosen first by Argentum's `CommanderDeckGenerator`, falling back the same way.
+ */
+private fun deckFor(corpus: Corpus, o: JsonObject, name: String, person: Brought?, seed: Long, commanderGame: Boolean = false): Built {
+    val deck = o["deck"]
+    if (deck is JsonObject) return Built("deck", "deck", readLines(deck), readLines(o["sideboard"] as? JsonObject), commander = commanderOf(o["commander"]))
+    val word = (deck as? JsonPrimitive)?.takeIf { it.isString }?.content
+    val formatWord = o["format"]?.jsonPrimitive?.contentOrNull?.lowercase()
+    // A copy is the whole of what the person brought: their deck, their sideboard, and at a Commander
+    // table their commander, or the seat opposite would be dealt a Commander game with none.
+    fun mirror(asked: String, fellBack: String? = null, why: String? = null, format: DeckFormat? = null): Built {
+        val p = person ?: throw Refused("$name was to play a copy of a person's deck, and nobody at the table brought one.")
+        return Built(asked, "mirror", p.lines, p.sideboard, formatWord.takeIf { asked == "own" }, format, fellBack = fellBack, why = why, commander = p.commander)
+    }
+    when (word) {
+        "mirror" -> return mirror("mirror")
+        "own" -> {}
+        null -> throw Refused("$name has no deck.")
+        else -> throw Refused("$name's deck is \"$word\", which is neither a list of cards, \"mirror\" nor \"own\".")
+    }
+    // Which builder, to which format: at a Commander table a Commander deck, commander and all; at any
+    // other a constructed one. A Commander deck of its own is not built for a table dealt by the
+    // ordinary rules, where it would have no command zone to begin in, so there the copy is dealt, as
+    // every engine before protocol 8 dealt it.
+    val builds = if (commanderGame) COMMANDER_BUILDS else BUILDS
+    val format = formatWord?.let(builds::get)
+        ?: return mirror("own", "format", when {
+            formatWord == null -> "No format was given."
+            commanderGame -> "A Commander game is dealt a Commander deck of its own, and \"$formatWord\" is not one."
+            formatWord in COMMANDER_BUILDS -> "A \"$formatWord\" deck of its own is built only for a Commander game."
+            else -> "The engine builds no \"$formatWord\" deck of its own."
+        })
+    val build = { codes: List<String> -> if (commanderGame) generateCommander(corpus, codes, format, seed) else generate(corpus, codes, format, seed) }
+    // Argentum's set codes are Scryfall's in capitals, as printings' are (pinOf). A list, even an
+    // empty one, asks for the sets in it; no list asks for the whole format. An empty one is a
+    // person's deck with no set to go by, and falls back as sets the engine has not got do.
+    val setsAsked = o["sets"] is JsonArray
+    val asked = (o["sets"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }.distinctBy { it.uppercase() }
+    val known = asked.map { it.uppercase() }.filter { it in corpus.boosters.availableSets }
+    val missing = asked.filter { it.uppercase() !in corpus.boosters.availableSets }
+    var fellBack: String? = null
+    var why: String? = null
+    if (setsAsked) {
+        if (known.isEmpty()) {
+            fellBack = "sets"
+        } else when (val built = build(known)) {
+            is Generated.Dealt -> return Built("own", "own", built.lines, formatWord = formatWord, format = format, from = "sets",
+                sets = known.map(corpus.boosters.availableSets::getValue), missingSets = missing, commander = built.commander)
+            is Generated.Failed -> { fellBack = built.code; why = built.why }
+        }
+    }
+    return when (val built = build(emptyList())) {
+        is Generated.Dealt -> Built("own", "own", built.lines, formatWord = formatWord, format = format, from = "format", missingSets = missing, fellBack = fellBack, why = why, commander = built.commander)
+        is Generated.Failed -> mirror("own", fellBack ?: built.code, why ?: built.why, format)
+    }
+}
+
+/** What a person brought to the table: their deck, their sideboard, and at a Commander table their commander. */
+private class Brought(val lines: List<Line>, val sideboard: List<Line>, val commander: Line?)
+
+/**
+ * A deck's colours, in Argentum's order (white, blue, black, red, green), by the engine's own card
+ * data: the colours its basic lands make, and for a deck with none, the colours of its spells.
+ *
+ * By the lands first because that is what a deck of the engine's own is — every one Argentum builds
+ * has a manabase of basics alone, chosen for the colours it plays — and its spells can say more
+ * than that. Measured on the first builds (PLAN.md, M5): a hybrid card counts as both its colours,
+ * so a black-green deck holding Vibrance read as black, red and green, and Argentum's builder put
+ * four Overlord of the Floodpits in a white-green deck with no Island to cast them. Named by
+ * its spells, either would be called a colour it cannot play.
+ *
+ * A Commander deck's colours are its commander's colour identity (CR 903.4), which every card in it
+ * must fit inside (CR 903.5c) and its basics are chosen from (protocol 8).
+ */
+private fun coloursOf(corpus: Corpus, lines: List<Line>, commander: Line? = null): List<Color> {
+    commander?.let { c -> resolveName(corpus, c.name)?.let(corpus.registry::getCard) }?.let { card ->
+        return Color.entries.filter { it in card.colorIdentity }
+    }
+    val cards = lines.mapNotNull { l -> resolveName(corpus, l.name)?.let(corpus.registry::getCard) }
+    val basics = cards.filter { it.typeLine.isBasicLand }
+    val seen = if (basics.isNotEmpty()) basics.flatMapTo(HashSet()) { it.colorIdentity } else cards.filterNot { it.isLand }.flatMapTo(HashSet()) { it.colors }
+    return Color.entries.filter { it in seen }
+}
+
 private fun newTable(corpus: Corpus, params: JsonObject): Table {
     val registry = corpus.registry
     val players = params["players"]?.jsonArray ?: throw Refused("\"players\" is required.")
     if (players.size < 2) throw Refused("A game needs at least two players.")
+    // The seed decides the shuffle, every coin flip and every other "at random",
+    // so the same seed plays the same game. One is always chosen here and sent
+    // back, which means any game, a failing test's included, can be played again
+    // exactly. A chosen one stays below 2^53, because the relay reads it as a
+    // JavaScript number and a larger Long would come back as a different game.
+    // Chosen before any deck, because a deck of the engine's own is built from it.
+    val seed = params["seed"]?.jsonPrimitive?.longOrNull ?: (Random().nextLong() ushr 11)
+    // The game format (protocol 8): Commander where it is asked for, and the ordinary rules otherwise,
+    // which is what every engine before this dealt whatever the decks' own format was. A word this
+    // process deals no game in is refused rather than dealt by rules nobody asked for.
+    val formatWord = (params["format"] as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase() ?: "standard"
+    val gameFormat = GAME_FORMATS[formatWord]
+        ?: throw Refused("The engine deals no \"$formatWord\" game; it deals ${GAME_FORMATS.keys.joinToString(" and ") { "\"$it\"" }}.")
+    val commanderGame = gameFormat.usesCommanders
+    val objects = players.map { it.jsonObject }
+    val names = objects.mapIndexed { i, o -> o["name"]?.jsonPrimitive?.contentOrNull ?: "Player ${i + 1}" }
+    val kinds = objects.map { playerOf(it) }
+    // The deck of the first person to bring one, which is what an engine's seat mirrors: the deck
+    // and its sideboard as they were sent, printings and all, and at a Commander table their commander.
+    val person = objects.indices.firstOrNull { kinds[it].first == null && objects[it]["deck"] is JsonObject }?.let {
+        Brought(readLines(objects[it]["deck"] as JsonObject), readLines(objects[it]["sideboard"] as? JsonObject),
+            if (commanderGame) commanderOf(objects[it]["commander"]) else null)
+    }
+    // A person's deck is what they brought. A seat the engine plays may ask for a copy of theirs or
+    // one of its own instead (protocol 7). Each engine seat's randomness is its own, so two seats
+    // asking for a deck of their own at one table are not dealt the same one.
+    val built = objects.mapIndexed { i, o -> if (kinds[i].first == null) null else deckFor(corpus, o, names[i], person, seed + i, commanderGame) }
+    val commanders = mutableListOf<String?>()
     val leftOutOfSideboards = mutableListOf<List<String>>()
     val printingsMissed = mutableListOf<List<String>>()
-    val configs = players.mapIndexed { i, p ->
-        val o = p.jsonObject
-        val name = o["name"]?.jsonPrimitive?.contentOrNull ?: "Player ${i + 1}"
-        val lines = readLines(o["deck"] as? JsonObject ?: throw Refused("$name has no deck."))
+    val decks = mutableListOf<List<Line>>()
+    val configs = objects.mapIndexed { i, o ->
+        val name = names[i]
+        val lines = built[i]?.lines ?: readLines(o["deck"] as? JsonObject ?: throw Refused("$name has no deck."))
+        decks += lines
         lines.firstOrNull { it.count == null }?.let { throw Refused("$name's deck lists ${it.name} without a number of copies.") }
         val missing = lines.map { it.name }.distinct().filter { resolveName(corpus, it) == null }
         if (missing.isNotEmpty()) throw Refused("The engine does not know ${missing.size} of $name's cards: ${missing.joinToString(", ")}")
@@ -1391,24 +1791,31 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
         // Deck.sideboard, citing CR 100.4). One the engine does not know is left out rather than
         // refused, as the owner chose on 2026-09-21: a whole game is too much to refuse over a
         // card only a wish could fetch. The reply names it, so the table can say so.
-        val side = readLines(o["sideboard"] as? JsonObject)
+        val side = built[i]?.sideboard ?: readLines(o["sideboard"] as? JsonObject)
         side.firstOrNull { it.count == null }?.let { throw Refused("$name's sideboard lists ${it.name} without a number of copies.") }
         val (sideKnown, sideUnknown) = side.partition { resolveName(corpus, it.name) != null }
         leftOutOfSideboards += sideUnknown.map { it.name }.distinct()
         val sideboard = sideKnown.flatMap { l -> resolveName(corpus, l.name)!!.let { card -> List(l.count!!) { CardEntry(card, pinOf(corpus, l, card)) } } }
+        // At a Commander table, the seat's commander (protocol 8): dealt face up into the command zone
+        // and not into the library (CR 903.6), under the name the engine knows it by, in the printing
+        // named where the engine has it. Argentum deals no Commander game with a player who has none,
+        // so neither does this, and says whose; at any other table a commander sent is not read.
+        val commanderLine = if (commanderGame) built[i]?.commander ?: commanderOf(o["commander"]) else null
+        val commander = commanderLine?.let { c -> resolveName(corpus, c.name) ?: throw Refused("The engine does not know $name's commander, ${c.name}.") }
+        if (commanderGame && commander == null) throw Refused("$name has no commander, and every player in a Commander game has one.")
+        commanders += commander
         // A printing named but not held: said once per card, so the table can say whose art it wears.
-        printingsMissed += (lines + sideKnown)
+        printingsMissed += (lines + sideKnown + listOfNotNull(commanderLine))
             .filter { it.set != null && it.number != null }
             .mapNotNull { l -> resolveName(corpus, l.name)?.takeIf { pinOf(corpus, l, it) == null } }
             .distinct()
-        PlayerConfig(name = name, deck = Deck.fromEntries(entries, sideboard = sideboard), startingLife = o["life"]?.jsonPrimitive?.int ?: 20)
+        PlayerConfig(
+            name = name,
+            deck = Deck.fromEntries(entries, commander = commander, commanderPrinting = commander?.let { pinOf(corpus, commanderLine!!, it) }, sideboard = sideboard),
+            startingLife = o["life"]?.jsonPrimitive?.int ?: 20,
+            commanderCardName = commander,
+        )
     }
-    // The seed decides the shuffle, every coin flip and every other "at random",
-    // so the same seed plays the same game. One is always chosen here and sent
-    // back, which means any game, a failing test's included, can be played again
-    // exactly. A chosen one stays below 2^53, because the relay reads it as a
-    // JavaScript number and a larger Long would come back as a different game.
-    val seed = params["seed"]?.jsonPrimitive?.longOrNull ?: (Random().nextLong() ushr 11)
     val env = GameEnvironment.create(registry)
     // The opening hands are the players' to keep only where asked (protocol 6): a relay asks
     // for it where every person's client can show a mulligan. Unasked, every hand is kept, as
@@ -1425,21 +1832,22 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
         skipMulligans = !opening,
         startingPlayerIndex = params["startingPlayer"]?.jsonPrimitive?.int ?: 0,
         seed = seed,
+        format = gameFormat,
     ))
     env.restore(dealt.state, dealt.playerIds)
     val seats = env.playerIds.mapIndexed { i, id ->
-        val o = players[i].jsonObject
-        val (ai, profile, level) = playerOf(o)
+        val o = objects[i]
+        val (ai, profile, level) = kinds[i]
         // The decisions a person's client said it can show, of those this process can ask. A word
         // it does not know — a newer client's — is not asked, and not a reason to refuse the game.
         val answers = (o["answers"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.filter { it in ASKABLE }
         Seat(id, configs[i].name, ai, o["autoPass"]?.jsonPrimitive?.boolean ?: false, leftOutOfSideboards[i], printingsMissed[i], profile, level,
-            asks = if (ai == null) ALWAYS_ASKED + answers else emptySet())
+            asks = if (ai == null) ALWAYS_ASKED + answers else emptySet(), dealt = decks[i], built = built[i], commander = commanders[i])
     }
-    return Table(registry, env, seats, seed, pacedBy(params), dealt.events, opening)
+    return Table(registry, env, seats, seed, pacedBy(params), dealt.events, opening, formatWord)
 }
 
-private fun seatsOf(table: Table): JsonArray = buildJsonArray {
+private fun seatsOf(table: Table, corpus: Corpus): JsonArray = buildJsonArray {
     table.seats.forEach { s ->
         add(buildJsonObject {
             put("id", s.id.value); put("name", s.name); put("ai", s.ai); put("autoPass", s.autoPass)
@@ -1449,6 +1857,30 @@ private fun seatsOf(table: Table): JsonArray = buildJsonArray {
             // What a person will be asked rather than have answered for them, so the relay can
             // tell their client which of its prompts will ever be shown.
             if (s.ai == null) putJsonArray("asked") { ASKABLE.filter { it in s.asks }.forEach { add(JsonPrimitive(it)) } }
+            // At a Commander table, the seat's commander (protocol 8). Said for every seat, the
+            // engine's too: a commander begins the game face up in the command zone (CR 903.6), so
+            // it is on the table for everybody to see, where the rest of a deck is not.
+            s.commander?.let { put("commander", it) }
+            // What a seat the engine plays was dealt, and how (protocol 7): never its cards, which
+            // are as hidden from the person opposite as any opponent's deck, but what they are
+            // made of — how many, what colours, and for a deck of its own, the format and the sets.
+            // A Commander deck counts its commander among its cards (CR 903.5a), and is named by its
+            // commander's colours.
+            s.built?.let { b ->
+                putJsonObject("deck") {
+                    put("asked", b.asked); put("played", b.played)
+                    put("cards", b.lines.sumOf { it.count ?: 0 } + (if (s.commander != null) 1 else 0))
+                    putJsonArray("colours") { coloursOf(corpus, b.lines, b.commander.takeIf { s.commander != null }).forEach { add(JsonPrimitive(it.symbol.toString())) } }
+                    s.commander?.let { put("commander", it) }
+                    b.formatWord?.let { put("format", it) }
+                    b.format?.let { put("formatName", it.displayName) }
+                    b.from?.let { put("from", it) }
+                    if (b.sets.isNotEmpty()) putJsonArray("sets") { b.sets.forEach { set -> add(buildJsonObject { put("code", set.setCode); put("name", set.setName) }) } }
+                    if (b.missingSets.isNotEmpty()) putJsonArray("missingSets") { b.missingSets.forEach { add(JsonPrimitive(it)) } }
+                    b.fellBack?.let { put("fellBack", it) }
+                    b.why?.let { put("why", it) }
+                }
+            }
             putJsonArray("sideboardLeftOut") { s.sideboardLeftOut.forEach { add(JsonPrimitive(it)) } }
             putJsonArray("unknownPrintings") { s.unknownPrintings.forEach { add(JsonPrimitive(it)) } }
         })
@@ -1500,9 +1932,14 @@ fun main() {
                         putJsonArray("costs") { PAYABLE.keys.forEach { add(JsonPrimitive(it)) } }
                         putJsonArray("decisions") { ASKABLE.forEach { add(JsonPrimitive(it)) } }
                     }
+                    // The game formats it deals (protocol 8), by the word `new` takes.
+                    putJsonArray("formats") { GAME_FORMATS.keys.forEach { add(JsonPrimitive(it)) } }
+                    // The formats an engine's seat can be dealt a deck of its own in (protocol 7),
+                    // by Scryfall's word for each; since protocol 8 Commander's too, at a Commander table.
+                    putJsonObject("decks") { putJsonArray("formats") { (BUILDS.keys + COMMANDER_BUILDS.keys).forEach { add(JsonPrimitive(it)) } } }
                     // Measured, not assumed: what loading the corpus took and holds.
                     putJsonObject("load") {
-                        put("ms", corpus.loadMs); put("heapMb", corpus.heapMb); put("maxHeapMb", Runtime.getRuntime().maxMemory() / MB)
+                        put("ms", corpus.loadMs); put("legalitiesMs", corpus.legalMs); put("heapMb", corpus.heapMb); put("maxHeapMb", Runtime.getRuntime().maxMemory() / MB)
                     }
                 }
                 "cards" -> buildJsonObject {
@@ -1530,9 +1967,10 @@ fun main() {
                     // `paced` and `mulligans` are said only when on, as everything else this
                     // process leaves off the wire is: a relay sees whether the engine understood
                     // what it asked for rather than assuming an older one did.
-                    JsonObject(t.status() + mapOf("seats" to seatsOf(t), "seed" to JsonPrimitive(t.seed)) +
+                    JsonObject(t.status() + mapOf("seats" to seatsOf(t, corpus), "seed" to JsonPrimitive(t.seed)) +
                         (if (t.paced) mapOf("paced" to JsonPrimitive(true)) else emptyMap()) +
-                        (if (t.opening) mapOf("mulligans" to JsonPrimitive(true)) else emptyMap()))
+                        (if (t.opening) mapOf("mulligans" to JsonPrimitive(true)) else emptyMap()) +
+                        (if (t.format != "standard") mapOf("format" to JsonPrimitive(t.format)) else emptyMap()))
                 }
                 "turn" -> (table ?: throw Refused("No game yet. Send \"new\" first.")).status()
                 // One more of the engine's own actions, on a paced table. The relay asks
@@ -1543,6 +1981,39 @@ fun main() {
                 // How long the engine's seats took to choose, since the last time this was
                 // asked. The relay never asks; scripts/engine-levels.mjs does.
                 "clock" -> (table ?: throw Refused("No game yet.")).readClock()
+                // The deck a seat was dealt, card by card, with what the engine's own card data says
+                // of each: its type line, its cost, its colours, the formats it is legal in. For measuring and
+                // for tests, which hold a deck of the engine's own to the app's validator; never sent
+                // by the relay, since the engine's deck is as hidden as any opponent's.
+                "decklist" -> {
+                    val t = table ?: throw Refused("No game yet.")
+                    val wanted = req["seat"]?.jsonPrimitive?.contentOrNull ?: throw Refused("\"seat\" is required.")
+                    val seat = t.seats.firstOrNull { it.id.value == wanted } ?: throw Refused("No seat $wanted.")
+                    buildJsonObject {
+                        put("ok", true)
+                        // At a Commander table the commander is dealt apart from the deck, into the
+                        // command zone, and is said apart here too (protocol 8).
+                        seat.commander?.let { put("commander", it) }
+                        putJsonObject("deck") {
+                            for ((name, lines) in seat.dealt.groupBy { it.name }) {
+                                val shaped = lines.map { l -> if (l.set != null && l.number != null) buildJsonObject { put("count", l.count); put("set", l.set); put("number", l.number) } else JsonPrimitive(l.count) }
+                                put(name, if (shaped.size == 1) shaped.single() else JsonArray(shaped))
+                            }
+                        }
+                        putJsonArray("cards") {
+                            for (name in (seat.dealt.map { it.name } + listOfNotNull(seat.commander)).distinct()) {
+                                val card = resolveName(corpus, name)?.let(corpus.registry::getCard) ?: continue
+                                add(buildJsonObject {
+                                    put("name", name); put("typeLine", card.typeLine.toString()); put("manaCost", card.manaCost.toString())
+                                    putJsonArray("colours") { Color.entries.filter { it in card.colors }.forEach { add(JsonPrimitive(it.symbol.toString())) } }
+                                    // Its colour identity (CR 903.4), which a Commander deck is held to (protocol 8).
+                                    putJsonArray("identity") { Color.entries.filter { it in card.colorIdentity }.forEach { add(JsonPrimitive(it.symbol.toString())) } }
+                                    putJsonArray("legal") { DeckFormat.entries.filter { it in card.legalFormats }.forEach { add(JsonPrimitive(it.scryfallKey)) } }
+                                })
+                            }
+                        }
+                    }
+                }
                 "view" -> {
                     val t = table ?: throw Refused("No game yet.")
                     val viewer = req["viewer"]?.jsonPrimitive?.contentOrNull ?: throw Refused("\"viewer\" is required.")

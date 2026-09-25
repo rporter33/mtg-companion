@@ -39,6 +39,7 @@ import { heldBackBy, NO_CHOICES, pickable, stepOf } from './choose.js'
 /** The words each glow adds to a card's spoken label. */
 export const GLOW_SAYS = {
   play: 'playable now',
+  command: 'can be cast from the command zone now',
   ability: 'an ability can be used now',
   target: 'a legal target',
   targeted: 'chosen as a target',
@@ -146,13 +147,16 @@ export function glowsAt({ status, me, zoneOf = () => undefined, chosen = new Set
 
   // A play: a card in hand with a meaningful offer it can afford, or a
   // permanent with an ability that is not a mana ability — the two things one
-  // tap on a card does at this table (Table.jsx, `touchHeld`). A card in any
-  // other zone with an offer — a flashback in the graveyard — is played from
-  // the actions panel, and the prompt says so (`offeredElsewhere`).
+  // tap on a card does at this table (Table.jsx, `touchHeld`) — and, at a
+  // Commander table (M6), a commander that can be cast from the command zone,
+  // which a tap on that zone casts. A card in any other zone with an offer — a
+  // flashback in the graveyard — is played from the actions panel, and the
+  // prompt says so (`offeredElsewhere`).
   for (const a of offers) {
     if (typeof a.card !== 'string' || !a.affordable || a.mana || heldBack(a, can)) continue
     const zone = zoneOf(a.card)
     if (zone === 'hand' && a.meaningful) glows.set(a.card, lit('playable', GLOW_SAYS.play))
+    else if (zone === 'command' && a.meaningful && a.type === 'CastSpell') glows.set(a.card, lit('playable', GLOW_SAYS.command))
     else if (zone === 'battlefield' && a.type === 'ActivateAbility' && !glows.has(a.card)) glows.set(a.card, lit('playable', GLOW_SAYS.ability))
   }
   return glows
@@ -181,14 +185,16 @@ export function unpaid(status, can = NO_CHOICES) {
  * What a pile holds that is part of what the engine asks now, for its tile to
  * wear and say, since the cards inside glow only once it is opened: `'target'`
  * a legal target, `'choice'` a card something else being chosen can take — a
- * cost exiling from the graveyard, cards to select — `'play'` or `'use'` a
- * card with a play offered from the pile (`offeredElsewhere`), or null. A
- * target is said as one only where it is one: the words differ, the edge not.
+ * cost exiling from the graveyard, cards to select — `'cast'` a commander that
+ * a tap on the command zone casts (M6), `'play'` or `'use'` a card with a play
+ * offered from the pile (`offeredElsewhere`), or null. A target is said as one
+ * only where it is one: the words differ, the edge not.
  */
 export function pileHolding(ids, glows, elsewhere = []) {
   const lit = ids.map((id) => glows.get(id)).filter((g) => g?.kind === 'target')
   if (lit.some((g) => g.says === GLOW_SAYS.target)) return 'target'
   if (lit.length) return 'choice'
+  if (ids.some((id) => glows.get(id)?.says === GLOW_SAYS.command)) return 'cast'
   const here = elsewhere.filter(({ offer }) => ids.includes(offer.card))
   if (!here.length) return null
   return here.some(({ offer }) => offer.type !== 'ActivateAbility') ? 'play' : 'use'
@@ -208,6 +214,8 @@ export function offeredElsewhere(status, zoneOf = () => undefined, can = NO_CHOI
     if (typeof a.card !== 'string' || heldBack(a, can)) continue
     const zone = zoneOf(a.card)
     if (zone === 'hand' || zone === 'battlefield') continue
+    // A commander from the command zone is cast by a tap on that zone, and glows (M6).
+    if (zone === 'command' && a.type === 'CastSpell') continue
     const key = `${a.card}:${a.type === 'ActivateAbility' ? 'use' : 'play'}`
     if (seen.has(key)) continue
     seen.add(key)

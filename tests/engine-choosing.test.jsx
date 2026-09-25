@@ -362,3 +362,31 @@ describe('the opening hand at a table of several people (M11)', () => {
     expect(sub(unknown.el)).toMatch(/^7 cards\. You play first\. /)
   })
 })
+
+describe('the question of the command zone at a Commander table (M6)', () => {
+  // Argentum's own words for it, as the built engine asked them on 2026-09-25
+  // (CommanderZoneChoiceCheck), and where the commander is, which Server.kt reads
+  // off the continuation Argentum suspended with the question.
+  const question = (zone) => asked({
+    type: 'YesNo', prompt: 'Put Rhys the Redeemed into the command zone instead of leaving it in the graveyard?', source: 'Rhys the Redeemed',
+    yesText: 'Command zone', noText: 'Leave in the graveyard', commanderZone: zone,
+  })
+
+  it('says the rule that asks it, by where the commander is, and sends the answer pressed', async () => {
+    const { el, sent } = await render({ status: question('graveyard') })
+    expect(el.querySelector('.prompt__title').textContent).toBe('Put Rhys the Redeemed into the command zone instead of leaving it in the graveyard?')
+    expect(sub(el)).toBe("From Rhys the Redeemed. A commander put into a graveyard or exile may be put into its owner's command zone, a state-based action (903.9a).")
+    await press(el, 'Command zone')
+    expect(sent.decides).toEqual([{ yes: true }])
+  })
+
+  it('cites 903.9b for a hand or a library, and says no rule where an engine said nothing of where it is', async () => {
+    let r = await render({ status: question('library') })
+    expect(sub(r.el)).toMatch(/\(903\.9b\)\.$/)
+    await act(async () => { root.unmount() })
+    r = await render({ status: question(undefined) })
+    expect(sub(r.el)).toBe('From Rhys the Redeemed.')
+    await press(r.el, 'Leave in the graveyard')
+    expect(r.sent.decides).toEqual([{ yes: false }])
+  })
+})

@@ -29,6 +29,7 @@ import { createBoard, makeInstance } from '../board/model.js'
 import { laneFor, snapToLane } from '../board/placement.js'
 import { freeAlong } from '../board/geometry.js'
 import { FIRST_STEP } from '../../data/turn-structure.js'
+import { commanderDamageOf } from './commander.js'
 
 /**
  * What the table says while the engine is playing its own turn.
@@ -222,6 +223,10 @@ export function boardFromView(view, { prev = null, seats = null } = {}) {
     phase: view.currentPhase ?? null,
     over: Boolean(view.isGameOver),
     winner: view.winnerId ?? null,
+    // The combat damage each player has been dealt by each commander, at a
+    // Commander table (M6; CR 903.10a), which the board model has no word for:
+    // Argentum's own tally, by player, empty where nobody has been dealt any.
+    commanderDamage: {},
   }
 
   for (const p of view.players ?? []) {
@@ -230,6 +235,8 @@ export function boardFromView(view, { prev = null, seats = null } = {}) {
     const counters = {}
     if (p.poisonCounters) counters.poison = p.poisonCounters
     board.counters[p.playerId] = counters
+    const dealt = commanderDamageOf(p)
+    if (dealt.length) board.engine.commanderDamage[p.playerId] = dealt
   }
 
   // Every card the seat may see, in the zone the engine says it is in.
@@ -263,6 +270,9 @@ export function boardFromView(view, { prev = null, seats = null } = {}) {
         z: was?.z ?? 0,
         enteredOnTurn: was?.zone === 'battlefield' ? was.enteredOnTurn : (view.turnNumber ?? 1),
         sick: Boolean(card.hasSummoningSickness),
+        // A commander stays one wherever it goes (CR 903.3), and the engine says so
+        // of the card (`isCommander`), so the table can say it in words.
+        ...(card.isCommander === true ? { commander: true } : {}),
       }
       board.cards[id] = inst
       list.push(id)

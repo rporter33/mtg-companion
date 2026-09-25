@@ -18,6 +18,7 @@ import useDeckCards from '../decks/useDeckCards.js'
 import { goneTableNote, movedTableNote } from '../../lib/card-migrations.js'
 import { playFor } from '../../lib/board/sound.js'
 import useDrag from '../../components/table/useDrag.js'
+import useHold from '../../components/table/useHold.js'
 import Field from '../../components/table/Field.jsx'
 import BoardCard from '../../components/table/BoardCard.jsx'
 import HandCost from '../../components/table/HandCost.jsx'
@@ -35,6 +36,8 @@ import { THINKING, thinkingAt } from '../../lib/engine/board.js'
 import { glowsAt, heldBack, offeredElsewhere, pileHolding } from '../../lib/engine/glow.js'
 import { NO_CHOICES, advance, answerOf, beginBottom, beginDecision, beginPlay, complete, pickable, stepOf, toggle } from '../../lib/engine/choose.js'
 import { chosenLevel, LEVEL_NAMES, levelOf } from '../../lib/engine/levels.js'
+import { chosenOpponent } from '../../lib/engine/opponent.js'
+import { damageRule, damageWords } from '../../lib/engine/commander.js'
 import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
 import useEngineRoom from './useEngineRoom.js'
@@ -84,9 +87,12 @@ const COMBAT_STEPS = ['beginCombat', 'attackers', 'blockers', 'firstStrike', 'da
 const PILE_SAYS = {
   target: 'holds a legal target',
   choice: 'holds a card that can be chosen now',
+  cast: 'your commander can be cast now: a tap casts it',
   play: 'holds a card you can play, under Actions',
   use: 'holds a card whose ability you can use, under Actions',
 }
+/** How the command zone's tile is looked through while a tap on it casts the commander, said in its label. */
+const OPENS_INSTEAD = 'and a hold, a right-click or Shift+Enter opens the zone'
 /**
  * Said when a tap reaches an offer that needs a target this seat cannot send:
  * a relay or an engine from before M4, whose `act` carries none. Sent as it
@@ -200,6 +206,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     // The level chosen in the lobby, kept with the player's other table
     // preferences; read forgivingly, since any build may have written it.
     level: chosenLevel(prefs.engineLevel),
+    // And what the engine's seat plays, where the lobby recorded nothing for
+    // this table (M5): the player's kept choice, read the same way.
+    opponent: chosenOpponent(prefs.engineOpponent),
   })
   const away = Boolean(room || engine)
   // A card the deck knows, else one fetched for the table, else what the
@@ -509,6 +518,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   const holdRef = useRef(null)
   const onHold = useCallback((id) => holdRef.current?.(id), [])
   const { drag, begin, justDragged } = useDrag({ fieldRef, onDrop, onHold })
+  // The same from a finger on your command zone's tile, which casts the
+  // commander at a tap (M6): a hold opens the zone instead, as a right-click
+  // does. Opened, not toggled, so the contextmenu an Android browser raises from
+  // the same long press cannot close it again.
+  const { start: holdTile, justHeld: tileJustHeld } = useHold((zone) => setPanel(`zone:${zone}@${me}`))
 
   // Cards travel between places, unless motion is reduced.
   useTravel(rootRef, { board, reduced, me })
@@ -627,6 +641,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   const myTurn = board.active === me
   const inCombat = COMBAT_STEPS.includes(board.step)
   const commander = deck.commanders?.length ? lookup(deck.commanders[0]) : null
+  // At the engine's table the command zone is the engine's to say (M6): what is
+  // in it now, which is nothing while the commander is on the battlefield.
+  const commandCard = (who) => (engine ? zoneOf(board, who, 'command')[0] ?? null : null)
+  // The commander a tap on the command zone casts, where the engine offers it.
+  const castable = (who) => (engine && who === me ? zoneOf(board, me, 'command').find((inst) => offerFor(inst.id)) ?? null : null)
   const refusal = engine ? held.refusal : room ? shared.refusal : run.refusal
   // Whether the first-strike damage step happens at all this turn (510.4),
   // read off the creatures on the table rather than asked for.
@@ -640,6 +659,16 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     return shared.seats.find((s) => s.seat === p) ?? null
   }
   const nameOfSeat = (p) => seatOf(p)?.name ?? (engine ? 'The engine' : `Seat ${p.replace(/^p/, '')}`)
+  // Whose a commander is, for a plate telling two tallies of one name apart
+  // (lib/engine/commander.js, `damageWords`): its owner, read off the card, or
+  // the controller the engine names for it where the card is out of sight.
+  const whoseCommander = (d) => {
+    const owner = board.cards[d?.commander]?.owner ?? d?.controller ?? null
+    if (!owner) return null
+    if (owner === me) return 'your'
+    const seat = nameOfSeat(owner)
+    return `${seat.startsWith('The ') ? `the ${seat.slice(4)}` : seat}'s`
+  }
   // What glows, and what each glow says (lib/engine/glow.js). Only the
   // engine's table has any: the table played by hand knows nothing of what a
   // card can do, and says so rather than guessing.
@@ -695,6 +724,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   const touchHeld = (id, inst) => {
     if (choosing) { answerTap(id); return }
     if (inst.zone === 'hand') { play(id); return }
+    // A commander in the command zone is cast by a tap on it, as a card in hand
+    // is played (M6); with nothing offered for it, the tap picks it up.
+    if (inst.zone === 'command' && offerFor(id)) { play(id); return }
     if (inst.zone === 'battlefield') {
       if (declaring?.validAttackers?.includes(id)) {
         setChosen((was) => { const next = new Set(was); if (next.has(id)) next.delete(id); else next.add(id); return next })
@@ -837,6 +869,8 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
               target={glows.get(them)?.kind === 'target'}
               name={nameOfSeat(them)}
               life={sitting ? board.life[them] : null}
+              damage={board.engine?.commanderDamage?.[them] ?? null}
+              whose={whoseCommander}
             />
             <div className="game__theirhand" aria-label={`${nameOfSeat(them)}'s hand, ${theirHand} card${theirHand === 1 ? '' : 's'}`} role="img">
               {theirHand ? (
@@ -849,7 +883,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             <div className="ztiles ztiles--them" role="group" aria-label={`${nameOfSeat(them)}'s zones`}>
               {PILES.map((zone) => {
                 const n = zone === 'library' ? librarySize(board, them) : zoneOf(board, them, zone).length
-                const open = PUBLIC_PILES.includes(zone)
+                // A command zone is public (CR 903.6 puts the commander there face
+                // up), so at the engine's table it can be looked through, and its
+                // tile names what is in it.
+                const led = zone === 'command' ? commandCard(them) : null
+                const open = PUBLIC_PILES.includes(zone) || Boolean(engine && zone === 'command')
                 const Tag = open ? 'button' : 'span'
                 const holds = pileHolds(them, zone)
                 return (
@@ -864,7 +902,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                     className={`ztile${open ? '' : ' ztile--closed'}${zoneOpen === zone && zoneWho === them ? ' ztile--open' : ''}${holds ? ` ztile--${holds === 'target' || holds === 'choice' ? 'target' : 'playable'}` : ''}`}
                     onClick={open ? () => openZone(zone, them) : undefined}
                     aria-expanded={open ? zoneOpen === zone && zoneWho === them : undefined}
-                    aria-label={`${nameOfSeat(them)}'s ${ZONE_LABELS[zone].toLowerCase()}, ${n} card${n === 1 ? '' : 's'}${holds ? `, ${PILE_SAYS[holds]}` : ''}`}
+                    aria-label={`${nameOfSeat(them)}'s ${ZONE_LABELS[zone].toLowerCase()}, ${n} card${n === 1 ? '' : 's'}${led ? `: ${nameFor(led)}` : ''}${holds ? `, ${PILE_SAYS[holds]}` : ''}`}
                   >
                     <span className="ztile__label" aria-hidden="true">{TILE_LABELS[zone]}</span>
                     <span className={`ztile__face${zone === 'library' && n ? ' ztile__face--back' : ''}`} style={zone === 'command' && face ? { backgroundImage: `url("${face}")` } : undefined} aria-hidden="true">
@@ -1005,6 +1043,8 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             name={away ? (prefs.playerName || 'You') : 'You'}
             life={board.life[me]}
             onLife={engine ? undefined : (delta) => doAction({ type: 'life', delta })}
+            damage={board.engine?.commanderDamage?.[me] ?? null}
+            whose={whoseCommander}
           >
             <div className="plate__mana">
               <span className="plate__label">Untapped sources</span>
@@ -1095,17 +1135,34 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
         <div className="ztiles" role="group" aria-label="Your zones">
           {PILES.map((zone) => {
             const n = zone === 'library' ? librarySize(board, me) : zoneOf(board, me, zone).length
-            const face = zone === 'command' && showImages ? artUrl(commander) : null
+            // At the engine's table the command zone shows what the engine says is
+            // in it (M6); alone and at a shared table, the deck's own commander.
+            const led = zone === 'command' ? commandCard(me) : null
+            const face = zone === 'command' && showImages ? artUrl(engine ? (led ? cardFor(led) : null) : commander) : null
             const isOpen = zoneOpen === zone && zoneWho === me
             const holds = pileHolds(me, zone)
+            // A tap on the command zone casts the commander where the engine offers
+            // it, as a tap on a card in hand plays it (Law 2); the zone is still
+            // looked through the long way in — a hold (useHold, since a phone has
+            // no right-click), a right-click, or Shift+Enter from the keyboard —
+            // each said in its label. While a tap casts, the tile discloses
+            // nothing, so it says no `aria-expanded` (found in M6's review).
+            const casts = zone === 'command' ? castable(me) : null
+            const tapCasts = Boolean(casts && !choosing)
             return (
               <button
                 key={zone}
                 data-zone={zone}
                 className={`ztile${isOpen ? ' ztile--open' : ''}${holds ? ` ztile--${holds === 'target' || holds === 'choice' ? 'target' : 'playable'}` : ''}`}
-                onClick={() => openZone(zone)}
-                aria-expanded={isOpen}
-                aria-label={`${ZONE_LABELS[zone]}, ${n} card${n === 1 ? '' : 's'}${holds ? `, ${PILE_SAYS[holds]}` : ''}`}
+                onClick={() => { if (zone === 'command' && tileJustHeld()) return; if (tapCasts) play(casts.id); else openZone(zone) }}
+                onContextMenu={tapCasts ? (e) => { e.preventDefault(); if (!tileJustHeld()) openZone(zone) } : undefined}
+                onPointerDown={tapCasts ? (e) => holdTile(e, zone) : undefined}
+                onKeyDown={tapCasts ? (e) => { if (e.key === 'Enter' && e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); openZone(zone) } } : undefined}
+                onPointerEnter={led ? (e) => { if (e.pointerType === 'mouse') hoverCard(led.id, e.currentTarget) } : undefined}
+                onPointerLeave={led ? () => hoverCard(null) : undefined}
+                aria-expanded={tapCasts ? undefined : isOpen}
+                aria-keyshortcuts={tapCasts ? 'Shift+Enter' : undefined}
+                aria-label={`${ZONE_LABELS[zone]}, ${n} card${n === 1 ? '' : 's'}${led ? `: ${nameFor(led)}` : ''}${holds ? `, ${PILE_SAYS[holds]}` : ''}${tapCasts ? `, ${OPENS_INSTEAD}` : ''}`}
               >
                 <span className="ztile__label" aria-hidden="true">{TILE_LABELS[zone]}</span>
                 <span className={`ztile__face${zone === 'library' && n ? ' ztile__face--back' : ''}`} style={face ? { backgroundImage: `url("${face}")` } : undefined} aria-hidden="true">
@@ -1335,11 +1392,16 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
  * says so in its label; the prompt offers the seat by name, since a plate is
  * not a card to tap.
  */
-function Plate({ who, status, active = false, thinking = false, target = false, name, life, onLife, children }) {
+function Plate({ who, status, active = false, thinking = false, target = false, name, life, onLife, damage = null, whose = null, children }) {
+  // Commander damage at a Commander table (M6), under the life total once any
+  // is dealt, in words (lib/engine/commander.js): each commander's tally, told
+  // apart by whose it is where two share a name, and what they count towards.
+  const dealt = damageWords(damage, { whose })
+  const rule = damageRule(damage)
   return (
     <section
       className={`plate plate--${who}${active ? ' plate--active' : ''}${target ? ' plate--target' : ''}`}
-      aria-label={`${name}: ${status}${life == null ? '' : `, ${life} life`}${target ? ', a legal target' : ''}`}
+      aria-label={`${name}: ${status}${life == null ? '' : `, ${life} life`}${dealt ? `, ${dealt.charAt(0).toLowerCase()}${dealt.slice(1)}` : ''}${target ? ', a legal target' : ''}`}
     >
       <span className={`plate__status${active ? ' plate__status--turn' : ''}${thinking ? ' plate__status--thinking' : ''}`}>{status}</span>
       <span className="plate__name">{name}</span>
@@ -1348,6 +1410,8 @@ function Plate({ who, status, active = false, thinking = false, target = false, 
         <output className="plate__total" aria-label={life == null ? 'No life total' : `${life} life`}>{life ?? '—'}</output>
         {onLife && <button className="plate__step" onClick={() => onLife(1)} aria-label="Gain 1 life">+</button>}
       </div>
+      {/* The count, and once beside it what reaching the threshold does, the rule cited (found in M6's review, where only the number was cited). */}
+      {dealt && <p className="plate__cmd">{dealt}. {rule}</p>}
       {children}
     </section>
   )

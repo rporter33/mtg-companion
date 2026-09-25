@@ -5,6 +5,8 @@ import { nothingHeld, receiveView } from '../../lib/engine/stream.js'
 import { leaveOut, nameList, seatDeck } from '../../lib/engine/deck.js'
 import { levelLine, levelOf } from '../../lib/engine/levels.js'
 import { ANSWERS, NO_CHOICES, choicesFrom } from '../../lib/engine/choose.js'
+import { DEFAULT_OPPONENT, OPPONENT_KINDS, engineDeckLine, formatWord, insteadLine, setsOf } from '../../lib/engine/opponent.js'
+import { COMMANDER_GAME, formatLine, gameOf } from '../../lib/engine/commander.js'
 
 /**
  * A seat at a table the engine holds.
@@ -51,6 +53,17 @@ import { ANSWERS, NO_CHOICES, choicesFrom } from '../../lib/engine/choose.js'
  * engine deals one opens the game with the opening hands to keep (the owner's
  * "mulligans on", HANDOFF.md §3 item 3). A room that never says so deals every
  * hand kept, and the first status is simply the first stop of the game.
+ *
+ * And what the engine's seat is to play (M5): a copy of this deck, one of the
+ * player's other decks by the names the lobby checked, or a deck the engine
+ * builds, from the sets this deck uses or from the whole of its format. The
+ * lobby records the choice with the table (`chooseEngineDeck`); the sit carries
+ * it (`engineDeck`), and the log says once what the room reports was dealt.
+ *
+ * And which game the deck asks for (M6): the sit says so (`format`), a
+ * Commander deck bringing its commander apart from its library (`commander`),
+ * and the log says once which game the room reports was dealt — the Commander
+ * rules, or the ordinary ones and why.
  */
 /**
  * How long a press may go unanswered before the table says the engine is
@@ -76,7 +89,50 @@ export function agreeToLeaveOut(code, deckId, names) {
   remember(code, { ...(recall(code) ?? {}), without: { deckId, names } })
 }
 
-export default function useEngineRoom({ address, code, name, deck, deckLookup, cardsReady, level: chosen = null }) {
+/**
+ * Record, for one table, what its engine's seat is to play, as the lobby had
+ * it when the player sat down (M5): `{ kind: 'mirror' }`, `{ kind: 'deck',
+ * deckId, name, deck, sideboard }` with exactly the names the engine was asked
+ * about, or `{ kind: 'own', pool }`. A deck chosen but not sendable goes as the
+ * copy with `instead` saying why. Kept with the seat, as the cards left out
+ * are, so a reload of the table asks for the same deck.
+ */
+export function chooseEngineDeck(code, choice) {
+  if (!code) return
+  remember(code, { ...(recall(code) ?? {}), engineDeck: choice })
+}
+
+/**
+ * The engine's deck as the sit sends it, from what the lobby recorded for this
+ * table, read forgivingly — it was written by whatever build was running when
+ * the player sat down — or, where it recorded nothing, from the player's kept
+ * choice. `sets` are the sets the player's own deck uses (`setsOf`), sent only
+ * for a deck of the engine's own built from them. A deck of theirs with no
+ * names recorded cannot be sent, and goes as the copy with the reason.
+ */
+function engineDeckFor(recorded, kept, { formatId, sets }) {
+  const r = recorded && typeof recorded === 'object' && !Array.isArray(recorded) ? recorded : null
+  const kind = OPPONENT_KINDS.includes(r?.kind) ? r.kind : kept.kind
+  if (kind === 'own') {
+    const pool = r ? (r.pool === 'format' ? 'format' : 'sets') : kept.pool
+    return { sit: { kind: 'own', format: formatWord(formatId), sets: pool === 'sets' ? sets.map((s) => s.code) : null }, asked: 'own' }
+  }
+  if (kind === 'deck') {
+    const isList = (d) => Boolean(d) && typeof d === 'object' && !Array.isArray(d) && Object.keys(d).length > 0
+    if (r?.kind === 'deck' && isList(r.deck)) {
+      const name = typeof r.name === 'string' ? r.name : null
+      // Its commander, at a Commander game (M6), as the lobby had it; a commander
+      // written by any build is read forgivingly and dropped where it has no name.
+      const commander = r.commander && typeof r.commander === 'object' && typeof r.commander.name === 'string' && r.commander.name ? r.commander : null
+      return { sit: { kind: 'deck', name, deck: r.deck, ...(isList(r.sideboard) ? { sideboard: r.sideboard } : {}), ...(commander ? { commander } : {}) }, asked: 'deck' }
+    }
+    return { sit: { kind: 'mirror' }, asked: 'mirror', instead: 'missing' }
+  }
+  const instead = ['none', 'short', 'unloaded', 'leader'].includes(r?.instead) ? r.instead : null
+  return { sit: { kind: 'mirror' }, asked: 'mirror', ...(instead ? { instead, name: typeof r?.name === 'string' ? r.name : null } : {}) }
+}
+
+export default function useEngineRoom({ address, code, name, deck, deckLookup, cardsReady, level: chosen = null, opponent = DEFAULT_OPPONENT }) {
   const [wireStatus, setWireStatus] = useState('connecting')
   const [seat, setSeat] = useState(null)
   const [seats, setSeats] = useState([])
@@ -123,7 +179,11 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   // The deck by name, as a string: the lookup function is new on every
   // render, and an effect keyed on an object rebuilt from it would open a
   // new socket each time. The names themselves change only with the deck.
-  const deckKey = prepared && !unloaded ? JSON.stringify({ deck: prepared.seat.deck, sideboard: prepared.seat.sideboard }) : null
+  // A Commander deck's commander and the game it asks for go with it (M6): they
+  // are part of what the seat is, and change with the deck.
+  const deckKey = prepared && !unloaded
+    ? JSON.stringify({ deck: prepared.seat.deck, sideboard: prepared.seat.sideboard, ...(prepared.seat.game === COMMANDER_GAME ? { game: COMMANDER_GAME, commander: prepared.seat.commander ?? null, leaders: prepared.seat.leaders ?? 0 } : {}) })
+    : null
   const deckNames = useMemo(() => (deckKey ? JSON.parse(deckKey) : null), [deckKey])
   const leftKey = JSON.stringify(prepared?.left ?? [])
   const leftOut = useMemo(() => JSON.parse(leftKey), [leftKey])
@@ -138,6 +198,14 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   // What this seat may choose, once the room has said after the deal; nothing
   // until then, and nothing from a relay or an engine that never says.
   const [can, setCan] = useState(NO_CHOICES)
+  // What the engine's seat plays, once the room has said after the deal (M5):
+  // its report, null where it said nothing, undefined until the deal.
+  const [engineDeck, setEngineDeck] = useState(undefined)
+  const deckNoted = useRef(false)
+  // The game the room says it dealt (M6): Commander or the ordinary rules, and
+  // why where a Commander game was asked for and not dealt; undefined until the deal.
+  const [game, setGame] = useState(undefined)
+  const gameNoted = useRef(false)
   const sat = useRef(false)
   const sideNoted = useRef(false)
   const printingsNoted = useRef(false)
@@ -174,7 +242,17 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
     // The level rides along each time: before the deal it is the room's to
     // take, and after it the room keeps the one the game was dealt with.
     const asked = levelOf(chosen)
-    line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, deltas: true, answers: ANSWERS, mulligans: true, ...side, ...(asked ? { level: asked } : {}) }))
+    // What the engine's seat is to play, and the sets this deck uses, which a
+    // deck of the engine's own is built from by default. Worked out here, once
+    // the deck's names are, because the sets are read off the same cards.
+    const sets = setsOf(deck, deckLookup)
+    const ask = engineDeckFor(memory.engineDeck, opponent, { formatId: deck?.formatId, sets })
+    // Every sit says which game its deck asks for: a Commander deck a Commander
+    // game, bringing its commander where it has one to send, and every other deck
+    // the ordinary rules. Said by a sixty-card deck too, since M6's review: a sit
+    // that said nothing left a room's earlier Commander request standing.
+    const led = { format: gameOf(deck?.formatId), ...(deckNames.game === COMMANDER_GAME && deckNames.commander ? { commander: deckNames.commander } : {}) }
+    line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, deltas: true, answers: ANSWERS, mulligans: true, ...side, ...(asked ? { level: asked } : {}), engineDeck: ask.sit, ...led }))
     line.onMessage((m) => {
       if (m?.t !== 'engine') return
       switch (m.op) {
@@ -211,6 +289,39 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
             setLevel(levelOf(m.level))
             const kind = 'ai' in m ? m.ai : seating.current.length ? seating.current.find((x) => x.ai)?.ai ?? null : undefined
             const said = kind === undefined || kind === 'heuristic' ? levelLine('level' in m ? m.level : undefined, levelOf(chosen)) : null
+            if (said) note(said)
+          }
+          // What the engine's seat plays, said once, where the engine plays a
+          // seat at all: why a deck chosen for it could not be sent, and then
+          // what the room says was dealt — a deck of its own by its colours and
+          // where it was built from, and any fallback with its reason. A relay
+          // from before the choice sends no word of it, which is said where the
+          // player asked for anything but the copy every table used to deal.
+          // The game dealt goes with it, since it is why a Commander deck of the
+          // engine's own was not built at a table dealt by the ordinary rules.
+          const dealtGame = m.format && typeof m.format === 'object' && !Array.isArray(m.format) ? m.format : undefined
+          if (m.engineSeat && !deckNoted.current) {
+            deckNoted.current = true
+            const kind = 'ai' in m ? m.ai : seating.current.length ? seating.current.find((x) => x.ai)?.ai ?? null : undefined
+            const report = m.engineDeck && typeof m.engineDeck === 'object' ? m.engineDeck : undefined
+            setEngineDeck(report ?? null)
+            if (kind !== null) {
+              const instead = insteadLine(ask.instead, ask.name)
+              if (instead) note(instead)
+              const told = engineDeckLine(report, { asked: ask.asked, sets, game: dealtGame })
+              if (told) note(told)
+            }
+          }
+          // Which game was dealt, said once, after the deal: the Commander rules,
+          // or the ordinary ones and why, where this deck asked for Commander.
+          // A room from before Commander says nothing, and dealt the ordinary game.
+          if (m.engineSeat && !gameNoted.current) {
+            gameNoted.current = true
+            const report = dealtGame
+            setGame(report ?? null)
+            const said = deckNames.game === COMMANDER_GAME && deckNames.leaders > 1 && report?.played !== COMMANDER_GAME
+              ? 'The engine deals one commander, and this deck has two, so the game is played by the ordinary rules: 20 life each, and no command zone.'
+              : formatLine(report, deckNames.game ?? 'standard')
             if (said) note(said)
           }
           if (!sat.current) {
@@ -329,7 +440,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   }, [])
 
   return {
-    run, seat, seats, status, refusal, gone, wireStatus, unloaded, leftOut, sideboardLeftOut, level, answering, slow, can,
+    run, seat, seats, status, refusal, gone, wireStatus, unloaded, leftOut, sideboardLeftOut, level, answering, slow, can, engineDeck, game,
     act, decide, cardFor, moveCard,
     refuse: (message) => setRefusal({ message }),
     clearRefusal: () => setRefusal(null),

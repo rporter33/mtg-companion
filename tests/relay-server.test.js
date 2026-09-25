@@ -352,12 +352,12 @@ describe('an enforced room', () => {
   const DECK = { Mountain: 14, 'Raging Goblin': 6 }
 
   /** A client at an enforced room: the raw messages, kept. */
-  async function join(code, name, { deck = DECK, seat = null, sideboard = null, deltas = false, level = null, answers = null, mulligans = false } = {}) {
+  async function join(code, name, { deck = DECK, seat = null, sideboard = null, deltas = false, level = null, answers = null, mulligans = false, engineDeck = undefined, format = undefined, commander = undefined } = {}) {
     const api = roomsApi(base)
     const got = []
     const wire = relay({ url: api.socketUrl(code), WebSocket })
     wire.onMessage((m) => got.push(m))
-    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat, ...(sideboard ? { sideboard } : {}), ...(deltas ? { deltas: true } : {}), ...(level ? { level } : {}), ...(answers ? { answers } : {}), ...(mulligans ? { mulligans: true } : {}) }))
+    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat, ...(sideboard ? { sideboard } : {}), ...(deltas ? { deltas: true } : {}), ...(level ? { level } : {}), ...(answers ? { answers } : {}), ...(mulligans ? { mulligans: true } : {}), ...(engineDeck !== undefined ? { engineDeck } : {}), ...(format !== undefined ? { format } : {}), ...(commander !== undefined ? { commander } : {}) }))
     const last = (op) => [...got].reverse().find((m) => m.t === 'engine' && m.op === op) ?? null
     await until(() => last('seated'))
     return { got, wire, last, send: (m) => wire.send({ t: 'engine', ...m }), leave: () => wire.close() }
@@ -581,6 +581,368 @@ describe('an enforced room', () => {
       } finally {
         delete process.env.FAKE_HOLD_HELLO
       }
+    })
+  })
+
+  /**
+   * What the engine's seat plays (HANDOFF.md, M5, the owner's answer of
+   * 2026-09-25): a copy of the person's deck, one of their decks, or one the
+   * engine builds, from the sets the person's deck uses or from the whole
+   * format. The sit asks, the room keeps the ask until the deal, and every
+   * seated after it says what was dealt — and never a card of it.
+   */
+  describe('what the engine\'s seat plays', () => {
+    const dealtSeat = (who) => [...who.got].reverse().find((m) => m.op === 'seated' && m.engineSeat) ?? null
+    const engineAt = (code) => relayServer.rooms.get(code).engine.engine
+    const sentFor = async (code) => (await engineAt(code).call('lastNew')).request.players
+    const ELVES = { Forest: 20, 'Llanowar Elves': 20 }
+
+    it('deals a copy of the person\'s deck where nothing is asked, as every room did, and says so after the deal', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { sideboard: { 'Lava Axe': 2 } })
+      // The seated that answers the sit comes before any deal and says nothing of it.
+      expect(you.got.find((m) => m.op === 'seated')).not.toHaveProperty('engineDeck')
+      await until(() => dealtSeat(you), 5000)
+      const [person, bot] = await sentFor(code)
+      expect(bot).toMatchObject({ ai: 'heuristic', deck: DECK, sideboard: { 'Lava Axe': 2 } })
+      expect(person.deck).toEqual(DECK)
+      expect(dealtSeat(you).engineDeck).toEqual({ asked: 'mirror', played: 'mirror', cards: 20, colours: ['R'] })
+      expect((await api.peek(code)).engineDeck).toEqual(dealtSeat(you).engineDeck)
+      you.leave()
+    })
+
+    it('deals one of the person\'s other decks by its names, and says it by its name', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { engineDeck: { kind: 'deck', name: 'Elves', deck: ELVES, sideboard: { Naturalize: 2 } } })
+      // Asked, and not yet dealt: the room says what it was asked.
+      expect((await api.peek(code)).engineDeck).toMatchObject({ asked: 'deck', name: 'Elves' })
+      await until(() => dealtSeat(you), 5000)
+      const [person, bot] = await sentFor(code)
+      expect(bot).toMatchObject({ deck: ELVES, sideboard: { Naturalize: 2 } })
+      expect(person.deck).toEqual(DECK)
+      expect(dealtSeat(you).engineDeck).toEqual({ asked: 'deck', played: 'deck', cards: 40, colours: ['R'], name: 'Elves' })
+      you.leave()
+    })
+
+    it('asks the engine to build a deck of its own from the sets asked, to the format, and says what it built without a card of it', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { engineDeck: { kind: 'own', format: 'legacy', sets: ['por', 'sld'] } })
+      // Said with the format asked, so a lobby can say the copy while the engine deals where it builds none.
+      expect((await api.peek(code)).engineDeck).toEqual({ asked: 'own', pool: 'sets', format: 'legacy' })
+      await until(() => dealtSeat(you), 5000)
+      const [person, bot] = await sentFor(code)
+      expect(bot).toEqual({ name: 'The engine', deck: 'own', format: 'legacy', sets: ['por', 'sld'], ai: 'heuristic', autoPass: false })
+      expect(person.deck).toEqual(DECK)
+      const said = dealtSeat(you).engineDeck
+      expect(said).toEqual({
+        asked: 'own', played: 'own', cards: 60, colours: ['R', 'G'], format: 'legacy', formatName: 'Legacy',
+        from: 'sets', sets: [{ code: 'POR', name: 'Portal' }], missingSets: ['sld'],
+      })
+      expect((await api.peek(code)).engineDeck).toEqual(said)
+      you.leave()
+    })
+
+    it('asks for the whole format where the switch says so, sending no sets at all', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { engineDeck: { kind: 'own', format: 'standard', sets: null } })
+      await until(() => dealtSeat(you), 5000)
+      expect((await sentFor(code))[1]).not.toHaveProperty('sets')
+      expect(dealtSeat(you).engineDeck).toMatchObject({ played: 'own', from: 'format', format: 'standard' })
+      expect(dealtSeat(you).engineDeck).not.toHaveProperty('fellBack')
+      you.leave()
+    })
+
+    // One room each: a room is an engine started, and several in one test
+    // outran its time beside the JVM of the live suite (found in M5's run).
+    it.each([
+      ['a format it builds none to', { kind: 'own', format: 'brawl', sets: ['por'] }, { asked: 'own', played: 'mirror', format: 'brawl', fellBack: 'format', why: 'The engine builds no "brawl" deck of its own.' }],
+      ['a Commander deck of its own, at a table dealt by the ordinary rules', { kind: 'own', format: 'commander', sets: ['por'] }, { asked: 'own', played: 'mirror', format: 'commander', fellBack: 'format', why: 'A "commander" deck of its own is built only for a Commander game.' }],
+      ['sets too thin to build from', { kind: 'own', format: 'standard', sets: ['trc'] }, { asked: 'own', played: 'own', from: 'format', fellBack: 'thin', why: 'The deck came to 12 cards, short of 60.' }],
+      ['sets it has not got', { kind: 'own', format: 'standard', sets: ['zzz'] }, { asked: 'own', played: 'own', from: 'format', fellBack: 'sets', missingSets: ['zzz'] }],
+      ['a deck with no set to go by', { kind: 'own', format: 'standard', sets: [] }, { asked: 'own', played: 'own', from: 'format', fellBack: 'sets' }],
+    ])('passes on the engine\'s fallback and its reason: %s', async (_, engineDeck, expected) => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { engineDeck })
+      await until(() => dealtSeat(you), 5000)
+      expect(dealtSeat(you).engineDeck).toMatchObject(expected)
+      you.leave()
+    })
+
+    it('passes on only what a client may be told of the engine\'s deck, whatever else the engine says', async () => {
+      // The stand-in says its cards by name, a count that is no count, colours as
+      // a word, sets it cannot name, and a fallback and a commander that are not
+      // words at all; the room keeps what it can read and drops the rest.
+      process.env.FAKE_DECK_REPORT = 'noisy'
+      try {
+        const api = roomsApi(base)
+        const { code } = await api.open({ seats: 2, enforced: true })
+        const you = await join(code, 'Robin', { engineDeck: { kind: 'own', format: 'legacy', sets: ['por'] } })
+        await until(() => dealtSeat(you), 5000)
+        const said = dealtSeat(you).engineDeck
+        expect(said).toEqual({ asked: 'own', played: 'own', colours: [], format: 'legacy', formatName: 'Legacy', from: 'sets', sets: [{ code: 'POR', name: 'Portal' }] })
+        expect((await api.peek(code)).engineDeck).toEqual(said)
+        you.leave()
+      } finally {
+        delete process.env.FAKE_DECK_REPORT
+      }
+    })
+
+    it('deals an older engine the copy, since it cannot build one, and says that is why', async () => {
+      // The environment is read when the relay starts that room's engine, at the sit.
+      process.env.FAKE_PROTOCOL = '6'
+      try {
+        const api = roomsApi(base)
+        const { code } = await api.open({ seats: 2, enforced: true })
+        const you = await join(code, 'Robin', { engineDeck: { kind: 'own', format: 'standard', sets: ['por'] } })
+        await until(() => dealtSeat(you), 5000)
+        // Names, which an engine at 6 reads, where "own" it would refuse as no deck at all.
+        expect((await sentFor(code))[1].deck).toEqual(DECK)
+        expect(dealtSeat(you).engineDeck).toEqual({ asked: 'own', played: 'mirror', colours: [], format: 'standard', fellBack: 'engine' })
+        you.leave()
+        // One of the person's decks goes as names, which it can read.
+        const other = await api.open({ seats: 2, enforced: true })
+        const again = await join(other.code, 'Robin', { engineDeck: { kind: 'deck', name: 'Elves', deck: ELVES } })
+        await until(() => dealtSeat(again), 5000)
+        expect((await sentFor(other.code))[1].deck).toEqual(ELVES)
+        expect(dealtSeat(again).engineDeck).toMatchObject({ asked: 'deck', played: 'deck', name: 'Elves' })
+        again.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
+    }, 15_000)
+
+    it('takes the ask a sit brings until the deal, and keeps the game\'s after it', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { engineDeck: { kind: 'own', format: 'legacy', sets: ['por'] } })
+      await until(() => dealtSeat(you), 5000)
+      you.leave()
+      const again = await join(code, 'Robin', { seat: 'p1', engineDeck: { kind: 'deck', name: 'Elves', deck: ELVES } })
+      await until(() => dealtSeat(again), 5000)
+      expect(dealtSeat(again).engineDeck).toMatchObject({ asked: 'own', played: 'own', from: 'sets' })
+      expect((await sentFor(code))[1].deck).toBe('own')
+      again.leave()
+    }, 15_000)
+
+    it.each([
+      ['a bare word', 'own'],
+      ['a deck that is not a list', { kind: 'deck', deck: [] }],
+      ['a deck with no cards', { kind: 'deck' }],
+      ['a kind it has no word for', { kind: 'someday' }],
+      ['a list', [1, 2]],
+    ])('reads an ask it cannot make sense of as none, and deals the copy: %s', async (_, engineDeck) => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { engineDeck })
+      await until(() => dealtSeat(you), 5000)
+      expect((await sentFor(code))[1].deck).toEqual(DECK)
+      expect(dealtSeat(you).engineDeck).toMatchObject({ asked: 'mirror', played: 'mirror' })
+      you.leave()
+    })
+
+    it('says nothing of an engine\'s deck at a table where the engine plays no seat', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true, ai: null })
+      const a = await join(code, 'Robin', { engineDeck: { kind: 'own', format: 'standard', sets: null } })
+      const b = await join(code, 'Sam', { deck: ELVES })
+      await until(() => dealtSeat(a) && dealtSeat(b), 5000)
+      expect(dealtSeat(a)).not.toHaveProperty('engineDeck')
+      expect(await api.peek(code)).not.toHaveProperty('engineDeck')
+      expect((await sentFor(code)).map((p) => p.deck)).toEqual([DECK, ELVES])
+      a.leave(); b.leave()
+    })
+  })
+
+  /**
+   * A Commander game (HANDOFF.md, M6). A sit with a Commander deck says so and
+   * brings its commander; the room asks the engine for the game where the engine
+   * deals one and every person brought a commander, gives the engine's seat one
+   * too, and says after the deal which game it dealt and why.
+   */
+  describe('a Commander game', () => {
+    const dealtSeat = (who) => [...who.got].reverse().find((m) => m.op === 'seated' && m.engineSeat) ?? null
+    const engineAt = (code) => relayServer.rooms.get(code).engine.engine
+    const lastNew = async (code) => (await engineAt(code).call('lastNew')).request
+    const LIBRARY = { Forest: 50, Plains: 49 }
+    const RHYS = { name: 'Rhys the Redeemed', set: 'shm', number: '237' }
+    const sitCommander = (extra = {}) => ({ deck: LIBRARY, format: 'commander', commander: RHYS, ...extra })
+
+    it('asks the engine for one, the person\'s commander with their deck and the copy\'s with its, and says so after the deal', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitCommander())
+      // Asked, not yet dealt: the room says what it was asked.
+      expect((await api.peek(code)).format).toMatchObject({ asked: 'commander' })
+      await until(() => dealtSeat(you), 5000)
+      const sent = await lastNew(code)
+      expect(sent.format).toBe('commander')
+      expect(sent.players[0]).toMatchObject({ deck: LIBRARY, commander: RHYS })
+      // The copy is the whole of what the person brought, commander and all.
+      expect(sent.players[1]).toMatchObject({ ai: 'heuristic', deck: LIBRARY, commander: RHYS })
+      expect(dealtSeat(you).format).toEqual({ asked: 'commander', played: 'commander' })
+      // The engine's commander is said by name: it begins face up in the command zone.
+      expect(dealtSeat(you).engineDeck).toEqual({ asked: 'mirror', played: 'mirror', cards: 100, colours: ['R'], commander: 'Rhys the Redeemed' })
+      expect(await api.peek(code)).toMatchObject({ format: { asked: 'commander', played: 'commander' } })
+      you.leave()
+    })
+
+    it('passes the offer from the command zone, its tax, and the tally of commander damage through untouched', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitCommander())
+      await until(() => you.last('view'), 5000)
+      const cast = you.last('status').status.actions.find((a) => a.from === 'command')
+      expect(cast).toMatchObject({ type: 'CastSpell', card: 'cmd-e0', manaCost: '{G/W}', commanderTax: { casts: 0, generic: 0 } })
+      const view = you.last('view').state
+      expect(view.zones.find((z) => z.zoneId.zoneType === 'Command' && z.zoneId.ownerId === 'e0').cardIds).toEqual(['cmd-e0'])
+      expect(view.cards['cmd-e0']).toMatchObject({ name: 'Rhys the Redeemed', isCommander: true })
+      expect(view.players.map((p) => p.life)).toEqual([40, 40])
+      await engineAt(code).call('commanderDamage', { to: 'e1', from: 'e0', amount: 3 })
+      you.send({ op: 'resync' })
+      await until(() => you.last('view')?.state?.players?.[1]?.commanderDamage, 5000)
+      expect(you.last('view').state.players[1].commanderDamage).toEqual([{ commanderId: 'cmd-e0', commanderName: 'Rhys the Redeemed', controllerId: 'e0', amount: 3, threshold: 21 }])
+      you.leave()
+    })
+
+    it('deals another of the person\'s decks with its own commander, and the copy where it came without one', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const SYTHIS = { name: "Sythis, Harvest's Hand" }
+      const you = await join(code, 'Robin', sitCommander({ engineDeck: { kind: 'deck', name: 'Enchantress', deck: LIBRARY, commander: SYTHIS } }))
+      await until(() => dealtSeat(you), 5000)
+      expect((await lastNew(code)).players[1]).toMatchObject({ deck: LIBRARY, commander: SYTHIS })
+      expect(dealtSeat(you).engineDeck).toMatchObject({ asked: 'deck', played: 'deck', name: 'Enchantress', commander: "Sythis, Harvest's Hand" })
+      you.leave()
+      const other = await api.open({ seats: 2, enforced: true })
+      const again = await join(other.code, 'Robin', sitCommander({ engineDeck: { kind: 'deck', name: 'Leaderless', deck: LIBRARY } }))
+      await until(() => dealtSeat(again), 5000)
+      expect((await lastNew(other.code)).players[1]).toMatchObject({ deck: LIBRARY, commander: RHYS })
+      expect(dealtSeat(again).engineDeck).toMatchObject({ asked: 'deck', played: 'mirror', name: 'Leaderless', fellBack: 'commander', commander: 'Rhys the Redeemed' })
+      again.leave()
+    }, 15_000)
+
+    it('asks for a Commander deck of the engine\'s own, and passes on the commander it chose', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitCommander({ engineDeck: { kind: 'own', format: 'commander', sets: null } }))
+      await until(() => dealtSeat(you), 5000)
+      const bot = (await lastNew(code)).players[1]
+      expect(bot).toMatchObject({ deck: 'own', format: 'commander' })
+      expect(bot).not.toHaveProperty('commander')
+      expect(dealtSeat(you).engineDeck).toMatchObject({ asked: 'own', played: 'own', cards: 100, format: 'commander', from: 'format', commander: "Sythis, Harvest's Hand" })
+      you.leave()
+    })
+
+    it('deals the ordinary game where a person brought no commander, and says why', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      // Played without the cards the engine does not know, the commander among them,
+      // as the lobby's gate offers; a deck with two commanders sits the same way.
+      const you = await join(code, 'Robin', { deck: LIBRARY, format: 'commander' })
+      await until(() => dealtSeat(you), 5000)
+      const sent = await lastNew(code)
+      expect(sent).not.toHaveProperty('format')
+      expect(sent.players.every((p) => !('commander' in p))).toBe(true)
+      expect(dealtSeat(you).format).toEqual({ asked: 'commander', played: 'standard', fellBack: 'commander' })
+      expect(dealtSeat(you).engineDeck).not.toHaveProperty('commander')
+      you.leave()
+    })
+
+    it('passes on why a Commander deck of the engine\'s own was not built at the ordinary game dealt instead', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { deck: LIBRARY, format: 'commander', engineDeck: { kind: 'own', format: 'commander', sets: null } })
+      await until(() => dealtSeat(you), 5000)
+      expect((await lastNew(code)).players[1]).toMatchObject({ deck: 'own', format: 'commander' })
+      // The engine's reason and the room's go out together, which is how the table tells this from an engine that builds none.
+      expect(dealtSeat(you).format).toEqual({ asked: 'commander', played: 'standard', fellBack: 'commander' })
+      expect(dealtSeat(you).engineDeck).toMatchObject({ asked: 'own', played: 'mirror', format: 'commander', fellBack: 'format', why: 'A "commander" deck of its own is built only for a Commander game.' })
+      you.leave()
+    })
+
+    it('never asks an engine older than Commander for one, and says that is why', async () => {
+      process.env.FAKE_PROTOCOL = '7'
+      try {
+        const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+        const you = await join(code, 'Robin', sitCommander())
+        await until(() => dealtSeat(you), 5000)
+        const sent = await lastNew(code)
+        expect(sent).not.toHaveProperty('format')
+        // The deck as every room before Commander sent it: the library alone.
+        expect(sent.players.map((p) => p.deck)).toEqual([LIBRARY, LIBRARY])
+        expect(sent.players.every((p) => !('commander' in p))).toBe(true)
+        expect(dealtSeat(you).format).toEqual({ asked: 'commander', played: 'standard', fellBack: 'engine' })
+        you.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
+    })
+
+    it('keeps the ordinary game for a sit that asks for none, as every room did, and says so', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      expect((await api.peek(code)).format).toEqual({ asked: 'standard' })
+      // A commander sent with no Commander game asked for is not read.
+      const you = await join(code, 'Robin', { commander: RHYS })
+      await until(() => dealtSeat(you), 5000)
+      const sent = await lastNew(code)
+      expect(sent).not.toHaveProperty('format')
+      expect(sent.players.every((p) => !('commander' in p))).toBe(true)
+      expect(dealtSeat(you).format).toEqual({ asked: 'standard', played: 'standard' })
+      you.leave()
+    })
+
+    it('takes the game a sit brings until the deal, and keeps the game\'s after it', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitCommander())
+      await until(() => dealtSeat(you), 5000)
+      you.leave()
+      const again = await join(code, 'Robin', { seat: 'p1', format: 'standard' })
+      await until(() => dealtSeat(again), 5000)
+      expect(dealtSeat(again).format).toEqual({ asked: 'commander', played: 'commander' })
+      again.leave()
+    }, 15_000)
+
+    it('takes the game from the decks the people sit with, so a sit again with a sixty-card deck no longer asks for Commander', async () => {
+      // Found in M6's review: the room kept the last game a sit named, and a sit
+      // naming none — as a sixty-card deck's did — left a Commander request standing.
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 3, enforced: true })
+      const first = await join(code, 'Robin', sitCommander())
+      expect((await api.peek(code)).format).toEqual({ asked: 'commander' })
+      // Waiting for Sam, Robin sits again with a sixty-card deck, from a tab that names no game at all.
+      const again = await join(code, 'Robin', { seat: 'p1' })
+      expect((await api.peek(code)).format).toEqual({ asked: 'standard' })
+      const sam = await join(code, 'Sam', { format: 'standard' })
+      await until(() => dealtSeat(again) && dealtSeat(sam), 5000)
+      expect(await lastNew(code)).not.toHaveProperty('format')
+      expect(dealtSeat(sam).format).toEqual({ asked: 'standard', played: 'standard' })
+      expect((await api.peek(code)).format).toEqual({ asked: 'standard', played: 'standard' })
+      first.leave(); again.leave(); sam.leave()
+    }, 15_000)
+
+    it.each([
+      ['a bare name', 'Rhys the Redeemed', { name: 'Rhys the Redeemed' }],
+      ['a printing with half its number', { name: 'Rhys the Redeemed', set: 'shm' }, { name: 'Rhys the Redeemed' }],
+      ['no name', { set: 'shm', number: '237' }, null],
+      ['a list', ['Rhys the Redeemed'], null],
+    ])('reads a commander forgivingly: %s', async (_, commander, expected) => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { deck: LIBRARY, format: 'commander', commander })
+      await until(() => dealtSeat(you), 5000)
+      const sent = await lastNew(code)
+      if (expected) expect(sent.players[0].commander).toEqual(expected)
+      else expect(dealtSeat(you).format).toMatchObject({ played: 'standard', fellBack: 'commander' })
+      you.leave()
+    })
+
+    it('reads a game it has no word for as none, and deals the ordinary one', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitCommander({ format: 'brawl' }))
+      await until(() => dealtSeat(you), 5000)
+      expect(await lastNew(code)).not.toHaveProperty('format')
+      expect(dealtSeat(you).format).toEqual({ asked: 'standard', played: 'standard' })
+      you.leave()
     })
   })
 

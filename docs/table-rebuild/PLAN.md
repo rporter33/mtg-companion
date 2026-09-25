@@ -1832,6 +1832,602 @@ no name for ("their"); the unit suite, `decisions.spec.mjs` (81) and the axe
 sweep (25) were run again on a build with it. The token check clean. No JVM
 and no preview left running.
 
+### M5: the engine's own deck — 2026-09-25
+
+**The owner's answer, and what it asked for.** On 2026-09-25 the owner
+decided the shape (`HANDOFF.md` §3 item 16): the lobby offers the engine's deck
+as a copy of yours, one of your decks, or one the engine builds; and when it
+builds one, a switch chooses its card pool — by default only the sets the
+player's own deck uses, a fair fight, and with the switch, the whole format.
+The seats panel names what the engine chose, the log names the deck's colours
+once, games are seeded so two differ, and a deck the generator cannot build
+from the sets chosen falls back in words, never silently. The defaults the
+answer left open were taken and written down as §3 item 17.
+
+**How Argentum builds a deck, read before anything was built.** The brief's
+two signatures are right: `ConstructedDeckGenerator.generate(setCodes, format)`
+and `generate(format)`, returning names to counts. What the brief did not say:
+
+1. It needs a `BoosterGenerator` of set configurations and a `CardRegistry`, and
+   takes a `kotlin.random.Random`, "pass a seeded Random to make a run
+   reproducible — the arena does". Its pool is `FormatCardPool`: a set's own
+   cards and its reprint rows resolved through the registry (or every card in
+   the registry, for no sets), filtered to `format in card.legalFormats`, meld
+   results out.
+2. It refuses the Commander family outright ("Use CommanderDeckGenerator
+   instead"), an unknown set code, and a pool with no legal card, each with an
+   `IllegalArgumentException` in words.
+3. It shortlists 120 spells by Draftsim's ratings, cubed, by weighted sampling
+   (`weightedSample`), hands four of each to Argentum's port of Draftsim's
+   autobuilder at the constructed shape (36 spells, 24 basics), and pins the
+   basics to the set's art as `Plains#BLB-262`. Where Draftsim builds nothing it
+   falls back to `RandomDeckGenerator`, whose basics are `Plains#262`, and which
+   stops short, silently, when the pool runs out of cards to add.
+4. Argentum's own game server (`RandomDeckResolver`) falls back from a
+   constructed build that fails to a sealed pool, and from a commander one to a
+   deck with no commander. Neither fits a table that plays a sixty-card
+   format, so the fallbacks here are the owner's words instead: the whole
+   format, then the copy.
+5. `legalFormats` is empty on every card definition as the catalogue gives it.
+   Game-server fills it at start-up from the Scryfall legalities Argentum ships
+   (`LegalityData.stamp`, in `withLegalities`); this process never had, because
+   nothing before M5 read it. The first build here therefore answered "No
+   Standard-legal cards available" for every format and every set.
+
+**What was built.**
+
+In the process (`Server.kt`), protocol 7. `new` takes, on an engine's player,
+`deck: "mirror"` — the first person's deck and sideboard as sent — or
+`deck: "own"` with `format` (Scryfall's word) and `sets` (a list of Scryfall
+codes, or none for the whole format), beside a list of names as before
+(`deckFor`). "own" is `ConstructedDeckGenerator` over a `BoosterGenerator` built
+from every set as game-server builds its own, seeded from the game's seed plus
+the seat's place, held to at least 60 cards of names a deck may hold. The
+fallbacks: sets it has not got, or none in the list, to the whole format
+(`sets`); too few legal cards in them, to the whole format (`thin`); a format
+it builds no deck to, or a whole format it cannot build from, to the copy
+(`format`, `thin`); anything else as `failed` with Argentum's words. The seat in
+the reply says `deck`: what was asked and played, cards, colours, format, where
+it was built from, the sets it drew on and those it has not got, and any
+fallback and why — never a card. Every card registered is stamped with its
+legalities, as game-server does, timed on its own in `hello` (`legalitiesMs`),
+which also lists the formats it builds to (`decks.formats`). `decklist` gives a
+seat's dealt deck card by card, with each card's type line, cost, colours and
+legal formats, for measuring and the live tests; the relay never asks for it.
+
+In the room (`relay-engine.mjs`). A sit says `engineDeck`, read forgivingly
+(`engineDeckOf`); the room keeps the last one until the deal, as it keeps the
+level. A copy and another deck go to the engine as names, which every protocol
+reads; "own" only to an engine at 7, and an older one is dealt the copy and the
+room says why (`fellBack: "engine"`). Every `seated` after the deal says
+`engineDeck` (`reportOf` keeps only what a client may be told), and `GET
+/rooms/<code>` says the same, or before the deal what was asked.
+
+In the client. `src/lib/engine/opponent.js` holds the choice (`chosenOpponent`,
+read forgivingly from preferences; `DEFAULT_OPPONENT`), the sets a deck uses
+(`setsOf`: each main-deck printing's set, basic lands left out, the most copies
+first) and every word said about the engine's deck (`colourWords`, `seatWords`,
+`engineDeckLine`, `insteadLine`). The lobby offers the three in the seats panel
+as radios beside the levels, with a `<select>` of the shelf's decks — one the
+engine does not wholly know listed but not pickable, with the reason — and a
+switch for the pool (`role="switch"`, off by default, its line saying which
+sets: "Goblins uses Portal"), or, for a Commander-family deck, a line saying the
+engine builds no such deck of its own. The choice is kept with the player's
+table preferences (`engineOpponent`). Sitting down records with the table what
+the sit is to send (`chooseEngineDeck`): for one of your decks, exactly the
+names the lobby's check asked the engine about, and the lobby waits for that
+deck's answer as it waits for the player's. The table's seat sits with it
+(`engineDeck`), and says once in the log what the room reports was dealt; the
+seats panel names it — "The engine, with a deck of its own: green-blue from
+Portal" — and says any fallback beside the seat. The stand-in engine speaks 7.
+
+**Measured.** On the owner's machine, 2026-09-25, the real engine, twenty
+seeds a pool, the person's seat holding Portal goblins:
+
+| Pool | Build (median / slowest) | Legal by the app's validator | 60 cards | Different decks | A spell its lands cannot cast |
+| --- | --- | --- | --- | --- | --- |
+| Standard, Bloomburrow and Duskmourn | 1,046 / 1,696 ms | 20 of 20 | 20 | 20 | 5 decks, 15 copies |
+| Standard, Bloomburrow | 1,038 / 1,448 ms | 20 | 20 | 20 | 4 decks, 10 copies |
+| Standard, the whole format | 1,014 / 1,257 ms | 20 | 20 | 20 | 1 deck, 4 copies |
+| Modern, the whole format | 1,040 / 1,370 ms | 20 | 20 | 20 | 6 decks, 25 copies |
+| Pioneer, the whole format | — | — | — | — | 5 decks, 14 copies |
+| Pauper, Portal | 517 / 738 ms | 20 | 20 | **1** | none |
+| Legacy, Portal | 766 / 1,144 ms | 20 | 20 | 20 | none |
+
+Pioneer was measured in a second run, for the last column alone. The first build in a process took 2,567 ms, Draftsim's ratings loading; a deal
+with a copy, for comparison, 6 ms at the median. So a deck of its own adds about
+a second to a deal that already waits some thirty on the corpus. Stamping the
+legalities took 601–820 ms of a load of 27.3–32.9 s over three fresh processes,
+and the heap after loading was 126–127 MB, where M1 measured 110. That load is
+twice M1's 15.4 s on the same machine, and 0.7 s of it is this milestone's; the
+rest was the machine that day (a process built before the stamping answered in
+22.6 s earlier in the session, and one built after it in 24.0 s). In the
+browser against the real engine, from pressing Sit to the log's line took 57 s:
+the lobby's check of the deck loading one engine and the room's deal loading
+another, as at M1. "Legal" is the app's own `validateDeck`, reading each card by
+its name with the engine's copy of Scryfall's legalities — the same data the
+generator filtered on — so what it proves beyond the filter is the size, the
+four-copy limit, the basics, and that the deck dealt is the one built
+(`tests/engine-live.test.js` checks the hand and library come to 60). "Cannot
+cast" counts a spell with a coloured symbol none of the deck's basics make, a
+hybrid castable by either half and a Phyrexian one with life, by the cost the
+engine gives it.
+
+**Two things of Argentum's, found by the measuring and said rather than worked
+round.** First, a pool of 120 spells or fewer leaves `weightedSample` nothing to
+choose (`if (count >= size) return this`), and Draftsim's autobuilder has no
+randomness of its own, so it builds the same deck from every seed: Portal's
+commons in Pauper, one deck in twenty. "Seeded per game so two games differ"
+holds wherever the builder has a choice to make, and there it held 20 in 20
+every time. Second, a fifth of its builds hold a spell of a colour its basics
+do not make — four Overlord of the Floodpits in a white-green deck, Sentinel of
+the Nameless City in a deck with no Forest — since its manabase is counted from
+the two colours it settled on and its picks are not all in them. That is why
+the engine's deck is named by the colours its basics make (`coloursOf`): named
+by its spells, a black-green deck holding Vibrance, a hybrid, read as black,
+red and green on the first build. Both are for upstream, as `PLAN.md` says
+Argentum is: a report, not a fork.
+
+**The run in a browser.** `tests/browser/engine-deck.spec.mjs`, 43 checks,
+against the stand-in through the real relay: the three choices beside the seat,
+a copy chosen for a first game and nothing kept until the player chooses; at a
+Commander table the line saying the engine builds no Commander deck of its own,
+and no switch; in Standard the switch, off, "Off: it builds only from the sets
+your deck uses, for a fair fight. Goblins uses Portal.", turned by Space, said
+in words and in `aria-checked`, kept; one of your decks by a `<select>` naming
+the shelf, "Mystery (the engine does not know every card)" disabled; the arrow
+keys between the radios; all of it after a reload; axe clean at 1280 and at
+390, which fits without sideways scrolling; and each choice to the engine and
+back — the names the lobby checked dealt to the engine and the log saying "The
+engine plays your deck Elves."; "own" asked with `format: "standard"` and
+`sets: ["por"]`, the log saying once "The engine plays a deck of its own, built
+by Argentum's deck builder: red-green, from Portal." and the seat list "The
+engine, with a deck of its own: red-green from Portal"; and Elves, whose
+Foundations the stand-in has not got, saying "The engine has none of the sets
+your deck uses, so it built its deck from the whole of Standard instead:
+black-green." in the log and beside the seat. Then by hand against the real
+engine through the real relay (a scratch script, not kept): a Pauper deck of
+Portal goblins, "own" from its sets — the engine dealt Charging Rhino, Man-o'-War,
+Snapping Drake and the rest, thirteen Forests and eleven Islands of Portal's
+own art; the log said "The engine plays a deck of its own, built by Argentum's
+deck builder: green-blue, from Portal.", and the lobby of that table "The
+engine, with a deck of its own: green-blue from Portal". Pictures looked at:
+`engine-deck-own.png`, `engine-deck-table.png`, `engine-deck-fallback.png`,
+`m5-real-pauper-lobby.png`, `m5-real-pauper-table.png` and
+`m5-real-pauper-dealt.png`, in the system's temporary folder.
+
+**Found by the runs, and fixed.**
+
+1. *Every format's pool was empty* (above, item 5): the legalities are stamped
+   now, and `tests/engine-live.test.js` builds a deck in five formats and holds
+   each to the validator.
+2. *The colours named a deck by a card it could not play*: by its basics now,
+   and why is in `coloursOf`'s comment and above.
+3. *An empty list of sets was read as the whole format, silently.* A person's
+   deck with no set to go by (every card a basic, or none loaded) would have
+   asked for its sets and got the whole format with nothing said. A list, even
+   an empty one, now asks for sets, and an empty one falls back as `sets` does.
+   The live test that says so failed against the engine built before the fix.
+4. *Two relay tests each started five rooms*, and beside the live suite's JVM
+   one outran vitest's five seconds in the whole run, never alone. Each case is
+   a test of its own now (`it.each`).
+
+**Where it departs from the brief's letter, and why.**
+
+1. *The relay never sends `"mirror"`:* a copy goes as the person's names, which
+   every protocol reads, so a copy needs nothing new of an older engine. The
+   process takes `"mirror"` all the same, as the brief's shape, and uses it
+   itself when a deck of its own cannot be built.
+2. *"Seeded per game so two games differ"* holds wherever Argentum's builder has
+   a choice, and not in a pool of 120 spells or fewer (above). Said here and in
+   `engine/README.md`, not worked round: the builder is Argentum's.
+3. *A deck of its own falls back to the whole format before the copy.* The brief
+   named no fallback; Argentum's own falls back to a sealed pool, which is no
+   deck for a sixty-card table. The owner's to overturn (§3 item 17).
+4. *The live test's validator reads the engine's legalities, not Scryfall's*: a
+   unit test reaches no network. It still proves the size, the copies and the
+   deal.
+5. *Beyond the letter:* `decklist`, `legalitiesMs` and `decks` in `hello`, and
+   the process stamping legalities, which nothing asked for and everything here
+   needed.
+
+**Not done, and where it goes.** A Commander deck of the engine's own is M6's
+(`CommanderDeckGenerator`, now read; HANDOFF.md M6 item 6). The two findings in
+Argentum's builder are to be reported upstream. The lobby's check asks about the
+shelf's decks with the player's chosen deck first and the engine's chosen deck
+in shelf order after it, so a deck picked for the engine may wait its turn to
+be asked; nobody has waited on it long enough to notice. Nothing on screen says
+which cards are in a deck of the engine's own, deliberately: its deck is as
+hidden as any opponent's, and the log's lines say what it plays as it plays it.
+
+The bar at the end: 1,963 unit tests across 93 files, 47 of them new (1,916 at
+M4's end), the live engine suite 46 of 46, six of them new; 37 browser specs,
+1,493 checks, none failed, in 1,115 s — the engine's own spec 152 of them
+against the real engine through the real relay, and `engine-deck.spec.mjs` 43,
+all new. One change came after that run, the lobby's words for a Commander deck
+("so with a Commander deck it plays a copy of yours", where it said "at this
+table", which was the format tab's and not the table's); the app was rebuilt,
+the preview restarted, `engine-deck.spec.mjs` (43) and the axe sweep (25) run
+again, and the unit suite once more, all passing. The token check clean. No JVM
+and no preview left running.
+
+### M6: Commander — 2026-09-25
+
+**What stood in the brief's way, found before anything was built.** The brief's
+Done-when is the app's example Commander decks playing against the engine. Asked
+about each one, the engine at the pin knows 50 of Y'shtola, Night's Blessed's
+hundred cards, 54 of Esika, God of the Tree's, 55 of Anikthea, Hand of Erebos's
+and 45 of Commodore Guff's — and none of the four commanders. Scryfall gives
+Y'shtola's printing as Final Fantasy Commander's, Anikthea's and Guff's as
+Commander Masters', and Esika's as Kaldheim's (asked by name, 2026-09-25): the
+first two sets are not among the engine's 179, and Kaldheim is, marked incomplete
+by Argentum, without Esika. A
+Commander game cannot be dealt without a commander (CR 903.3; Argentum's
+`GameInitializer` refuses one), so no example deck can be played as Commander at
+this pin, whatever this milestone builds. The pin is not this session's to move
+(§3 item 12), so Commander was built whole and proved with a deck the engine
+knows, and the example decks are checked by the real engine in the engine spec
+and said, in the lobby, to be what they are. Of the four, one holds a legendary
+creature the engine knows in its commander's own colours — Narset, Enlightened
+Master, in the Commodore Guff deck — and whether a deck may be led by another
+of its cards is the owner's question (HANDOFF.md §6), not a default taken here.
+
+**How Argentum plays Commander, read before anything was built.**
+
+1. `Format.Commander` is data: `commanderDamageThreshold` 21, `deckSize` 100,
+   `startingLife` 40, `startingHandSize` 7, `alwaysDivertToCommand` false. The
+   initializer sets every player's life from it, whatever `PlayerConfig` says,
+   and requires `PlayerConfig.commanderCardName` of every player — one each;
+   partners are later work upstream — dealing it into `Zone.COMMAND` with a
+   `CommanderComponent`, in the printing `Deck.commanderPrinting` names.
+2. The cast from the command zone is Argentum's own offer
+   (`CastFromZoneEnumerator.enumerateCommandZone`), made only where it is
+   affordable, marked `sourceZone = "COMMAND"`, its cost already holding the tax:
+   `CostCalculator` adds {2} for each of the card's `castsFromCommandZone`, which
+   the stack counts at the cast, so a countered commander still costs more
+   (CR 903.8).
+3. The question of the command zone is a state-based action,
+   `CommanderZoneChoiceCheck`, raised as a `YesNoDecision` in Argentum's words
+   for a commander in a graveyard, exile, a hand or a library, with a
+   `CommanderZoneChoiceContinuation` holding where it is. So the brief's item 5
+   held: it is askable as it stands.
+4. The client DTO carries it all: a public `Command` zone, `isCommander` on a
+   card, and `ClientPlayer.commanderDamage` — commander, controller, amount,
+   threshold — per commander that has connected.
+5. `CommanderDeckGenerator.generate(sets, format)` returns a `GeneratedDeck` of
+   a list and a `commander` chosen first, the list without it, or null where the
+   pool holds no legal commander with colours to build around. It picks the
+   commander by Draftsim's rating weighted towards narrow colour identities,
+   fills a singleton library along a curve inside that identity, and makes the
+   rest basics, so its decks come to the size exactly.
+
+**What was built.**
+
+In the process (`Server.kt`), protocol 8. `new` takes `format` — `commander` is
+Argentum's `Format.Commander` as it stands, the ordinary rules otherwise, and a
+word it deals no game in is refused — and a `commander` for every player, a name
+or `{name, set, number}`, dealt into the command zone in that printing where the
+engine has it; a player with none, or one the engine does not know, is refused in
+words. The engine's seat is given one too: a copy's is the person's (`Brought`),
+a list of names brings its own, and `own` at a Commander table is a Commander deck
+of its own by `CommanderDeckGenerator` (`generateCommander`), held to a hundred
+cards, falling back as M5's do. A Commander deck is named by its commander's
+colour identity (903.4). An offer from the command zone says `from: "command"`
+and `commanderTax` (`taxOf`, read off `CommanderComponent`); the 903.9a yes or no
+says `commanderZone` (`commanderGoing`, read off Argentum's continuation, as M4's
+`placement` is). The reply says `format`, each seat its `commander`, the engine's
+`deck` names its commander and counts it; `hello` says `formats`; `decklist` says
+`commander` and each card's `identity`.
+
+In the room (`relay-engine.mjs`). A sit may say `format: "commander"` and bring
+`commander`, read forgivingly (`formatOf`, `commanderOf`) and kept until the deal,
+the commander with its deck. The room asks for a Commander game only of an engine
+at 8, and only where every person brought a commander; the engine's seat plays the
+copy with the person's commander, another deck with its own (one without is not
+sent, and the copy is), or a Commander deck of its own. Every `seated` after the
+deal says `format: {asked, played, fellBack?}`, and the engine's `engineDeck` its
+`commander`. An engine at 7 is dealt the decks as every room before M6 dealt a
+Commander deck — the library alone, by the ordinary rules — and the room says why.
+
+In the client. `src/lib/engine/commander.js` holds the game a deck asks for and
+every word said about it, each rule by its number. `seatDeck` sends a Commander
+deck's commander apart from its library and counts it among its cards (903.5a);
+the lobby's check asks the engine about it too (`checkedDeck`), names it first
+among what the engine does not know, and says a Commander game cannot be dealt
+without it (903.3). Sitting with such a deck opens the gate: the rest of the deck
+by the ordinary rules, or the whole deck alone, or another deck — the owner's M1
+answer as far as it goes. A deck with two commanders, or none, is offered the
+ordinary game or the table alone. The lobby says what a Commander deck is dealt
+as, the rules cited, and says of Brawl, Duel Commander and Oathbreaker that they
+are dealt by the ordinary rules without their commander, as before; the engine's
+deck of its own is offered for Commander with M5's switch, and one of the
+player's Commander decks chosen for the engine goes with its commander. At the
+table: the command zone's tile shows and names what the engine says is in it,
+glows where the commander can be cast, and casts it at a tap (a right-click or a
+hold opens it instead); the engine's command zone can be looked through; a
+commander is said to be one on the table and in a pile; the stop's line says the
+cast and its tax (903.8); commander damage is said on the plate under the life
+total once any is dealt (903.10a); the 903.9a question is asked in Argentum's
+words with the rule that asks it; and the log says once which game was dealt.
+
+**Measured.** On the owner's machine, 2026-09-25, the real engine, by
+`scripts/engine-commander.mjs`: games dealt paced, as a room deals them, the
+engine at intermediate, each played to turn 12 with the person's seat played
+plainly (the first play worth making, chosen whole by the engine for them, else
+a pass), seeds from 20260925. The Commander games are two decks the engine
+built for itself, a hundred cards each; the Modern ones the same at sixty; the
+goblins the baseline every measurement before this was taken with. The corpus
+loaded in 15.0–15.3 s and held 126 MB, as at M5.
+
+| | Goblins, 60 (10 games) | Modern of its own, 60 (10) | Commander of its own, 100 (10, twice) |
+| --- | --- | --- | --- |
+| Deal (`new`), median / slowest | 5 / 364 ms | 696 / 839 ms | 59–62 / 73–81 ms |
+| A paced step, median / p90 / slowest | 5 / 23 / 78 ms | 5 / 14 / 46 ms | 6 / 19–20 / 108–122 ms |
+| The engine's whole turn, its steps summed | 16 / 54 / 85 ms | 9 / 33 / 82 ms | 13 / 38–45 / 187–207 ms |
+| Steps in the engine's turn, median / most | 2 / 4 | 2 / 4 | 2 / 5 |
+| A whole view with its log, median / p90 / largest | 22.9 / 35.0 / 41.8 kB | 24.3 / 38.7 / 43.1 kB | 36.1–39.3 / 50.3–54.7 / 60.1 kB |
+| A delta with its lines, median / p90 / largest | 2.8 / 5.9 / 9.5 kB | 4.1 / 8.9 / 15.2 kB | 4.0–4.5 / 18.7–19.2 / 28.7 kB |
+
+At hard, five games each: a step of the goblins' 24 / 175 / 401 ms and their
+turn 115 / 364 / 570 ms; a step of Commander's 101 / 450 / 564 ms and its turn
+277 / 925 / 1,631 ms, where hard's search has more on the table to weigh. What a
+person waits on is the room's pace, 600 ms before each step, and then the step:
+at intermediate a Commander turn is the pace and a few tens of milliseconds, as a
+sixty-card one is; at hard it is up to about a second and a half more, which the
+plate covers by saying the engine is thinking (M3).
+
+The deal is not what a person waits for: a Commander deal with a deck of the
+engine's own is 60 ms, cheaper than a Modern one, since Argentum's commander
+builder fills its curve from rated buckets and runs no autobuilder, where its
+constructed builder runs Draftsim's. The first Commander deck built in a fresh
+process took 668 ms, Draftsim's ratings loading, and the next ones 58–78 ms. From pressing Sit to the hand to keep, against the real
+engine in the browser, took 16.5 s, all of it the room's engine loading the
+corpus, as it is for any deck (M1, M5).
+
+The views are half as large again, and the reason was measured rather than
+guessed: at the deal a Commander whole view is 24.7 kB against the goblins'
+7.9 kB, and 13.5 kB of it is the viewer's own `deck` — Argentum's deck tracker,
+one entry per distinct card, 63 entries for a singleton hundred against 6 — which
+nothing in this app reads. The library's hundred ids add 1 kB. A delta is the
+same size as a sixty-card one at the median, because the tracker travels only
+when it changes; the p90 is three times as large, the tracker changing with each
+card drawn. Sending it to a client that never reads it is a saving left for later
+(below).
+
+**The run in a browser.** Against the real engine through the real relay,
+`game-engine.spec.mjs` gained a Commander section, 23 checks: the four example
+decks put on the shelf by name, as a deck whose records have not loaded carries
+them, each checked by the engine — "The engine knows 45 of 100 cards." for
+Commodore Guff, and the line "It does not know the commander, Commodore Guff, and
+every Commander deck has one (903.3), so it cannot deal a Commander game with
+this deck." — axe clean; sitting with Commodore Guff opening the gate with the
+commander first on the list, "1 Commodore Guff, its commander", and "Without
+them, the engine deals the other 45 cards by the ordinary rules: 20 life each,
+and no command zone."; then a Commander deck made from the Esika example for
+this spec — its 24 green-white cards the engine knows, its 3 Forests and its
+Plains, led by the legendary creature among them in those colours, Rhys the
+Redeemed, and basics to a hundred — which the engine knows whole. Sitting with it:
+the hand to keep, the log's "Played by the Commander rules: 40 life each (903.7),
+and each commander begins in its owner's command zone (903.6).", both plates at
+40, both command zones naming Rhys; a Plains played, the command zone glowing and
+saying "your commander can be cast now: a tap casts it", the engine's offer from
+the command zone at {G/W} with no tax, the prompt saying so; a tap on the command
+zone, and Rhys on the battlefield "a commander", the zone empty, the log saying
+"You cast Rhys the Redeemed (from command zone, paid 1 mana)" in the engine's
+words, and the room reporting a Commander game. The new
+`engine-commander.spec.mjs`, 41 checks against the stand-in, holds what the real
+engine will not do on cue: commander damage on the plate ("Commander damage:
+Rhys the Redeemed 3 of 21 (903.10a)."), the 903.9a question with its rule, the
+commander sent home by the keyboard, the tax said on the next cast ("{2} more for
+the commander tax, as it has been cast from the command zone once before
+(903.8)"), the zone opened by a right-click, its commander pressed there, and an
+unknown commander's gate leading to the ordinary game; axe clean at 1280 and
+390, and nothing sideways at 390. Pictures looked at: `engine-examples.png`,
+`engine-example-gate.png`, `engine-command.png`, `engine-commander-cast.png`,
+`engine-commander-gate.png`, `engine-commander-damage.png`,
+`engine-commander-question.png`, `engine-commander-tax.png` and
+`engine-commander-phone.png`, in the system's temporary folder.
+
+**Found by the runs, and fixed.**
+
+1. *A Commander deck at the engine's table was dealt without its commander,
+   and nothing said so.* Since M1 a deck went to the engine as its main list,
+   and a Commander deck's commander is kept apart from it, so every Commander
+   game against the engine — the owner's own test run among them (M2's note) —
+   was ninety-nine cards at 20 life by the ordinary rules, the commander simply
+   absent. A Commander deck is a Commander game now, and the rest of the family
+   says in the lobby what it is dealt as, which is what it always was.
+2. *The lobby said the engine builds no Commander deck of its own*, M5's words,
+   true until this milestone; it offers one now, with M5's switch, and the M5
+   spec that held the old line holds the Brawl tab's instead.
+3. *A commander in a pile said nothing of being one.* The stand-in spec found it:
+   the command zone opened showed "Rhys the Redeemed" and no more, and a
+   commander in a graveyard would read as any card. A commander is said to be
+   one on the table (`BoardCard`) and in a pile (`ZoneBrowser`).
+4. *The gate called a deck with two commanders and an unknown card a Commander
+   game without them*, where the ordinary game is what would be dealt: found in
+   reading the gate over, and said as the ordinary game now.
+5. *The engine spec wrote its new decks into a layout the store no longer
+   keeps* — every deck a document of its own since it was split — so they were
+   never read; they are written as documents.
+6. Two unit tests asserted a Commander deck's size without its commander, the
+   behaviour this milestone changes (903.5a counts it); they assert the hundred.
+
+**Where it departs from the brief's letter, and why.**
+
+1. *The Done-when is met for a Commander deck the engine knows, not for the
+   example decks.* Above: the engine at the pin has none of their commanders.
+   The engine spec checks all four against it and plays a Commander game through
+   a commander cast from the command zone with a deck made from one of them,
+   named as that.
+2. *`format` on `new` names the game; M5's `format` on a player names the format
+   a deck of the engine's own is built to.* Two keys at two levels, both the
+   brief's; a game word the process deals no game in is refused rather than
+   dealt by the ordinary rules, so a relay never gets a game it did not ask for.
+3. *Only Commander of the family is dealt as a Commander game* (§3 item 18):
+   the brief named `"standard" | "commander"`, and Duel Commander's and Brawl's
+   life totals are data the owner should choose to use (HANDOFF.md §6).
+4. *The command zone's tile casts at a tap.* The brief's "the tile's tap finds
+   it like any other" is how it finds it — by the offer's `card`, as a card in
+   hand is found — and Law 2 is why the tap does it rather than opening a list.
+5. *Beyond the letter:* `from` and `commanderTax` on the offer, `commanderZone`
+   on the question, `formats` in `hello`, `commander` and `identity` in
+   `decklist`, the gate for a Commander deck the engine cannot lead, and
+   `scripts/engine-commander.mjs`, kept.
+6. *Section 903 is cited from the Comprehensive Rules, not from `docs/`* (found
+   in the review, below). `HOUSE-RULES.md` asks that rules of play be cited from
+   `docs/TURN_STRUCTURE.md`, which transcribes the turn and has no section 903.
+   Transcribing the format's rules from memory would be asserting them, so the
+   table says 903.3, 903.6 to 903.8, 903.9a, 903.9b and 903.10a from the rules
+   directly, `src/lib/engine/commander.js` says so, and whether section 903
+   should be transcribed into `docs/` is the owner's (HANDOFF.md §6).
+
+**Not done, and where it goes.** The example decks as Commander games wait on
+the pin moving to an Argentum with their commanders (§3 item 12); nothing here
+steers the printing or the deck towards what the engine has. Partners,
+Backgrounds and companions wait on Argentum, whose `PlayerConfig` takes one
+commander. Duel Commander, Brawl and Oathbreaker as games of their own, and a
+deck led by another of its cards, are the owner's questions (HANDOFF.md §6).
+The view's `deck` tracker, most of a Commander whole view and read by nothing
+here, could be left off the wire by the process or the room — a saving, not a
+fault, and not this milestone's. Found by the measuring and not this
+milestone's either: "Let the engine choose" on a Crew ability is refused ("Must
+select at least one creature to crew", Broadcast Rambler, the Commander kind's
+seed 20260931): the play the engine chose for the person came back without
+creatures to crew with, and Argentum refused it. That is M4's `auto`, and a look
+at `act` for whoever takes it up.
+The tally reaching 21 and ending a game, and the 903.9b question for a hand or a
+library, were not reached against the real engine; the first is Argentum's
+state-based action and the second its words, both held on screen with the
+stand-in. Sitting still waits on the corpus loading, 16.5 s here, as at M5: a
+warm engine is M8's.
+
+The bar at the end: 2,009 unit tests across 94 files, 46 of them new (1,963 at
+M5's end), the live engine suite 52 of 52, six of them new; 38 browser specs,
+1,560 checks, none failed, in 890 s — the engine's own spec 175 of them against
+the real engine through the real relay, 23 new, and `engine-commander.spec.mjs`
+41, all new. One change came after that run, the gate's words for a deck with
+two commanders and an unknown card (item 4 above); the app was rebuilt, the
+preview restarted, and `engine-commander.spec.mjs` (41), `engine-deck.spec.mjs`
+(46), the axe sweep (25) and the engine's own spec (175) run again, all passing.
+The token check clean. No JVM and no preview left running.
+
+**What the review found, and what was done.** The same day, a review of this
+milestone made fifteen findings, each confirmed by a second reading before
+anything was touched. Three were one fault seen from three places and two were
+another, so twelve faults were fixed, each with a test that fails without its fix
+where one could be written. The two in the room were checked that way: with the
+engine's report of its deck passed through whole, the new test of it fails, and
+with the game kept from the last sit to name one, so does the new test of a sit
+again. Nothing in `Server.kt` changed, so the engine was not rebuilt.
+
+1. *The log and the seat said "The engine builds no Commander deck of its own"*
+   where a Commander deck the engine could not lead — its commander unknown and
+   left out at the gate, two commanders, or none — was dealt by the ordinary rules
+   with a deck of the engine's own asked for. False since protocol 8, which builds
+   one, but only for a Commander game ("A \"commander\" deck of its own is built
+   only for a Commander game.", the engine's `why`, which the client never
+   showed). `engineDeckLine` now reads the room's report of the game dealt beside
+   the deck's and says "The engine builds a Commander deck of its own only for a
+   Commander game, and this one is played by the ordinary rules, so it plays a
+   copy of yours."; the old words stand only for an engine older than 8
+   (`fellBack: "engine"`) and a room older than Commander, where they are true.
+   Held in `engine-opponent.test.js`, in `engine-room.test.jsx` along the gate's
+   own path (the commander left out, "own" chosen), and in `relay-server.test.js`
+   (the engine's reason and the room's go out together); a Brawl case keeps
+   "builds no Brawl deck", which is still so.
+2. *The command zone's tile had no hold and no keyboard way in while a tap cast
+   the commander*, and said `aria-expanded` of a press that disclosed nothing.
+   iOS raises no contextmenu from a long press and a Mac keyboard has no menu key,
+   so there the tile only cast, where §3 item 18 says a hold opens it. `useHold`
+   (new, `src/components/table/`) gives it a finger's hold at `useDrag`'s own
+   450 ms and 6 px, opening the zone rather than toggling it, and swallowing the
+   click and the contextmenu a phone raises around the lift; Shift+Enter opens it
+   from the keyboard (`aria-keyshortcuts`); the label says all three ("…a tap
+   casts it, and a hold, a right-click or Shift+Enter opens the zone"); and
+   `aria-expanded` is left off while a tap casts. `tests/use-hold.test.jsx` (new)
+   holds the hook on a fake clock; `engine-commander.spec.mjs` a dispatched touch
+   hold, the contextmenu and the click around its lift, Shift+Enter, and a
+   right-click straight after — which found a flaw in the first cut: the swallow
+   outlived the hold by 400 ms and ate the right-click's contextmenu. It ends at
+   the next press now, a gesture of its own.
+3. *Commander damage was said by name alone*, so two tallies from commanders of
+   one name — a copy of the person's deck plays their commander, and a commander
+   taken and turned on its owner is still the owner's — read the same, where
+   903.10a counts each apart. Where a name is shared each tally says whose it is
+   ("your Rhys the Redeemed 3 of 21 and Bot's Rhys the Redeemed 2 of 21"), read
+   off the card's owner, or where the card is out of sight off the controller the
+   engine names. Argentum's `controllerId` is the commander's controller now, not
+   its owner (`ClientCommanderDamage`, read at the pin), which is why the card is
+   asked first. A name no other shares is said alone, as before.
+4. *The room kept a Commander request after a later sit.* A sixty-card deck's sit
+   named no game, and the room changed its game only on a sit that named one, so
+   somebody who sat with a Commander deck and then again with a Modern one, in a
+   room waiting for a second person, left the room asking for Commander. The
+   client names the game on every sit now (`gameOf`, which had no caller), and the
+   room keeps it with the deck it came with, seat by seat: Commander where any
+   person sitting with a deck asked for it, and a sit with a deck and no game it
+   can read the ordinary rules. `GET /rooms` says the same.
+5. *The 903.9a line said "instead"*, the word of 903.9b's replacement, of what
+   PLAN.md itself calls a state-based action on a commander already in a
+   graveyard or exile. It says "A commander put into a graveyard or exile may be
+   put into its owner's command zone, a state-based action (903.9a)." now, and the
+   unit test that matched only the citation holds both lines whole. That section
+   903 is cited without a transcription in `docs/` is departure 6, above.
+6. *Before the deal, the seat list said the choice as made*: "with a deck of its
+   own" on a Brawl table, where the sit brings a copy, and "your deck Mystery" for
+   a remembered deck the engine does not wholly know, which the sit sends as the
+   copy. What the sit sends is one function now (`engineDeckRecord`,
+   `lib/engine/opponent.js`, which the lobby records with), and the seat list says
+   it (`plannedWords`), with why: "The engine, with a copy of your deck: it builds
+   no Brawl deck of its own". While the engine deals, the room says the format a
+   deck of its own is to be built to, and the line says the copy there too for
+   the rest of the Commander family (`dealingWords`).
+7. *"a Oathbreaker deck"*, in the lobby and the log; and an Oathbreaker deck's
+   signature spell, kept apart from its main deck as its oathbreaker is and never
+   sent, not said to be left out. `withArticle` (`lib/engine/deck.js`), and the
+   Oathbreaker line names both.
+8. *`DAMAGE_RULE`'s comment said it was shown beside the tally, and nothing showed
+   it*; `gameOf` had no caller but a test. The plate says it once beside the tally
+   now — "A player dealt 21 combat damage by one commander loses the game
+   (903.10a)." (`damageRule`, the threshold the engine's) — and `gameOf` names the
+   game of every sit (4).
+9. *The live test of the same Commander deck from the same seed held only the
+   commander*, and asked for a decklist after a later deal, reading that game's.
+   It reads the whole deck straight after each deal now, two from one seed equal
+   and one from another different.
+10. *Nothing held that a deck is named by the colours of its basics*, the fix M5
+    and M6 both describe. The live test holds a built deck's colours to its basic
+    lands' identities, and a deck of Forests and Raging Goblins — its lands green,
+    its one spell red — is named green.
+11. *Nothing held that the room keeps an engine's report of its deck to what a
+    client may be told.* The stand-in says more on request (`FAKE_DECK_REPORT=noisy`:
+    its cards by name, a count that is none, colours as a word, sets with no code,
+    a fallback and a commander that are no words), and a relay test holds the room
+    and `GET /rooms` to what they may pass on.
+12. *A live test held the Commander deal to ten seconds of wall-clock time*, a
+    limit somebody chose rather than a measurement. The deal's cost is
+    `scripts/engine-commander.mjs`'s to measure, and the test no longer leans on
+    the clock.
+
+What the fixes did not reach: while the engine deals, a Commander deck of its own
+asked at a table that will be dealt by the ordinary rules is still said as asked
+("with a deck of its own") until the deal, some seconds, after which the room's
+report says the copy and why. The hold is held with a touch pointer dispatched in
+Chromium, not on a phone; the plate's longer line was looked at
+(`engine-commander-damage.png`) and at 390 px nothing goes sideways.
+
+The bar after the review: 2,025 unit tests across 95 files, 16 of them new
+(2,009 at M6's end), the live engine suite 53 of 53, one new and two rewritten;
+38 browser specs, 1,570 checks, none failed, in 893 s — `engine-commander.spec.mjs`
+48 of them (seven new), `engine-deck.spec.mjs` 49 (three new), and the engine's
+own spec 175 against the real engine through the real relay, its command zone's
+words updated. One change came after that run, the lift's swallowed click kept to
+the command zone's own tile; the app was rebuilt, the preview restarted, and
+`engine-commander.spec.mjs` (48), `game.spec.mjs` (98) and the axe sweep (25) run
+again, and the unit suite once more, all passing. The token check clean. No JVM
+and no preview left running.
+
 ## Phase 3-alt — Writing the rules core ourselves
 
 Only if the owner wants the engine to be ours. `src/lib/engine/`, TypeScript,
