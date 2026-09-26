@@ -449,6 +449,104 @@ These are settled. Do not reopen them; build on them.
     "which defer to 903.4 and 903.5c") — the committee's numbers first, and the
     Comprehensive Rules' they defer to after, read from the committee's document on
     2026-09-25.
+24. **Decided by the owner 2026-09-25, for the pace presets** (`MOXGATE_STUDY.md`,
+    "Pace is chosen once, as a posture"; `TARGET.md` §5; `PLAN.md` Phase 1's "the pace
+    presets"). Before the first game at the engine's table the player is asked "How do
+    you want to play?" with three presets — Fast, Controlled, Learning — and an
+    Advanced disclosure that shows the settings each actually sets. **Controlled is
+    pre-selected.** It is asked once, remembered per player like the other table
+    preferences, changeable later from the table's own settings, and never blocks
+    sitting down. Only settings that are real are built, and what a preset would need
+    that the wire cannot do is said on screen.
+    **Built, 2026-09-25.** What was built, measured and found, and what is left, are in
+    `PLAN.md`, "§3 item 24: the pace presets"; the defaults the decision left open are
+    item 25. In short: protocol 11. Where the game stops for a person is the engine's
+    `autoPass` on their seat, which every engine has read since the first protocol:
+    Fast is Law 1, Controlled and Learning every priority window, both turns; the
+    process now takes `stops` to change it mid-game, from the next window, and no
+    longer stops a seat stopped everywhere where the rules give nobody a window — an
+    empty declaration, the untap step, the first player's first draw step (500.3,
+    508.1, 509.1, 103.8a) — which Argentum offered. How long each of the engine's plays
+    stands is the room's pace, the relay's own wait since M2: Brisk is the room's own,
+    Relaxed twice it, Instant none. Learning's "each phase says what it is for the
+    first few times" is the prompt quoting `docs/TURN_STRUCTURE.md` for the step, by
+    rule number, the first three times the person stops in it, counted across games.
+    Two things the design source's presets set are not built, and the choice says so
+    under Advanced: tapping your own mana (the engine pays for every spell, Argentum's
+    `AutoPay`), and a window with a spell on the stack (a spell resolves in the step it
+    was cast, `engine/README.md`, 117.4). The question is a panel on the table above
+    the battlefield from the moment the person sits, never a dialog in front of it;
+    the sit carries Controlled until they choose, and the engine deals meanwhile.
+    Played through the app against the stand-in engine at both widths, and against
+    the real engine mid-game in the engine's own spec; `Server.kt` changed, and the
+    engine was rebuilt.
+    **Reviewed, 2026-09-26** (`PLAN.md`, "The review of item 24 and the shelf"): the
+    question is no longer inside the battlefield's box, where it pushed the opening
+    hand's Keep down the page and at 360 px had the prompt over its own buttons; it
+    stands in the column beside the table where that column is beside it, and above
+    the seat opposite on a one-column table, narrow there (name and tagline, the rest
+    under Advanced), brought into view as it first appears, its button plain while a
+    stop waits. A stop in the engine's turn is titled "The engine's upkeep" and its
+    button is Done. A step is explained only in the person's own turn or at a block,
+    the lines the reference scopes to other games left out, the note first; in the
+    prompt only the note where the turn panel is beside it, and whole under the
+    battlefield where it is not. At an engine older than 11 the relay deals every
+    person Law 1, which that engine could not stop everywhere without a stop that had
+    no pass.
+25. **Taken as defaults building item 24, 2026-09-25, and the owner's to overturn:**
+    the bundles are the app's own and said to be — Fast stops only where there is
+    something to play at Brisk; Controlled at every window at Brisk; Learning at every
+    window at Relaxed with the steps explained — and a setting changed under Advanced
+    makes "your own mix", said as that, with no preset chosen; Relaxed is twice the
+    room's own pace, capped at the relay's 10 s, and Instant is no wait with each of
+    the engine's plays still arriving as a stop of its own, a room opened with no pace
+    playing the engine's turn in one go whatever is chosen, and saying so; the speed is
+    one setting for the room, the last person to say having said it; a change of where
+    the game stops takes effect from the next window, the stop the person stands at
+    staying theirs to answer, and the log says it once the engine has taken it; "the
+    first few times" is three, a step at a time, kept with the player and counted once a
+    stop (a reload at the same stop says it again without counting it), with "Explain
+    every step again" under Advanced; the explanation is said at a stop, an attack and a
+    block — in the person's own turn, or at a block they declare in the other's (since
+    the review of 2026-09-26) — and not in the opening hand or while something is being
+    chosen; the steps no
+    person is stopped in (untap, cleanup) are not explained, the turn panel beside the
+    log saying them as it always has; the question is answered by its button ("Play
+    Controlled →"), not by sitting or by choosing, so a person who reloads before
+    pressing it is asked again with their choice kept; the table's own settings are the
+    first thing under the rail's More button, "How you play"; the lobby's line about
+    rules-enforced play says where the game will stop for the person; the specs written
+    before the choice play Fast with the question answered, keeping their Law 1 checks,
+    and `pace.spec.mjs` is the choice's own; and a relay older than the choice is told
+    apart by its `seated`, the choice then said to change nothing there.
+26. **Taken as defaults building the shelf's archetype and bracket chips, 2026-09-26, and
+    the owner's to overturn** (`PLAN.md` Phase 1's "the deck shelf with archetype, colour
+    pips, bracket and count", listed as not built in "Where Phase 1 stands"; `PLAN.md`,
+    "The seat opposite at a phone's width, and the shelf's archetype and bracket"). No
+    deck carries an archetype or a bracket, and nothing in the app worked one out, so both
+    are the app's own reading of a deck's cards and said to be, above the shelf, beside
+    each filter and in each tile's words to a screen reader. The archetype is the plan
+    most of a deck's cards fit, from the app's own vocabulary of plans for a first deck
+    (`src/data/strategies.js`), each plan read by its own searches that a card record can
+    answer here — rules text, type line, power — its Scryfall oracle-tag searches left
+    out as unanswerable, lands left out as the first-deck flow leaves them out, every copy
+    counted, all the plans tied at the top shown, and a deck none of whose cards fits any
+    read as "No plan". The bracket is the lowest a deck's Game Changers allow, by Wizards'
+    Commander Brackets as its Commander page gave them on 2026-09-26 (Brackets 1 and 2
+    none, Bracket 3 up to three, 4 and 5 any number; still a beta), from Scryfall's
+    `game_changer` on each card: badges `B1+`, `B3+` and `B4+`, the other things a
+    bracket weighs not read, on the Commander tab alone, since the brackets are
+    Commander's. A deck with a card whose record has not arrived is not read at all, a
+    record without the flag counting as not arrived; a deck of no cards is read as no
+    plan and no Game Changers. The filters are the colours filter's shape, a count on
+    every chip taken before any filter, several chips of one filter meaning any of them,
+    two filters meaning both, and a filter with no deck read behind it not offered.
+    **Reviewed, 2026-09-26** (`PLAN.md`, "The review of item 24 and the shelf"): rules
+    text is read without its reminder text, as Scryfall's `o:` reads it; a Bracket chip is
+    named by what it keeps, "B3+ · 1–3 Game Changers", where "B3 or higher" had not kept
+    the B4+ deck; a tile read as no plan says "No plan", and one not read "Not read"; the
+    line above the shelf names the Bracket filter only where there is one; and how each
+    filter was read is behind "How this is read" under its chips.
 
 ---
 
@@ -1267,10 +1365,26 @@ names), and leave it out of the lobby's copy, per the owner's rule.
   (GitHub's rule for its `GITHUB_TOKEN`), and a scheduled workflow in a public
   repository is switched off after 60 days with no activity in it, its failures mailed
   to whoever last changed its `cron` (GitHub's documentation, read 2026-09-25).
+- **A container query cannot restyle its own container.** The seat opposite
+  (`.game__them`) is the container its layout is queried on, since its width
+  depends on whether the log sits beside the table; so the narrow and the wide layout
+  move its children between the cells of one grid, and never change the grid itself.
+  Being a size container also makes it a containing block and a stacking context for
+  what is inside it, which nothing in it minded (2026-09-26).
 - **Never edit a shell script while `sh` is running it.** A shell reads its script as
   it goes, from where it stopped; an edit above that point moves what it reads next,
   and it runs half a line. `engine-build.sh` was edited while a build waited in
   `gradlew` (§3 item 12); the edit was taken back until the build ended.
+- **A box placed from the middle is at most half as wide as its container.** With
+  `position: absolute; left: 50%; transform: translateX(-50%)` and no width, a box
+  shrinks to fit the space right of its left edge, whatever its `max-width`. The
+  prompt was never more than half the battlefield wide, and long words stacked it into
+  a tower over the creatures on a phone. Centre such a box with both insets, `width:
+  fit-content` and `margin-inline: auto` (2026-09-26).
+- **The screen the table opens in keeps the lobby's scroll.** `.app__main` scrolls,
+  and the table replaces the lobby inside it without resetting it, so what is first on
+  the table may open above the top of the screen; the first question brings itself into
+  view (2026-09-26).
 
 ---
 
@@ -1331,6 +1445,32 @@ names), and leave it out of the lobby's copy, per the owner's rule.
   the pin (M6's note), where the plain reading would offer them three and two, so
   which reading to keep decides whether two more example decks can be played as
   Commander games before the pin moves.
+- §3 item 24, the pace presets: built on 2026-09-25 (PLAN.md, "§3 item 24: the pace
+  presets"), the defaults it left open taken as §3 item 25. Found building it, and the
+  owner's: with Controlled pre-selected, a first game against the engine stops at every
+  priority window — 61 stops against Law 1's 8 to turn 9 in the measured goblin game —
+  where `FRICTION.md` makes Law 1 "the default and the only sensible behaviour"; the
+  owner's choice is built as made, and the question sits on the table so Fast is one tap
+  away, but which of the two documents should give way is the owner's to say. And two
+  things the design source's Controlled does that this table cannot, said on screen
+  under Advanced: tapping your own mana, and a window with a spell on the stack (which
+  `engine/README.md` records as not in any milestone; Argentum's `stepExactlyOne` is
+  where it would start).
+- The shelf's archetype and bracket chips: built on 2026-09-26 (PLAN.md, "The seat
+  opposite at a phone's width, and the shelf's archetype and bracket"), the defaults
+  taken as §3 item 26. Found building it, and the owner's: the archetype reading is
+  blunt. Read against Scryfall's records of the four example decks, all four read as
+  Tokens, the Commodore Guff deck tied with Flyers: 15, 16, 13 and 8 of their hundred
+  cards make a token of some kind (three of them a Treasure, a Clue or a Food), and the
+  Tokens plan's own search, `o:"create" o:"token"`, counts every one, where no other
+  plan's search reaches more cards in any of them (Esika's next, Big creatures, 15). The plans' searches were written to
+  find cards for a first deck, not to tell decks apart. Built as asked, from what the app
+  has, and said to be the app's reading with how many cards fit; whether to keep it, to
+  narrow the plans' searches (which the first-deck flow shares), to let a player name a
+  deck's plan themselves, or to take the chip away is the owner's. And for the bracket:
+  Wizards calls a bracket's intent its most important part, which only a deck's builder
+  can say, and the app's reading is only the floor its Game Changers set; whether a
+  player should be able to declare one, the floor then a check on it, is the owner's.
 - M8: which provider, once `HOSTING.md` has verified notes for three.
 - M9: nothing asked, but four things found that are the owner's. `gradle/actions`
   is at v6, whose caching is a proprietary component under Gradle's terms of use;
@@ -1373,12 +1513,35 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 ## 7. Appendix — the wire, in one place
 
 Between the browser and the relay, over the room's socket, all
-`{ t: "engine", op }`: `sit { name, deck, sideboard?, seat?, deltas?, level?, answers?, mulligans?, engineDeck?, format?, commander? }`,
+`{ t: "engine", op }`: `sit { name, deck, sideboard?, seat?, deltas?, level?, answers?, mulligans?, engineDeck?, format?, commander?, stops?, pace? }`,
 `act { stop, index, attackers?, blockers?, targets?, x?, damage?, cost?, auto?, cards? }`, `decide { stop, … }`, `turn`,
-`resync`; back: `seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, level?, ai?, choices?, engineDeck?, format? }`,
+`resync`, `settings { stops?, pace? }`; back: `seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, pace, level?, ai?, choices?, engineDeck?, format? }`,
 `seats`, `status`, `view { you, seq, state | delta, log }`, `refused { error, stale?, answering?, restoring? }`, `gone`,
 `restoring { reason }`, `restored { reason, behind, lost?, at }`.
 Over HTTP, before any room: `POST /engine/check`.
+
+§3 item 24 (2026-09-25) added how a person plays (protocol 11 on the process's side). A
+sit, and a `settings` message at any time, may say `stops` — `playable`, only where the
+person can play (Law 1, what every room did before), or `every`, every priority window —
+and `pace`, the speed: `relaxed`, `brisk` or `instant`. Words the room does not know change
+nothing. Where a person stops is the engine's `autoPass` on their seat, sent at the deal
+(every engine reads it), and changed mid-game by the process's `stops` op where the engine
+is at 11, one change at a time, the last wish winning however changes cross; at an engine
+at 10 every person is dealt Law 1 whatever they asked, and kept so (since the review of
+2026-09-26: that engine stopped a seat stopped everywhere at an empty declaration with no
+pass beside it). The speed is the room's wait between the engine's plays, one setting
+for the room: Brisk is the pace it was opened with, Relaxed twice it (capped at 10 s),
+Instant none; a room opened with no pace plays the engine's turn in one go whatever is
+asked. Every `seated` to a person says `pace: { stops, speed, ms, paced, fixed? }` — where
+the game stops for them, the engine's word from the deal on and what was asked before it;
+the speed and the wait it makes; whether the engine's turn is shown a play at a time; and
+`fixed` where an engine older than 11 dealt the game — and a change is answered with the
+person's `seated`, again once the engine has taken it; a change of speed goes to everybody.
+A `seated` without `pace` is a relay from before the choice, and a client sends it no
+`settings`, which it would refuse. `settings` from a socket with no seat is refused ("Sit
+down first."). `GET /rooms/<code>` says `speed` beside `pace`, now the wait as it stands.
+The room's file keeps `speed` and each person's `stops`, read back forgivingly, and a game
+taken back is brought to where each person asked to stop.
 
 §3 item 20 (2026-09-25) added Duel Commander and Brawl as Commander games (protocol
 10 on the process's side). A sit's `format` may be `"duel"` or `"brawl"` besides
@@ -1580,8 +1743,12 @@ an engine's player in `new` and `deck` on its seat in the reply, `decks` and
 seat and in the engine's `deck`, `formats` in `hello`, `from` and `commanderTax`
 on an offer, `commanderZone` on a yes or no, and `commander` and `identity` in
 `decklist`; M7 `snapshot` and `restore` (with `replace`, for measuring); §3 item 20 `duel` and `brawl` as
-`format` on `new`, and `rules` in the reply to `new` and `restore`. `engine/README.md` is the
-contract and is updated with every op added. `PROTOCOL` is 10 since item 20; an engine at 9 refuses
+`format` on `new`, and `rules` in the reply to `new` and `restore`; §3 item 24 `stops`, and a seat
+without `autoPass` no longer stopped where the rules give nobody a window. `engine/README.md` is the
+contract and is updated with every op added. `PROTOCOL` is 11 since item 24; an engine at 10 refuses
+`stops` as an unknown op, and stops a seat stopped everywhere where it has no pass to give, so a
+relay reading 10 deals every person Law 1, keeps it so and says so. It
+was 10 since item 20; an engine at 9 refuses
 `duel` and `brawl` as games it does not deal, so a relay reading 9 asks for neither; an engine
 at 8 answers neither op, so a relay reading 8 keeps no game and says so if it
 restarts; an engine

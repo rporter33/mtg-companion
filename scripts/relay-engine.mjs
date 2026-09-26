@@ -10,12 +10,13 @@
  * file knows a rule of Magic either — it knows whose turn the engine says
  * it is, and forwards.
  *
- *   from a client        sit { name, deck: { "Mountain": 14, … }, sideboard?: { … }, seat?, deltas?, level?, answers?, mulligans?, engineDeck?, format?, commander? }
+ *   from a client        sit { name, deck: { "Mountain": 14, … }, sideboard?: { … }, seat?, deltas?, level?, answers?, mulligans?, engineDeck?, format?, commander?, stops?, pace? }
  *                        act { stop, index, attackers?, blockers?, targets?, x?, damage?, cost?, auto?, cards? }
  *                        decide { stop, … }        turn                    resync
+ *                        settings { stops?, pace? }
  *   to every client      seats [ … ]               status { … }            gone { reason }
  *                        restoring { reason }      restored { reason, behind, lost?, at }
- *   to one client        seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, level?, ai?, choices?, engineDeck?, format? }
+ *   to one client        seated { seat, engineSeat, sideboardLeftOut, unknownPrintings, pace, level?, ai?, choices?, engineDeck?, format? }
  *                        view { you, seq, state | delta, log }             refused { error, stale?, answering?, restoring? }
  *
  * `stop` is the number of the status a client is answering: an act sent
@@ -139,6 +140,25 @@
  * a text it cannot read, or a restart that finds the same crash waiting — is
  * said to have gone, and why, never left to look like a table that froze.
  *
+ * How a person plays is theirs to choose, at the table and at any time
+ * (HANDOFF.md §3 item 24, the pace presets, lib/engine/pace.js). A sit and a
+ * `settings` message may say where the game stops for that person (`stops`:
+ * `playable`, only where they can play, Law 1, which every room did before; or
+ * `every`, every priority window) and how long each of the engine's plays
+ * stands (`pace`: `relaxed`, `brisk` or `instant`). Where a person stops is the
+ * engine's `autoPass` on their seat: sent at the deal, which every engine reads,
+ * and changed mid-game with `stops` by an engine that can (protocol 11). At an
+ * older engine the room deals every person Law 1 whatever they asked, since that
+ * engine stops a seat stopped everywhere where there is no pass to give, and so
+ * it stays for the game; the person is told so (`fixed`). The speed is the
+ * room's own wait, which the room may change at any time: Brisk is the pace the
+ * room was opened with, Relaxed twice that, Instant none. It is one setting for
+ * the room, the last person to say having said it, since there is one engine's
+ * turn to watch. A room opened with no pace plays the engine's turn in one go,
+ * and no speed changes that. Every `seated` to a person says what the room is
+ * doing (`pace: { stops, speed, ms, paced, fixed? }`); a `seated` without it is
+ * a relay from before the choice.
+ *
  * What the room decides of itself is written down with it (M7's review): a game
  * that ended, which comes back only when somebody sits down to look at it, and a
  * game the room ended for good — the same crash waiting, a turn the engine would
@@ -151,9 +171,10 @@
 import { startEngine } from './engine-bridge.mjs'
 import { levelOf } from '../src/lib/engine/levels.js'
 import { sameCard } from '../src/lib/engine/names.js'
+import { speedMs, speedOf, stopsOf } from '../src/lib/engine/pace.js'
 
 export const OP = {
-  sit: 'sit', act: 'act', decide: 'decide', turn: 'turn', resync: 'resync',
+  sit: 'sit', act: 'act', decide: 'decide', turn: 'turn', resync: 'resync', settings: 'settings',
   seated: 'seated', seats: 'seats', status: 'status', view: 'view', refused: 'refused', gone: 'gone',
   restoring: 'restoring', restored: 'restored',
 }
@@ -182,8 +203,9 @@ export const STARTUP_MS = 120_000
  * How long one of the engine's plays is left standing before the room asks for
  * the next. Moxgate's table plays the opponent's turn at a pace rather than in
  * one jump, and 600 ms is where this one starts (HANDOFF.md, M2). It is the
- * room's setting rather than a constant in the loop, so the playback-speed
- * preset of TARGET.md §5 — Relaxed, Brisk, Instant — has somewhere to land.
+ * room's setting rather than a constant in the loop, and it is where the
+ * playback speed of the pace presets lands (TARGET.md §5; lib/engine/pace.js):
+ * Brisk is the room's own pace, Relaxed twice it, Instant none.
  */
 export const PACE_MS = 600
 
@@ -203,6 +225,8 @@ const COMMANDER_PROTOCOL = 8
 const KEEPING_PROTOCOL = 9
 /** The protocol that first dealt Duel Commander and Brawl as Commander games, and said each game's rules. */
 const FAMILY_PROTOCOL = 10
+/** The protocol that first changed where a person stops mid-game (`stops`). */
+const STOPS_PROTOCOL = 11
 
 /**
  * The games of the Commander family a room asks an engine for, by the word the
@@ -362,6 +386,14 @@ const reportOf = (d) => {
  * the room passes it on. Read forgivingly: an engine that said nothing, or
  * something unreadable, offers nothing to choose.
  */
+/**
+ * Where the engine says it stops a person, `autoPass` on their seat in its reply to
+ * `new` or `restore`, as the room's word (§3 item 24): `playable` where it passes
+ * for them, `every` where it does not. Every engine reads the key and says it, so
+ * one that says nothing readable is taken to have done what it was sent.
+ */
+const stopsDealt = (es, sent) => (es?.autoPass === false ? 'every' : es?.autoPass === true ? 'playable' : sent)
+
 const choicesOf = (hello) => {
   const c = hello?.choices
   if (!c || typeof c !== 'object' || Array.isArray(c)) return null
@@ -435,6 +467,8 @@ export function savedRoomOf(v) {
     standIn: savedStandIn(s.standIn),
     // And the one put back in their library in a game dealt by the ordinary rules; a file from before that has none.
     inLibrary: savedStandIn(s.inLibrary),
+    // Where this person asked to stop (§3 item 24); a file from before the choice has none, which is Law 1.
+    stops: stopsOf(s.stops),
   }))
   const inFlight = r.inFlight && typeof r.inFlight === 'object' && word(r.inFlight.seat) && ['act', 'decide'].includes(r.inFlight.op) ? { seat: r.inFlight.seat, op: r.inFlight.op } : null
   // The game dealt, and since §3 item 20 the engine's numbers for it; a file from before has none.
@@ -459,10 +493,12 @@ export function savedRoomOf(v) {
     unkept: text(r.unkept),
     over: r.over === true,
     gone: text(r.gone, 1000),
+    // The speed the room was last asked for (§3 item 24); none from a file from before it, which is Brisk.
+    speed: speedOf(r.speed),
   }
 }
 
-export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', level: askedLevel = null, engineCommand, seed = null, deliver, onStderr = null, paceMs = PACE_MS, wait = null, saved = null, onChange = null }) {
+export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', level: askedLevel = null, engineCommand, seed = null, deliver, onStderr = null, paceMs = PACE_MS, mostPaceMs = Infinity, wait = null, saved = null, onChange = null }) {
   const humanSeats = Math.max(1, ai ? seatCount - 1 : seatCount)
   const seats = Array.from({ length: seatCount }, (_, i) => ({
     seat: `p${i + 1}`, name: null, here: false, ready: false, socket: null, deck: null, sideboard: null, commander: null, format: 'standard',
@@ -482,6 +518,13 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
     // stand-in the room put back in the library it sent instead, `{ name, for }`.
     standIn: null,
     inLibrary: null,
+    // Where the person here asked to stop (§3 item 24): only where they can play, Law 1, as every
+    // room did before the choice, or at every priority window. `stopsIn` is where the engine stops
+    // them, in its own word, from the deal on, and null before it; `syncing` is a change being
+    // asked of the engine, whose answer is awaited before another is asked.
+    stops: 'playable',
+    stopsIn: null,
+    syncing: false,
     // What this seat is still to be told of a game that came back (`restored`),
     // until a socket of theirs has heard it: a person away while the relay
     // restarted comes back to a table that says what happened. `said` is the
@@ -515,6 +558,13 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   const familyAsks = () => seats.filter((s) => !s.ai && s.deck && COMMANDER_GAMES.includes(s.format)).map((s) => s.format)
   const wantedFormat = () => familyAsks()[0] ?? 'standard'
   let dealtFormat = null
+  // How long each of the engine's plays stands (§3 item 24): the speed the room was
+  // last asked for, or null where nobody has asked, which is Brisk — the pace the
+  // room was opened with, as every room played before the choice. The wait itself
+  // is worked out each time it is waited (`waitMs`), so a change takes effect at
+  // the next play. A room opened with no pace waits nothing, whatever the speed.
+  let speed = null
+  const waitMs = () => speedMs(speed ?? 'brisk', paceMs, mostPaceMs)
   // The level is said only once there is a deal to have taken it: before that,
   // a seated carries no `level`, rather than one the engine may yet refuse.
   // With it goes the kind of player the engine fields here, `ai` — heuristic,
@@ -531,8 +581,16 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   // leads this person's deck where one does (§3 item 19), or in a game dealt by
   // the ordinary rules the stand-in put back in their library: the room's word for
   // it, kept on its disk, so a person who comes back from anywhere is told it.
+  //
+  // And how the person is played (§3 item 24), always, so a client can tell this
+  // relay from one before the choice: where the game stops for them — the engine's
+  // word from the deal on, and what they asked before it — the speed and the wait
+  // it makes, whether the engine's turn is shown a play at a time, and `fixed`
+  // where where they stop cannot change until their next table, the engine that
+  // dealt it being older than changing it (protocol 11).
   const seated = (seat) => ({
     seat: seat.seat, engineSeat: seat.engineSeat, sideboardLeftOut: seat.sideboardLeftOut, unknownPrintings: seat.unknownPrintings,
+    ...(!seat.ai ? { pace: paceOf(seat) } : {}),
     ...(seat.engineSeat ? { level: played, ai: ai ?? null } : {}),
     ...(seat.engineSeat && choices && !seat.ai ? { choices: { ...choices, decisions: seat.asked ?? [] } } : {}),
     ...(seat.engineSeat && dealtDeck ? { engineDeck: dealtDeck } : {}),
@@ -603,6 +661,23 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   let crashes = 0
   let restoredAt = 0
 
+  /**
+   * How a person is played, as their `seated` says it (§3 item 24). Whether the
+   * engine's turn is shown a play at a time is the engine's word once it has
+   * dealt, and before that what the room will ask for: a pace, where it was
+   * opened with one.
+   */
+  const paceOf = (seat) => {
+    const isDealt = Boolean(status) || dealt
+    return {
+      stops: seat.stopsIn ?? seat.stops,
+      speed: speed ?? 'brisk',
+      ms: waitMs(),
+      paced: isDealt ? paced : paceMs > 0,
+      ...(seat.stopsIn !== null && protocol < STOPS_PROTOCOL ? { fixed: true } : {}),
+    }
+  }
+
   // A room read back from disk: the game as it was dealt and where it stood.
   // Its seats keep their places and their numbering; what the engine's seat
   // plays and which game it is are as the room last said them.
@@ -614,6 +689,7 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
     unkept = from.unkept
     inFlight = from.inFlight
     level = from.level ?? level
+    speed = from.speed
     if (from.dealt) {
       played = from.played
       profile = from.profile
@@ -633,6 +709,8 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
         seat.seq = s.seq
         seat.standIn = s.standIn
         seat.inLibrary = s.inLibrary
+        // Where they asked to stop, which the game taken back is brought to (`syncStops`).
+        if (!seat.ai) seat.stops = s.stops ?? 'playable'
         if (!seat.ai) seat.ready = true
       }
       finished = from.over
@@ -839,7 +917,7 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       // loop looks again at whether there is anything to watch and carries on.
       while (watching() && gen === generation) {
         try {
-          await pause(paceMs)
+          await pause(waitMs())
           if (!watching() || gen !== generation) break
           const next = await engine.call('continue')
           if (gen !== generation) break
@@ -965,7 +1043,8 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
         const side = forProtocol(hello?.protocol, s.sideboard)
         const deck = s.ai ? botDeck() : { deck: forProtocol(hello?.protocol, libraryOf(s) ?? {}), ...(side ? { sideboard: side } : {}) }
         return {
-          name: s.name ?? (s.ai ? 'The engine' : s.seat), ...deck, ai: s.ai, autoPass: !s.ai,
+          // A person is passed for where nothing is affordable (Law 1) unless they asked to stop at every window.
+          name: s.name ?? (s.ai ? 'The engine' : s.seat), ...deck, ai: s.ai, autoPass: !s.ai && sentStops[seats.indexOf(s)] !== 'every',
           ...(commanderGame && !s.ai ? { commander: toEngine(s.commander) } : {}),
           // The decisions this seat's client can show, for a person's seat and an engine that asks them.
           ...(choices && !s.ai && s.answers.length ? { answers: s.answers } : {}),
@@ -979,6 +1058,15 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       // whose client cannot would be offered keeping and bottoming it has no
       // prompt for, and the game would wait on it for good.
       const opening = protocol >= MULLIGAN_PROTOCOL && seats.filter((s) => !s.ai).every((s) => s.mulligans)
+      // Where each person is stopped, as it is sent: a person may change it while the
+      // engine deals, and what the deal took is read against what went, not the newer wish.
+      // At every window only of an engine at 11 or later: one before it stopped such a
+      // seat at a declaration with nothing to declare — offered alone, with no pass
+      // beside it, so the prompt said "Nothing to do here but pass." over no Pass and
+      // Space found none — and in the untap step, where nobody gets priority (500.3).
+      // Found in review; a person at an older engine is dealt Law 1, and their seated
+      // says it is fixed, which the table says in words.
+      const sentStops = seats.map((s) => (s.stops === 'every' && protocol >= STOPS_PROTOCOL ? 'every' : 'playable'))
       const reply = await engine.call('new', {
         players: seats.map(player),
         // Absent, the engine picks one and says which in its reply.
@@ -1023,6 +1111,7 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
         // What the engine will ask this person, in its own words; an engine that
         // does not say asks what every engine has: targets, yes or no, an option.
         seats[i].asked = choices && !seats[i].ai ? words(es.asked) : null
+        seats[i].stopsIn = seats[i].ai ? null : stopsDealt(es, sentStops[i])
       })
       // The level the engine says its seat took, and only where this room asked
       // for that one: an older engine says none, and a word the room did not ask
@@ -1070,6 +1159,9 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       // down from its first stop comes back to it (M7).
       await keep()
       drive()
+      // A person who changed how they play while the engine was loading is brought
+      // to it now: the deal took what was sent when it began (§3 item 24).
+      for (const seat of seats) syncStops(seat)
     } catch (e) {
       lost(e.message)
       // A refused deal leaves the process up and waiting, and one that missed
@@ -1183,6 +1275,8 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       // A pace the engine took back is one this room can go on driving; the
       // engine says whether it did, as it says so at a deal.
       paced = paced && reply.paced === true
+      // Where each person is stopped in the game taken back, which keeps it, in the engine's word.
+      if (Array.isArray(reply.seats)) reply.seats.forEach((es, i) => { if (seats[i] && !seats[i].ai) seats[i].stopsIn = stopsDealt(es, seats[i].stopsIn ?? seats[i].stops) })
       status = reply
       restoring = null
       inFlight = null
@@ -1213,6 +1307,9 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       restoredAt = stop
       onChange?.()
       drive()
+      // A game kept before a person's last change, or changed while it came back, is
+      // brought to where they asked to stop (§3 item 24).
+      for (const seat of seats) syncStops(seat)
     } catch (e) {
       if (gen !== generation || closed) return
       restoring = null
@@ -1225,7 +1322,73 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
     }
   }
 
-  const sit = (socket, { name, seat: wanted, deck, sideboard, deltas, level: wantedLevel, answers, mulligans, engineDeck, format, commander }) => {
+  /**
+   * A person's seat brought to where they asked to stop, once there is a game
+   * (§3 item 24): the engine asked with `stops` (protocol 11), and the person told
+   * what it now does. Before the deal there is nothing to ask, the deal sending it;
+   * while the game comes back there is no engine, and `resume` calls this once it
+   * is back. An engine older than 11 cannot, and the person's `seated` says so
+   * (`fixed`). One change is asked at a time, and one wished for meanwhile is
+   * asked after it, so two quick changes end where the second asked, whichever
+   * way the answers cross.
+   */
+  const syncStops = async (seat) => {
+    if (seat.ai || seat.syncing) return
+    seat.syncing = true
+    try {
+      while (engine && status && !restoring && !closed && seat.engineSeat && seat.stopsIn !== null && seat.stopsIn !== seat.stops && protocol >= STOPS_PROTOCOL) {
+        const gen = generation
+        const asked = seat.stops
+        try {
+          const r = await engine.call('stops', { seat: seat.engineSeat, autoPass: asked !== 'every' })
+          if (gen !== generation || closed) return
+          seat.stopsIn = stopsDealt(r, asked)
+        } catch (e) {
+          // Refused, or no answer: said to the relay's log, and the person's seated
+          // goes on saying where the engine stops them, which is still true.
+          if (gen === generation && !closed) onStderr?.(`could not change where ${seat.seat} stops: ${e.message}`)
+          break
+        }
+        if (seat.socket) say(seat.socket, OP.seated, seated(seat))
+        onChange?.()
+      }
+    } finally {
+      seat.syncing = false
+    }
+  }
+
+  /**
+   * How a person plays, from a sit or a `settings` message (§3 item 24), read
+   * forgivingly: a word this room does not know changes nothing. Where they stop
+   * is theirs; the speed is the room's, the last person to say having said it.
+   * Either may change at any time, before the deal or after it.
+   */
+  const applySettings = (seat, { stops, pace }) => {
+    const nextSpeed = speedOf(pace)
+    const nextStops = stopsOf(stops)
+    if (nextSpeed) speed = nextSpeed
+    if (nextStops && !seat.ai) seat.stops = nextStops
+    if (nextSpeed || nextStops) onChange?.()
+    if (nextStops) syncStops(seat)
+  }
+
+  /**
+   * A change of how a person plays, made at the table rather than with a sit
+   * (§3 item 24). Answered with their `seated`, saying what the room now does;
+   * a change of speed is said to everybody, since it is the room's. Where the
+   * engine is asked to change where they stop, a second `seated` follows its
+   * answer.
+   */
+  const settings = (socket, message) => {
+    const seat = seats.find((s) => s.socket === socket && !s.ai)
+    if (!seat) { say(socket, OP.refused, { error: 'Sit down first.' }); return }
+    const was = speed
+    applySettings(seat, message ?? {})
+    say(socket, OP.seated, seated(seat))
+    if (speed !== was) for (const s of seats) if (s !== seat && s.socket && !s.ai) say(s.socket, OP.seated, seated(s))
+  }
+
+  const sit = (socket, { name, seat: wanted, deck, sideboard, deltas, level: wantedLevel, answers, mulligans, engineDeck, format, commander, stops, pace }) => {
     let seat = wanted ? seats.find((s) => s.seat === wanted && !s.ai) : null
     if (seat?.socket && seat.socket !== socket) { sockets.delete(seat.socket.id); seat.socket.terminate?.() }
     if (!seat) seat = seats.find((s) => !s.ai && !s.here) ?? null
@@ -1256,6 +1419,8 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       if (!engine && !starting && !dealt) seat.standIn = COMMANDER_GAMES.includes(seat.format) ? standInOf(seat.commander) : null
     }
     socket.seat = seat.seat
+    // How this person plays, which a sit carries every time and may change at any time (§3 item 24).
+    applySettings(seat, { stops, pace })
     // The level is the room's until the deal, and a sit that names one changes
     // it: the lobby's choice travels with the sit. After the deal it is the
     // game's, and a sit that comes back naming another is told what it is.
@@ -1396,6 +1561,7 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
         case OP.decide: forward(socket, 'decide', message); break
         case OP.turn: if (restoring) say(socket, OP.restoring, { reason: restoring }); else if (status) sayStatus(socket); break
         case OP.resync: resync(socket); break
+        case OP.settings: settings(socket, message); break
         default: say(socket, OP.refused, { error: `Unknown op "${message.op}".` })
       }
     },
@@ -1411,6 +1577,8 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       // plays after it, as a seated says it: never a card of it, since anybody with the
       // table's code may ask.
       // `format` is the game asked for until the deal, and the game dealt after it, as a seated says it.
+      // `pace` is the wait between the engine's plays as it stands, and `speed` the setting that makes
+      // it (§3 item 24), Brisk — the pace the room was opened with — until somebody chooses another.
       // A deck of its own is said with the format it was asked to be built to, so
       // a lobby can say the copy while the engine deals where it builds none.
       // A game coming back (M7) was dealt, and is said as dealt, with `restoring`
@@ -1421,7 +1589,7 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       const own = wantedDeck?.kind === 'own' ? { pool: wantedDeck.sets ? 'sets' : 'format', ...(wantedDeck.format ? { format: wantedDeck.format } : {}) } : {}
       const asked = wantedDeck ? { asked: wantedDeck.kind, ...(wantedDeck.name ? { name: wantedDeck.name } : {}), ...own } : null
       return {
-        mode: 'enforced', ai, seats: seatList(), started: Boolean(engine) || dealt, dealt: isDealt, over: Boolean(status?.over) || finished, pace: paceMs, paced,
+        mode: 'enforced', ai, seats: seatList(), started: Boolean(engine) || dealt, dealt: isDealt, over: Boolean(status?.over) || finished, pace: waitMs(), paced, speed: speed ?? 'brisk',
         level, ...(isDealt ? { played, profile, mulligans: mulliganed } : {}),
         ...(ai && (isDealt ? dealtDeck : asked) ? { engineDeck: isDealt ? dealtDeck : asked } : {}),
         format: isDealt && dealtFormat ? dealtFormat : { asked: wantedFormat() },
@@ -1440,16 +1608,17 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
      * text of the game at the last stop kept, with any move still in flight;
      * and whether the game ended, and why it went where the room ended it for
      * good (M7's review), so the next relay neither loads an engine for it nor
-     * says it came back.
+     * says it came back. The speed asked for, and where each person asked to
+     * stop (§3 item 24), so a game taken back is brought to them.
      * Never the decks: a room that has dealt has them in the engine's text, and
      * one that has not is sat at again by clients that bring them.
      */
     record() {
       return {
-        seats: seats.length, ai, pace: paceMs, level,
+        seats: seats.length, ai, pace: paceMs, level, ...(speed ? { speed } : {}),
         ...(dealt ? {
           dealt: true, stop, played, profile, paced, mulliganed, choices, engineDeck: dealtDeck, format: dealtFormat,
-          seated: seats.map((s) => ({ seat: s.seat, name: s.name, engineSeat: s.engineSeat, sideboardLeftOut: s.sideboardLeftOut, unknownPrintings: s.unknownPrintings, asked: s.asked, seq: s.seq, ...(s.standIn ? { standIn: s.standIn } : {}), ...(s.inLibrary ? { inLibrary: s.inLibrary } : {}) })),
+          seated: seats.map((s) => ({ seat: s.seat, name: s.name, engineSeat: s.engineSeat, sideboardLeftOut: s.sideboardLeftOut, unknownPrintings: s.unknownPrintings, asked: s.asked, seq: s.seq, ...(s.standIn ? { standIn: s.standIn } : {}), ...(s.inLibrary ? { inLibrary: s.inLibrary } : {}), ...(!s.ai ? { stops: s.stops } : {}) })),
           ...(finished ? { over: true } : {}),
           ...(gone && final ? { gone } : {}),
         } : {}),

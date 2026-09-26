@@ -4,6 +4,7 @@ import { nameList } from '../../lib/engine/deck.js'
 import { heldBack, unaimed, unpaid, GLOW_SAYS } from '../../lib/engine/glow.js'
 import { NO_CHOICES, advance, beginBottom, beginDecision, pickable, ready, setAmount, setX, stepOf } from '../../lib/engine/choose.js'
 import { commanderZoneRule, taxWords } from '../../lib/engine/commander.js'
+import { teachingBody, teachingHead } from '../../lib/engine/teach.js'
 
 /*
  * The prompt panel at the engine's table, out of Table.jsx since M4 made it
@@ -34,13 +35,18 @@ export function placeWords(place, me, nameOfSeat = () => null) {
  * The prompt panel at the engine's table, after Moxgate's (TARGET.md §8):
  * where the game stands and what is asked, with every button saying what
  * pressing it does. It appears only when there is something to answer or
- * a pass to make; the engine never stops the player where there is
- * nothing to do, so a quiet table is one where it is not their stop.
+ * a pass to make; the engine stops the player only where they asked to be
+ * stopped — where they hold something they can play, or at every window
+ * (lib/engine/pace.js) — so a quiet table is one where it is not their stop.
  *
  * A paced table stops after each of the engine's own plays, and those stops
- * name the engine's seat as the actor, so this says nothing through the whole
- * of the engine's turn — Moxgate's own behaviour. What is happening is on the
- * engine's plate, and what happened is in the log.
+ * name the engine's seat as the actor, so this says nothing at them — Moxgate's
+ * own behaviour. What is happening is on the engine's plate, and what happened
+ * is in the log. A person stopped at every window (Controlled, Learning) is
+ * stopped in the engine's turn as well, and there the stop is titled as the log
+ * titles the step, "The engine's upkeep", and its button is Done, as Moxgate's
+ * is on the other player's turn (TARGET.md §8): the step's bare name, and a
+ * label of "Your stop", said nothing of whose turn it was.
  *
  * Drawn by Table.jsx, and rendered by its tests against statuses the engine sent.
  * `glows` is the table's (lib/engine/glow.js); `elsewhere` the plays offered
@@ -48,12 +54,17 @@ export function placeWords(place, me, nameOfSeat = () => null) {
  * whose, so a sentence about a target or a play can say where to find it.
  * `handSize` and `active` — the cards in this seat's hand, and the seat that
  * plays first — are for the opening hand, which is weighed with both.
+ * `teach` is what the step is for, where the person asked for the steps to be
+ * explained and this is one of the first times they stop in it (lib/engine/
+ * teach.js): said under the prompt's own words at a stop, an attack and a block,
+ * where the turn panel stands beside the table. Where it does not, the table
+ * says it under the battlefield instead (Table.jsx), and passes none here.
  */
 export function EnginePrompt({
   status, me, step, chosen = new Set(), blocks = {}, blocker = null, declaring = null, blocking = null,
   glows = NO_GLOW, elsewhere = [], placeOf = () => null, players = [], nameOf, standsForOf = () => null, nameOfSeat, can = NO_CHOICES,
   choosing = null, onPick = () => {}, onChange = () => {}, onDone = () => {}, onChooseForMe = null, onLetGo = () => {},
-  handSize = null, active = null, onAct, onDecide,
+  handSize = null, active = null, onAct, onDecide, teach = null,
 }) {
   if (status.over) {
     return (
@@ -102,6 +113,7 @@ export function EnginePrompt({
         <div className="prompt__lead">
           <strong className="prompt__title">Your attack</strong>
           <span className="prompt__sub">{chosen.size ? [...chosen].map(nameOf).join(', ') : 'Tap the creatures that attack.'}</span>
+          {teach && <Teaching teach={teach} beside />}
         </div>
         <button className="btn btn--primary btn--sm prompt__btn" disabled={!chosen.size} onClick={() => onAct(declaring.index, { attackers })}>
           Attack with {chosen.size} →
@@ -117,6 +129,7 @@ export function EnginePrompt({
         <div className="prompt__lead">
           <strong className="prompt__title">Their attack</strong>
           <span className="prompt__sub">{blocker ? `${nameOf(blocker)} blocks — tap the attacker.` : n ? `${n} block${n === 1 ? '' : 's'} declared.` : 'Tap a blocker, then the attacker it blocks.'}</span>
+          {teach && <Teaching teach={teach} beside />}
         </div>
         <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onAct(blocking.index, { blockers: blocks })}>
           {n ? `Block with ${n} →` : 'No blocks →'}
@@ -126,20 +139,43 @@ export function EnginePrompt({
   }
   const pass = (status.actions ?? []).find((a) => a.type === 'PassPriority')
   const sub = stopLine({ status, me, glows, elsewhere, placeOf, nameOf, standsForOf, nameOfSeat, can })
+  // Whose turn the stop is in, said in its title as the log says it; a table that
+  // has not said whose turn it is keeps the step's own name, as before.
+  const theirs = Boolean(active) && active !== me
+  const title = theirs ? `${capital(seatWords(active, me, nameOfSeat))}'s ${step.name.toLowerCase()}` : step.name
   return (
-    <div className="prompt" role="group" aria-label="Your stop">
+    <div className="prompt" role="group" aria-label={theirs ? title : 'Your stop'}>
       <div className="prompt__lead">
-        <strong className="prompt__title">{step.name}</strong>
+        <strong className="prompt__title">{title}</strong>
         <span className="prompt__sub">{sub}</span>
+        {teach && <Teaching teach={teach} beside />}
       </div>
       {pass && (
         <button className="btn btn--primary btn--sm prompt__btn" onClick={() => onAct(pass.index)} aria-keyshortcuts="Space">
-          Pass →
+          {theirs ? 'Done →' : 'Pass →'}
           {/* Said once, here, rather than on every button that passes. */}
           <span className="prompt__hint prompt__key">or press Space</span>
         </button>
       )}
     </div>
+  )
+}
+
+/**
+ * What the step is for (the Learning preset, lib/engine/teach.js):
+ * docs/TURN_STRUCTURE.md's lines for it, each with its rule, headed by the phase
+ * and the step so it reads as the reference it is. In the prompt (`beside`) it
+ * is the note alone, the turn panel beside the table showing the rest; under the
+ * battlefield, where that panel is far below, it is the whole of it. Both carry
+ * `teaching`, the class a test finds either by.
+ */
+export function Teaching({ teach, beside = false, className = 'prompt__teach' }) {
+  const Tag = beside ? 'span' : 'p'
+  return (
+    <Tag className={`${className} teaching`}>
+      <span className="prompt__teachhead">{teachingHead(teach)}</span>
+      {` ${teachingBody(teach, { beside })}`}
+    </Tag>
   )
 }
 

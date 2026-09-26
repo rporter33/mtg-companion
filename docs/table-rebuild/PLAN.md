@@ -147,7 +147,10 @@ Shipped, at `#/game`, reached by address only:
 - **The lobby** (§2): format tabs with counts, search, the colours filter
   with counts on every facet, random / import / guide tiles, the shelf with
   art, commander, colour pips, and the seats panel with its honest
-  "Solitaire" line. Not yet: the bracket and archetype chips on the shelf.
+  "Solitaire" line. Not yet: the bracket and archetype chips on the shelf
+  (built 2026-09-26 as the app's own reading of each deck's cards, and said to
+  be: "The seat opposite at a phone's width, and the shelf's archetype and
+  bracket", below).
 - **The table** (§7): both plates with the phase pill and the ring on the
   active seat (the seat opposite open and saying so), the battlefield of
   **cropped landscape tiles** with the tapped treatment — turned a little,
@@ -2903,7 +2906,8 @@ and not this item's: at a phone's width the seat opposite's hand of backs overla
 zone tiles once it holds seven cards — measured at 390 px at a table with no stand-in,
 the backs' right edge at 267 px and the tiles' left at 175 — because the middle column
 of `.game__them--seated` shrinks to nothing and the backs do not; a layout fix for
-whoever next works on the table at that width. And the gate is long now: at 900 px
+whoever next works on the table at that width (fixed 2026-09-26: "The seat opposite at a
+phone's width, and the shelf's archetype and bracket", below). And the gate is long now: at 900 px
 tall its last button is below the fold of the dialog, which scrolls to it.
 
 The bar at the end: 2,118 unit tests across 98 files, 33 of them new and one file new
@@ -3813,6 +3817,413 @@ none failed and none skipped, 1,030 s, the example decks at 50, 54, 55 and 45 wi
 every commander unknown, asked of the engine. actionlint clean on both workflows,
 ShellCheck on each step's script, and the 28 cases above as they should be. The token
 check clean. No JVM and no preview left running.
+
+### §3 item 24: the pace presets — 2026-09-25
+
+The owner's decision (HANDOFF.md §3 item 24): before the first game at the engine's
+table the player is asked "How do you want to play?" — Fast, Controlled, Learning —
+with an Advanced disclosure showing what each sets; Controlled pre-selected; asked
+once, remembered, changeable later from the table's own settings, never blocking the
+sit; and only settings that are real. The defaults taken are §3 item 25.
+
+**What was real, found before anything was built.** Three of the design source's
+settings (`TARGET.md` §5: playback speed, always auto-pay mana, full control) and
+Learning's explanations were held against the wire:
+
+| Setting | Where it would land | Real? |
+| --- | --- | --- |
+| Where the game stops (Law 1, or every window: Moxgate's "Full Control") | the process's `autoPass` on a person's seat, read at `new` since the first protocol | At the deal, yes: the relay sent `autoPass: !s.ai` always, so it only had to pass the person's word on. Mid-game, no: the seat's field was a `val`, so protocol 11 added `stops`. |
+| Playback speed | the room's pace, the relay's own wait between the engine's plays (M2) | Yes, relay-side alone: `paceMs` was a room setting fixed at `POST /rooms`; the room now keeps a speed a sit or `settings` may change at any time, and works the wait out each time. |
+| Tapping your own mana | a `SelectManaSources` at every cast | No. The engine pays for every spell itself (`PaymentStrategy.AutoPay`, recorded at M4), and asks which sources pay only where Argentum raises that decision. Said under Advanced. |
+| Every priority window, the stack's included | priority with a spell on the stack | No. `GameEnvironment.step` resolves a spell inside the step that cast it (engine/README.md, "What is deliberately not here", since M4), so "every window" means every window this table gives. Said under Advanced, 117.4 cited. |
+| Each step explained, the first few times | the app's own `docs/TURN_STRUCTURE.md`, as `src/data/turn-structure.js` holds it and `TurnTracker` shows it | Yes, client-side. |
+
+**What was built.** In the process (`Server.kt`): protocol 11. `Seat.autoPass` is
+changeable, and `{"op":"stops","seat","autoPass"}` changes it, answering with the seat's
+setting rather than a status so the relay publishes no stop, the stop the table stands at
+staying the person's to answer; the engine's seat and a missing `autoPass` are refused in
+words. And a seat stopped everywhere is not stopped where the rules give nobody a window
+but Argentum offered one anyway: a declaration with nothing to declare, which is a
+turn-based action with no pass to give it (508.1, 509.1), the untap step (500.3), and the
+first player's first draw step in a game of two (103.8a). In the room
+(`relay-engine.mjs`): each person's `stops`, from the sit and a new `settings` message,
+sent at the deal as `autoPass` and brought mid-game to the latest wish by `syncStops` —
+one change at a time, asked again where another arrived meanwhile — where the engine is
+at 11, and `fixed` where it is not; the room's `speed` (Brisk its own pace, Relaxed twice
+it capped at 10 s, Instant none; a room opened without a pace plays the engine's turn in
+one go whatever is asked); `seated.pace` to every person, which is how a client tells this
+relay from an older one; `speed` in `GET /rooms` and, with each person's `stops`, in the
+room's file, a game taken back being brought to the wishes. In the app:
+`src/lib/engine/pace.js` (the presets, their bundles, the forgiving reads, the waits, the
+words), `src/lib/engine/teach.js` (a step's lines from the reference, and the count), the
+choice itself (`PaceChoice.jsx`), the hook sitting with both settings and sending a change
+as `settings`, the log's lines, the prompt's teaching, and the lobby's line about
+rules-enforced play, which no longer says the engine never stops you where you have
+nothing to do whatever you chose. The question is a panel above the battlefield from the
+moment the person sits — in the loading table too, while the engine deals — never a
+dialog in front of it; the sit carries Controlled until they choose; pressing "Play
+Controlled →" answers it and puts focus on the prompt. The table's own settings, under
+the rail's More button, begin with "How you play".
+
+**Measured.** Where the game stops, against the real engine at the pin, the goblin deck
+against `easy`, seed 20260925, a person passing at every stop and declaring nothing, to
+the start of turn 9: Law 1 (Fast) stopped them 8 times, every one in their own main
+phases with a land to play, and passed 45 windows for them; every window (Controlled,
+Learning) stopped them 61 times and passed none — upkeep, draw, both main phases,
+beginning and end of combat and the end step, in both players' turns. Before the process
+learnt which windows are not windows, the same game stopped an every-window seat at
+turn 1's untap step and at turn 1's draw step, which the first player skips — 29 stops
+to the start of turn 5 with both; the untap step's went first, leaving 62 to turn 9, and
+the draw step's after it, leaving 61. The speed, through the relay at its default: Brisk 600 ms a play, Relaxed
+1,200 ms, Instant 0. The question takes about 330 px above the battlefield at 1280 × 900
+(the table already scrolled at that size), and the whole height of a 390 × 844 screen
+with Advanced open.
+
+**What the review found**, going over it once built, and fixed:
+
+1. *The real engine offered the untap step and the first player's first draw step as
+   windows* to a seat stopped everywhere, found by the first probe; the rules give
+   nobody priority there (500.3; 103.8a skips the step). The process passes them, not
+   counted as windows passed. `tests/engine-live.test.js` holds it.
+2. *An empty declaration would have been a stop with no pass on it* — the prompt says
+   "Nothing to do here but pass." over no Pass button, and Space finds none. The
+   process makes the declaration of nothing for such a seat.
+3. *A spell on the stack is never a window here*, so Controlled's "every window" could
+   not mean what Moxgate's does; `STACK_LINE` says so beside the choice, 117.4 cited.
+4. *Each preset radio's accessible name was its whole card, forty words*, read out on
+   every arrow key. Each is now named by its preset and tagline and described by what
+   it does; so is each setting under Advanced.
+5. *Focus went to nothing when the question's button went with it.* It goes to the
+   prompt's first button, else the rail's; `pace.spec.mjs` checks it lands on Pass.
+6. *The log said "as you chose" of a preset nobody had chosen* — Controlled pre-selected.
+   It says where the game stops, and no more.
+7. *Advanced's options stood one above another the full width of the field at 1280*,
+   found in the first screenshot; they sit side by side where there is room.
+8. *The test of crossing changes passed against a relay that asked the engine once*: its
+   three changes ended where the first began. Rewritten to end elsewhere, it fails with
+   the loop made one-shot and passes with it.
+9. *The real engine's spec took an empty window to be one with only a pass on it*; with
+   lands on the battlefield the engine offers their mana abilities beside the pass, and
+   the first run failed there. It now reads the engine's own `meaningful`, as Law 1 does.
+10. The line for a stop fixed by an older engine lacked a comma, and the bridge's test
+    still expected the stand-in at protocol 10.
+
+Three of the tests were held against the code they test, reverted and restored: the
+relay's `autoPass` sent as before (three of the new relay tests fail), `syncStops` made
+one-shot (the crossing test fails), and the hook's `settings` never sent (its test fails).
+
+**Where it departs from the letter.** The design source's Controlled sets "tap your own
+mana" and its "every window" includes the stack's; neither is built, and both are said
+under Advanced rather than left to look as though they took. "Each phase says what it is
+for" is each *step*: a phase is one or several steps and a stop is in one of them, so
+the prompt says the phase and the step, from the reference. The question is a panel on
+the table, not the design source's dialog, because the owner's "never blocks sitting
+down" rules out a dialog in front of a seat already taken; it has one button, where the
+source has "Don't ask again" and "Start", since it is asked once anyway. The specs
+written before the choice play Fast with the question answered, to keep the Law 1 checks
+they were written for (`FRICTION.md`'s regression test among them); `pace.spec.mjs` is the
+choice's own, and the engine's spec plays Controlled at the real engine mid-game.
+
+**Not done, and where it goes.** Armed stops for one step ("always ask me at beginning of
+combat", `FRICTION.md`): Argentum's `MeaningfulActionFilter` takes per-step stops of its
+own, and it would be a setting under Advanced, but no decision names it. Priority with a
+spell on the stack stays where engine/README.md put it. Tapping your own mana would need
+the client to answer `SelectManaSources` at every cast. The owner's question (HANDOFF.md
+§6): Controlled pre-selected makes a first game stop at every window, where `FRICTION.md`
+makes Law 1 the default.
+
+The bar at the end, against the pin with the engine rebuilt at protocol 11: `npm test`,
+2,229 tests in 101 files, 45 of them new and one file new, the live engine suite among
+them, none skipped, 66 s. `pace.spec.mjs` 57 checks and the real engine's
+`game-engine.spec.mjs` 218 (five new), each run on its own first. Then the whole browser
+suite against a built preview: 40 specs, 1,773 checks, none failed and none skipped,
+about nineteen minutes. Screenshots looked at, `ui-pace-*` in the system's temporary
+folder: the question at 1280 × 900 and at 390 × 844, Advanced open, a stop explained at
+both widths, the table's settings at both widths, and the table after Fast. The token
+check clean. No JVM and no preview left running.
+
+### The seat opposite at a phone's width, and the shelf's archetype and bracket — 2026-09-26
+
+Two smaller pieces, one after the other: the layout fault found building the stand-in
+commander (above, item 19's "Not done"), and the shelf's archetype and bracket chips,
+which "Where Phase 1 stands" lists as not built.
+
+#### The seat opposite
+
+**What was found before anything was changed.** `.game__them--seated` was a grid of
+`auto minmax(0, 1fr) auto`: plate, hand, tiles. At every phone width the plate at its
+narrowest (7.5rem, 120 px) and the four zone tiles in a row (190 px) took the whole row
+between them, and the hand's column was left 0 to 6 px; the backs are a row of a fixed
+width — 182 px for twelve — and spilled out of it over the tiles. Not only at seven
+cards and not only at 390: measured by the new spec against the build as it stood, the
+backs lay over the tiles at 360, 390 and 430 px with seven cards and with twelve, at the
+engine's table and at a table played by hand, and "Nothing in hand" lay over them at 360
+and 390 — sixteen of the eighteen cases. At 390 with twelve, the first back from 157 px
+and the tiles from 175. It never showed at 1280, where the seat is 816 px wide. The
+table played alone, whose empty seat is a flex row of plate, sentence and tiles, never
+overlapped, but at 360 px its sentence took the width and stacked the four tiles in one
+column, the seat 347 px tall.
+
+**What was built.** The seat opposite — empty, loading or sat in — is the container its
+layout is queried on (`container: them / inline-size`), since its width depends on
+whether the log sits beside the table, not on the screen's, and one grid in every state.
+The hand's column is `minmax(min-content, 1fr)`, never narrower than what it holds. Below
+35rem the hand, or the empty seat's sentence, takes a row of its own under the plate and
+the tiles; from 35rem the three share a row as before, the tiles kept from wrapping — 35rem
+being what twelve backs and a "+n" (about 13rem), the plate at its narrowest (7.5rem),
+four tiles in a row (11.9rem) and the two gaps (1.5rem) come to, with room over. Narrower
+than a plate and four tiles side by side — 360 px — the tiles wrap, three and one, before
+anything overlaps. The markup is unchanged. For the test, the stand-in for the engine
+learnt `handSize`: a seat's hand at a size the test gives, in every view but its owner's,
+where a hidden hand is only a number.
+
+**Measured**, by `tests/browser/seat-opposite.spec.mjs`, every box as the browser drew it,
+after the fix, the engine's table and the table played by hand alike: at 390 and 430 px
+the plate (120 px) and the tiles in a row share the top, the backs a row of their own
+under them — twelve from the seat's left edge to 207 px — and their battlefield begins
+152 px below the seat's top, the backs' row (33 px, and the 8 px gap above it) being
+what the fix costs in height; at 360 the tiles wrap three and one, and the battlefield
+begins 215 px down; with an empty hand "Nothing in hand" has the row. At 1280 the three
+share one row, the backs from 261 to 443 px between the plate's edge at 249 and the
+tiles at 836. The empty seat at 360 is now 215 px tall, its tiles three and one and its
+sentence under them. 110 checks, none failed; against the build before the fix the same
+spec failed 16 overlaps, and the check that tiles stand in no more than two rows failed
+the empty seat at 360 against the build with the fix on the seat sat in alone.
+
+#### The shelf's archetype and bracket
+
+**What the app had, read before anything was built.** Nothing in the app worked out a
+deck's archetype or its bracket, and no deck carries either: a deck is a name, a format,
+its cards with their sections, its commanders and signature spell (`upgradeDeck`), and an
+import keeps neither from Archidekt or Moxfield. The lobby's own header said so of the
+bracket. What the app does have: the "archetype vocabulary" `MOXGATE_STUDY.md` points at,
+`src/data/strategies.js` — twenty-one plans for a first deck, written as this app's own
+suggestions and "not official archetypes", each with the searches the first-deck flow
+asks Scryfall for; every card's whole Scryfall record in the card cache, pinned for a
+saved deck; and on each record `game_changer`, Wizards' Game Changers list as Scryfall
+marks it — 53 cards on 2026-09-26, asked of Scryfall's API (`is:gamechanger`) with an
+anonymous User-Agent. And Wizards' Commander Brackets, read on its Commander page and its
+update of 2026-02-09 the same day: Brackets 1 and 2 hold no Game Changers, Bracket 3 up
+to three, 4 and 5 any number; each bracket has an intent, which Wizards calls the most
+important part; the system is still a beta, and its last change (Farewell and Biorhythm
+added to the list) left the brackets as they were.
+
+**What was built.** `src/lib/deck-reading.js` reads a deck two ways, from its records and
+nothing else. Its plan: each plan's searches as far as a record can answer them here —
+rules text (`o:`), type line (`t:`), power (`pow>=`), read as Scryfall reads them, either
+face of a card of two — the oracle-tag searches (`otag:`) left out, since a record does
+not carry Scryfall's community's tags (every plan has a search without one); a card fits
+a plan where it answers any of them, lands left out as the first-deck flow's searches
+leave them out; and the deck reads as the plan the most copies fit, every plan tied at the
+top kept, "No plan" where none fits. Its bracket: the lowest its Game Changers allow —
+`B1+` with none, `B3+` with one to three, `B4+` with four or more — on the Commander tab
+alone, since the brackets are Commander's. A deck with a card whose record has not arrived
+is read neither way, rather than from part of itself. `useDeckReadings` asks for every
+card the shelf's decks play, apart from the few its paintings need, which never wait on
+it. In the lobby each tile carries the plan as a tag and the floor as a badge, said to a
+screen reader as the sentences they stand for — "Reads as Flyers, this app's reading: 30
+of its 100 cards fit. Bracket 3 or higher, this app's reading: one Game Changer, Rhystic
+Study." — and to a pointer by their titles; a line above the shelf says that both are this
+app's reading of its cards, not its builder's word; and "Archetype ·" and "Bracket ·" open
+into chips in the colours filter's shape, each carrying how many decks are behind it,
+taken before any filter, with how each was read written under the chips. Several chips of
+one filter mean any of them, since a deck has one plan and one floor; two filters mean
+both; a deck not read is hidden by either and said to be; and a filter with no deck read
+behind it is not offered. Defaults taken: HANDOFF.md §3 item 26.
+
+**Measured.** The four example decks, read from Scryfall's records of their cards on
+2026-09-26: Y'shtola, Night's Blessed reads as Tokens (15 of its 100 cards; Graveyard
+value next with 7), `B1+`; Esika, God of the Tree as Tokens (16; Big creatures 15),
+`B1+`; Anikthea, Hand of Erebos as Tokens (13; Draw engine 9), `B1+`; Commodore Guff as
+Tokens and Flyers, tied at 8, `B3+` for Narset, Parter of Veils. Of the 52 cards counted
+under Tokens, three make a Treasure, a Clue or a Food and the rest creatures or copies:
+the decks do make tokens, and the Tokens plan's search, `o:"create" o:"token"`, counts
+every card that does. So the reading is true to its definition and blunt as a way of
+telling decks apart — the owner's question (HANDOFF.md §6). Reading the four decks both
+ways took 4.9 ms at the median of twenty runs in Node with fresh records, 10 ms at the
+worst, and twenty-five decks sharing their records 2.8 ms.
+
+#### What the review found, going over both once built, and fixed
+
+1. *The spec's first check that the stand-in took `handSize` read the reply's `ok`*, which
+   the bridge takes off a reply before it resolves; it reads the size the stand-in says.
+2. *A chip's name and its count are two items of a flex box*, which `innerText` gives on
+   two lines, so the first run's comparisons failed on a newline; they compare words.
+3. *A deck of no cards was read as not read*, which the lobby would have said was "not all
+   its cards have arrived". It is read as what it is: no plan, and no Game Changers.
+4. *The line under the bracket chips said the count came "from Scryfall's list"*;
+   Scryfall marks each card from Wizards' list, and the line says so.
+5. *The plan tag said nothing to a pointer* where the badge did; it has its sentence as
+   its title, how many cards fit it included.
+6. *The first explanation written down for the blunt reading was Treasure makers*; counted,
+   they were three cards of 52, and HANDOFF.md §6 says what the count found.
+7. *The first fix was the seat sat in alone*, and the boxes the spec prints showed the
+   empty seat of a table played alone at 360 px with its tiles in one column, 347 px tall.
+   The layout is now every seat opposite's, the loading table's faint line standing where
+   the hand will, and the spec checks that the tiles stand in no more than two rows.
+
+Four faults were put in, or found standing, to see the tests catch them: the old grid (the
+seat spec failed 16 checks), the fix on the seat sat in alone (its tiles check failed the
+empty seat at 360), the bracket filter dropped from the shelf (the shelf spec failed 2),
+and a deck read from the cards that arrived (the shelf spec failed 4, and the unit test
+of it 1); each was taken out.
+
+**Where it departs from the letter.** `TARGET.md` §2 shows Moxgate's archetypes (Tribal,
+Counters, … Goodstuff) and bracket badges `B2`, `B3`: the archetypes here are the app's
+own plans, which name no Tribal and no Goodstuff, and the badge is a floor with a plus,
+since the Game Changers can tell no more — nothing read here tells Bracket 2 from 1, or 5
+from 4. The colours filter's chips mean all of them, these any of them.
+
+**Not done, and where it goes.** A deck's own declared bracket or plan: no deck has one,
+and Wizards calls a bracket's intent its most important part, which only a deck's
+builder can say, so whether a player should set one — the floor then a check on it — is
+the owner's (HANDOFF.md §6), as is what to do
+about the archetype reading. The rest of what a bracket weighs — two-card combos, extra
+turns, mass land denial — is not read: nothing the app holds says which cards those are.
+A sixty-card deck's colours are still not read on the shelf, as before.
+
+The bar at the end, the engine as §3 item 24 left it (protocol 11, `Server.kt` unchanged,
+not rebuilt): `npm test`, 2,259 tests in 102 files, 30 of them new and one file new, the
+live engine suite among them, none skipped, 67 s. `shelf.spec.mjs` 33 checks and
+`seat-opposite.spec.mjs` 110, each run on its own first, and both in the `test:browser`
+chain. Then the whole browser suite against a built preview: 42 specs, 1,916 checks, none
+failed and none skipped, in 1,169 s. A run before it, after the seat's layout was widened
+to every seat opposite, stopped at `deckfind.spec.mjs` on a click that timed out 73
+minutes into a suite that takes twenty; that spec passed alone at once (46 of 46) and in
+the full run after it, and touches nothing changed here. Screenshots looked at, `ui-*` in
+the system's temporary folder: `ui-seat-opposite-engine-12-1280`, `-engine-12-390`,
+`-engine-12-360`, `-hand-7-390`, `-hand-0-360`, `-hand-12-390`, `-hand-12-1280`,
+`-alone-1280`, `-alone-390` and `-alone-360`; `ui-shelf-1280`, `ui-shelf-390` (both filters
+open) and `ui-shelf-tiles-390`. The token check clean. No JVM and no preview left running.
+
+### The review of item 24 and the shelf — 2026-09-26
+
+A review of the two pieces above and of §3 item 24, its findings confirmed by a second
+reader against the code before anything was changed: thirteen, one of them twice (the
+Bracket chips), so twelve faults. Each is fixed, and each testable one has a test that
+fails with the fault put back.
+
+**What was found, and what was done.**
+
+1. *The first question pushed the opening hand's Keep down the page, and two gold
+   buttons stood on screen at once.* The question was the first thing inside
+   `.game__field`, the box the prompt is placed at the foot of, so every line of it moved
+   the prompt; at 1280 × 900 the table already ran past the fold. It now stands in the
+   side column where that column is beside the table — the query game.css lays the table
+   out by, asked of the browser by `useSideBeside.js` — and above the seat opposite on a
+   table of one column. Where it is narrower than three presets side by side (a phone,
+   or that column) each preset is its name and tagline, what it does and its chip opening
+   with Advanced; a screen reader hears them as each radio's description either way.
+   "Play … →" is a plain button while a stop waits on the person, whose prompt then
+   holds the one primary.
+2. *A stop in the engine's turn was titled with the bare step and labelled "Your stop".*
+   Controlled stops a person at every window in both turns. Such a stop is now titled as
+   the log titles the step, "The engine's upkeep", its label the same, and its button is
+   Done, as Moxgate's is on the other player's turn (`TARGET.md` §8); Space still passes.
+3. *Learning taught lines scoped to other games, said again what the turn panel beside it
+   said, and was spent on the engine's turn.* `src/data/turn-structure.js` marks the two
+   lines `docs/TURN_STRUCTURE.md` scopes to other games — 505.3, Archenemy games, now its
+   own line of the main phase's three, in the reference's order, and 507.1, multiplayer
+   games — and gains the beginning of combat's own trigger line (legend A there, 500.6),
+   which left the step something to say at a table of two. `teachingFor` leaves the scoped
+   lines out at two seats and leads with the step's note. Where the turn panel stands
+   beside the table the prompt says only the note, or for a step with none where to look;
+   where it does not, the whole teaching is said under the battlefield (finding 7). A step
+   is taught, and counted, only in the person's own turn or at a block they declare in the
+   other's (`teachesHere`).
+4. *The Bracket chips said "B3 or higher" and kept exactly floor 3* (found twice). Each
+   chip is now named by what it keeps — "B1+ · no Game Changers", "B3+ · 1–3 Game
+   Changers", "B4+ · 4 or more Game Changers" — the filter unchanged, since a deck has one
+   floor and the badge beside it is the same `B3+`.
+5. *A deck read as no plan showed nothing a sighted person could tell from a deck not
+   read.* Its tile says "No plan", the Archetype chip's own words, with the reading's
+   sentence as its title; a deck with a card that never arrived says "Not read"; one whose
+   cards are still on their way, nothing. Both drawn with a dashed edge.
+6. *The line above the shelf named a Bracket filter on tabs that have none, and each
+   filter wrote its paragraph out under its chips.* `shelfLine` names the Bracket filter
+   only where there is one; under each filter's chips is one line, "This app's reading of
+   the cards.", and "How this is read" (a disclosure) holds `PLAN_LINE` or `BRACKET_LINE`,
+   both rewritten so they no longer repeat that line.
+7. *On a phone the teaching made the prompt cover the creatures a person taps to attack
+   with.* Placed from the middle (`left: 50%` and a transform back), the prompt shrank to
+   the half of the field right of its left edge, and the teaching's words stacked it into
+   a tower: at Learning's attack stops the only way on was not to attack. The prompt is
+   now centred by its margins between two insets, as wide as its words up to the whole
+   field; your battlefield and the prompt share a box of their own (`.game__table`), and
+   where the log is not beside the table the teaching is said under that box rather than
+   in the prompt.
+8. *A first sit on a phone opened with the question above the top of the screen, and at
+   360 px the opening hand's prompt rose over its buttons.* The lobby's scroll is kept by
+   the screen the table opens in. The question is brought into view, instantly, the first
+   time it shows, where the table's top is above the screen's; and with the question out
+   of the battlefield's box the prompt cannot reach it.
+9. *Answering the question from the keyboard over the opening hand put focus on
+   Mulligan*, and the next Enter took one — Space too, since the opening hand offers no
+   pass for the table's own Space to find. Focus now goes to the prompt's primary button,
+   Keep this hand or Pass, before its first.
+10. *The shelf's plan reading counted reminder text*, which the plans' own searches, sent
+    to Scryfall as `o:`, leave out: a reach creature read as Flyers, an investigate
+    creature's Clue as Tokens and Draw engine. Rules text is read without the words in
+    parentheses, as `o:` reads it.
+11. *Controlled at an engine older than protocol 11 stopped a person at an empty
+    declaration with no pass to press* — the fix for it was the process's, new at 11. A
+    relay now deals every person at such an engine Law 1 whatever they asked, keeps it so
+    and says so (`fixed`), and the table says "This table's engine is older than stopping
+    you at every window…"; the stand-in engine at protocol 10 offers the empty declaration
+    alone, as those engines did, so the relay's test can see it never reaches a person.
+12. *The line for a fixed engine could be said twice*: the deal's line was that line, but
+    did not mark it said. It now does.
+13. *The lobby credited Controlled when another preset had been picked at the table and not
+    confirmed.* `lobbyStopsLine` (moved to `pace.js`) names the preset kept, or "your own
+    mix", and speaks of Controlled only where Controlled, or nothing, is kept.
+
+**Measured.** The example decks read again from Scryfall's records of their cards
+(2026-09-26, asked by name with an anonymous User-Agent), reminder text left out:
+Y'shtola, Night's Blessed as Tokens, 12 of its 100 cards where it was 15 (Life gain and
+Flyers next with 6, where Graveyard value had been next with 7); Esika, God of the Tree as
+Tokens and Big creatures tied at 15, where Tokens had led with 16; Anikthea, Hand of Erebos
+as Tokens, 12 where it was 13; Commodore Guff unchanged, Tokens and Flyers at 8. At 1280 ×
+900 the tabletop's top stands where it stood with the question beside it (the spec
+compares the two); at 390 × 844 the narrow question, closed, is about 380 px tall, and
+the prompt at Learning's attack stop sits over the lands row with the goblin clear above
+it (`ui-pace-attack-390-after`).
+
+**What going over the fixes found**, and fixed: the pointer line first said the turn panel
+was "beside the log", and it is under it; the spec's own checks for a teaching that never
+appeared threw rather than failed, so the run stopped at the first; and a shelf check
+built a selector from a React id, which a selector cannot hold.
+
+Faults put back, to see the tests catch them: the prompt placed from the middle with the
+teaching whole in it, focus to the prompt's first button, and no scroll on the first
+question (`pace.spec.mjs` failed 8, among them the tap on the attacker, blocked, and the
+Enter after the question, which took a mulligan); the relay dealing `autoPass: false` at
+protocol 10 (the new relay test fails); reminder text read in (three new unit tests fail);
+and the fixed line left unmarked at the deal (the new hook test fails). Each was taken out.
+
+**Where it departs from the letter.** Item 24's question was "a panel on the table above
+the battlefield"; on a wide screen it is now beside it, where it moves nothing. Learning's
+teaching is not always in the prompt: on a one-column table it is said under the
+battlefield, and on a wide one the prompt says only the note, the turn panel beside it
+having the rest. "Done" is the design source's word for the pass in the other player's
+turn; the rail's button still says Pass.
+
+**Not done, and where it goes.** The question's Advanced closes when the table moves it
+between the column and the top, a phone turned on its side; nothing is lost but the
+disclosure. The rest of this review's suggestions that were offered as optional are built
+(Done, the "Not read" tag); none was left.
+
+The bar at the end, the engine as §3 item 24 left it (protocol 11, `Server.kt` unchanged,
+not rebuilt): `npm test`, 2,277 tests in 102 files, 18 of them new, the live engine suite
+among them, none skipped, 125 s. `pace.spec.mjs` 77 checks and `shelf.spec.mjs` 39, each
+run on its own first, and `game`, `decisions` and the real engine's `game-engine` (218)
+after them. Then the whole browser suite against a built preview: 42 specs, 1,942 checks,
+none failed and none skipped, in about 1,210 s. Screenshots looked at, named `-after` in
+the system's temporary folder: `ui-pace-asked-1280-after`, `-advanced-1280-`,
+`-asked-390-`, `-teach-1280-`, `-teach-390-`, `-attack-390-`, `-first-390-`,
+`-first-360-`, `-settings-390-` and the rest of the pace spec's; `ui-shelf-1280-after`
+and `ui-shelf-390-after` (both filters open); and the real engine's `engine-controlled`, a
+stop in its turn titled "The engine's declare blockers" with Done. The token check clean.
+No JVM and no preview left running.
 
 ## Phase 3-alt — Writing the rules core ourselves
 

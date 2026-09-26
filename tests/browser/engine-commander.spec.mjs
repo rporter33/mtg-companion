@@ -96,7 +96,10 @@ const STATE = {
     { ...deckOf('d5', 'Warden Duel', ['warden']), formatId: 'duel', main: [{ cardId: 'rhys', quantity: 1 }, { cardId: 'forest', quantity: 50 }, { cardId: 'plains', quantity: 48 }] },
   ],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
-  prefs: { relayUrl: RELAY, playerName: 'Robin', reduceMotion: true },
+  // Fast, and the question answered: how a person plays is pace.spec.mjs's to test, and this
+  // spec keeps the table every spec before the choice played, stopped only where there is
+  // something to play (Law 1), with nothing asked above the battlefield (HANDOFF.md §3 item 24).
+  prefs: { relayUrl: RELAY, playerName: 'Robin', reduceMotion: true, tablePace: { preset: 'fast', asked: true } },
 }
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })

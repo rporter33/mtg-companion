@@ -15,6 +15,12 @@
  * anyone gets priority there at all — the untap step and a quiet cleanup are
  * the two places nobody does (500.3), which is exactly the thing new players
  * are surprised by.
+ *
+ * A `does` line the reference itself scopes to other games carries `only`:
+ * `multiplayer` where it says "in a multiplayer game" (507.1), `archenemy`
+ * where it says "Archenemy games" (505.3). The turn panel shows every line, as
+ * the reference does; a step's teaching at a table of two leaves those out
+ * (lib/engine/teach.js), since none of them can happen there.
  */
 
 export const PHASES = [
@@ -68,8 +74,12 @@ export const PHASES = [
         rule: '505.',
         priority: true,
         sorcerySpeed: true,
+        // Three turn-based actions, in the reference's order, each its own line so
+        // the one it scopes to Archenemy games can be told apart.
         does: [
-          { text: 'Sagas get a lore counter; Attractions are rolled for; the Archenemy sets a scheme in motion.', rule: '505.3–505.5' },
+          { text: 'In an Archenemy game, the Archenemy sets a scheme in motion.', rule: '505.3', only: 'archenemy' },
+          { text: 'Sagas get a lore counter.', rule: '505.4' },
+          { text: 'Attractions are rolled for.', rule: '505.5' },
         ],
         note: 'While the stack is empty the active player may cast sorcery-speed spells and play one land. A land does not use the stack and cannot be responded to.',
       },
@@ -86,7 +96,8 @@ export const PHASES = [
         rule: '507.',
         priority: true,
         does: [
-          { text: 'In some multiplayer games the active player chooses which opponent is defending.', rule: '507.1' },
+          { text: 'In some multiplayer games the active player chooses which opponent is defending.', rule: '507.1', only: 'multiplayer' },
+          { text: '“At beginning of combat” abilities trigger.', rule: '500.6' },
         ],
       },
       {

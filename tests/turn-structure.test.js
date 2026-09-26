@@ -61,6 +61,14 @@ describe('the structure of a turn', () => {
     }
   })
 
+  it('marks the lines the reference itself scopes to other games, and no others', () => {
+    // docs/TURN_STRUCTURE.md: 505.3 is "Archenemy games, rule 904", 507.1 "a multiplayer game".
+    const scoped = STEPS.flatMap((s) => s.does.filter((d) => d.only).map((d) => `${s.id} ${d.rule} ${d.only}`))
+    expect(scoped).toEqual(['main1 505.3 archenemy', 'beginCombat 507.1 multiplayer'])
+    // The main phase's three turn-based actions in the reference's order, each its own line.
+    expect(STEPS.find((s) => s.id === 'main1').does.map((d) => d.rule)).toEqual(['505.3', '505.4', '505.5'])
+  })
+
   it('reads a step by position, whichever way it is counted', () => {
     expect(stepAt(0).id).toBe('untap')
     expect(stepAt(STEPS.length).id).toBe('untap')

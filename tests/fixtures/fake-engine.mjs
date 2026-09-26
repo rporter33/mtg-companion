@@ -64,6 +64,28 @@
 // an engine from before them, which refuses both words; FAKE_FORMATS one whose
 // hello lists the games given, and deals those, whatever its protocol.
 //
+// And where a person stops (HANDOFF.md §3 item 24). A person dealt with
+// `autoPass: false` is stopped at every window: before each captured stop it
+// offers them, one at a time, the windows the captured run passed for them
+// (its `autoPassed`), each a stop with only a pass on it, in a step of the fake's
+// own — upkeep, then beginning of combat, then the end step, then the draw — and
+// the captured stop then says none were passed. Dealt with it true, or without
+// the key, as every test before this was, it passes them as the run did. Since
+// protocol 11 `stops` changes it mid-game, as Server.kt's does: from the next
+// window, the one the table stands at staying the person's to answer.
+// FAKE_PROTOCOL=10 plays an engine from before it, which knows no `stops`, and
+// which, dealt a person stopped everywhere, offers them the second of those
+// windows as Argentum's declaration of attackers with nothing to declare, alone
+// and with no pass beside it, as every engine before 11 did (engine/README.md);
+// a relay is not to deal it so.
+//
+// And the size of a hand as the other seats see it: `handSize` gives a seat's hand
+// as many cards as a test needs in every view but its owner's, where a hidden hand
+// is only ever a number, from the next view asked for. The captured views hold the
+// engine's hand at seven and then three, and a layout is measured at none and at
+// twelve as well (tests/browser/seat-opposite.spec.mjs). Nothing the real protocol
+// has, and not kept in a snapshot: a test that restarts the relay sets it again.
+//
 // It can be made to hold a request until the test lets it go (`holdActs`,
 // `holdSnapshot`, `release`, FAKE_HOLD_HELLO), which is how a test waits on
 // "the engine is still answering" without waiting on a clock.
@@ -125,7 +147,37 @@ let acts = 0
 let lastNew = null
 let lastAct = null
 let lastDecide = null
-const protocol = () => Number(process.env.FAKE_PROTOCOL) || 10
+const protocol = () => Number(process.env.FAKE_PROTOCOL) || 11
+// Protocol 11, and `autoPass` before it: whether the first seat, the person, is
+// stopped at every window; the empty windows still to offer before the captured
+// stop the table is heading for, of how many there were; and the windows passed
+// for the person on the way to it, which that stop says. `stopsAsked` counts the
+// changes asked for and `lastStops` keeps the last, for a test to read.
+let everyWindow = false
+let windows = 0
+let windowsBefore = 0
+let passedFor = 0
+let stopsAsked = 0
+let lastStops = null
+/** The steps the fake's empty windows are in, one after another before a captured stop. */
+const WINDOW_STEPS = [['BEGINNING', 'UPKEEP'], ['COMBAT', 'BEGIN_COMBAT'], ['ENDING', 'END'], ['BEGINNING', 'DRAW']]
+/** The step the empty window the table stands at is in, or null where it stands at none. */
+const windowStep = () => {
+  if (windows <= 0) return null
+  const w = WINDOW_STEPS[(windowsBefore - windows) % WINDOW_STEPS.length]
+  // An engine before 11 put an empty declaration of attackers in the second's place (above).
+  return protocol() < 11 && w[1] === 'BEGIN_COMBAT' ? ['COMBAT', 'DECLARE_ATTACKERS'] : w
+}
+/**
+ * The table heading for the captured stop `at`: the windows the run passed on the
+ * way there offered to a person stopped everywhere, or passed for one who is not.
+ */
+const arrive = () => {
+  const n = at >= 0 && at < shots.length ? shots[at].status.autoPassed ?? 0 : 0
+  windows = everyWindow ? n : 0
+  windowsBefore = windows
+  passedFor = everyWindow ? 0 : n
+}
 // Protocol 9: how many games this stand-in has taken back, and the last text it
 // was given, so a test can see what the relay kept and passed back.
 let restores = 0
@@ -137,6 +189,16 @@ let holdingSnapshot = false
 let fragile = false
 let continued = false
 let snapshotError = null
+// Test-only: each seat's hand, by size, as the other seats see it (`handSize`).
+let handSizes = {}
+/** A view with every hand the viewer may not see at the size a test gave it. */
+const sized = (view) => ({
+  ...view,
+  zones: view.zones.map((z) => {
+    const owner = z.zoneId?.ownerId
+    return z.zoneId?.zoneType === 'Hand' && owner in handSizes && owner !== view.viewingPlayerId ? { ...z, cardIds: [], size: handSizes[owner] } : z
+  }),
+})
 /**
  * The random number generator's state the stand-in's kept games carry: past
  * 2^53, as the real one's are (PLAN.md, M7), so JavaScript reads it as another
@@ -368,8 +430,21 @@ const status = () => {
     const { actions, ...rest } = shots[at].status
     return { ...rest, ok: true, waiting: 'decision', actor: FIXTURE.seats[0].id, decision: asking[0] }
   }
+  if (windows > 0 && at >= 0 && at < shots.length) return emptyWindow()
   if (commanders?.main && at >= 0 && at < shots.length) return mainStop()
-  return at >= shots.length ? ended() : { ...shots[at].status, ok: true }
+  return at >= shots.length ? ended() : { ...shots[at].status, ok: true, autoPassed: passedFor }
+}
+/** A window with nothing in it but a pass, offered to a person stopped at every window. */
+const emptyWindow = () => {
+  const [phase, step] = windowStep()
+  const declaring = step === 'DECLARE_ATTACKERS'
+  return {
+    ok: true, over: false, winner: null, turn: shot().status.turn, phase, step, actor: FIXTURE.seats[0].id, waiting: 'action',
+    actions: [declaring
+      ? { index: 0, type: 'DeclareAttackers', description: 'Declare attackers', affordable: true, meaningful: false, validAttackers: [], validAttackTargets: [FIXTURE.seats[1].id] }
+      : { index: 0, type: 'PassPriority', description: 'Pass priority', affordable: true, meaningful: false }],
+    autoPassed: 0, decided: [],
+  }
 }
 /**
  * The reply to a deal, and to a game taken back (protocol 9): the status, what
@@ -383,7 +458,7 @@ const dealtReply = (req, game, leaders) => ({
   ...(game ? { format: game } : {}),
   // What the game holds a player to (protocol 10), as Server.kt's `rulesOf` says it.
   ...(game && protocol() >= 10 ? { rules: { life: GAME_RULES[game].life, deckSize: GAME_RULES[game].deckSize, commanderDamage: GAME_RULES[game].commanderDamage } } : {}),
-  seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(typeof req.players?.[i]?.deck === 'object' ? req.players[i].deck : null), ...played(req.players?.[i]), ...asked(req.players?.[i]), ...built(req.players?.[i], req.players, game), ...(leaders[i] ? { commander: leaders[i] } : {}) })),
+  seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, autoPass: req.players?.[i]?.ai ? false : !everyWindow, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(typeof req.players?.[i]?.deck === 'object' ? req.players[i].deck : null), ...played(req.players?.[i]), ...asked(req.players?.[i]), ...built(req.players?.[i], req.players, game), ...(leaders[i] ? { commander: leaders[i] } : {}) })),
 })
 
 /** The log so far: one line a step, each carrying its words and its step, as M1 left them. */
@@ -507,7 +582,11 @@ function handle(req) {
         : null
       at = 0; steps = 0; pending = 0
       lastView.clear(); sentLines.clear()
+      handSizes = {}
       lastNew = req
+      // Where the person stops: every window only where the deal says so in so many words.
+      everyWindow = req.players?.[0]?.autoPass === false
+      arrive()
       // A pace is read only as a yes, and only by an engine that has one: an
       // older one has never heard of the key and ignores it, as the real one does.
       paced = protocol() >= 3 && (req.pace === true || (typeof req.pace === 'number' && req.pace > 0))
@@ -525,7 +604,7 @@ function handle(req) {
       if (holdingSnapshot && !req.released) { holdingSnapshot = false; held = req; return }
       if (!lastNew) { say({ id, ok: false, error: 'No game yet. Send "new" first.' }); break }
       if (snapshotError) { say({ id, ok: false, error: snapshotError }); snapshotError = null; break }
-      const body = JSON.stringify({ kind: 'fake-game', at, steps, paced, plays, pending, mulligan, commanders, asking, lastNew, fragile })
+      const body = JSON.stringify({ kind: 'fake-game', at, steps, paced, plays, pending, mulligan, commanders, asking, lastNew, fragile, everyWindow, windows, windowsBefore, passedFor })
       const text = `${body.slice(0, -1)},"rng":${RNG}}`
       say({ id, ok: true, snapshot: text, bytes: Buffer.byteLength(text) })
       break
@@ -544,6 +623,11 @@ function handle(req) {
       if (doc?.kind !== 'fake-game') { say({ id, ok: false, error: 'That is not a game this engine kept.' }); break }
       if (rng !== RNG) { say({ id, ok: false, error: `That game's random number generator came back as ${rng ?? 'nothing'}, where it was kept as ${RNG}.` }); break }
       ;({ at, steps, paced, plays, pending, mulligan, commanders, asking, lastNew } = doc)
+      // Where the person stops, as the game kept it; a text from before that keeps none, and is Law 1.
+      everyWindow = doc.everyWindow === true
+      windows = Number.isInteger(doc.windows) ? doc.windows : 0
+      windowsBefore = Number.isInteger(doc.windowsBefore) ? doc.windowsBefore : windows
+      passedFor = Number.isInteger(doc.passedFor) ? doc.passedFor : 0
       fragile = doc.fragile === true
       lastView.clear(); sentLines.clear()
       restores++
@@ -563,7 +647,7 @@ function handle(req) {
     // the player's stops alone, so what it does between them is said here.
     case 'plays': plays = Math.max(0, Number(req.count) || 0); say({ id, ok: true, plays }); break
     // Test-only: what this engine has been asked for and where it stands.
-    case 'tally': say({ id, ok: true, continues, steps, pending, paced, plays, acts, restores }); break
+    case 'tally': say({ id, ok: true, continues, steps, pending, paced, plays, acts, restores, stopsAsked, everyWindow, windows }); break
     // Test-only: the next act is taken and not answered until `release`.
     case 'holdActs': holding = true; say({ id, ok: true }); break
     case 'holdSnapshot': holdingSnapshot = true; say({ id, ok: true }); break
@@ -594,6 +678,14 @@ function handle(req) {
       commanders.damage[req.to] = { ...(commanders.damage[req.to] ?? {}), [req.from]: Number(req.amount) || 0 }
       steps++
       say({ id, ok: true })
+      break
+    }
+    // Test-only: a seat's hand as the others see it, a number of cards (above).
+    case 'handSize': {
+      const size = Number(req.size)
+      if (!FIXTURE.seats.some((s) => s.id === req.seat) || !Number.isInteger(size) || size < 0) { say({ id, ok: false, error: 'No such seat, or no such size.' }); break }
+      handSizes[req.seat] = size
+      say({ id, ok: true, seat: req.seat, size })
       break
     }
     // Test-only faults, above.
@@ -627,6 +719,14 @@ function handle(req) {
       }
       if (pending > 0) { say({ id, ok: false, error: 'The game is not waiting on anyone.' }); break }
       if (at < 0 || at >= shots.length) { say({ id, ok: false, error: 'The game is not waiting on anyone.' }); break }
+      // An empty window, offered to a person stopped at every window: the pass
+      // goes on to the next, and after the last to the captured stop.
+      if (windows > 0) {
+        if (req.index !== 0) { say({ id, ok: false, error: `No action ${req.index}; 1 were offered.` }); break }
+        windows--; steps++
+        say({ id, ...status() })
+        break
+      }
       // The main phase before a captured stop at a Commander table: a pass goes on
       // to the captured stop, and the commander cast from the command zone goes to
       // the battlefield, one more cast for its tax, and then on as well.
@@ -642,6 +742,7 @@ function handle(req) {
       const offered = shots[at].status.actions ?? []
       if (!(req.index >= 0 && req.index < offered.length)) { say({ id, ok: false, error: `No action ${req.index}; ${offered.length} were offered.` }); break }
       at++; steps++
+      arrive()
       if (commanders) commanders.main = true
       // Then the engine's own turn, one play at a time, if this table is paced
       // and there is anything in it to watch.
@@ -661,11 +762,34 @@ function handle(req) {
       }
       if (at < 0) { say({ id, ok: false, error: 'There is no decision to make.' }); break }
       at++; steps++
+      arrive()
       if (commanders) commanders.main = true
       if (paced && plays > 0) { pending = plays; steps++ }
       say({ id, ...status() })
       break
     }
+    // Where a person stops, changed mid-game (protocol 11), refused in Server.kt's
+    // words: a seat it does not have, the engine's own, no `autoPass`. From the
+    // next window: stopped everywhere from here, the window the table stands at
+    // stays theirs and the rest before the captured stop are passed for them; the
+    // other way round, the next captured stop's run-up is offered.
+    case 'stops': {
+      if (protocol() < 11) { say({ id, ok: false, error: `Unknown op "${req.op}".` }); break }
+      if (!lastNew) { say({ id, ok: false, error: 'No game yet. Send "new" first.' }); break }
+      if (typeof req.seat !== 'string') { say({ id, ok: false, error: '"seat" is required.' }); break }
+      const i = FIXTURE.seats.findIndex((s) => s.id === req.seat)
+      if (i < 0) { say({ id, ok: false, error: `No seat ${req.seat}.` }); break }
+      if (lastNew.players?.[i]?.ai) { say({ id, ok: false, error: `Seat ${req.seat} is the engine's own, which passes by its own judgement: only a person's seat is stopped or passed for.` }); break }
+      if (typeof req.autoPass !== 'boolean') { say({ id, ok: false, error: '"autoPass" is required: true to be passed for where nothing is affordable, false to stop at every window.' }); break }
+      stopsAsked++
+      lastStops = req
+      everyWindow = !req.autoPass
+      // The window stood at keeps its step: the ones after it go, and so does their place in the count.
+      if (!everyWindow && windows > 1) { passedFor += windows - 1; windowsBefore -= windows - 1; windows = 1 }
+      say({ id, ok: true, seat: req.seat, autoPass: req.autoPass })
+      break
+    }
+    case 'lastStops': say({ id, ok: true, request: lastStops, stopsAsked }); break
     // The next step of a paced table, refused the two ways the real one refuses
     // it: at a table that was never paced, and where nothing is waiting on the
     // engine. The last step is the one that hands the table back to the player.
@@ -683,7 +807,9 @@ function handle(req) {
       if (fragile && continued) { process.stderr.write('fake engine: a view it could not write\n'); process.exit(3) }
       const here = shot()
       const seatId = req.viewer ?? here.view.viewingPlayerId
-      const next = commanderView({ ...here.view, viewingPlayerId: seatId })
+      const seen = sized(commanderView({ ...here.view, viewingPlayerId: seatId }))
+      // At an empty window the table is in that window's step, not the captured stop's.
+      const next = windowStep() ? { ...seen, currentPhase: windowStep()[0], currentStep: windowStep()[1], combat: null } : seen
       const before = lastView.get(seatId)
       lastView.set(seatId, next)
       const all = logSoFar()

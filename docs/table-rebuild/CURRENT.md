@@ -489,6 +489,92 @@ that routes `*.scryfall.io` opening its pages with service workers blocked.
 `engine/README.md` and HANDOFF.md §3 item 12 say what the workflow ensures and what it
 cannot; HANDOFF.md §5 gains two traps and says more in two others, and §6 the rest.
 
+Added for §3 item 24 (2026-09-25), the pace presets (PLAN.md, "§3 item 24: the pace
+presets"). `Server.kt` changed to protocol 11, and the engine rebuilt.
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/engine/pace.js` | 219 | `PRESETS` (Fast, Controlled, Learning), `DEFAULT_PRESET` (Controlled, the owner's choice), `PRESET_SETTINGS` (what each sets: `stops`, `speed`, `explain`), `chosenPace` and `paceWith` and `answered` (the choice kept with the table preferences as `tablePace`, read forgivingly), `presetFor`, `speedMs` (Brisk the room's own pace, Relaxed twice it, Instant none), `roomPaceOf` (the room's `seated.pace`, read forgivingly), `stopsLine` (the log's words), and the app's own words for each, with `PAYING_LINE` and `STACK_LINE`, what no preset can do here. Shared by the relay and the app. Pure. |
+| `src/lib/engine/teach.js` | 74 | `teachingFor` (a step's lines from `docs/TURN_STRUCTURE.md` through `src/data/turn-structure.js`, with their rules; none for untap and cleanup), `teachingWords`, and the count kept as `tableTaught` — `timesTaught`, `taughtOnce`, `taughtAt`, `taughtAny`, `taughtEnough` — read forgivingly. Pure. |
+| `src/features/game/PaceChoice.jsx` | 119 | "How do you want to play?": three presets as radios, each named by its preset and tagline and described by what it does; Advanced, the settings each sets, changeable one at a time; what the table cannot do, from the room's report; the button that answers it. Asked once on the table, and kept in the table's own settings as "How you play". |
+| `tests/engine-pace.test.js` | 191 | What each preset sets, the owner's default, the forgiving reads, the speeds' waits, the room's report and the log's words in every case, and the teaching held to the reference step by step, counted forgivingly. |
+| `tests/browser/pace.spec.mjs` | 253 | Against the stand-in engine, so it runs everywhere: the question on the table with Controlled chosen and in force, a window with nothing in it a stop, Learning chosen from the keyboard, the steps explained and counted, Advanced's settings and the room's speed, the question answered and not asked again after a reload, Fast chosen later from the table's settings and a window then passed and said; axe at both widths, nothing sideways, nothing animating; screenshots `ui-pace-*`. |
+
+And these grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `engine/src/main/kotlin/companion/Server.kt` | 2,398 | Protocol 11: a seat's `autoPass` changes mid-game (`stops`, the seat's setting in reply, the table not driven, the engine's seat refused), and a seat stopped everywhere is not stopped for an empty declaration, at the untap step, or at the first player's first draw step in a game of two. |
+| `scripts/relay-engine.mjs` | 1,643 | Each person's `stops` from the sit or `settings`, sent at the deal as `autoPass` and changed mid-game by `stops` where the engine is at 11 (`syncStops`, one change at a time, the last wish winning), `fixed` where it is not; the room's `speed` and its wait (`waitMs`); `seated.pace` to every person; `speed` in `GET /rooms` and on disk with each person's `stops`, read back forgivingly (`savedRoomOf`); a game taken back brought to the wishes. |
+| `scripts/relay-server.mjs` | 678 | Rooms given the longest pace, 10 s, which Relaxed may not pass. |
+| `src/features/game/useEngineRoom.js` | 646 | Sits with `stops` and `pace`, sends a change as `settings` to a relay that has said it knows them, returns the room's report as `pace`, and says in the log where the game stops, at the deal, on a change and where one cannot be made. |
+| `src/features/game/Table.jsx` | 1,871 | The choice kept as `tablePace` and read with `chosenPace`; the question above the battlefield, in the loading table too, until answered, then focus to the prompt; "How you play" first under More; the step's teaching counted once a stop and kept as `tableTaught`. |
+| `src/features/game/EnginePrompt.jsx` | 698 | `teach`: what the step is for, under the prompt's words at a stop, an attack and a block. |
+| `src/features/game/Seats.jsx`, `game.css` | 388, 549 | The lobby's line about rules-enforced play says where the game will stop; the choice's and the teaching's styles, from tokens. |
+| `tests/fixtures/fake-engine.mjs` | 796 | Protocol 11: a person dealt `autoPass: false` offered the windows its captured run passed for them, one at a time, before each captured stop; `stops`; both kept in its snapshot. |
+| `tests/browser/game-engine.spec.mjs` | 1,559 | Controlled chosen mid-game at the real engine from the table's settings, the log saying the engine took it and the next windows stops with nothing to play; then Fast again. |
+
+`tests/relay-server.test.js` (3,211 lines) gains eleven, `tests/engine-room.test.jsx`
+(1,056) seven, `tests/engine-prompt.test.jsx` (319) six, `tests/engine-live.test.js`
+(1,965) one and one changed (protocol 11), `tests/engine-bridge.test.js` one changed.
+`decisions`, `engine-commander`, `engine-deck`, `engine-restart`, `game-engine` and
+`levels` specs play Fast with the question answered, as every spec did before the
+choice. `engine/README.md` says protocol 11; HANDOFF.md §3 items 24 and 25, §6 and §7.
+
+Added 2026-09-26, the seat opposite at a phone's width and the shelf's archetype and
+bracket (PLAN.md, "The seat opposite at a phone's width, and the shelf's archetype and
+bracket"; HANDOFF.md §3 item 26). No change to the engine, the relay or the wire.
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/deck-reading.js` | 195 | What the shelf reads of a deck, the app's own reading and said to be: `PLANS` (the vocabulary of `src/data/strategies.js`, each plan once), `searchOf` (a plan's search as a test of a card record — `o:`, `t:`, `pow>=`; null for an oracle tag or anything else), `plansFitting`, `playedEntries` (main deck, commanders, signature spell), `readPlan` (the plan most copies fit, ties kept, lands left out; null where a card has not arrived), `readBracket` (the lowest bracket the Game Changers allow, from Scryfall's `game_changer`, by Wizards' Commander Brackets as read 2026-09-26: `floorFor`, `FLOORS`, `BRACKET_NAMES`), and the words — `planSentence`, `bracketSentence`, `floorBadge`, `floorWords`, `PLAN_LINE`, `BRACKET_LINE`, `SHELF_LINE`. Pure. |
+| `src/features/game/useDeckReadings.js` | 43 | Every card the shelf's decks play, asked for apart from the paintings' few (`useShelfCards`), and each deck read: `{ plan, bracket }`, the bracket only on the Commander tab. |
+| `tests/deck-reading.test.js` | 186 | The vocabulary, every plan with a search that can run; the searches read as Scryfall reads them (case, both faces, power as a number, an oracle tag refused); lands left out, a Treasure maker counted as the Tokens plan's search counts it; the readings with ties, copies, commanders, cards not arrived and records without the flag; Wizards' floors; the words. |
+| `tests/browser/shelf.spec.mjs` | 208 | The shelf's tags and badges, a deck with a card that never arrives not read, the line above the shelf, the tile's words to a screen reader; the Archetype and Bracket filters, a count on every chip, counts fixed while picking, any-of within one, both across two, the unread deck said; a sixty-card tab with a plan and no bracket; axe at 1280 and 390, nothing sideways; screenshots `ui-shelf-*`. |
+| `tests/browser/seat-opposite.spec.mjs` | 316 | The seat opposite measured as drawn at 360, 390 and 430 px, with none, seven and twelve cards opposite, at the engine's table (the stand-in's `handSize`) and at a table played by hand (a second person playing and drawing through the relay), and the empty seat of a table played alone: nothing over the plate or a tile, all of it inside the seat, the tiles in no more than two rows, nothing sideways, and where each was drawn printed; at 1280 the backs between the plate and the tiles; axe at 390; screenshots `ui-seat-opposite-*`. |
+
+And these grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `src/features/game/game.css` | 591 | Every seat opposite — empty, loading, sat in — one grid and a size container (`them`): the hand's column never narrower than what it holds, and a row of its own under the plate and tiles below 35rem; the shelf's tags, badge and notes, from tokens. |
+| `src/features/game/Lobby.jsx` | 766 | `ReadingFilter`, the Archetype and Bracket dropdowns in the colours filter's shape; each tile's plan tag and bracket badge, said as sentences; the line above the shelf; decks not read, and hidden by a filter, said. |
+| `tests/fixtures/fake-engine.mjs` | 822 | `handSize`, test-only: a seat's hand at a size a test gives, in every view but its owner's. |
+
+`package.json`'s `test:browser` runs both new specs: `shelf` after `game`, and
+`seat-opposite` after `pace`.
+
+Changed 2026-09-26 by the review of §3 item 24 and the shelf (PLAN.md, "The review of item
+24 and the shelf"). No change to the engine or the wire's shape; the relay deals an engine
+older than protocol 11 differently.
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/features/game/useSideBeside.js` | 27 | Whether the side column stands beside the table: game.css's own query (`SIDE_BESIDE`), asked of the browser for what goes in one column or the other; false with no `matchMedia`. |
+
+And these changed:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `src/features/game/Table.jsx` | 1,932 | The first question beside the table in the side column, or above the seat opposite on a one-column table (`game--asking`), never in the battlefield's box; brought into view once as it first shows; focus after it to the prompt's primary button; your battlefield and the prompt in a box of their own (`.game__table`); the teaching in the prompt where the side column is beside, else under that box; taught only in the person's turn or at a block. |
+| `src/features/game/EnginePrompt.jsx` | 713 | A stop in the engine's turn titled "The engine's upkeep", labelled so, its button Done; `Teaching`, exported, the note alone in the prompt and the whole under the battlefield. |
+| `src/features/game/PaceChoice.jsx` | 134 | `waiting` (its button plain while a stop waits), `onShown`, `pacechoice--open`; the fixed engine's note from `fixedLine`. |
+| `src/lib/engine/teach.js` | 114 | `teachingFor(step, { seats })`: the note first, the lines the reference scopes to other games left out at two seats, `note` and `does` apart; `teachingHead`, `teachingBody` (the note alone `beside`), `TURN_PANEL_LINE`, `teachesHere`. |
+| `src/lib/engine/pace.js` | 248 | `fixedLine` (an engine older than 11, or a game dealt every window by a relay before this), `lobbyStopsLine` (the lobby's line, naming the preset kept). |
+| `src/data/turn-structure.js` | 232 | `only` on the two lines `docs/TURN_STRUCTURE.md` scopes to other games (505.3, 507.1); the main phase's three turn-based actions as three lines; the beginning of combat's trigger (500.6). |
+| `src/lib/deck-reading.js` | 225 | Rules text read without reminder text; `floorChip`; `shelfLine({ brackets })` in place of `SHELF_LINE`; `READING_LINE`, `UNREAD_SENTENCE`; `PLAN_LINE` and `BRACKET_LINE` rewritten to follow `READING_LINE`. |
+| `src/features/game/Lobby.jsx`, `Seats.jsx` | 782, 383 | Bracket chips named by what they keep; "No plan" and "Not read" tags; "How this is read" under each filter's chips; the lobby's line from `lobbyStopsLine`. |
+| `src/features/game/game.css` | 638 | The prompt centred by its margins, as wide as its words; `.game__table`, `.game__ask`, `.game--asking`, `.game__teach`; the narrow question (a container, `pace`); the tags for no reading, and "How this is read". |
+| `src/features/game/useEngineRoom.js` | 649 | The fixed engine's line marked said at the deal. |
+| `scripts/relay-engine.mjs` | 1,651 | A person at an engine older than 11 dealt `autoPass: true` whatever they asked. |
+| `tests/fixtures/fake-engine.mjs` | 834 | At protocol 10, the second window offered a person stopped everywhere is an empty declaration of attackers, alone. |
+| `tests/browser/pace.spec.mjs`, `shelf.spec.mjs` | 350, 242 | The question beside the table at 1280 and first on it at 390, the tabletop unmoved by it, one primary button; the teaching beside and under the battlefield, a tap on the attacker at 390; a first sit on a phone from a scrolled lobby, 390 and 360, focus to Keep; the chips, the tags, the shelf's line, the disclosures. |
+
+`tests/engine-pace.test.js` (246 lines), `tests/engine-prompt.test.jsx` (388),
+`tests/engine-room.test.jsx` (1,068), `tests/deck-reading.test.js` (218),
+`tests/turn-structure.test.js` (79) and `tests/relay-server.test.js` (3,221) gain the
+review's tests. `engine/README.md` and HANDOFF.md §3 items 24 to 26 and §7 say what changed.
+
 ## `src/lib/board/` — the rules-free table
 
 | File | Lines | What it holds |

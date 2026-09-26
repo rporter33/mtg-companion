@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { FORMATS, getFormat } from '../../lib/formats.js'
 import { libraryOf } from '../../lib/board/deck.js'
 import { unionColorIdentity } from '../../lib/deck.js'
@@ -12,6 +12,11 @@ import DeckArt from '../../components/DeckArt.jsx'
 import ManaCost from '../../components/ManaCost.jsx'
 import useShelfCards from './useShelfCards.js'
 import useEngineCheck from './useEngineCheck.js'
+import useDeckReadings from './useDeckReadings.js'
+import {
+  BRACKET_LINE, FLOORS, PLAN_LINE, PLANS, READING_LINE, UNREAD_SENTENCE,
+  bracketSentence, floorBadge, floorChip, floorWords, planName, planSentence, shelfLine,
+} from '../../lib/deck-reading.js'
 import { agreeToLeaveOut, chooseEngineDeck } from './useEngineRoom.js'
 import { chosenOpponent, colourWords, engineDeckRecord } from '../../lib/engine/opponent.js'
 import { gameName, leaderProblem, leaderWords } from '../../lib/engine/commander.js'
@@ -33,8 +38,15 @@ import Seats from './Seats.jsx'
  * commanders' — the same arithmetic the deck checker uses — so the pips and
  * the colours filter exist on the Commander-family tabs, where that is a
  * fact, and not on the sixty-card tabs, where it would take every card in the
- * deck to say. There is no bracket filter because nothing in this app knows a
- * deck's bracket, and a filter with nothing behind it is not a filter.
+ * deck to say.
+ *
+ * The archetype and bracket are not facts a deck carries, so they are this app's
+ * reading of its cards (lib/deck-reading.js), and said to be, above the shelf and
+ * beside each filter: the plan most of a deck's cards fit, from the app's own
+ * plans for a first deck, and, on the Commander tab, the lowest bracket its Game
+ * Changers allow. A deck whose cards have not all arrived is not read, and a filter
+ * with no deck read behind it is not offered, since a filter with nothing behind it
+ * is not a filter.
  */
 
 /* The tabs Moxgate shows first, in its order; every other format is behind "More". */
@@ -49,11 +61,15 @@ export default function Lobby({ decks, room = null, engine = null }) {
   const [more, setMore] = useState(false)
   const [wanted, setWanted] = useState(() => new Set())
   const [exactly, setExactly] = useState(false)
+  const [wantedPlans, setWantedPlans] = useState(() => new Set())
+  const [wantedFloors, setWantedFloors] = useState(() => new Set())
 
   const inFormat = useMemo(() => decks.filter((d) => d.formatId === format), [decks, format])
   const cards = useShelfCards(inFormat)
   const showImages = getPrefs().showCardImages !== false
   const commanderFamily = getFormat(format)?.group === 'commander'
+  // The brackets are Wizards' for the Commander format, so they are read on its tab alone.
+  const readings = useDeckReadings(inFormat, { brackets: format === 'commander' })
 
   // What the shelf knows about each deck, from the few cards it loaded.
   const info = useMemo(() => {
@@ -75,6 +91,28 @@ export default function Lobby({ decks, room = null, engine = null }) {
     return out
   }, [inFormat, info])
 
+  // The same for what this app reads of each deck: a deck counts under each plan
+  // it reads as (several where they tie), under "No plan" where it was read and
+  // fits none, and under the one bracket its Game Changers allow at the lowest. A
+  // deck not read is under none of them, as a deck of unknown colours is.
+  const planFacet = useMemo(() => {
+    const counts = new Map()
+    for (const deck of inFormat) {
+      const plan = readings.get(deck.id)?.plan
+      if (!plan) continue
+      for (const id of plan.top.length ? plan.top : ['none']) counts.set(id, (counts.get(id) ?? 0) + 1)
+    }
+    // Most decks first, as Moxgate's chips run, and the vocabulary's order between equals.
+    const order = [...PLANS.map((p) => p.id), 'none']
+    return [...counts].sort((a, b) => b[1] - a[1] || order.indexOf(a[0]) - order.indexOf(b[0]))
+      .map(([id, count]) => ({ id, count, text: id === 'none' ? 'No plan' : planName(id) }))
+  }, [inFormat, readings])
+  const floorFacet = useMemo(() => {
+    const read = inFormat.map((d) => readings.get(d.id)?.bracket).filter(Boolean)
+    if (!read.length) return []
+    return FLOORS.map((floor) => ({ id: floor, count: read.filter((b) => b.floor === floor).length, text: floorChip(floor) }))
+  }, [inFormat, readings])
+
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
     return inFormat
@@ -82,10 +120,15 @@ export default function Lobby({ decks, room = null, engine = null }) {
         || d.name.toLowerCase().includes(q)
         || (info.get(d.id)?.commanderName ?? '').toLowerCase().includes(q))
       .filter((d) => matchesColours(info.get(d.id)?.identity, wanted, exactly))
-  }, [inFormat, info, query, wanted, exactly])
+      .filter((d) => matchesPlan(readings.get(d.id)?.plan, wantedPlans))
+      .filter((d) => matchesFloor(readings.get(d.id)?.bracket, wantedFloors))
+  }, [inFormat, info, readings, query, wanted, exactly, wantedPlans, wantedFloors])
   const unknownHidden = wanted.size
     ? inFormat.filter((d) => !info.get(d.id)?.identity && !matchesColours(null, wanted, exactly)).length
     : 0
+  const unreadHidden = inFormat.filter((d) => (wantedPlans.size && !readings.get(d.id)?.plan)
+    || (wantedFloors.size && !readings.get(d.id)?.bracket)).length
+  const readingShown = shown.some((d) => readings.get(d.id)?.plan?.top.length || readings.get(d.id)?.bracket)
 
   const chosenDeck = shown.find((d) => d.id === chosen) ?? null
   const rest = Object.keys(FORMATS).filter((id) => !FRONT.includes(id))
@@ -167,7 +210,9 @@ export default function Lobby({ decks, room = null, engine = null }) {
   const known = engine ? shown.filter((d) => checks.get(d.id)?.state === 'complete') : []
   const wildcards = known.length ? known : shown
 
-  const pickFormat = (id) => { setFormat(id); setChosen(null); setWanted(new Set()); setPending(null); setGate(null) }
+  const pickFormat = (id) => {
+    setFormat(id); setChosen(null); setWanted(new Set()); setWantedPlans(new Set()); setWantedFloors(new Set()); setPending(null); setGate(null)
+  }
 
   return (
     <div className="lobby">
@@ -208,6 +253,13 @@ export default function Lobby({ decks, room = null, engine = null }) {
             {commanderFamily && (
               <ColourFilter facet={facet} wanted={wanted} exactly={exactly}
                 onWanted={setWanted} onExactly={setExactly} />
+            )}
+            {planFacet.length > 0 && (
+              <ReadingFilter label="Archetype" chips={planFacet} wanted={wantedPlans} onWanted={setWantedPlans} note={PLAN_LINE} />
+            )}
+            {floorFacet.length > 0 && (
+              <ReadingFilter label="Bracket" chips={floorFacet} wanted={wantedFloors} onWanted={setWantedFloors} note={BRACKET_LINE}
+                summary={(ids) => ids.map(floorBadge).join(', ')} />
             )}
           </div>
 
@@ -250,27 +302,37 @@ export default function Lobby({ decks, room = null, engine = null }) {
             </div>
           ) : !shown.length ? (
             <p className="faint" role="status">
-              {query.trim() || wanted.size ? 'No deck here matches.' : `You have no ${getFormat(format)?.name ?? format} decks yet.`}
+              {query.trim() || wanted.size || wantedPlans.size || wantedFloors.size ? 'No deck here matches.' : `You have no ${getFormat(format)?.name ?? format} decks yet.`}
             </p>
           ) : (
-            <ul className="lobby__shelf" role="list">
-              {shown.map((deck) => (
-                <li key={deck.id}>
-                  <DeckTile
-                    deck={deck}
-                    info={info.get(deck.id)}
-                    chosen={chosen === deck.id}
-                    check={checks.get(deck.id)}
-                    onChoose={() => choose(deck.id)}
-                  />
-                </li>
-              ))}
-            </ul>
+            <>
+              {readingShown && <p className="faint tiny lobby__readnote">{shelfLine({ brackets: floorFacet.length > 0 })}</p>}
+              <ul className="lobby__shelf" role="list">
+                {shown.map((deck) => (
+                  <li key={deck.id}>
+                    <DeckTile
+                      deck={deck}
+                      info={info.get(deck.id)}
+                      reading={readings.get(deck.id)}
+                      chosen={chosen === deck.id}
+                      check={checks.get(deck.id)}
+                      onChoose={() => choose(deck.id)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
           {unknownHidden > 0 && (
             <p className="faint tiny" role="status">
               {unknownHidden === 1 ? 'One deck is' : `${unknownHidden} decks are`} not shown because
               {unknownHidden === 1 ? ' its' : ' their'} colours are not known yet.
+            </p>
+          )}
+          {unreadHidden > 0 && (
+            <p className="faint tiny" role="status">
+              {unreadHidden === 1 ? 'One deck is' : `${unreadHidden} decks are`} not shown because not all
+              {unreadHidden === 1 ? ' its' : ' their'} cards have arrived, so this app has not read {unreadHidden === 1 ? 'it' : 'them'}.
             </p>
           )}
         </section>
@@ -327,12 +389,17 @@ export default function Lobby({ decks, room = null, engine = null }) {
 }
 
 /**
- * One deck on the shelf: painting behind, name, commander and size, pips.
- * The painting is decoration and the pips are spoken by ManaCost, so a
- * screen reader hears "white, green" where a sighted person sees two dots.
+ * One deck on the shelf: painting behind, name, commander and size, pips, and
+ * what this app reads of it — the plan as a tag, and the bracket's floor as a
+ * badge, as Moxgate's shelf carries an archetype tag and a bracket badge. The
+ * painting is decoration and the pips are spoken by ManaCost, so a screen reader
+ * hears "white, green" where a sighted person sees two dots; the tags are said as
+ * the sentences they stand for, each saying it is this app's reading.
  */
-function DeckTile({ deck, info, chosen, check, onChoose }) {
+function DeckTile({ deck, info, reading = null, chosen, check, onChoose }) {
   const pips = info?.identity ? (info.identity.length ? info.identity.map((c) => `{${c}}`).join('') : '{C}') : null
+  const plan = reading?.plan ?? null
+  const bracket = reading?.bracket ?? null
   return (
     <button
       type="button"
@@ -347,6 +414,21 @@ function DeckTile({ deck, info, chosen, check, onChoose }) {
           {info?.commanderName ? `${info.commanderName} · ` : ''}{sizeOf(deck, Boolean(info?.commanderName))}
         </span>
         {pips && <ManaCost cost={pips} className="lobby__pips" />}
+        {/* Three states a sighted player can tell apart, as the Archetype filter's
+            "No plan" chip needs: read as a plan, read as none ("No plan", the chip's
+            own words), and not read because a card never arrived ("Not read"). Before
+            the cards are here at all, nothing: the reading is on its way. */}
+        {reading && (
+          <span className="lobby__tags">
+            {plan?.top.map((id) => <span key={id} className="lobby__tag" aria-hidden="true" title={planSentence(plan)}>{planName(id)}</span>)}
+            {plan && !plan.top.length && <span className="lobby__tag lobby__tag--none" aria-hidden="true" title={planSentence(plan)}>No plan</span>}
+            {!plan && <span className="lobby__tag lobby__tag--none" aria-hidden="true" title={UNREAD_SENTENCE}>Not read</span>}
+            {bracket && (
+              <span className="lobby__tag lobby__tag--bracket" aria-hidden="true" title={floorWords(bracket.floor)}>{floorBadge(bracket.floor)}</span>
+            )}
+            <span className="sr-only">{[plan ? planSentence(plan) : UNREAD_SENTENCE, bracket && bracketSentence(bracket)].filter(Boolean).join(' ')}</span>
+          </span>
+        )}
         <DeckCheck check={check} />
       </span>
       {chosen && <span className="lobby__tick" aria-hidden="true">✓</span>}
@@ -545,6 +627,58 @@ function ColourFilter({ facet, wanted, exactly, onWanted, onExactly }) {
   )
 }
 
+/**
+ * The archetype and bracket dropdowns, in the colours filter's shape: a chip per
+ * value carrying how many decks are behind it, fixed while you pick, several chips
+ * at once meaning any of them — a deck reads as one plan and has one floor, so
+ * "all of them" would find nothing. Under the chips, one line saying they are this
+ * app's reading, and how it was read behind "How this is read": written out every
+ * time, the two paragraphs stood between the chips and the shelf with both open.
+ */
+function ReadingFilter({ label, chips, wanted, onWanted, note, summary = null }) {
+  const [open, setOpen] = useState(false)
+  const [how, setHow] = useState(false)
+  const howId = useId()
+  const toggle = (id) => {
+    const next = new Set(wanted)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    onWanted(next)
+  }
+  const picked = chips.filter((c) => wanted.has(c.id)).map((c) => c.id)
+  const said = summary ? summary(picked) : picked.map((id) => chips.find((c) => c.id === id).text).join(', ')
+  return (
+    <div className="lobby__filter">
+      <button type="button" className={`chip lobby__tab${wanted.size ? ' lobby__tab--on' : ''}`}
+        aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {picked.length ? `${label} · ${said}` : `${label} ·`}
+      </button>
+      {open && (
+        <div className="lobby__facets" role="group" aria-label={label}>
+          {chips.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={`chip lobby__facet${wanted.has(c.id) ? ' lobby__tab--on' : ''}`}
+              aria-pressed={wanted.has(c.id)}
+              onClick={() => toggle(c.id)}
+            >
+              {c.text}
+              <span className="lobby__count">{c.count}</span>
+            </button>
+          ))}
+          <p className="lobby__facetnote faint tiny">
+            {READING_LINE}{' '}
+            <button type="button" className="lobby__howread" aria-expanded={how} aria-controls={howId} onClick={() => setHow((h) => !h)}>
+              How this is read
+            </button>
+          </p>
+          <p id={howId} className="lobby__facetnote faint tiny" hidden={!how}>{note}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function FormatTab({ id, current, count = 0, onPick }) {
   return (
     <button
@@ -583,6 +717,19 @@ function matchesColours(identity, wanted, exactly) {
   const have = new Set(identity.length ? identity : ['C'])
   if (exactly) return have.size === wanted.size && [...wanted].every((c) => have.has(c))
   return [...wanted].every((c) => have.has(c))
+}
+
+/** Any of the plans wanted, or "No plan" for a deck read that fits none; a deck not read, never. */
+function matchesPlan(plan, wanted) {
+  if (!wanted.size) return true
+  if (!plan) return false
+  return plan.top.length ? plan.top.some((id) => wanted.has(id)) : wanted.has('none')
+}
+
+/** Any of the floors wanted; a deck whose bracket was not read, never. */
+function matchesFloor(bracket, wanted) {
+  if (!wanted.size) return true
+  return Boolean(bracket) && wanted.has(bracket.floor)
 }
 
 /** One line under the title, the way Moxgate's says "100-card singleton". */

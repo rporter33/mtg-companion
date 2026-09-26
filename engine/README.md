@@ -85,7 +85,7 @@ One request per line, one reply per line, correlated by `id`:
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"engine":"argentum","protocol":10,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"levels":{"easy":"v0","intermediate":"production-raceclock","hard":"production-candidate-expiring"},"choices":{"act":["targets","x","damage","cost","auto","cards"],"costs":["DiscardCard",…],"decisions":["ChooseTargets","YesNo","ChooseOption","SelectCards",…]},"formats":["standard","commander","duel","brawl"],"decks":{"formats":["standard","pioneer","modern","legacy","vintage","pauper","premodern","commander","brawl"]},"load":{"ms":27342,"legalitiesMs":601,"heapMb":127,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order; `levels` are the strengths an engine seat may play at, weakest first, each with the Argentum profile behind it; `choices` is what a person may choose over this protocol (below); `formats` the games it deals (protocol 8, and since 10 Duel Commander and Brawl, below); `decks.formats` the formats an engine's seat can be dealt a deck of its own in (protocol 7, below; Commander's only at a Commander table, and Brawl's only at a Brawl one); `load.legalitiesMs` what stamping every card with the formats it is legal in took, of `load.ms` |
+| `{"op":"hello"}` | `{"engine":"argentum","protocol":11,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"levels":{"easy":"v0","intermediate":"production-raceclock","hard":"production-candidate-expiring"},"choices":{"act":["targets","x","damage","cost","auto","cards"],"costs":["DiscardCard",…],"decisions":["ChooseTargets","YesNo","ChooseOption","SelectCards",…]},"formats":["standard","commander","duel","brawl"],"decks":{"formats":["standard","pioneer","modern","legacy","vintage","pauper","premodern","commander","brawl"]},"load":{"ms":27342,"legalitiesMs":601,"heapMb":127,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order; `levels` are the strengths an engine seat may play at, weakest first, each with the Argentum profile behind it; `choices` is what a person may choose over this protocol (below); `formats` the games it deals (protocol 8, and since 10 Duel Commander and Brawl, below); `decks.formats` the formats an engine's seat can be dealt a deck of its own in (protocol 7, below; Commander's only at a Commander table, and Brawl's only at a Brawl one); `load.legalitiesMs` what stamping every card with the formats it is legal in took, of `load.ms` |
 | `{"op":"cards"}` | `{"names":[…]}` — every name a deck may hold: no tokens and no back faces, though the engine knows both |
 | `{"op":"check","deck":{"Delver of Secrets // Insectile Aberration":4,"Made-Up Card":2},"sideboard":{…}}` | `{"known":4,"total":6,"unknown":["Made-Up Card"],"unknownSideboard":[]}` — which of a deck's cards the engine knows, before any game; unknown names come back exactly as sent |
 | `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true,"answers":["SelectCards","CombatResolution"]},{"name":"Bot","deck":{…},"ai":"heuristic","level":"intermediate"}],"seed":20260921,"pace":true,"mulligans":true}` | the table's status (below) plus `seats` and the `seed` it was dealt from, `paced` when the table was paced, and `mulligans` when it was dealt with the hands to keep (protocol 6, below); each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got; a seat the engine plays with its own judgement also says the `level` it took (null for none) and the Argentum `profile` it plays with; a person's seat says `asked`, the decisions it will be put rather than have answered for it |
@@ -94,6 +94,7 @@ One request per line, one reply per line, correlated by `id`:
 | `{"op":"decklist","seat":"e1"}` | `{"commander":"Jareth, Leonine Titan","deck":{"Plains":{"count":17,"set":"BLB","number":"262"},…},"cards":[{"name":"Plains","typeLine":"Basic Land — Plains","manaCost":"","colours":[],"identity":["W"],"legal":["standard",…]},…]}` — the deck a seat was dealt, with what the engine's own card data says of each card, its colour identity among it; at a Commander table the commander, apart from the deck as it was dealt apart; for measuring and tests, and never sent by the relay, since the engine's deck is as hidden as any opponent's |
 | `{"op":"turn"}` | the table's status |
 | `{"op":"continue"}` | the next step of a paced table: the status once the engine's seat has made its next play |
+| `{"op":"stops","seat":"e0","autoPass":false}` | `{"seat":"e0","autoPass":false}` — where a person's seat is stopped, changed mid-game (protocol 11, below): `true` passes for them where nothing is affordable, `false` stops them at every priority window, from the next one; the table is not driven |
 | `{"op":"act","index":3}` | the status after that action and everything that followed it |
 | `{"op":"act","index":0,"attackers":{"e16":"e1"}}` / `{"blockers":{"e20":["e16"]}}` | a declare-attackers or declare-blockers offer, filled in: which creatures, at whom |
 | `{"op":"act","index":1,"targets":{"0":["e1"]},"x":2,"damage":{"e1":2,"e0":1},"cost":["e22"]}` / `{"auto":true}` | a spell or an ability, filled in with what the person chose — its targets requirement by requirement, its X, how its damage is divided, what its cost takes — or with the engine's choice of all of them (protocol 5) |
@@ -619,6 +620,44 @@ every key it does not know — and refuses `continue` as an unknown op, so a
 relay reading `hello.protocol` below 3 must not ask for a pace and must never
 send `continue`. The reply to `new` says `paced` when the pace was taken, so a
 relay can see that it was rather than assume.
+
+**Where a person stops (protocol 11, HANDOFF.md §3 item 24).** A person's seat
+in `new` says `autoPass`, as it has since the first protocol: `true` is Law 1,
+the seat passed for at every priority window where it holds nothing affordable
+and the count said in `autoPassed`; `false`, or the key left out, stops it at
+every priority window, both turns. The pace presets at the table are built on
+it — Fast is `true`, Controlled and Learning `false` — and since protocol 11 a
+person may change their mind mid-game: `stops` takes their seat and `autoPass`
+and answers with the seat's setting, not a status, so the relay publishes no
+stop for it. It takes effect from the next window: the stop the table stands at
+has been put to them already and stays theirs to answer. The engine's own seat
+is refused ("passes by its own judgement"), and so is a `stops` with no
+`autoPass`. A kept game keeps each seat's setting, and one taken back stops its
+people as it did.
+
+Stopped at every window means every *priority* window. Two things Argentum
+offers are not, and a seat without `autoPass` is not stopped for them either,
+which protocol 11 brought too: a declaration of attackers or blockers with
+nothing to declare, a turn-based action (508.1, 509.1) with no pass to give it
+— stopped there a person was asked a question with one answer, and a client
+with no pass to show for it; and the two steps the rules give nobody priority
+in where Argentum offers a pass all the same, the untap step (500.3), once as
+the game begins, and the draw step of the first player's first turn in a game
+of two, which that player skips (103.8a). Neither is counted in `autoPassed`,
+because no window was passed. Measured on 2026-09-25, the goblin deck against
+`easy`, seed 20260925, a person passing at every stop and declaring nothing: to
+the start of turn 9, `autoPass: true` stopped them 8 times and passed 45 windows
+for them; `false` stopped them 61 times and passed none. And a spell on the
+stack is never a window here, whichever it is (below, "What is deliberately not
+here"), which the table says beside the choice.
+
+An engine at 10 refuses `stops` as an unknown op, so a relay reading 10 must not
+send it. Nor should it deal a person `autoPass: false` there: an engine before 11
+stops such a seat at the declarations with nothing to declare and in the untap
+step, above, the declaration offered alone with no pass beside it. The relay deals
+every person at such an engine `autoPass: true` whatever they asked, keeps it so
+for the game, and says so (`fixed`, `scripts/relay-engine.mjs`). Every engine
+reads `autoPass` at the deal.
 
 **Levels, and `clock`.** An engine seat plays at one of three levels, each one of
 Argentum's own named AI profiles (`ai/…/engine/AiProfile.kt`), mapped in

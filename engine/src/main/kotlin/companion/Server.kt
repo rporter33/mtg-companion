@@ -140,7 +140,9 @@ import java.util.Random
  *
  *  - **Law 1, server-side.** A human seat with `autoPass` is never stopped at
  *    a priority window where it has nothing affordable to do; the server
- *    passes for it and says how many times it did (`autoPassed`).
+ *    passes for it and says how many times it did (`autoPassed`). A seat
+ *    without it is stopped at every priority window, which a person may ask
+ *    for at the table and change mid-game (`stops`, protocol 11).
  *  - **The seat opposite can be the engine's own player.** A seat with
  *    `ai: "heuristic"` or `"random"` is driven here, so solo play needs no
  *    second client. A heuristic seat plays at one of three levels, each one
@@ -243,7 +245,17 @@ import java.util.Random
 // Commander game: its life total, its deck size and the commander damage that loses it, or null where
 // none does. "hello" lists the two in "formats". An engine at 9 refuses both words as games it does not
 // deal, so a relay reading 9 must not ask for either.
-const val PROTOCOL = 10
+// 11: where a person is stopped may change mid-game. "stops" takes a person's seat and "autoPass":
+// true passes for them where nothing is affordable (Law 1), false stops them at every priority
+// window, from the next one; the reply is the seat's setting, and the table is not driven. And a seat
+// that stops at every window is not stopped for a declaration with nothing in it, which is a
+// turn-based action with nothing to choose and no pass to give, but at the window after it; nor at
+// a step with no priority window in it by the rules, where Argentum offers a pass all the same: the
+// untap step (500.3), and the first player's first draw step in a game of two (103.8a). The pace
+// presets at the table land here (HANDOFF.md §3 item 24). An engine at 10 refuses "stops" as an
+// unknown op, so a relay reading 10 must not send it, and must say that where a person stops is as
+// the game was dealt until their next table.
+const val PROTOCOL = 11
 
 /**
  * The decisions put to a person whatever their client said, because every client since the
@@ -466,7 +478,12 @@ private class Seat(
     val id: EntityId,
     val name: String,
     val ai: String?,
-    val autoPass: Boolean,
+    /**
+     * Whether a person is passed for where they hold nothing affordable (Law 1), or stopped at
+     * every priority window. Changed mid-game by `stops` (protocol 11), since how a person wants
+     * to play is theirs to change at the table, and kept with a game, which keeps whatever it is.
+     */
+    var autoPass: Boolean,
     val sideboardLeftOut: List<String> = emptyList(),
     /** Cards whose chosen printing the engine does not have, so they wear its own art. */
     val unknownPrintings: List<String> = emptyList(),
@@ -843,6 +860,29 @@ private class Table(
                 env.step((pass ?: emptyDeclaration)!!.action)
                 continue
             }
+            // A seat that stops at every window (protocol 11) is stopped at every priority window,
+            // and a declaration with nothing in it is not one: declaring attackers and blockers are
+            // turn-based actions (508.1, 509.1), and with no creature that can attack or block there
+            // is nothing to choose in them. Stopped there, a person would be asked a question with
+            // one answer and no pass to give it, so the declaration of nothing is made and the stop
+            // is the next priority window Argentum offers. Not counted as a window passed, because
+            // none was.
+            if (!seat.autoPass && !canAct && pass == null && emptyDeclaration != null) {
+                env.step(emptyDeclaration.action)
+                continue
+            }
+            // Nor is a step the rules say has no priority window in it: the untap step, where no
+            // player receives priority (500.3), and in a game of two the draw step of the first
+            // player's first turn, which that player skips (103.8a). Argentum offers a pass in each —
+            // the first once, as the game begins; the second in a draw step it keeps and draws
+            // nothing in — and over eight turns of a seat stopped everywhere, measured on 2026-09-25,
+            // those were the only such offers. The pass Argentum waits for there is given, and not
+            // counted as a window passed, because neither is one.
+            val noWindow = env.state.step == Step.UNTAP || (env.state.step == Step.DRAW && env.turnNumber == 1 && seats.size == 2)
+            if (!seat.autoPass && !canAct && pass != null && noWindow) {
+                env.step(pass.action)
+                continue
+            }
             offered = actions; offeredTo = actor
             return
         }
@@ -1075,6 +1115,21 @@ private class Table(
         if (pausedAfter == null) throw Refused("Nothing is waiting on the engine. Ask for \"turn\" to see where the table stands.")
         drive()
         return status()
+    }
+
+    /**
+     * Where a person is stopped, changed mid-game (protocol 11): passed for where they hold nothing
+     * affordable (Law 1), or stopped at every priority window. It takes effect from the next window.
+     * The stop the table stands at has been put to them already, so it stays theirs to answer rather
+     * than being passed for them in the moment they changed their mind, and the table is not driven:
+     * the reply is the seat's setting, not a status, so a relay publishes no stop for it.
+     */
+    fun stops(params: JsonObject): JsonObject {
+        val wanted = (params["seat"] as? JsonPrimitive)?.contentOrNull ?: throw Refused("\"seat\" is required.")
+        val seat = seats.firstOrNull { it.id.value == wanted } ?: throw Refused("No seat $wanted.")
+        if (seat.ai != null) throw Refused("Seat $wanted is the engine's own, which passes by its own judgement: only a person's seat is stopped or passed for.")
+        seat.autoPass = (params["autoPass"] as? JsonPrimitive)?.booleanOrNull ?: throw Refused("\"autoPass\" is required: true to be passed for where nothing is affordable, false to stop at every window.")
+        return buildJsonObject { put("ok", true); put("seat", seat.id.value); put("autoPass", seat.autoPass) }
     }
 
     /**
@@ -2281,6 +2336,9 @@ fun main() {
                 // One more of the engine's own actions, on a paced table. The relay asks
                 // for this at the room's pace, publishing a view between steps.
                 "continue" -> (table ?: throw Refused("No game yet. Send \"new\" first.")).resume()
+                // Where a person is stopped, changed mid-game (protocol 11): the relay sends it when
+                // somebody changes how they play at the table.
+                "stops" -> (table ?: throw Refused("No game yet. Send \"new\" first.")).stops(req)
                 "act" -> (table ?: throw Refused("No game yet.")).act(req["index"]?.jsonPrimitive?.int ?: throw Refused("\"index\" is required."), req)
                 "decide" -> (table ?: throw Refused("No game yet.")).decide(req)
                 // How long the engine's seats took to choose, since the last time this was

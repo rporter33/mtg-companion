@@ -10,6 +10,7 @@ import { formatLine, gameName, gameOf, isCommanderGame } from '../../lib/engine/
 import { restartOf, restoredLines } from '../../lib/engine/restart.js'
 import { leadOf, ledSeat, standInLine, standInLostLine, unledLine } from '../../lib/engine/stand-in.js'
 import { sameCard } from '../../lib/engine/names.js'
+import { roomPaceOf, speedOf, stopsLine, stopsOf } from '../../lib/engine/pace.js'
 
 /**
  * A seat at a table the engine holds.
@@ -89,6 +90,14 @@ import { sameCard } from '../../lib/engine/names.js'
  * (src/lib/engine/restart.js). Any status is the game back too, since a room
  * sends none while it is coming back, and `restored` can be lost on a socket
  * that died unnoticed.
+ *
+ * And how the person plays (HANDOFF.md §3 item 24, lib/engine/pace.js): where
+ * the game stops for them and how long each of the engine's plays stands. Both
+ * go with every sit, and a change made at the table goes at once as `settings`,
+ * to a relay that has said it knows them; the room says back what it is doing
+ * (`seated.pace`), which is what `pace` returns and what the table shows beside
+ * the choice. The log says once where the game stops for them, and again when a
+ * change reaches the engine, or where it cannot.
  */
 /**
  * How long a press may go unanswered before the table says the engine is
@@ -162,7 +171,7 @@ function engineDeckFor(recorded, kept, { formatId, sets }) {
   return { sit: { kind: 'mirror' }, asked: 'mirror', ...(instead ? { instead, name: typeof r?.name === 'string' ? r.name : null } : {}) }
 }
 
-export default function useEngineRoom({ address, code, name, deck, deckLookup, cardsReady, level: chosen = null, opponent = DEFAULT_OPPONENT }) {
+export default function useEngineRoom({ address, code, name, deck, deckLookup, cardsReady, level: chosen = null, opponent = DEFAULT_OPPONENT, stops = null, speed = null }) {
   const [wireStatus, setWireStatus] = useState('connecting')
   const [seat, setSeat] = useState(null)
   const [seats, setSeats] = useState([])
@@ -262,6 +271,19 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   const [leads, setLeads] = useState({ own: null, engine: null })
   const leadsRef = useRef({ own: null, engine: null })
   const mySeat = useRef(null)
+  // How the person plays, as the room says it (§3 item 24): null until the room
+  // has said, `{ older: true }` from a relay older than the choice, and otherwise
+  // `{ room }`, its report read forgivingly. `wanted` is what this person chose,
+  // read by the socket's handlers through a ref, since the socket outlives a
+  // render; `sentPace` is what the sit or the last `settings` sent, so a change
+  // is sent once. `paceNoted` and `lastStops` are for the log's lines.
+  const [pace, setPace] = useState(null)
+  const wanted = useRef({ stops: null, speed: null })
+  wanted.current = { stops: stopsOf(stops), speed: speedOf(speed) }
+  const sentPace = useRef(null)
+  const paceNoted = useRef(false)
+  const lastStops = useRef(null)
+  const fixedNoted = useRef(false)
   const sat = useRef(false)
   const sideNoted = useRef(false)
   const printingsNoted = useRef(false)
@@ -310,11 +332,23 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
     // the ordinary rules. Said by a sixty-card deck too, since M6's review: a sit
     // that said nothing left a room's earlier Commander request standing.
     const led = { format: gameOf(deck?.formatId), ...(isCommanderGame(deckNames.game) && deckNames.commander ? { commander: deckNames.commander } : {}) }
-    line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, deltas: true, answers: ANSWERS, mulligans: true, ...side, ...(asked ? { level: asked } : {}), engineDeck: ask.sit, ...led }))
+    // How the person plays goes with every sit, as it stands when the socket opens
+    // (§3 item 24): a sit again after a reload or a dropped line brings the table
+    // to what they chose since.
+    line.onOpen(() => {
+      const how = wanted.current
+      sentPace.current = `${how.stops}|${how.speed}`
+      line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, deltas: true, answers: ANSWERS, mulligans: true, ...side, ...(asked ? { level: asked } : {}), engineDeck: ask.sit, ...led, ...(how.stops ? { stops: how.stops } : {}), ...(how.speed ? { pace: how.speed } : {}) })
+    })
     line.onMessage((m) => {
       if (m?.t !== 'engine') return
       switch (m.op) {
         case 'seated': {
+          // How the person plays, as the room says it (§3 item 24): every seated
+          // from a relay that knows the choice says it, and one without it is a
+          // relay from before, which stops only where there is something to play.
+          const heard = 'pace' in m ? { room: roomPaceOf(m.pace) } : { older: true }
+          setPace(heard)
           // Read forgivingly: a relay from before the sideboard sends none.
           const sideOut = Array.isArray(m.sideboardLeftOut) ? m.sideboardLeftOut.filter((n) => typeof n === 'string') : []
           setSideboardLeftOut(sideOut)
@@ -403,6 +437,32 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
             // out of the library to send it as the commander.
             if (ownLead) note(standInLine(ownLead, report?.played))
             else if (sent && !isCommanderGame(report?.played)) note(unledLine(sent, leadOf(report?.inLibrary)))
+          }
+          // Where the game stops for this person, after what the deal says of the engine and the game.
+          if (m.engineSeat) {
+            const room = heard.older ? undefined : heard.room
+            const want = wanted.current
+            if (!paceNoted.current) {
+              // Said once at the deal, under the table it belongs to.
+              paceNoted.current = true
+              lastStops.current = room?.stops ?? null
+              const said = stopsLine(room, want)
+              if (said) note(said)
+              // That line is the fixed engine's where the deal already differs from the
+              // wish, and is not said again at the next seated (found in review).
+              if (room?.fixed && want.stops && want.stops !== room.stops) fixedNoted.current = true
+            } else if (room && room.stops !== lastStops.current) {
+              // A change that reached the engine mid-game, said at once: no view
+              // follows it, so the log is redrawn for it here.
+              lastStops.current = room.stops
+              note(stopsLine(room, want, { changed: true }))
+              setRun((r) => (r ? { ...r, events: events.current } : r))
+            } else if (room?.fixed && want.stops && want.stops !== room.stops && !fixedNoted.current) {
+              // One the engine cannot make, said once rather than at every seated.
+              fixedNoted.current = true
+              note(stopsLine(room, want))
+              setRun((r) => (r ? { ...r, events: events.current } : r))
+            }
           }
           if (!sat.current) {
             // A stand-in chosen in the lobby that can no longer lead this deck, let go of.
@@ -535,6 +595,21 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, code, deckKey])
 
+  /*
+   * A change of how the person plays, made at the table, goes to the room at
+   * once (§3 item 24) — not through `send`, since it answers no stop and may be
+   * made while the engine is still answering one. Only to a room that has said
+   * it knows the choice: a relay from before it would refuse the message and put
+   * its refusal on the table, and the table says instead that it is older.
+   */
+  const paceKey = `${stopsOf(stops)}|${speedOf(speed)}`
+  useEffect(() => {
+    const line = wire.current
+    if (!line || !pace || pace.older || sentPace.current === paceKey) return
+    const how = wanted.current
+    if (line.send({ t: 'engine', op: 'settings', ...(how.stops ? { stops: how.stops } : {}), ...(how.speed ? { pace: how.speed } : {}) })) sentPace.current = paceKey
+  }, [paceKey, pace])
+
   const send = useCallback((op, params = {}) => {
     const line = wire.current
     if (!line || !status) return false
@@ -566,7 +641,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   }, [])
 
   return {
-    run, seat, seats, status, refusal, gone, restoring, wireStatus, unloaded, leftOut, sideboardLeftOut, level, answering, slow, can, engineDeck, game, leads,
+    run, seat, seats, status, refusal, gone, restoring, wireStatus, unloaded, leftOut, sideboardLeftOut, level, answering, slow, can, engineDeck, game, leads, pace,
     act, decide, cardFor, moveCard,
     refuse: (message) => setRefusal({ message }),
     clearRefusal: () => setRefusal(null),

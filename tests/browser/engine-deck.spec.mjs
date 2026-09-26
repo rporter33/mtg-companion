@@ -84,7 +84,10 @@ const STATE = {
   ],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
   // Nothing kept about the engine's deck: this is somebody's first game against it.
-  prefs: { relayUrl: RELAY, playerName: 'Robin', reduceMotion: true },
+  // Fast, and the question answered: how a person plays is pace.spec.mjs's to test, and this
+  // spec keeps the table every spec before the choice played, stopped only where there is
+  // something to play (Law 1), with nothing asked above the battlefield (HANDOFF.md §3 item 24).
+  prefs: { relayUrl: RELAY, playerName: 'Robin', reduceMotion: true, tablePace: { preset: 'fast', asked: true } },
 }
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })

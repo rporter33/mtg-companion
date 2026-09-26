@@ -164,7 +164,10 @@ const STATE = {
     sideboard: [], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
   }],
   guide: { completedLessons: [], tutorialState: null, seenGlossary: [] },
-  prefs: { relayUrl: RELAY, playerName: 'Robin', reduceMotion: true },
+  // Fast, and the question answered: how a person plays is pace.spec.mjs's to test, and this
+  // spec keeps the table every spec before the choice played, stopped only where there is
+  // something to play (Law 1), with nothing asked above the battlefield (HANDOFF.md §3 item 24).
+  prefs: { relayUrl: RELAY, playerName: 'Robin', reduceMotion: true, tablePace: { preset: 'fast', asked: true } },
 }
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
@@ -1063,6 +1066,41 @@ check('nor does the More panel say that nothing here checks a play', !/Nothing h
 check('undo is not offered', await page.getByRole('button', { name: '↶ Undo' }).isDisabled())
 
 await page.screenshot({ path: SHOT('table') })
+
+console.log('\nWhere the game stops, changed at the table, against the real engine (§3 item 24)')
+{
+  // Played Fast until now, as this spec's prefs say. Controlled is chosen from the
+  // table's own settings, mid-game: the real engine is asked, and from the next
+  // window it stops this person at every priority window, empty ones and all.
+  // Then Fast again, for the tables after this one.
+  const howYouPlay = page.getByRole('region', { name: 'How you play' })
+  check('the table\'s own settings hold how you play, Fast as this spec chose', await until(() => howYouPlay.count().then((n) => n === 1)) && await howYouPlay.getByRole('radio', { name: /^Fast/ }).isChecked())
+  await howYouPlay.getByRole('radio', { name: /^Controlled/ }).check()
+  check('Controlled chosen, the log says the real engine took it, from the next window',
+    await until(() => logText().then((t) => t.includes('From the next window, the game stops for you at every priority window, both turns.')), 10000), (await logText()).slice(-400))
+  let empty = null
+  for (let i = 0; i < 12 && !empty; i++) {
+    await until(() => prompt.count().then((n) => n === 1), 20000)
+    const s = wire.status
+    if (!s || s.over) break
+    // Empty is nothing worth playing: a land's mana ability may be on offer beside the pass,
+    // and is no play (Law 1's own test, the engine's `meaningful`).
+    if (s.actor === wire.me && s.waiting === 'action' && s.actions.some((a) => a.type === 'PassPriority') && !s.actions.some((a) => a.meaningful && a.affordable)) { empty = s; break }
+    const label = await prompt.getAttribute('aria-label').catch(() => null)
+    if (label === 'Your attack') await page.getByRole('button', { name: 'No attack' }).click()
+    else if (label === 'Their attack') await page.getByRole('button', { name: /No blocks/ }).click()
+    else if (label === 'The engine asks') await page.getByRole('button', { name: /Let the engine choose|Yes/ }).first().click()
+    else if (await passBtn.isEnabled().catch(() => false)) await passBtn.click()
+    else break
+    await nextStop(s.stop)
+  }
+  check('the real engine then stops at a window with nothing in it to play, only a pass', Boolean(empty), JSON.stringify(wire.status).slice(0, 300))
+  check('and the prompt says there is nothing to do there but pass', /Nothing to do here but pass\./.test(await prompt.textContent().catch(() => '') ?? ''))
+  await page.screenshot({ path: SHOT('controlled') })
+  await howYouPlay.getByRole('radio', { name: /^Fast/ }).check()
+  check('Fast again, and the log says the engine took that too',
+    await until(() => logText().then((t) => t.includes('From the next window, the game stops for you only where you can play.')), 10000))
+}
 
 console.log('\nWithout the cards it does not know')
 // The owner's choice (2026-09-21): a deck the engine cannot fully hold may be

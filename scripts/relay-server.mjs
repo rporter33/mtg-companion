@@ -78,7 +78,8 @@ export const IDLE_MS = 7 * 24 * 60 * 60 * 1000
  */
 export const CHECK_IDLE_MS = 10 * 60 * 1000
 /**
- * The longest pace a room may be opened with. A pace is a wait between the
+ * The longest pace a room may be opened with, and the longest a person's
+ * Relaxed may make it (HANDOFF.md §3 item 24). A pace is a wait between the
  * engine's plays, not a timeout, so a number far past watching is a mistake
  * rather than a preference, and one that would hold a turn for a minute is
  * brought back to something a person would sit through.
@@ -234,9 +235,11 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
   /**
    * A room's pace: how long one of the engine's plays stands before the room
    * asks for the next (`relay-engine.mjs`). The relay's own is the default;
-   * a room may be opened with its own, which is where a playback-speed preset
-   * will land. `false` or 0 turns the pacing off, and the engine's turn then
-   * arrives in one jump, as it did before there was a pace at all.
+   * a room may be opened with its own. It is the pace presets' Brisk, and a
+   * person at the table may ask for Relaxed, twice it, or Instant, none
+   * (HANDOFF.md §3 item 24). `false` or 0 turns the pacing off, and the engine's
+   * turn then arrives in one jump, as it did before there was a pace at all,
+   * whatever speed is asked for.
    */
   const paceFor = (asked) => {
     if (asked === undefined || asked === null || asked === true) return pace
@@ -259,7 +262,7 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     const room = { code, mode: 'enforced', sockets: new Map(), touchedAt, flushTimer: null }
     room.engine = createEngineRoom({
       // The level is read by the room, which takes only a word it knows.
-      code, seats, ai: ai || null, level, engineCommand, seed: engineSeed, paceMs,
+      code, seats, ai: ai || null, level, engineCommand, seed: engineSeed, paceMs, mostPaceMs: MAX_PACE_MS,
       deliver, onStderr: (line) => console.error(`[${code}] ${line}`),
       saved, onChange: (how) => (how?.now ? flush(room) : save(room)),
     })

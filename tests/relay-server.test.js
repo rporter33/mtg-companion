@@ -353,12 +353,12 @@ describe('an enforced room', () => {
   const DECK = { Mountain: 14, 'Raging Goblin': 6 }
 
   /** A client at an enforced room: the raw messages, kept. */
-  async function join(code, name, { deck = DECK, seat = null, sideboard = null, deltas = false, level = null, answers = null, mulligans = false, engineDeck = undefined, format = undefined, commander = undefined } = {}) {
+  async function join(code, name, { deck = DECK, seat = null, sideboard = null, deltas = false, level = null, answers = null, mulligans = false, engineDeck = undefined, format = undefined, commander = undefined, stops = undefined, pace = undefined } = {}) {
     const api = roomsApi(base)
     const got = []
     const wire = relay({ url: api.socketUrl(code), WebSocket })
     wire.onMessage((m) => got.push(m))
-    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat, ...(sideboard ? { sideboard } : {}), ...(deltas ? { deltas: true } : {}), ...(level ? { level } : {}), ...(answers ? { answers } : {}), ...(mulligans ? { mulligans: true } : {}), ...(engineDeck !== undefined ? { engineDeck } : {}), ...(format !== undefined ? { format } : {}), ...(commander !== undefined ? { commander } : {}) }))
+    wire.onOpen(() => wire.send({ t: 'engine', op: 'sit', name, deck, seat, ...(sideboard ? { sideboard } : {}), ...(deltas ? { deltas: true } : {}), ...(level ? { level } : {}), ...(answers ? { answers } : {}), ...(mulligans ? { mulligans: true } : {}), ...(engineDeck !== undefined ? { engineDeck } : {}), ...(format !== undefined ? { format } : {}), ...(commander !== undefined ? { commander } : {}), ...(stops !== undefined ? { stops } : {}), ...(pace !== undefined ? { pace } : {}) }))
     const last = (op) => [...got].reverse().find((m) => m.t === 'engine' && m.op === op) ?? null
     await until(() => last('seated'))
     return { got, wire, last, send: (m) => wire.send({ t: 'engine', ...m }), leave: () => wire.close() }
@@ -1828,6 +1828,206 @@ describe('an enforced room', () => {
   })
 
   /**
+   * How a person plays (HANDOFF.md §3 item 24): where the game stops for them,
+   * which is the engine's `autoPass` on their seat, sent at the deal and changed
+   * mid-game by an engine at 11; and the speed, the room's own wait between the
+   * engine's plays. The stand-in engine offers a person stopped everywhere the
+   * windows its captured run passed for them, so a stop at an empty window is
+   * something a test can see.
+   */
+  describe('how a person plays', () => {
+    const engineAt = (code) => relayServer.rooms.get(code).engine.engine
+    const roomAt = (code) => relayServer.rooms.get(code).engine
+    const dealtSeat = (who) => [...who.got].reverse().find((m) => m.op === 'seated' && m.engineSeat) ?? null
+    const openRoom = async (body = {}) => (await fetch(`${base}/rooms`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seats: 2, enforced: true, ...body }) })).json()
+    /** Only a pass on offer: an empty window. */
+    const empty = (status) => status.waiting === 'action' && status.actions.length === 1 && status.actions[0].type === 'PassPriority'
+
+    it('stops a person only where they can play where the sit says nothing, as every room did, and says so in every seated', async () => {
+      const { code } = await openRoom()
+      const you = await join(code, 'Robin')
+      // Said before the deal too, as what the room will ask for: a client tells this relay from an older one by it.
+      expect(you.got.find((m) => m.op === 'seated').pace).toEqual({ stops: 'playable', speed: 'brisk', ms: PACE_MS, paced: true })
+      await until(() => dealtSeat(you) && you.last('view'), 5000)
+      const sent = (await engineAt(code).call('lastNew')).request
+      expect(sent.players.map((p) => p.autoPass)).toEqual([true, false])
+      expect(dealtSeat(you).pace).toEqual({ stops: 'playable', speed: 'brisk', ms: PACE_MS, paced: true })
+      // The captured stop, with the windows passed on the way.
+      expect(empty(you.last('status').status)).toBe(false)
+      expect(you.last('status').status.autoPassed).toBe(2)
+      you.leave()
+    })
+
+    it('stops a person at every window where the sit asks for it, and the engine offers them each', async () => {
+      const { code } = await openRoom()
+      const you = await join(code, 'Robin', { stops: 'every' })
+      await until(() => dealtSeat(you) && you.last('view'), 5000)
+      expect((await engineAt(code).call('lastNew')).request.players.map((p) => p.autoPass)).toEqual([false, false])
+      expect(dealtSeat(you).pace.stops).toBe('every')
+      const first = you.last('status').status
+      expect(empty(first)).toBe(true)
+      expect(first.step).toBe('UPKEEP')
+      await moved(you, { op: 'act', stop: first.stop, index: 0 })
+      expect(you.last('status').status.step).toBe('BEGIN_COMBAT')
+      await moved(you, { op: 'act', stop: first.stop + 1, index: 0 })
+      // Then the captured stop, with nothing passed for the person on the way.
+      const captured = you.last('status').status
+      expect(captured.actions.some((a) => a.type === 'DeclareAttackers')).toBe(true)
+      expect(captured.autoPassed).toBe(0)
+      you.leave()
+    })
+
+    it('changes where a person stops mid-game from the next window, the stop they are at staying theirs, and says so once the engine has', async () => {
+      const { code } = await openRoom()
+      const you = await join(code, 'Robin', { stops: 'every' })
+      await until(() => dealtSeat(you) && you.last('view'), 5000)
+      const at = you.last('status').status
+      expect(empty(at)).toBe(true)
+      const seatedBefore = you.got.filter((m) => m.op === 'seated').length
+      you.send({ op: 'settings', stops: 'playable' })
+      // The engine asked, for this person's seat alone, and their seated saying what it now does.
+      await untilAsked(async () => (await engineAt(code).call('lastStops')).stopsAsked === 1, 5000)
+      expect((await engineAt(code).call('lastStops')).request).toMatchObject({ op: 'stops', seat: 'e0', autoPass: true })
+      await until(() => you.got.filter((m) => m.op === 'seated').slice(seatedBefore).some((m) => m.pace?.stops === 'playable'), 5000)
+      // No stop published for it: the table is where it was.
+      expect(you.last('status').status.stop).toBe(at.stop)
+      await moved(you, { op: 'act', stop: at.stop, index: 0 })
+      // The window that was left before the captured stop is passed for them now.
+      const next = you.last('status').status
+      expect(next.actions.some((a) => a.type === 'DeclareAttackers')).toBe(true)
+      expect(next.autoPassed).toBe(1)
+      expect(roomAt(code).record().seated[0].stops).toBe('playable')
+      you.leave()
+    })
+
+    it('asks the engine for the latest wish however two changes cross, one change at a time', async () => {
+      const { code } = await openRoom()
+      const you = await join(code, 'Robin')
+      await until(() => dealtSeat(you) && you.last('view'), 5000)
+      // Three changes sent before the first is answered, the last of them back where the
+      // first began: the engine is asked the first, then brought to the last.
+      you.send({ op: 'settings', stops: 'every' })
+      you.send({ op: 'settings', stops: 'playable' })
+      you.send({ op: 'settings', stops: 'every' })
+      you.send({ op: 'settings', stops: 'playable' })
+      await untilAsked(async () => (await engineAt(code).call('tally')).stopsAsked >= 2 && you.last('seated').pace.stops === 'playable', 5000)
+      await sleep(100)
+      expect((await engineAt(code).call('tally')).everyWindow).toBe(false)
+      expect(you.last('seated').pace.stops).toBe('playable')
+      you.leave()
+    })
+
+    it('deals a person Law 1 at an engine older than 11 whatever they asked, so no stop comes without a pass, and says it is fixed', async () => {
+      // An engine before 11 stops a seat stopped everywhere at a declaration with
+      // nothing to declare, offered alone (the stand-in does as it did): the prompt
+      // said "Nothing to do here but pass." over no Pass, and Space found none.
+      process.env.FAKE_PROTOCOL = '10'
+      try {
+        const { code } = await openRoom()
+        const you = await join(code, 'Robin', { stops: 'every' })
+        await until(() => dealtSeat(you) && you.last('view'), 5000)
+        // Dealt Law 1, the person's wish notwithstanding, and told so.
+        expect((await engineAt(code).call('lastNew')).request.players[0].autoPass).toBe(true)
+        expect(dealtSeat(you).pace).toMatchObject({ stops: 'playable', fixed: true })
+        // The first stop is the captured one, the windows before it passed for them;
+        // no status the person was sent offers a declaration of nothing alone.
+        const first = you.last('status').status
+        expect(first.actions.some((a) => a.type === 'DeclareAttackers' && a.meaningful)).toBe(true)
+        expect(first.autoPassed).toBe(2)
+        const sent = you.got.filter((m) => m.op === 'status').map((m) => m.status).filter((s) => s?.actor === 'e0' && Array.isArray(s.actions))
+        expect(sent.some((s) => s.actions.every((a) => !a.meaningful && a.type !== 'PassPriority'))).toBe(false)
+        const seatedBefore = you.got.filter((m) => m.op === 'seated').length
+        you.send({ op: 'settings', stops: 'every' })
+        await until(() => you.got.filter((m) => m.op === 'seated').length > seatedBefore, 5000)
+        await sleep(100)
+        // Never asked of an engine that would refuse it, and the seat says what is still true.
+        expect((await engineAt(code).call('tally')).stopsAsked).toBe(0)
+        expect(you.last('seated').pace).toMatchObject({ stops: 'playable', fixed: true })
+        expect(you.got.some((m) => m.op === 'refused')).toBe(false)
+        you.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
+    })
+
+    it('makes each of the engine\'s plays stand as long as the speed says, Brisk being the room\'s own pace', async () => {
+      // The waiting is faked, as in the pacing tests: what is under test is how long the room asks for.
+      const waits = []
+      const sent = []
+      const socket = { id: 's1', seat: null }
+      const room = createEngineRoom({
+        code: 'SPEED', seats: 2, ai: 'heuristic', engineCommand: FAKE_ENGINE, paceMs: 100, mostPaceMs: 150,
+        deliver: (_socket, m) => sent.push(m), wait: async (ms) => { waits.push(ms) },
+      })
+      const last = (op) => [...sent].reverse().find((m) => m.op === op) ?? null
+      room.join(socket)
+      room.receive({ t: 'engine', op: 'sit', name: 'Robin', deck: DECK, pace: 'relaxed' }, socket)
+      await until(() => last('view'), 5000)
+      await room.engine.call('plays', { count: 2 })
+      const play = async () => {
+        const { stop } = last('status').status
+        room.receive({ t: 'engine', op: 'act', stop, index: 0 }, socket)
+        await until(() => last('status').status.stop === stop + 3, 5000)
+      }
+      // Relaxed is twice the room's pace, but never past the longest a pace may be.
+      await play()
+      expect(waits).toEqual([150, 150])
+      expect(last('seated').pace).toMatchObject({ speed: 'relaxed', ms: 150, paced: true })
+      room.receive({ t: 'engine', op: 'settings', pace: 'instant' }, socket)
+      expect(last('seated').pace).toMatchObject({ speed: 'instant', ms: 0 })
+      await play()
+      expect(waits.slice(2)).toEqual([0, 0])
+      room.receive({ t: 'engine', op: 'settings', pace: 'brisk' }, socket)
+      expect(room.describe()).toMatchObject({ pace: 100, speed: 'brisk' })
+      await room.close()
+    })
+
+    it('says a change of speed to everybody at the table, since it is the room\'s, and reports it', async () => {
+      const { code } = await openRoom({ pace: 40 })
+      const you = await join(code, 'Robin')
+      await until(() => dealtSeat(you), 5000)
+      you.send({ op: 'settings', pace: 'relaxed' })
+      await until(() => you.last('seated').pace.speed === 'relaxed', 5000)
+      expect(you.last('seated').pace).toMatchObject({ speed: 'relaxed', ms: 80 })
+      expect(await roomsApi(base).peek(code)).toMatchObject({ pace: 80, speed: 'relaxed', paced: true })
+      you.leave()
+    })
+
+    it('plays the engine\'s turn in one go at a room opened with no pace, whatever the speed, and says so', async () => {
+      const { code } = await openRoom({ pace: false })
+      const you = await join(code, 'Robin', { pace: 'relaxed' })
+      await until(() => dealtSeat(you), 5000)
+      expect(dealtSeat(you).pace).toEqual({ stops: 'playable', speed: 'relaxed', ms: 0, paced: false })
+      expect('pace' in (await engineAt(code).call('lastNew')).request).toBe(false)
+      you.leave()
+    })
+
+    it('reads a stop or a speed it has no word for as no change, and refuses settings from a socket with no seat', async () => {
+      const { code } = await openRoom()
+      const you = await join(code, 'Robin', { stops: 'sometimes', pace: 'warp' })
+      await until(() => dealtSeat(you), 5000)
+      expect((await engineAt(code).call('lastNew')).request.players[0].autoPass).toBe(true)
+      expect(dealtSeat(you).pace).toMatchObject({ stops: 'playable', speed: 'brisk' })
+      const stranger = relay({ url: roomsApi(base).socketUrl(code), WebSocket })
+      const heard = []
+      stranger.onMessage((m) => heard.push(m))
+      await until(() => stranger.status === 'open', 5000)
+      stranger.send({ t: 'engine', op: 'settings', stops: 'every' })
+      await until(() => heard.some((m) => m.op === 'refused'), 5000)
+      expect(heard.find((m) => m.op === 'refused').error).toBe('Sit down first.')
+      stranger.close()
+      you.leave()
+    })
+
+    it('reads the speed and where each person asked to stop back from a file forgivingly', () => {
+      expect(savedRoomOf({ speed: 'relaxed', dealt: true, seated: [{ seat: 'p1', stops: 'every' }, { seat: 'p2' }] })).toMatchObject({ speed: 'relaxed', seated: [{ seat: 'p1', stops: 'every' }, { seat: 'p2', stops: null }] })
+      expect(savedRoomOf({ speed: 'warp', dealt: true, seated: [{ seat: 'p1', stops: 'sometimes' }] })).toMatchObject({ speed: null, seated: [{ seat: 'p1', stops: null }] })
+      // A file from before the choice has neither, which is Brisk and Law 1.
+      expect(savedRoomOf({ dealt: true, seated: [{ seat: 'p1' }] })).toMatchObject({ speed: null, seated: [{ seat: 'p1', stops: null }] })
+    })
+  })
+
+  /**
    * A room that survives the relay (HANDOFF.md, M7). The room keeps the
    * engine's snapshot of the game after every stop, the relay writes it beside
    * the room, and a relay that comes back starts an engine for the room and has
@@ -2813,6 +3013,27 @@ describe('an enforced room', () => {
       // The last stop kept stands.
       expect(roomOf(code).record().kept.stop).toBe(1)
       you.leave()
+    })
+
+    it('keeps the speed and where a person asked to stop through a restart, and brings a game kept before a change to it (§3 item 24)', async () => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { deltas: true })
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      // Changed after the last stop kept: the game kept still has the person passed for.
+      you.send({ op: 'settings', stops: 'every', pace: 'relaxed' })
+      await untilAsked(async () => (await roomOf(code).engine.call('tally')).everyWindow === true, 5000)
+      expect(roomOf(code).record()).toMatchObject({ speed: 'relaxed', seated: [{ seat: 'p1', stops: 'every' }, { seat: 'p2' }] })
+      you.leave()
+      await restart()
+      await cameBack(code)
+      // Taken back as kept, then brought to what the person asked, without anybody sitting.
+      await untilAsked(async () => (await roomOf(code).engine.call('tally')).everyWindow === true, 5000)
+      expect((await roomOf(code).engine.call('lastStops')).request).toMatchObject({ seat: 'e0', autoPass: false })
+      expect(roomOf(code).describe()).toMatchObject({ speed: 'relaxed', pace: PACE_MS * 2 })
+      const back = await join(code, 'Robin', { seat: 'p1', deck: null })
+      await until(() => back.last('seated')?.pace?.stops === 'every', 5000)
+      back.leave()
     })
   })
 })

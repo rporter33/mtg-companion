@@ -218,6 +218,103 @@ describe('the level the engine plays at', () => {
 })
 
 /**
+ * How the person plays (HANDOFF.md §3 item 24): where the game stops for them
+ * and the speed go with every sit; a change made at the table goes at once as
+ * `settings`, to a room that has said it knows them; and the log says where the
+ * game stops, once at the deal and again when a change reaches the engine.
+ */
+describe('how the person plays (§3 item 24)', () => {
+  const mountPace = async (props) => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    const render = (p) => act(async () => { root.render(<Probe address="http://relay.test" code="ABCD" name="You" deck={DECK} deckLookup={lookup} cardsReady {...p} />) })
+    await render(props)
+    return { socket: FakeSocket.live[FakeSocket.live.length - 1], render }
+  }
+  const settingsSent = (socket) => socket.sent.filter((m) => m.op === 'settings')
+  const PACE = (stops, extra = {}) => ({ stops, speed: 'brisk', ms: 600, paced: true, ...extra })
+
+  it('goes with the sit: where the game stops for the person, and the speed', async () => {
+    const { socket } = await mountPace({ stops: 'every', speed: 'relaxed' })
+    expect(socket.sent.find((m) => m.op === 'sit')).toMatchObject({ stops: 'every', pace: 'relaxed' })
+  })
+
+  it('sends nothing it has no word for, as a sit from before the choice sent nothing', async () => {
+    const { socket } = await mountPace({ stops: 'sometimes', speed: null })
+    const sit = socket.sent.find((m) => m.op === 'sit')
+    expect(sit).not.toHaveProperty('stops')
+    expect(sit).not.toHaveProperty('pace')
+  })
+
+  it('sends a change at once, but only once the room has said it knows the choice, and only once', async () => {
+    const { socket, render } = await mountPace({ stops: 'every', speed: 'brisk' })
+    await render({ stops: 'playable', speed: 'brisk' })
+    expect(settingsSent(socket)).toEqual([])
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: null, pace: PACE('every') })
+    expect(room.pace).toEqual({ room: { stops: 'every', speed: 'brisk', ms: 600, paced: true, fixed: false } })
+    expect(settingsSent(socket)).toEqual([{ t: 'engine', op: 'settings', stops: 'playable', pace: 'brisk' }])
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: null, pace: PACE('playable') })
+    await render({ stops: 'playable', speed: 'brisk' })
+    expect(settingsSent(socket)).toHaveLength(1)
+    await render({ stops: 'playable', speed: 'instant' })
+    expect(settingsSent(socket).at(-1)).toEqual({ t: 'engine', op: 'settings', stops: 'playable', pace: 'instant' })
+  })
+
+  it('never sends a change to a relay older than the choice, which would refuse it, and says in the log that it is older', async () => {
+    const { socket, render } = await mountPace({ stops: 'every', speed: 'brisk' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU }, ...stop(RUN.views[0], 1))
+    expect(room.pace).toEqual({ older: true })
+    await render({ stops: 'playable', speed: 'relaxed' })
+    expect(settingsSent(socket)).toEqual([])
+    expect(said().filter((t) => /relay is older than choosing/.test(t))).toHaveLength(1)
+  })
+
+  it('says once at the deal where the game stops, and again when a change reaches the engine', async () => {
+    const { socket, render } = await mountPace({ stops: 'every', speed: 'brisk' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, pace: PACE('every') }, ...stop(RUN.views[0], 1))
+    expect(said().filter((t) => /stops for you/.test(t))).toEqual(['The game stops for you at every priority window, both turns: pass with Pass or Space.'])
+    await render({ stops: 'playable', speed: 'brisk' })
+    // Until the engine has answered, the room still says every window, and nothing new is said.
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, pace: PACE('every') })
+    expect(said().filter((t) => /stops for you/.test(t))).toHaveLength(1)
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, pace: PACE('playable') })
+    // Said at once, with no view to bring it.
+    expect(said().at(-1)).toBe('From the next window, the game stops for you only where you can play.')
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, pace: PACE('playable') })
+    expect(said().filter((t) => /stops for you/.test(t))).toHaveLength(2)
+  })
+
+  it('says once where the engine cannot make a change, naming where it goes on stopping', async () => {
+    const { socket, render } = await mountPace({ stops: 'every', speed: 'brisk' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, pace: PACE('every', { fixed: true }) }, ...stop(RUN.views[0], 1))
+    await render({ stops: 'playable', speed: 'brisk' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, pace: PACE('every', { fixed: true }) })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, pace: PACE('every', { fixed: true }) })
+    expect(said().filter((t) => /cannot change where it stops/.test(t))).toEqual(['This table’s engine cannot change where it stops once the game is dealt, so the game goes on stopping for you at every priority window, both turns, until your next table.'])
+  })
+
+  it('says a fixed engine once where the deal already differs from the wish, however many seated follow', async () => {
+    // An engine older than 11 is dealt Law 1 whatever is asked (relay-engine.mjs), so a
+    // person on Controlled is told at the deal; a speed changed later brings another
+    // seated from the room, which said the same line a second time (found in review).
+    const { socket, render } = await mountPace({ stops: 'every', speed: 'brisk' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, pace: PACE('playable', { fixed: true }) }, ...stop(RUN.views[0], 1))
+    await render({ stops: 'every', speed: 'relaxed' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, pace: PACE('playable', { fixed: true }) })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, pace: PACE('playable', { fixed: true }) })
+    expect(said().filter((t) => /engine is older than stopping you/.test(t))).toEqual(['This table’s engine is older than stopping you at every window, so the game stops for you only where you can play, whatever is chosen.'])
+  })
+
+  it('reads a room\'s report it cannot make sense of as nothing said, and never throws on it', async () => {
+    const { socket } = await mountPace({ stops: 'every', speed: 'brisk' })
+    await deliver(socket, { op: 'seated', seat: 'p1', engineSeat: YOU, pace: 'fast please' }, ...stop(RUN.views[0], 1))
+    expect(room.pace).toEqual({ room: null })
+    expect(said().filter((t) => /stops for you|relay is older/.test(t))).toEqual([])
+  })
+})
+
+/**
  * What the engine's seat plays (M5). The lobby records the choice with the
  * table when the player sits; the sit carries it; the log says once what the
  * room reports was dealt.

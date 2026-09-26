@@ -32,7 +32,7 @@ import TokenMaker from '../../components/table/TokenMaker.jsx'
 import Printings from '../../components/Printings.jsx'
 import Confirm from '../../components/Confirm.jsx'
 import { nameList } from '../../lib/engine/deck.js'
-import { THINKING, thinkingAt } from '../../lib/engine/board.js'
+import { THINKING, stepIdOf, thinkingAt } from '../../lib/engine/board.js'
 import { glowsAt, heldBack, offeredElsewhere, pileHolding } from '../../lib/engine/glow.js'
 import { NO_CHOICES, advance, answerOf, beginBottom, beginDecision, beginPlay, complete, pickable, stepOf, toggle } from '../../lib/engine/choose.js'
 import { chosenLevel, LEVEL_NAMES, levelOf } from '../../lib/engine/levels.js'
@@ -40,12 +40,16 @@ import { chosenOpponent } from '../../lib/engine/opponent.js'
 import { damageLoses, damageRule, damageWords } from '../../lib/engine/commander.js'
 import { restoringLine } from '../../lib/engine/restart.js'
 import { standInPhrase } from '../../lib/engine/stand-in.js'
+import { answered, chosenPace, paceWith } from '../../lib/engine/pace.js'
+import { taughtAny, taughtAt, taughtEnough, taughtOnce, teachesHere, teachingFor } from '../../lib/engine/teach.js'
 import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
 import useEngineRoom from './useEngineRoom.js'
 import useTravel from './useTravel.js'
 import Peek, { usePeek } from './Peek.jsx'
-import { EnginePrompt } from './EnginePrompt.jsx'
+import { EnginePrompt, Teaching } from './EnginePrompt.jsx'
+import PaceChoice from './PaceChoice.jsx'
+import useSideBeside from './useSideBeside.js'
 import { relayAddress } from './relayAddress.js'
 import '../../components/table/table.css'
 
@@ -130,6 +134,15 @@ const NO_GLOW = new Map()
 // that imported it from here still can.
 export { EnginePrompt, placeWords, stopLine } from './EnginePrompt.jsx'
 
+/** The nearest box around `el` that scrolls, which a scroll offset belongs to; null where it is the page's. */
+function scrollerOf(el) {
+  for (let p = el?.parentElement; p; p = p.parentElement) {
+    const y = getComputedStyle(p).overflowY
+    if (y === 'auto' || y === 'scroll') return p
+  }
+  return null
+}
+
 
 export default function Table({ deck: initialDeck, onOpenCard, room = null, engine = null }) {
   // The deck is kept here because choosing a printing rewrites it, and the
@@ -174,6 +187,50 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   const reduced = prefersReducedMotion(prefs.reduceMotion ?? null)
   const showImages = prefs.showCardImages !== false
   const fieldRef = useRef(null)
+  /*
+   * How the person plays at the engine's table (HANDOFF.md §3 item 24; lib/engine/
+   * pace.js): a preset and the settings it makes, kept with the player's other
+   * table preferences and read forgivingly. Controlled until they choose, the
+   * owner's choice. Asked once — `asked` — and changeable at any time from the
+   * table's own settings; a change goes to the room at once (useEngineRoom).
+   */
+  const pace = chosenPace(prefs.tablePace)
+  const choosePace = useCallback((change) => {
+    setPrefs(setPref('tablePace', paceWith(getPrefs().tablePace, change)).prefs)
+  }, [])
+  // Answered, the question goes, and with it the button that had focus; focus is
+  // put where the game is — the prompt's primary button, else its first, else
+  // the rail's — rather than left on nothing for a keyboard or a screen reader to
+  // start again from. The primary first: at a first sit the question is answered
+  // over the opening hand, whose first button is Mulligan, and the Enter or Space
+  // that answered it would have been followed by one that took a mulligan.
+  const settlePace = useCallback(() => {
+    setPrefs(setPref('tablePace', answered(getPrefs().tablePace)).prefs)
+    requestAnimationFrame(() => {
+      const root = rootRef.current
+      const next = root?.querySelector('.prompt .btn--primary:not(:disabled)') ?? root?.querySelector('.prompt button:not(:disabled), .rail button:not(:disabled)')
+      next?.focus()
+    })
+  }, [])
+  /*
+   * Where the question goes: in the column beside the table where that column
+   * stands beside it (a desktop, or a phone held sideways), so the battlefield and
+   * the prompt on it stay where they would be without it; and above the seat
+   * opposite where the table is one column, first thing on it. Asked once, it is
+   * brought into view the first time it shows, instantly: the lobby's scroll is
+   * kept by the screen the table opens in, and a person who scrolled down the
+   * shelf to sit found the question above the top of the screen.
+   */
+  const beside = useSideBeside()
+  const paceSeen = useRef(false)
+  const showPace = useCallback((el) => {
+    if (paceSeen.current) return
+    paceSeen.current = true
+    const game = el.closest('.game') ?? el
+    const top = game.getBoundingClientRect().top
+    const edge = scrollerOf(game)?.getBoundingClientRect().top ?? 0
+    if (top < edge) game.scrollIntoView?.({ block: 'start' })
+  }, [])
 
   // Deal once, and not before the cards have arrived: which row a card
   // belongs in is read off its type line, and at first paint there is none
@@ -211,6 +268,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     // And what the engine's seat plays, where the lobby recorded nothing for
     // this table (M5): the player's kept choice, read the same way.
     opponent: chosenOpponent(prefs.engineOpponent),
+    // And how the person plays: where the game stops for them, and the speed.
+    stops: pace.stops,
+    speed: pace.speed,
   })
   const away = Boolean(room || engine)
   // A card the deck knows, else one fetched for the table, else what the
@@ -433,6 +493,35 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   // here rather than with the rest of the render.
   const declaring = offers.find((a) => a.type === 'DeclareAttackers' && a.meaningful) ?? null
   const blocking = offers.find((a) => a.type === 'DeclareBlockers' && a.meaningful) ?? null
+  /*
+   * What the step is for, said in the prompt at a stop the first few times this
+   * person stops in it, where they asked for the steps to be explained (the
+   * Learning preset; lib/engine/teach.js). Counted once a stop, and kept with the
+   * table preferences so "the first few times" runs across games; the stop it was
+   * counted at is kept with it, so a reload at that stop says it again without
+   * counting it twice. A stop taken while something is being chosen, or in the
+   * opening hand, is not a step's to explain; nor is one in the engine's turn
+   * with nothing of the person's to do, since what the reference says of a step
+   * is the active player's allowances — a block, the defending player's, is
+   * theirs (`teachesHere`).
+   */
+  const teachStep = engine && pace.explain && myStop && status?.waiting === 'action' && !opening
+    && teachesHere({ active: board?.active, me, blocking })
+    ? stepIdOf(status.step) : null
+  const seatsHere = board?.players?.length ?? 2
+  const teachKey = teachStep && teachingFor(teachStep, { seats: seatsHere }) ? `${engine}:${status.stop}` : null
+  const [taught, setTaught] = useState(null)
+  useEffect(() => {
+    if (!teachKey) return
+    const kept = getPrefs().tableTaught
+    if (taughtAt(kept) === teachKey) { setTaught({ key: teachKey, step: teachStep }); return }
+    if (taughtEnough(kept, teachStep)) return
+    setTaught({ key: teachKey, step: teachStep })
+    setPrefs(setPref('tableTaught', taughtOnce(kept, teachStep, teachKey)).prefs)
+    // The stop is what a teaching belongs to.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teachKey])
+  const teaching = taught && taught.key === teachKey ? teachingFor(taught.step, { seats: seatsHere }) : null
   const shownBoard = useMemo(() => {
     if (!engine || !board || (!chosen.size && !Object.keys(blocks).length)) return board
     const arrows = [...board.arrows]
@@ -600,6 +689,24 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     doAction({ type: 'move', id, zone: 'battlefield', x: inst.x + dx, y: inst.y + dy })
   }, [board, doAction])
 
+  /*
+   * "How do you want to play?", asked once, the first time a person sits at the
+   * engine's table (HANDOFF.md §3 item 24): on the table, never in front of it,
+   * and from the moment they sit, while the engine deals — the seat is already
+   * taken, with Controlled in force until they choose. Never inside the
+   * battlefield's own box, which the prompt is placed at the foot of: there, every
+   * line of the question pushed the opening hand's Keep further down the page, and
+   * on a narrow phone the prompt rose over the question's own buttons. Beside the
+   * table in the side column where that stands beside it, else above the seat
+   * opposite (`beside`, above). While a stop waits on the person their prompt has
+   * the one primary button, and "Play …" is a plain one beside it.
+   */
+  const askPace = engine && !pace.asked
+    ? <PaceChoice pace={pace} room={held.pace} first waiting={myStop} taught={taughtAny(prefs.tableTaught)} onChoose={choosePace} onDone={settlePace} onTeachAgain={() => setPrefs(setPref('tableTaught', null).prefs)} onShown={showPace} />
+    : null
+  const askAbove = askPace && !beside ? <div className="game__ask">{askPace}</div> : null
+  const askBeside = askPace && beside ? askPace : null
+
   if (!run || !me) {
     // The table's own shape, empty, rather than a spinner: what is about to
     // appear is already where it will be, and the line says what is being
@@ -614,7 +721,8 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
       ? (shared.status === 'open' ? 'Taking a seat…' : shared.status === 'connecting' ? 'Joining the table…' : 'The relay is not answering yet. Trying again…')
       : (missing.length ? 'Some cards could not be loaded; dealing anyway…' : 'Fetching the cards, then dealing…')
     return (
-      <div className="game game--loading" aria-busy="true">
+      <div className={`game game--loading${askAbove ? ' game--asking' : ''}`} aria-busy="true">
+        {askAbove}
         <div className="game__them"><div className="plate plate--them skeleton" /><span className="skeleton skeleton--line" /></div>
         <div className="game__field"><div className="field field--tile skeleton"><p className="field__empty" role="status">{why}</p></div></div>
         <div className="game__you">
@@ -622,7 +730,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
           <div className="game__hand skeleton skeleton--hand" />
           <div className="ztiles">{PILES.map((z) => <span key={z} className="ztile"><span className="ztile__label">{TILE_LABELS[z]}</span><span className="ztile__face skeleton" /></span>)}</div>
         </div>
-        <aside className="game__side"><div className="gamelog skeleton skeleton--log" /></aside>
+        <aside className="game__side">{askBeside}<div className="gamelog skeleton skeleton--log" /></aside>
         <Confirm
           open={asking === 'carry'}
           title="Pick up where you left off"
@@ -841,12 +949,15 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   return (
     // `game--still` is the app's own reduced-motion setting, which the
     // stylesheet cannot read the way it reads the system's.
-    <div className={`game${drag ? ' game--carrying' : ''}${away ? ' game--shared' : ''}${engine ? ' game--held' : ''}${reduced ? ' game--still' : ''}`} ref={rootRef}>
+    <div className={`game${drag ? ' game--carrying' : ''}${away ? ' game--shared' : ''}${engine ? ' game--held' : ''}${reduced ? ' game--still' : ''}${askAbove ? ' game--asking' : ''}`} ref={rootRef}>
       {drag && drag.moved && drag.from !== 'battlefield' && board.cards[drag.id] && (
         <div className="carried" style={{ left: `${drag.x}px`, top: `${drag.y}px` }} aria-hidden="true">
           <BoardCard card={cardFor(board.cards[drag.id])} name={nameFor(board.cards[drag.id])} inst={board.cards[drag.id]} size="hand" dragging />
         </div>
       )}
+
+      {/* How you play, asked once: first thing on a table of one column. */}
+      {askAbove}
 
       {/* --- the seat opposite ------------------------------------------- */}
       {others.length === 0 ? (
@@ -990,24 +1101,64 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
         )}
         {loading && <p className="faint tiny m0">Loading the paintings…</p>}
         {refusal && <div className="banner banner--info" role="status">{refusal.message}</div>}
-        <Field
-          fieldRef={fieldRef}
-          board={shownBoard}
-          lookup={lookup}
-          player={me}
-          selectedId={selected}
-          drag={drag}
-          aiming={aiming}
-          onBegin={begin}
-          onSelect={touch}
-          onContext={hold}
-          onHover={hoverCard}
-          onNudge={nudge}
-          onBackground={() => { if (!justDragged()) { setAiming(null); if (panel === 'actions') setPanel(null) } }}
-          images={showImages}
-          tile
-          glowOf={glowOf}
-        />
+        {/* The tabletop: your battlefield, and the prompt placed at its foot, measured
+            from this box alone so nothing said above or below it moves the prompt. */}
+        <div className="game__table">
+          <Field
+            fieldRef={fieldRef}
+            board={shownBoard}
+            lookup={lookup}
+            player={me}
+            selectedId={selected}
+            drag={drag}
+            aiming={aiming}
+            onBegin={begin}
+            onSelect={touch}
+            onContext={hold}
+            onHover={hoverCard}
+            onNudge={nudge}
+            onBackground={() => { if (!justDragged()) { setAiming(null); if (panel === 'actions') setPanel(null) } }}
+            images={showImages}
+            tile
+            glowOf={glowOf}
+          />
+          {!kept && hand.length > 0 && (
+            <OpeningHand count={hand.length} mulligans={mulligans} onMulligan={mulligan} onKeep={() => setKept(true)} />
+          )}
+          {/* A slow answer is the engine thinking, and the prompt says nothing
+              while it does, as it says nothing at one of the engine's own stops. */}
+          {engine && status && !held.slow && (
+            <EnginePrompt
+              status={status}
+              me={me}
+              step={step}
+              chosen={chosen}
+              blocks={blocks}
+              blocker={blocker}
+              declaring={declaring}
+              blocking={blocking}
+              glows={glows}
+              elsewhere={elsewhere}
+              placeOf={placeOf}
+              players={board.players}
+              nameOf={(id) => nameOf(board, id, lookup)}
+              standsForOf={(id) => board.cards[id]?.standsFor ?? null}
+              nameOfSeat={nameOfSeat}
+              can={can}
+              choosing={choosing}
+              onPick={pick}
+              onChange={setChoosing}
+              onDone={() => goOn()}
+              onChooseForMe={chooseForMe}
+              onLetGo={() => setChoosing(null)}
+              handSize={hand.length}
+              active={board.active}
+              onAct={(index, extra) => held.act(index, extra)}
+              onDecide={(params) => held.decide(params)}
+              teach={beside ? teaching : null}
+            />
+          )}
+        </div>
         {aiming && (
           <div className="banner banner--info row row--wrap game__aim" role="status">
             <span style={{ flex: '1 1 12rem' }}>
@@ -1018,41 +1169,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             <button className="btn btn--ghost btn--sm" onClick={() => setAiming(null)}>Never mind</button>
           </div>
         )}
-        {!kept && hand.length > 0 && (
-          <OpeningHand count={hand.length} mulligans={mulligans} onMulligan={mulligan} onKeep={() => setKept(true)} />
-        )}
-        {/* A slow answer is the engine thinking, and the prompt says nothing
-            while it does, as it says nothing at one of the engine's own stops. */}
-        {engine && status && !held.slow && (
-          <EnginePrompt
-            status={status}
-            me={me}
-            step={step}
-            chosen={chosen}
-            blocks={blocks}
-            blocker={blocker}
-            declaring={declaring}
-            blocking={blocking}
-            glows={glows}
-            elsewhere={elsewhere}
-            placeOf={placeOf}
-            players={board.players}
-            nameOf={(id) => nameOf(board, id, lookup)}
-            standsForOf={(id) => board.cards[id]?.standsFor ?? null}
-            nameOfSeat={nameOfSeat}
-            can={can}
-            choosing={choosing}
-            onPick={pick}
-            onChange={setChoosing}
-            onDone={() => goOn()}
-            onChooseForMe={chooseForMe}
-            onLetGo={() => setChoosing(null)}
-            handSize={hand.length}
-            active={board.active}
-            onAct={(index, extra) => held.act(index, extra)}
-            onDecide={(params) => held.decide(params)}
-          />
-        )}
+        {/* What the step is for, where the turn panel is not beside the table: under
+            the battlefield rather than in the prompt on it, which on a phone it grew
+            over the creatures a person taps to attack with. Beside, the prompt says
+            the note and the panel the rest. */}
+        {engine && status && !held.slow && !beside && teaching && !choosing && <Teaching teach={teaching} className="game__teach" />}
       </div>
 
       {/* --- your seat ---------------------------------------------------- */}
@@ -1201,6 +1322,8 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
 
       {/* --- the side column: the log, and whatever is open --------------- */}
       <aside className="game__side">
+        {/* How you play, asked once: beside the table, where the battlefield keeps its place. */}
+        {askBeside}
         {away && (
           <section className="pile game__seats" aria-label="Who is at the table">
             <h2 className="pile__title">Table <span className="chip tiny">{room ?? engine}</span></h2>
@@ -1355,6 +1478,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             onDealAgain={() => setAsking('deal')}
             onTogglePref={togglePref}
             onLeave={() => navigate({ tab: 'game', gameDeckId: null, gameRoom: null, gameEngine: null })}
+            pace={engine ? pace : null}
+            roomPace={held.pace}
+            taught={taughtAny(prefs.tableTaught)}
+            onPace={choosePace}
+            onTeachAgain={() => setPrefs(setPref('tableTaught', null).prefs)}
           />
         )}
         {/*
@@ -1706,9 +1834,11 @@ function Actions({ inst, name, card, host, mine = true, permanent = true, onDo, 
  * Behind the dots on the rail: everything a game needs now and then and a
  * screen should not spend space on all the time.
  */
-function More({ board, player, prefs, shared, held = false, leftOut = [], sideboardLeftOut = [], onDo, onToken, onMulligan, onDealAgain, onTogglePref, onLeave }) {
+function More({ board, player, prefs, shared, held = false, leftOut = [], sideboardLeftOut = [], onDo, onToken, onMulligan, onDealAgain, onTogglePref, onLeave, pace = null, roomPace = null, taught = false, onPace, onTeachAgain }) {
   return (
     <div className="more">
+      {/* How the person plays at the engine's table: the question asked once, kept here to change (§3 item 24). */}
+      {held && pace && <PaceChoice pace={pace} room={roomPace} taught={taught} onChoose={onPace} onTeachAgain={onTeachAgain} />}
       {held && (
         <section className="pile">
           <h2 className="pile__title">The engine's table</h2>

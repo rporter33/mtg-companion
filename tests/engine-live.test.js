@@ -35,7 +35,7 @@ describe.skipIf(!command)('the engine on the wire', () => {
 
   it('says who it is, and knows the whole corpus rather than one set', async () => {
     expect(hello.engine).toBe('argentum')
-    expect(hello.protocol).toBe(10)
+    expect(hello.protocol).toBe(11)
     // The formats an engine's seat can be dealt a deck of its own in (protocol 7):
     // every one ConstructedDeckGenerator builds to, and since protocol 8 Commander,
     // which CommanderDeckGenerator builds, at a Commander table; since protocol 10 Brawl, at a Brawl table.
@@ -285,6 +285,73 @@ describe.skipIf(!command)('the engine on the wire', () => {
     const full = JSON.stringify(first.state).length
     const median = deltaBytes.sort((a, b) => a - b)[Math.floor(deltaBytes.length / 2)]
     expect(median).toBeLessThan(full)
+  }, 300_000)
+
+  /*
+   * How a person plays (HANDOFF.md §3 item 24, protocol 11): a person dealt
+   * without `autoPass` is stopped at every priority window, both turns, and the
+   * same game with it stops them only where something is worth playing. Neither
+   * is stopped where the rules give nobody priority, or for a declaration with
+   * nothing in it, though Argentum offers a pass or a declaration there. And
+   * `stops` changes it mid-game, from the next window, for a person's seat alone.
+   */
+  it('stops a person at every priority window where asked, and changes it mid-game', async () => {
+    // Every stop to the start of turn 5, passing at each and declaring nothing.
+    const playTo = async (autoPass, { switchAt = null } = {}) => {
+      let status = await engine.call('new', { players: [{ name: 'You', deck, autoPass }, { name: 'Bot', deck, ai: 'heuristic', level: 'easy' }], seed: 20260925 })
+      const you = status.seats[0].id
+      expect(status.seats.map((s) => s.autoPass)).toEqual([autoPass, false])
+      const seen = []
+      let passed = 0
+      let guard = 0
+      while (!status.over && status.turn < 5 && guard++ < 300) {
+        passed += status.autoPassed
+        if (status.waiting === 'decision') { status = await engine.call('decide', { auto: true }); continue }
+        if (status.waiting !== 'action' || status.actor !== you) { status = await engine.call('turn'); break }
+        seen.push({ turn: status.turn, step: status.step, only: status.actions.length === 1 ? status.actions[0].type : null, meaningful: status.actions.some((a) => a.meaningful && a.affordable) })
+        if (switchAt !== null && seen.length === switchAt) {
+          // A change is the seat's setting, answered as that: no status, and the table not moved.
+          expect(await engine.call('stops', { seat: you, autoPass: !autoPass })).toMatchObject({ seat: you, autoPass: !autoPass })
+          expect(await engine.call('turn')).toMatchObject({ turn: status.turn, step: status.step, waiting: 'action', actor: you })
+        }
+        const pass = status.actions.find((a) => a.type === 'PassPriority')
+        const declaration = status.actions.find((a) => a.type === 'DeclareAttackers' || a.type === 'DeclareBlockers')
+        if (pass) status = await engine.call('act', { index: pass.index })
+        else status = await engine.call('act', { index: declaration.index, ...(declaration.type === 'DeclareAttackers' ? { attackers: {} } : { blockers: {} }) })
+      }
+      return { seen, passed }
+    }
+    const law = await playTo(true)
+    const every = await playTo(false)
+    // Law 1 stops only where something is worth playing, and passes the rest, counted.
+    expect(law.seen.every((s) => s.meaningful)).toBe(true)
+    expect(law.passed).toBeGreaterThan(0)
+    // Every window: many more stops, most of them with nothing but a pass, both turns, and none passed for the person.
+    expect(every.passed).toBe(0)
+    expect(every.seen.length).toBeGreaterThan(law.seen.length * 3)
+    expect(every.seen.filter((s) => s.only === 'PassPriority').length).toBeGreaterThan(every.seen.length / 2)
+    expect(new Set(every.seen.map((s) => s.turn % 2))).toEqual(new Set([0, 1]))
+    for (const step of ['UPKEEP', 'PRECOMBAT_MAIN', 'BEGIN_COMBAT', 'END_COMBAT', 'POSTCOMBAT_MAIN', 'END']) expect(every.seen.some((s) => s.step === step)).toBe(true)
+    // Never where nobody gets priority (500.3), nor at a draw step the first player skips (103.8a),
+    // nor for a declaration of nothing, which has no pass to give it.
+    expect(every.seen.filter((s) => s.step === 'UNTAP' || s.step === 'CLEANUP')).toEqual([])
+    expect(every.seen.filter((s) => s.turn === 1 && s.step === 'DRAW')).toEqual([])
+    expect(every.seen.filter((s) => s.only === 'DeclareAttackers' || s.only === 'DeclareBlockers').filter((s) => !s.meaningful)).toEqual([])
+    // Changed mid-game, at the third stop: from the next window on the person is passed for, and says how often.
+    const changed = await playTo(false, { switchAt: 3 })
+    expect(changed.seen.slice(3).every((s) => s.meaningful)).toBe(true)
+    expect(changed.passed).toBeGreaterThan(0)
+    expect(changed.seen.length).toBeLessThan(every.seen.length)
+    // The engine's own seat is not a person's to stop, and a change needs its setting.
+    const table = await engine.call('new', { players: [{ name: 'You', deck, autoPass: false }, { name: 'Bot', deck, ai: 'heuristic' }], seed: 1 })
+    await expect(engine.call('stops', { seat: table.seats[1].id, autoPass: true })).rejects.toThrow(/engine's own/)
+    await expect(engine.call('stops', { seat: table.seats[0].id })).rejects.toThrow(/"autoPass" is required/)
+    await expect(engine.call('stops', { seat: 'e99', autoPass: true })).rejects.toThrow(/No seat e99/)
+    // A kept game keeps it, and the game taken back stops the person as it did.
+    await engine.call('stops', { seat: table.seats[0].id, autoPass: true })
+    const kept = await engine.call('snapshot')
+    const back = await engine.call('restore', { snapshot: kept.snapshot, replace: true })
+    expect(back.seats.map((x) => x.autoPass)).toEqual([true, false])
   }, 300_000)
 
   it('refuses an action that was not offered', async () => {

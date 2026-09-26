@@ -17,9 +17,13 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { EnginePrompt, placeWords, stopLine } from '../src/features/game/Table.jsx'
+import { Teaching } from '../src/features/game/EnginePrompt.jsx'
 import { applyDelta, boardFromView } from '../src/lib/engine/board.js'
 import { glowsAt, offeredElsewhere, GLOW_SAYS } from '../src/lib/engine/glow.js'
 import { STEPS } from '../src/data/turn-structure.js'
+import PaceChoice from '../src/features/game/PaceChoice.jsx'
+import { PAYING_LINE, PRESET_LINES, STACK_LINE, chosenPace, fixedLine } from '../src/lib/engine/pace.js'
+import { TURN_PANEL_LINE, teachingFor } from '../src/lib/engine/teach.js'
 // Imported rather than read off disk: this file runs in a browser-shaped environment.
 import FIXTURE from './fixtures/engine-views.json'
 
@@ -201,5 +205,184 @@ describe('the captured run\'s opening hand and its targets decision (M4)', () =>
     expect(el.querySelector('.prompt__title').textContent).toBe('Choose targets for Sparkmage Apprentice')
     expect(el.querySelector('.prompt__sub').textContent).toBe('Tap what Sparkmage Apprentice is aimed at: the legal targets glow.')
     expect([...el.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Aim at yourself', 'Aim at the engine', 'Let the engine chooseIt will say what it chose'])
+  })
+})
+
+describe('what the step is for, where the person asked for the steps to be explained (§3 item 24)', () => {
+  // An empty window at the engine's upkeep, as a table stopped at every window is offered one.
+  const window = { stop: 4, turn: 2, phase: 'BEGINNING', step: 'UPKEEP', actor: YOU, waiting: 'action', actions: [{ index: 0, type: 'PassPriority', description: 'Pass priority', affordable: true, meaningful: false }], autoPassed: 0, decided: [] }
+  const upkeep = STEPS.find((s) => s.id === 'upkeep')
+
+  it('is said under the prompt\'s own words where the turn panel stands beside it: the head, and where to look for the rest', async () => {
+    const el = await render({ status: window, step: upkeep, teach: teachingFor('upkeep'), active: YOU })
+    expect(el.querySelector('.prompt__title').textContent).toBe('Upkeep')
+    expect(el.querySelector('.prompt__sub').textContent).toBe('Nothing to do here but pass.')
+    // The upkeep has no note of its own, and what happens in it is the turn panel's, beside.
+    expect(el.querySelector('.prompt__teach').textContent).toBe(`Beginning phase · Upkeep (503.) ${TURN_PANEL_LINE}`)
+    // The pass is still the one thing to press.
+    expect([...el.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Pass →or press Space'])
+  })
+
+  it('is said at an attack too, the step\'s note alone, and not at all where nobody asked for it', async () => {
+    const attack = stops.find((s) => s.status.actions?.some((a) => a.type === 'DeclareAttackers' && a.meaningful))
+    const declaring = attack.status.actions.find((a) => a.type === 'DeclareAttackers')
+    const el = await render({ status: attack.status, step: STEPS.find((s) => s.id === 'attackers'), declaring, teach: teachingFor('attackers') })
+    expect(el.querySelector('.prompt').getAttribute('aria-label')).toBe('Your attack')
+    expect(el.querySelector('.prompt__teach').textContent).toBe('Combat phase · Declare attackers (508.) If nothing attacks, declare blockers and combat damage are skipped entirely.')
+    await act(async () => { root.unmount() })
+    container.remove()
+    root = null
+    const plain = await render({ status: window, step: upkeep })
+    expect(plain.querySelector('.prompt__teach')).toBeNull()
+  })
+
+  it('is said whole where it stands under the battlefield, the note first', async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => { root.render(<Teaching teach={teachingFor('attackers')} className="game__teach" />) })
+    const said = container.querySelector('.game__teach.teaching')
+    expect(said.tagName).toBe('P')
+    expect(said.textContent).toBe('Combat phase · Declare attackers (508.) If nothing attacks, declare blockers and combat damage are skipped entirely. The active player declares attackers, and what each is attacking. (508.1)')
+  })
+})
+
+describe('a stop in the engine\'s turn, for a person stopped at every window (review of §3 item 24)', () => {
+  const theirUpkeep = { stop: 9, turn: 2, phase: 'BEGINNING', step: 'UPKEEP', actor: YOU, waiting: 'action', actions: [{ index: 0, type: 'PassPriority', description: 'Pass priority', affordable: true, meaningful: false }], autoPassed: 0, decided: [] }
+  const upkeep = STEPS.find((s) => s.id === 'upkeep')
+
+  it('says whose turn it is, as the log says the step, and its button is Done', async () => {
+    const el = await render({ status: theirUpkeep, step: upkeep, active: THEM })
+    expect(el.querySelector('.prompt__title').textContent).toBe('The engine\'s upkeep')
+    expect(el.querySelector('.prompt').getAttribute('aria-label')).toBe('The engine\'s upkeep')
+    const done = el.querySelector('.prompt button')
+    expect(done.textContent).toBe('Done →or press Space')
+    expect(done.getAttribute('aria-keyshortcuts')).toBe('Space')
+  })
+
+  it('and in the person\'s own turn is the step and Pass, as before', async () => {
+    const el = await render({ status: theirUpkeep, step: upkeep, active: YOU })
+    expect(el.querySelector('.prompt__title').textContent).toBe('Upkeep')
+    expect(el.querySelector('.prompt').getAttribute('aria-label')).toBe('Your stop')
+    expect(el.querySelector('.prompt button').textContent).toBe('Pass →or press Space')
+  })
+})
+
+describe('the choice of how to play (§3 item 24)', () => {
+  const mountChoice = async (props) => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    const chosen = []
+    await act(async () => { root.render(<PaceChoice pace={chosenPace(undefined)} onChoose={(c) => chosen.push(c)} {...props} />) })
+    return { el: container, chosen }
+  }
+  const unmount = async () => { await act(async () => { root.unmount() }); container.remove(); root = null }
+  const radios = (el) => [...el.querySelectorAll('input[type="radio"]')]
+  const labelOf = (input) => input.closest('label').textContent
+
+  it('asks, the first time, with Controlled chosen and the other two a tap away, and a button that names what it plays', async () => {
+    const done = []
+    const { el, chosen } = await mountChoice({ first: true, onDone: () => done.push(true) })
+    expect(el.querySelector('section').getAttribute('aria-labelledby')).toBe(el.querySelector('h2').id)
+    expect(el.querySelector('h2').textContent).toBe('How do you want to play?')
+    const presets = radios(el).slice(0, 3)
+    expect(presets.map(labelOf)).toEqual([
+      `FastKeep it moving${PRESET_LINES.fast}Fewer stops`,
+      `ControlledSee every window${PRESET_LINES.controlled}More passing`,
+      `LearningExplain as you go${PRESET_LINES.learning}Steps explained`,
+    ])
+    expect(presets.map((r) => r.checked)).toEqual([false, true, false])
+    // Each radio is named by its preset and tagline, and described by what it does.
+    const words = (r, attr) => r.getAttribute(attr).split(' ').map((id) => document.getElementById(id).textContent).join(' ')
+    expect(presets.map((r) => words(r, 'aria-labelledby'))).toEqual(['Fast Keep it moving', 'Controlled See every window', 'Learning Explain as you go'])
+    expect(words(presets[1], 'aria-describedby')).toBe(`${PRESET_LINES.controlled} More passing`)
+    await act(async () => { presets[0].click() })
+    expect(chosen).toEqual([{ preset: 'fast' }])
+    const play = [...el.querySelectorAll('button')].find((b) => b.textContent.startsWith('Play'))
+    expect(play.textContent).toBe('Play Controlled →')
+    await act(async () => { play.click() })
+    expect(done).toEqual([true])
+  })
+
+  it('shows under Advanced the settings the preset sets, which may be changed one at a time, and what no preset can set', async () => {
+    const { el, chosen } = await mountChoice({ pace: chosenPace({ preset: 'learning' }) })
+    const more = [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Advanced'))
+    const advanced = document.getElementById(more.getAttribute('aria-controls'))
+    expect(more.getAttribute('aria-expanded')).toBe('false')
+    expect(advanced.hidden).toBe(true)
+    await act(async () => { more.click() })
+    expect(more.getAttribute('aria-expanded')).toBe('true')
+    expect(advanced.hidden).toBe(false)
+    expect([...advanced.querySelectorAll('legend')].map((l) => l.textContent)).toEqual(['Where the game stops for you', 'How long each of the engine’s plays stands', 'What each step is for'])
+    const on = [...advanced.querySelectorAll('input:checked')].map(labelOf)
+    expect(on[0]).toMatch(/^At every window/)
+    expect(on[1]).toMatch(/^Relaxed/)
+    expect(on[2]).toMatch(/^The first three times/)
+    expect(advanced.textContent).toContain(PAYING_LINE)
+    // And what every window cannot mean at this table, with the rule it departs from.
+    expect(advanced.textContent).toContain(STACK_LINE)
+    expect(STACK_LINE.endsWith('(117.4).')).toBe(true)
+    expect(advanced.textContent).toContain('this app’s own choices')
+    const instant = [...advanced.querySelectorAll('input')].find((r) => labelOf(r).startsWith('Instant'))
+    await act(async () => { instant.click() })
+    expect(chosen).toEqual([{ speed: 'instant' }])
+  })
+
+  it('steps its button back while a stop waits on the person, whose prompt holds the one primary', async () => {
+    const quiet = await mountChoice({ first: true, onDone: () => {} })
+    const play = () => [...container.querySelectorAll('button')].find((b) => b.textContent.startsWith('Play'))
+    expect(play().className).toMatch(/btn--primary/)
+    await unmount()
+    await mountChoice({ first: true, waiting: true, onDone: () => {} })
+    expect(play().className).toMatch(/btn--ghost/)
+    expect(play().className).not.toMatch(/btn--primary/)
+    expect(quiet.el).toBeTruthy()
+  })
+
+  it('opens what each preset does with Advanced, marking itself open for the narrow form to show it', async () => {
+    const { el } = await mountChoice({ first: true })
+    const section = el.querySelector('section')
+    expect(section.classList.contains('pacechoice--open')).toBe(false)
+    const more = [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Advanced'))
+    await act(async () => { more.click() })
+    expect(section.classList.contains('pacechoice--open')).toBe(true)
+  })
+
+  it('tells the table once, as the first question appears, and only the first question', async () => {
+    const shown = []
+    await mountChoice({ first: true, onShown: (node) => shown.push(node.tagName) })
+    await act(async () => { root.render(<PaceChoice pace={chosenPace({ preset: 'fast' })} first onChoose={() => {}} onShown={(node) => shown.push(node.tagName)} />) })
+    expect(shown).toEqual(['SECTION'])
+    await unmount()
+    await mountChoice({ onShown: (node) => shown.push(node.tagName) })
+    expect(shown).toEqual(['SECTION'])
+  })
+
+  it('says a mix of the player\'s own as that, with no preset chosen', async () => {
+    const { el } = await mountChoice({ pace: chosenPace({ stops: 'playable', speed: 'instant', explain: true }) })
+    expect(radios(el).slice(0, 3).some((r) => r.checked)).toBe(false)
+    expect(el.querySelector('.pacechoice__own').textContent).toBe('Your own mix: the game stops only where you can play, Instant, and steps explained the first three times.')
+  })
+
+  it('says where the table cannot do what is chosen, rather than let the choice look as though it took', async () => {
+    const older = await mountChoice({ room: { older: true } })
+    expect(older.el.querySelector('.pacechoice__note').textContent).toMatch(/^This relay is older than this choice/)
+    await unmount()
+    const fixed = await mountChoice({ pace: chosenPace({ preset: 'fast' }), room: { room: { stops: 'every', speed: 'brisk', ms: 600, paced: true, fixed: true } } })
+    expect(fixed.el.querySelector('.pacechoice__note').textContent).toBe('This table’s engine cannot change where it stops once the game is dealt, so the game goes on stopping for you at every priority window, both turns, until your next table.')
+    await unmount()
+    // An engine older than 11 is dealt Law 1 whatever is asked, and Controlled says so.
+    const older11 = await mountChoice({ pace: chosenPace({ preset: 'controlled' }), room: { room: { stops: 'playable', speed: 'brisk', ms: 600, paced: true, fixed: true } } })
+    expect(older11.el.querySelector('.pacechoice__note').textContent).toBe(fixedLine('playable'))
+    expect(fixedLine('playable')).toMatch(/^This table’s engine is older than stopping you at every window/)
+    await unmount()
+    const unpaced = await mountChoice({ room: { room: { stops: 'every', speed: 'brisk', ms: 0, paced: false, fixed: false } } })
+    expect(unpaced.el.querySelector('.pacechoice__note').textContent).toBe('This table plays the engine’s turn in one go, so the speed sets nothing here.')
+    await unmount()
+    const fine = await mountChoice({ room: { room: { stops: 'every', speed: 'brisk', ms: 600, paced: true, fixed: false } } })
+    expect(fine.el.querySelector('.pacechoice__note')).toBeNull()
   })
 })

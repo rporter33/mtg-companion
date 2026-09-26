@@ -8,6 +8,7 @@ import { isCommanderGame, leaderProblem, leaderlessFamily, leaderlessLine, table
 import { nameList } from '../../lib/engine/deck.js'
 import { leadOf, standInPhrase } from '../../lib/engine/stand-in.js'
 import { getFormat } from '../../lib/formats.js'
+import { lobbyStopsLine } from '../../lib/engine/pace.js'
 import { relayAddress, setRelayAddress, inviteLink } from './relayAddress.js'
 
 /**
@@ -201,8 +202,9 @@ export default function Seats({ room, engine = null, engineDeck = null }) {
               <span className="lobby__label">Your name at the table</span>
               <input className="input" value={name} onChange={(e) => saveName(e.target.value)} placeholder="Player" maxLength={24} />
             </label>
+            {/* Where the game stops is the person's to choose at the table (§3 item 24), so this says what it will do for them. */}
             <p className="lobby__notice tiny">
-              <strong>Rules enforced:</strong> the engine runs the game and plays the seat opposite. Only what the rules allow is offered, and the engine never stops you where you have nothing to do.
+              <strong>Rules enforced:</strong> the engine runs the game and plays the seat opposite. Only what the rules allow is offered, and {lobbyStopsLine(getPrefs().tablePace)}
             </p>
           </>
         )}
