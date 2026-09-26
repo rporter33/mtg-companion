@@ -931,7 +931,10 @@ laptop scrolls to see their hand. The engine spec routes `cards.scryfall.io` to
 a pixel, and the built app's service worker fetches those images itself, which
 `page.route` cannot see: on a machine that reaches Scryfall the spec loads real
 card faces. Found by looking at the screenshots; nothing depends on it, and it
-was so before this milestone.
+was so before this milestone. (Since M9 something does: the engine's specs gate
+every deploy and count console errors, and a failure to reach Scryfall is one. §3
+item 12's second review opens every spec that routes those images with service
+workers blocked; that section says what it measured.)
 
 The bar at the end: 1,770 unit tests across 88 files, 23 of them new; 34
 browser specs, 1,291 checks, none failed, in 788 s on the final build; the
@@ -3274,6 +3277,542 @@ built at protocol 10 (`Server.kt` unchanged); 39 browser specs, 1,709 checks, no
 failed, in 1,138 s — `engine-commander.spec.mjs` 105 of them (two new, four changed)
 against the stand-in engine, and the engine's own spec 212 against the real engine
 through the real relay. The token check clean. No JVM and no preview left running.
+
+### M9: CI builds the engine — 2026-09-25
+
+**What CI does now.** The `test` job in `.github/workflows/deploy.yml` builds the
+engine before any suite runs. Temurin 21 (`actions/setup-java@v4`); the pin, read
+from the build script itself (`scripts/engine-build.sh --rev`, new) and checked to
+be a commit; the engine's install restored (`actions/cache/restore@v4`) from
+`../argentum/companion/build/install` (spelled from the root, below), keyed on the
+runner's system, the JDK, the pin and a hash of `engine/build.gradle.kts`,
+`engine/src/` and the build script. On a
+miss, Gradle's own cache (`gradle/actions/setup-gradle@v4`), then `npm run
+engine:build`, which fetches Argentum at the pin into `../argentum` and builds, and
+the install saved at once (`actions/cache/save@v4`). A step then asks `findEngine`
+where the engine is, as every suite asks it, and fails if what it names cannot be
+run. Then the unit suite with the live suite apart, and the live suite in a step of
+its own, each of its tests listed; the app's build; and the browser suite through
+`scripts/browser-suite.mjs` (new), which runs `test:browser`'s chain from
+`package.json` spec by spec, as the chain would, saying each spec's time. The
+engine's build and the live suite put their times on the run's page as notices, and
+the job's summary says whether the engine was built or restored, the live suite's
+time, and a table of every browser spec's checks and time. The deploy job still
+needs the test job whole.
+
+**The skip, made a failure rather than hoped away.** `engineRequired()` in
+`scripts/engine-bridge.mjs` reads `ENGINE_REQUIRED`, which the job sets for every
+step. Where it is set and `findEngine` finds nothing, the live suite registers a
+failing test, "is built here, as ENGINE_REQUIRED says it is", in place of the skip,
+and `game-engine.spec.mjs` and `engine-restart.spec.mjs` end `0 passed, 1 failed (no
+engine, where one is required)` and exit 1. And the runner fails any spec whose last
+line says it skipped, whatever the reason, or whose last line is not its tally at
+all. Held both ways here with no engine where it looks: with the variable set, the
+live suite failed with that test and each spec exited 1; without it, both skipped
+as before. The two specs' real output, both ways, fed to the runner's own reading:
+the skip let off only without the variable. The runner itself, end to end on three
+stand-in specs: a skip let off, then refused with the variable set and the suite
+stopped there; a failure stopping it; a spec that threw before its tally; exit codes
+and the summary right in each. Two skips will still show in CI's unit counts, and are
+not the engine's: two of `engine-bridge.test.js`'s tests are for Windows alone
+(`runIf`), and on Linux they are counted as skipped, as they always have been.
+
+**Measured on the owner's machine**, in Git Bash, the workflow's steps as it runs
+them:
+
+| | |
+| --- | --- |
+| The pin step | `70d525c69845c4a8c14516a5c7214444096e1018`, read as a commit |
+| The build step, `engine/` unchanged | 11 s |
+| A fresh fetch of Argentum at the pin and a build, Gradle's local cache warm (what a change to `engine/` costs in CI once `main` has saved Gradle's cache) | 78 s |
+| The first compile with nothing cached (2026-09-21, not measured again) | 280 s, then 153 s for the other eras |
+| The install cached | 69 MB, 24 jars |
+| The unit suite, live suite apart | 2,097 tests in 98 files, 32 s |
+| The live suite on its own, against the built engine | 69 of 69, 74 s |
+| `npm test` whole, the engine built | 2,166 tests in 99 files, none skipped, 90 s |
+| The browser suite through the runner, `ENGINE_REQUIRED` set | 39 specs, 1,709 checks, none failed, none skipped, 1,100 s |
+| `game-engine.spec.mjs` / `engine-restart.spec.mjs` in it | 212 in 239 s / 41 in 88 s |
+| The POSIX launcher, the one Linux runs, started from Git Bash | `hello` in 21 s: protocol 10, 13,242 cards, corpus 19.6 s, 128 MB |
+
+For scale, the last run on GitHub before this (`f8d7619`) took 15 min 22 s for the
+test job: `npm test` 53 s and the browser suite 835 s, the two engine specs and the
+live suite skipped. What they add here is about seven minutes; on GitHub the first
+run will say, and every run after prints it.
+
+**What was built besides.** `scripts/engine-build.sh --rev`. `engineRequired`. The
+runner, and its unit test (`tests/browser-suite.test.js`). The workflow's shell is
+named `bash`, so every step has `pipefail`; its preview loop's unused variable, which
+ShellCheck flagged, is `_`.
+
+**Checked, and how.** The workflow passes actionlint 1.7.12 with ShellCheck 0.11.0,
+both their official Windows releases, downloaded for this and checked against the
+digests their releases publish; a copy with a misspelt input, a misspelt output and
+an unused loop variable was caught on all three, so both were checking.
+`scripts/engine-build.sh` passes ShellCheck as POSIX `sh`, which is what Ubuntu's
+`dash` runs. Every text file touched is LF. Each step's script was run here as the
+workflow has it, but for the actions themselves.
+
+**Deviations from the brief, each with why.**
+
+1. *`gradle/actions/setup-gradle@v4`, not `@v3`.* `@v3`'s last release (3.5.0,
+   2024-07-15) is built on `@actions/cache` 3.2.4, read from its `package.json`, and
+   the toolkit's own release notes put the new cache service in 4.0.0 and sunset the
+   legacy one from 2025-02-01, so `@v3` would cache nothing. `@v4` (4.4.4) and `@v5`
+   are built on 4.0.5; `@v4` keeps the job on one generation of actions. `@v6`, the
+   current one, moved its caching into a proprietary component under Gradle's terms
+   of use, which are the owner's to accept (HANDOFF.md §6).
+2. *No clone step of its own.* The build script fetches Argentum at the pin itself,
+   so a separate `git clone` would be a second place for the pin; the cache key asks
+   the script for it (`--rev`) for the same reason.
+3. *The key hashes more and less than `engine/`:* the build script too, since it
+   decides how the module goes into Argentum, and not `engine/README.md`, which goes
+   into nothing, so a change to the wire's words does not cost a build.
+4. *A restore and a save rather than `actions/cache`,* whose save waits for the end
+   of the job and is skipped if anything failed: a compile is kept however the
+   suites after it go.
+5. *The unit suite runs after the engine is built, and the live suite in a step of
+   its own.* With `ENGINE_REQUIRED` set for the whole job, a unit test that needed
+   the engine and ran before it would fail; and the live suite's own step is what
+   gives its time and lists its tests. Run apart they took 106 s here, against 90 s
+   together, where they overlap.
+6. *The browser suite runs through a runner*, not `npm run test:browser`, for the
+   times and the check of every spec's last line. The chain in `package.json` stays
+   the list, and `npm run test:browser` is unchanged.
+7. *`setup-java@v4` as the brief says*, though `@v6` is current: `@v4` still has
+   releases (4.9.1, 2026-08-04). Like every `@v4` action in the file, it draws
+   GitHub's Node 20 warning, which the last run shows already.
+8. *The cache's path is `../argentum` spelled from the root*, not written as the
+   brief writes it, which the cache action cannot save (below, "What the review
+   found", 1).
+
+**Found on the way, and fixed.**
+
+1. *The live suite failed one run in fifty.* The first `npm test` of the session
+   failed "plays a game against the engine, passing for the human only where nothing
+   is affordable": 8 cards in the opening hand, not 7. The game was dealt without a
+   seed; the first player is always the first seat, so it is the hand: dealt seed
+   by seed, 6 of 300 hold no Mountain, and then the first stop worth making is turns
+   later, cards drawn. It is seeded now (20260925, which deals a land and plays the
+   same game every run, the random player included — played twice and compared), and
+   §5 of HANDOFF.md says why. Once CI runs it before every deploy, a test that fails
+   one run in fifty stops one deploy in fifty.
+2. *Git Bash cannot say a `.bat` may be run.* The workflow's check of the launcher
+   was `[ -x ]`, which fails here on `companion.bat` although Node runs it; it asks
+   Node's `access(X_OK)` instead, which on Linux reads the mode and on Windows asks
+   only that it exists — so the step runs, and passes, on this machine too.
+3. *A fresh fetch at a deep path fails on Windows* ("Filename too long", Argentum's
+   file names being long), found fetching into the session's temporary folder to
+   measure it; `../argentum` is short enough, and §5 says so. Linux has no such
+   limit.
+
+**What the review found.** The change read over once built, as a reviewer would,
+with the sources of the actions it leans on read rather than assumed. The worst
+two first; neither would have shown on a green run.
+
+1. *The cache would never have been saved.* Its path was `../argentum/…`, as the
+   brief has it, and the cache action saves through `@actions/glob`, whose pattern
+   check — read in its source — refuses any path with a `..` segment ("Relative
+   pathing '.' and '..' is not allowed."). Restoring does not glob, and the save
+   step reports a failure as a warning (its `saveImpl`, read too), so nothing would
+   have failed: every run would have missed, and compiled for minutes. The path is
+   now the same folder spelled from the root, the parent of `$GITHUB_WORKSPACE` and
+   `argentum`, worked out in the pin's step; run here with the workspace set, it
+   names the folder `findEngine` finds. A path outside the workspace is otherwise
+   ordinary for the cache, which stores it relative to the workspace as it does
+   `~/.npm`.
+2. *The runner could have passed having run nothing.* It ran its `main` where its
+   own path equalled `argv[1]`, the pattern `relay-server.mjs` uses; Node names a
+   module by its real path and `argv[1]` as typed, and through a directory link here
+   the two differed, so the runner would have exited 0 with no spec run. Both sides
+   now go through `realpath`; run as a relative path, with `./`, with a small drive
+   letter and with backslashes, it started each time, and against a dead address
+   the first spec failed and the runner exited 1.
+3. The runner ended with `process.exit()`, and on POSIX — Linux, where CI runs — a
+   pipe is written asynchronously, so the summary could be cut off; it sets
+   `process.exitCode`. (On Windows a pipe is written synchronously: Node's own
+   documentation, and its `net.Socket`, which makes stdout and stderr blocking there
+   alone. This item said the platforms the wrong way round until the item 12 review
+   below.)
+4. The JDK's version was written twice, in `setup-java` and in the key; it is
+   `ENGINE_JDK`, once.
+5. The build's notice said "compiled" of a step that also fetches; it says
+   "fetched and built".
+6. A comment in the live suite said the flaky deal was found "when CI began to run
+   this suite", which has not happened yet; it says when it was met.
+7. The workflow's comment that a miss "recompiles little" was a guess until checked:
+   Argentum's `gradle.properties` turns Gradle's build cache on, `setup-gradle`'s
+   documentation lists `caches/build-cache-1` among what it keeps, and the fresh
+   fetch above built in 78 s with the cache warm.
+
+**What only a run on GitHub can prove**, since nothing here runs an action: that the
+three actions resolve and behave as their inputs say; that the cache round-trips
+the install from outside the workspace with the launcher's mode intact, which the
+discovery step would catch; that Temurin 21 compiles Argentum on `ubuntu-latest`
+within the runner's memory (Argentum asks up to 2 GB for Gradle and 6 GB for the
+Kotlin daemon); the times there, cold and warm; the corpus loading within the
+specs' 60 s and 90 s allowances; `engine-restart.spec.mjs`'s `SIGKILL` of the engine
+on Linux (the launcher `exec`s Java, so the process the bridge holds is the JVM);
+and the job's summary as GitHub draws it. And the brief's "done when": a pull
+request's run showing the engine spec's checks, with no skip in its log.
+
+**Not done, and where it goes.** The run itself, with the push. §3 item 12's
+scheduled workflow, now possible, was built the same day, and needs a repository
+setting rather than a token (the next section). Other deals in the live suite are unseeded — refusals, and
+decks the engine builds whose claims are about the deck, not the deal — and were not
+audited one by one; the one that failed is seeded. The owner's, in §6: setup-gradle
+v6's terms; the workflow's single `concurrency` group, which lets a pull request's
+push cancel a run on `main`; and `ubuntu-latest` becoming Ubuntu 26 from 2026-10-19.
+
+The bar at the end: 2,166 unit tests across 99 files, 7 of them new, none skipped,
+the live engine suite 69 of 69 among them; 39 browser specs, 1,709 checks, none
+failed and none skipped, run through the new runner with `ENGINE_REQUIRED` set, the
+engine's own spec 212 of them and the restart spec 41 against the real engine. That
+whole run came before review items 1 to 6; the runner's changes among them were run
+against stand-in specs and a dead address, as above, and no spec changed after it.
+actionlint and ShellCheck clean on the workflow as it stands. The token check clean.
+No JVM and no preview left running.
+
+### §3 item 12: the pin offered weekly — 2026-09-25
+
+**The decision.** The owner's, 2026-09-21 (HANDOFF.md §3 item 12): the engine moves
+to newer sets by a pull request the owner merges, and after M9 a scheduled workflow
+builds upstream Argentum, runs the live suite and the engine's browser spec, and
+opens that pull request with the new sets, the load time and the heap measured. M9
+made it possible; M9's write-up left it unbuilt because opening a pull request needs
+something of the owner's. What it needs turned out to be a setting, not a token.
+
+**What was built.** `.github/workflows/engine-pin.yml`, on a schedule (Mondays at
+05:17 UTC, off the hour, when GitHub's documentation says scheduled runs are most
+delayed) and by hand, in three jobs, each given only what it uses:
+
+- `look` (reads the repository and its pull requests). The pin and where upstream is
+  come from the build script itself (`--rev`, and `--repo`, new), upstream `main`'s
+  head from `git ls-remote`. It stops, saying why in a notice and the job's summary,
+  where upstream is the pin; where GitHub's comparison says upstream is behind it or
+  the same (asked where upstream is on GitHub, and said in the pull request as "3
+  commits on"; a comparison GitHub does not give only leaves the count out); where a
+  pull request from an `engine-pin/` branch is open; and where this commit's was
+  closed unmerged, so a commit the owner turned down is not offered every Monday
+  after, unless the workflow is run by hand with `again`.
+- `try` (reads; no credentials kept by the checkout; nothing saved to any cache). It
+  restores the pin's engine from `deploy.yml`'s cache under the key `deploy.yml`
+  saves it with, or builds it, and asks it `hello`; then builds upstream at its head
+  in the same `../argentum`, checks the checkout is that commit, and asks it `hello`;
+  then runs `tests/engine-live.test.js` with vitest's JSON reporter beside the verbose
+  one, and both engine specs through `scripts/browser-suite.mjs --only=` against a
+  preview of the app. Each suite runs whatever the other did, so a failing run says
+  both. What the run found goes on the job's summary, and its files — both `hello`s,
+  the live suite's report, the specs' record — are kept as an artifact for 30 days.
+- `offer` (writes; runs nothing of upstream's). Only where `try` passed. It writes
+  the body with `scripts/engine-pin.mjs body --offer`, which writes nothing and fails
+  unless every test in the files is there and passed; moves the pin with `move`, on
+  the one line that holds it and only from the commit measured against; checks that
+  the build script now says the new commit and that nothing else changed; commits it
+  as `github-actions[bot]` to `engine-pin/<commit>`; pushes that branch and nothing
+  else, forced, so a branch left by a run that could not open its pull request is
+  written over; and opens the pull request, or fails naming the setting it needs.
+
+One run at a time (`concurrency: engine-pin`, never cancelled), since "no pull
+request is open" is only true until the run before opens one. Its group is not
+`deploy.yml`'s, so it cancels no deploy.
+
+`scripts/engine-pin.mjs` (new) is the script: `specs`, `hello`, `body` and `move`,
+its pure parts exported and tested. The body says, from the run's own files: the move
+and a link to upstream's changes; that the workflow opened it and why, and that it is
+the owner's to merge; the sets new since the pin from each engine's `hello.sets`, with
+their release dates and Argentum's own "incomplete" mark, and any gone or whose mark
+changed; both engines' protocol, card names, sets, `load.ms`, `heapMb` and ceiling, and
+the builds' times, in a table, as one sample each; the three suites' results and times,
+and the checks that failed, by name, in a run's summary; and, before merging, that the
+repository's own checks wait for **Approve workflows to run**, the files still naming
+the old pin (by `git grep`, the build script left out), and that a moved pin is a
+deliberate commit measured again. Everything read back is read forgivingly: a file
+missing or of an older shape says less ("not said", "not run", "Unknown"), never
+throws, and in the verdict counts as a reason not to offer, never as a pass. Upstream's
+words — set names — are escaped so they read as text, with no link, mention, heading or
+split table cell made of them.
+
+`scripts/browser-suite.mjs` gained two arguments of its own, which go to no spec:
+`--only=`, the named specs of the chain alone, in its order, a name that is not exactly
+one spec of it refused, since a misspelt one would run nothing; and `--record=`, what
+each did as JSON, with the checks it said failed (`failuresOf`, reading the `  FAIL  `
+line all 39 specs print). `npm run test:browser` and CI's use of the runner are
+unchanged.
+
+**The owner's step.** GitHub's setting "Allow GitHub Actions to create and approve pull
+requests" (Settings, Actions, General) must be on for the workflow's token to open a
+pull request; GitHub's documentation, read 2026-09-25, says it is off by default for a
+repository in a personal account. Nothing in the repository can switch it on. Until it
+is, the run fails at its last step, naming it. HANDOFF.md §3 item 12 says so as a step,
+and §6 asks the two questions it leaves.
+
+**The dry run.** Every step the workflow runs, run here in Git Bash but for the actions
+and the push, against upstream's newest commit, `7cc9af8` (committed 2026-09-22; GitHub's
+comparison: 3 commits ahead of the pin, 149 files), fetched and built in a scratch clone
+beside `../argentum` and deleted after:
+
+| | |
+| --- | --- |
+| Fetch and build of upstream, on this machine, where the pin had been built before | 302 s |
+| `hello`, the pin / upstream | protocol 10 / 10; 13,242 / 13,274 card names; 179 / 184 sets; corpus 18.7 s / 18.4 s; heap 127 / 128 MB of 2,048 |
+| Each `hello` step, start to finish, the JVM's start and close included | 21.5 s / 21.3 s |
+| Sets new since the pin | `NEC` Neon Dynasty Commander, `WHO` Doctor Who (incomplete), `ACR` Assassin's Creed (incomplete), `SLD` Secret Lair Drop, `EOC` Edge of Eternities Commander; none gone, no mark changed |
+| `tests/engine-live.test.js` against upstream | 69 of 69, 76.7 s |
+| `game-engine.spec.mjs` against upstream, first run | 211 passed, 1 failed, 305 s (below, "Found") |
+| The same, after the fix / a copy logging failed loads / through the runner with `--only` | 211 and 1 failed (below) / 212 of 212 / 212 of 212 in 202.7 s |
+| `engine-restart.spec.mjs` against upstream, through the runner | 41 of 41, 75.7 s |
+| The body `--offer` wrote from the last run's files | 2,838 bytes; refused, exit 1, from the first run's |
+
+For scale, not measured on GitHub: the pin's install restored and upstream compiled
+cold would be the M9 cold compile, 280 s and 153 s on this machine (2026-09-21), and
+the suites about seven minutes here. The first real run will say.
+
+**Checked, and how.** The workflow, with `deploy.yml`, passes actionlint 1.7.12 with
+ShellCheck 0.11.0 (the binaries M9 fetched and checked against their digests); a copy
+with a misspelt input, a context used where it is not allowed and an unused loop
+variable was caught on all four places, so both were checking. `scripts/engine-build.sh`
+passes ShellCheck as POSIX `sh`. The `look` step's script, taken out of the file and run
+with GitHub's own `bash -eo pipefail` and a stand-in `gh`, in nine cases: upstream
+ahead (goes, `ahead=3`); a pull request open, one closed before, closed before with
+`again`, upstream behind, diverged, no comparison, upstream the pin, and a pin that is
+not a commit — each stopped, went or failed as it should, and said why. `move` on a
+copy of the scripts: one line changed, `--rev` then the new commit, the mode kept, a
+second move and a pin that is not a commit refused. The body from the dry run's files,
+read as the pull request would show it; and the summary from the first run's, naming
+the failure and the spec not run. The two unit files: `tests/engine-pin.test.js`, 12
+tests, and `tests/browser-suite.test.js`, 10, four of them new.
+
+**Where it departs from the letter, and why.**
+
+1. *Both engine specs, not "the engine's browser spec".* Since M7 the engine has two,
+   `game-engine.spec.mjs` and `engine-restart.spec.mjs`, and the task names them both;
+   the list is `ENGINE_SPECS` in the script, once, and the workflow asks it.
+2. *The pin's engine is built or restored too.* The sets new since the pin are the
+   difference of two `hello`s, and the load and heap mean something only beside the
+   pin's on the same runner, so both are asked in one job.
+3. *A commit whose pull request was closed is not offered again* unless run by hand
+   with `again`: not in the brief, but without it a commit the owner turned down comes
+   back every Monday while upstream is quiet.
+4. *The workflow's own token, not one of the owner's.* It needs no secret and can do
+   nothing outside this repository. The cost, by GitHub's rule, is that the pull
+   request's own checks wait for **Approve workflows to run**; the body says so, and
+   §6 asks whether the owner would rather give it a token.
+5. *No Gradle cache and no npm cache in the job that runs upstream's code.* Either
+   would be saved from that job and read by `deploy.yml`'s; a weekly compile costs
+   minutes, a poisoned cache would cost a deploy. (Not enough by itself: upstream's
+   code can write the cache with no step of the workflow's saving one. The second
+   review, below, 1, moved that job to a branch of its own.)
+6. *One check of the engine's spec changed* (below, "Found", 1), where the brief asked
+   for none.
+
+**Found on the way, and fixed.**
+
+1. *The engine's spec wrote down what the pin's corpus holds, and would have stopped
+   every offer.* Against upstream its first run failed one check: the Esika example
+   deck's tile said "The engine knows 55 of 100 cards.", where the spec held 54, the
+   pin's number (M6). Upstream adds cards; any check that writes their count down
+   fails against the first commit that adds one of those decks' cards, and the offer,
+   rightly, is not made. The check now asks the engine what it knows of each example
+   deck, as the lobby asks it (the deck's names with its commander, `POST
+   /engine/check`), and checks the tile says that, the whole a hundred, and the
+   commander unknown; the pin's numbers stay in its comment. (The commander unknown
+   was still the pin's corpus written down; the second review, below, 5, has the
+   check ask that of the engine too.) Against upstream: 50, 55,
+   55 and 45; against the pin, in the whole suite at the end, 50, 54, 55 and 45, as M6
+   measured. HANDOFF.md §5 says so as a trap.
+2. *The runner said nothing of which check failed*, so a failing week's summary would
+   have said "1 failed" and sent the owner to the log; it keeps them now.
+3. *The build script was edited while a build of it was running,* for `--repo`, and a
+   shell reads its script as it goes: the edit was taken back until the build ended,
+   then made again. §5 says so.
+
+**What the review found.** The change read over once built, as a reviewer would.
+
+1. The summary's reasons were sentences with their first letter raised, which turned
+   `tests/engine-live.test.js` into "Tests/…"; they are a list.
+2. A spec that ended skipped with nothing passed was said as "0 passed, 0 failed"; the
+   skip is said first now.
+3. `recordOf` called a run of no specs passed; nothing run is not a pass.
+4. `--record=` with nothing after it went to the specs as their argument; it is the
+   runner's own, and names no file.
+5. Set codes in code spans were escaped as prose, and a code span shows its
+   backslashes; `code()` escapes only what a table and a span need.
+6. The pin's build was said as "restored from the cache, or not timed"; the workflow
+   now says which (`--restored`, or the time), and where the pin was built in the same
+   job the body says upstream's build had Gradle's cache warm from it, since otherwise
+   it reads as a cold compile.
+7. An engine that never built was said as one that "said nothing readable"; it says
+   it may not have been built.
+
+**Found, and not fixed (fixed by the second review, below, 7): a console error
+nobody caused.** The second run of
+`game-engine.spec.mjs` against upstream failed "no console error through a paced turn"
+with four `Failed to load resource: net::ERR_FAILED`; the run before it and the two
+after it did not, a copy of the spec that logged every failed load among them. The app
+is a production build with its service worker, which answers `*.scryfall.io` images
+from the network (`public/sw.js`, `cacheFirstImage`), and Playwright's `page.route`
+does not see a service worker's requests, so the spec's pixel for card images may not
+be what is loaded; a moment's failure to reach Scryfall would then look like this. Not
+proved, since the copy saw none, and nothing ties it to upstream's engine: with the
+same engine and the same deal, that check passed in three other runs. A week it fails, no pull request is offered,
+the summary names the check, and the next week tries again.
+
+**What only a run on GitHub can prove**: that the three jobs' actions resolve and
+behave as their inputs say; that `deploy.yml`'s cache restores into this workflow (a
+cache saved on `main` is readable by a run on `main`, which a scheduled run is); that
+GitHub's comparison answers the workflow's token for another repository; that the
+pull request opens once the setting is on, and fails naming the setting before; the
+times on a runner; and the first pull request itself.
+
+**Not done, and where it goes.** The run itself, with the push and the owner's setting.
+The owner's two questions (HANDOFF.md §6): a token of the owner's so the checks start
+without approval, and a rule that only a pull request may change `main`. The Guff
+fixture (`tests/fixtures/example-guff.json`) is the engine's own description of the
+cards it knows of that deck at the pin, and the live suite holds it to the engine: the
+day upstream learns one of that deck's cards, the live suite fails against it and the
+offer is not made — rightly, since the lobby's stand-in offer comes from those cards, and
+the fixture is to be taken again with the move. The engine's two specs were not audited
+for other numbers the corpus decides; the one that failed was changed.
+
+The bar at the end, against the pin: `npm test`, 2,182 tests in 100 files, 16 of them
+new, none skipped, the live engine suite among them, 68 s; the whole browser suite
+through the runner with `ENGINE_REQUIRED` set, 39 specs, 1,709 checks, none failed and
+none skipped, 1,035 s, the engine's spec 212 of them with the example decks at 50, 54,
+55 and 45, asked of the engine. actionlint and ShellCheck clean on both workflows. The
+token check clean. No JVM and no preview left running; the scratch clone of upstream
+deleted.
+
+**What the second review found, and what was done — 2026-09-25.** A second reading-over
+the same day, its findings checked by a sceptic before they were passed on, found nine
+faults, one of them twice from different ends (1). Every one is fixed; each fixed in
+code has a test or a run that shows it, and the two tests for the service worker (7)
+were run against the fault put back, and failed.
+
+1. *Upstream's code ran in `main`'s cache scope, and the documents promised it could
+   reach nothing.* The workflow runs on a schedule, so on `main`, and a cache written
+   by a run on `main` is one `deploy.yml`'s runs on `main` restore. The `try` job
+   saved no cache, but upstream's build and tests run as the runner's user beside the
+   token that writes the Actions cache, which a job's `permissions` do not govern:
+   code left running by the build could have planted Gradle's cache under
+   `setup-gradle`'s prefix, or the engine's install under `deploy.yml`'s predictable key
+   once the real entry was pushed out, and `deploy.yml`'s next build on `main` would
+   have run it in the job that uploads the site — no merge needed. (Found twice: once
+   through Gradle's cache, once through the engine's key.) What keeps a cache from a
+   run is its branch: a run restores only its own branch's caches and the default
+   branch's, and a pull request its base's. So an offer now takes two runs. From
+   `main`, `look` decides as before and `hand-off` makes a branch of the workflow's own
+   at `main`'s commit, `engine-pin-try/<commit>-<run>`, and starts the workflow there
+   (`gh workflow run`, which a workflow's own token may do). On that branch, `look`
+   takes the commit it was handed, checks it is one, and checks by GitHub's comparison
+   that the branch is `main` as it was; `try` runs as before, still restoring the pin's
+   engine from `main`'s cache; `offer` offers; and `clean` deletes the branch however
+   the run went. Anything upstream's code writes to the cache is the throwaway branch's,
+   which no other run restores. The one `concurrency` group still makes it one run at a
+   time — the second waits until the first has ended — and since GitHub cancels a run
+   waiting its turn when another joins the queue, `hand-off` first deletes any
+   throwaway branch a cancelled run left. The comments, `engine/README.md` and
+   HANDOFF.md §3 item 12 now say what the workflow ensures and what it cannot, and §5
+   and §6 say the rest: that `permissions` do not govern the cache, and that a
+   compromised upstream could still make its own try look passed and have a pull
+   request offered, which only the owner's merge stands in front of.
+2. *A fork's pull request counted as the workflow's.* `look` took any open pull
+   request from a branch named `engine-pin/…`, and any closed one from
+   `engine-pin/<commit>`, as its own; `gh` gives a fork's branch by its bare name. In a
+   public repository anybody could stop every offer with one pull request, or turn a
+   commit down for the owner. Only pull requests from this repository
+   (`isCrossRepository` false) opened by GitHub Actions count now, chosen by `offersOf`
+   in `scripts/engine-pin.mjs` (`offers` on the command line, fed `gh`'s answer). Test:
+   a fork's from either branch, a person's own `engine-pin/` branch, the throwaway
+   branch and `main` are none; the workflow's, as `gh` spells GitHub Actions
+   (`app/github-actions`) and as the REST API does, are; an entry that does not say
+   where it is from or who opened it is none.
+3. *Run by hand from another branch, it offered that branch.* Every checkout took the
+   run's branch, and the offer was committed on top of it, carrying its unmerged
+   commits under a title about the pin alone. Run from any branch but `main` (and the
+   workflow's own throwaway ones) it now says so and does nothing; and `offer` checks
+   out `main` itself and refuses, saying why, where `main` no longer pins what was tried
+   against.
+4. *The run's summary said "the pull request is offered" before the offer.* The `try`
+   job writes the verdict; the `offer` job can still fail — at the setting, which is
+   off until the owner turns it on — and said so only in an annotation. The summary
+   says every test passed and that the `offer` job opens the pull request; the `offer`
+   job's last step, where anything failed, says in its summary what was not done and
+   why. Test: the passing summary claims nothing was offered.
+5. *The example decks' check still wrote down that the pin knows none of their
+   commanders.* Upstream learning Esika's would fail the check against a lobby rightly
+   saying something else, and stop the offer. It asks the engine that too: where the
+   commander is unknown, the tile must say why no Commander game can be dealt; where it
+   is known, it must not, and where every card is known the tile's "all 100" is
+   expected. Only the hundred is fixed. The Guff gate further on keeps its numbers,
+   which the Guff fixture already holds to the engine; HANDOFF.md §5 says both stop an
+   offer on purpose. At the pin every commander is unknown, so the branch for one known
+   has not met an engine that knows one.
+6. *This file had lost its "Phase 3-alt" heading* in the item 12 write-up, so the plan
+   for writing the rules core ourselves read as part of it. Put back.
+7. *The engine's specs could fail a deploy on Scryfall's weather.* Found above as not
+   proved; the sceptic proved it. In the built app the service worker answers every
+   `*.scryfall.io` image by its own `fetch`, and Playwright's own documentation says
+   `page.route` does not see a service worker's requests: with the worker allowed, the
+   spec's routes were never asked, a missing image logged a 404 and an unreachable host
+   `net::ERR_FAILED`, the four errors of the failed run. Since M9 these specs gate every
+   deploy and count console errors. The six specs that route Scryfall's images —
+   `game-engine`, `engine-restart`, `decisions`, `engine-commander`, `engine-deck` and
+   `levels`, the last four on the stand-in, whose cards carry the same links — open
+   their pages with `serviceWorkers: 'block'`; none of them tests the worker, which
+   `refresh.spec.mjs` does. The two engine specs count what the pixel answered and
+   check, with no worker controlling the page, that it answered the engine's card
+   images. Tests: `tests/browser-suite.test.js` holds every spec of the chain that
+   routes `*.scryfall.io` to opening its pages so (it failed with one spec's option
+   taken out); and the engine spec with the worker allowed again failed its new check.
+8. *M9's record said a pipe is written asynchronously on Windows.* It is the other way:
+   Node's documentation, and its `net.Socket`, which makes stdout and stderr blocking
+   on Windows alone. The risk was Linux's, where CI runs; the code was right, and the
+   runner's comment and M9's item 3 now say why.
+9. *M9's "Not done" still said item 12 was not built and needed a token*, citing a §6
+   that says otherwise. It says it was built the same day and needs a setting.
+
+**Checked, and how.** actionlint 1.7.12 on both workflows, clean. With ShellCheck on,
+it stalled on the new workflow: on Windows it stalls on any step whose script is over
+about 4 KB, whatever the script holds (4,673 bytes of workflow passed, 5,433 stalled;
+HANDOFF.md §5), and `look`'s is 4.1 KB. So actionlint ran with `-shellcheck=` and
+ShellCheck 0.11.0 on each of the fourteen steps' scripts, taken out of the file, by
+itself: clean. The steps that decide — `look`, `hand-off`, `offer`'s check of `main`
+and its last word, and `clean` — were run as GitHub runs a step (`bash -eo pipefail`),
+in the repository, with `gh` and upstream's `ls-remote` stood in for, in 28 cases:
+upstream ahead (goes); a pull request of the workflow's open (stops), a fork's alone
+(goes), both (stops, naming the workflow's); the workflow's closed before (stops), a
+fork's (goes), the workflow's with `again` (goes); upstream behind, the same as the
+pin, or no comparison (stops, stops, goes); run from a feature branch or a tag
+(nothing tried); on the throwaway branch as `main` was or behind it (goes, without
+asking about pull requests), not on `main`'s history, handed nothing, or handed
+something that is not a commit (fails, saying which); `hand-off` with and without
+branches left behind, and refused by GitHub (the branch deleted again, and said);
+`main` still pinning what was tried, and moved on (refused); each way the offer can
+fail, said; and the branch deleted.
+
+**What only a run on GitHub can prove**, besides what the first write-up names: that a
+run started by `gh workflow run` with the workflow's own token starts, on the throwaway
+branch, and waits its turn; that a run there restores `deploy.yml`'s cache from `main`;
+that `gh pr list --json author` names GitHub Actions `app/github-actions`, as `gh`
+spells an app's login, or `github-actions[bot]` (`offersOf` takes either, and nothing
+here has `gh` to ask); and that `clean` deletes the branch the run is on.
+
+**Not done, of what the review offered.** Nothing. Left as they were: the Guff gate's
+numbers (5); and the throwaway branch's caches, which GitHub removes when unused for a
+week and nothing else restores.
+
+The bar at the end of the second review, against the pin: `npm test`, 2,184 tests in
+100 files, 2 of them new, none skipped, the live engine suite among them, 66 s. The six
+specs the review touched, through the runner with `ENGINE_REQUIRED` set: 529 checks,
+none failed — `game-engine.spec.mjs` 213 (one new) in 201 s, `engine-restart.spec.mjs`
+42 (one new) in 76 s, and the four on the stand-in as before. The engine spec with the
+service worker allowed again, cut short after its new check: that check failed, a
+service worker controlling the page and no image answered by the pixel. Then the whole
+browser suite through the runner with `ENGINE_REQUIRED` set: 39 specs, 1,711 checks,
+none failed and none skipped, 1,030 s, the example decks at 50, 54, 55 and 45 with
+every commander unknown, asked of the engine. actionlint clean on both workflows,
+ShellCheck on each step's script, and the 28 cases above as they should be. The token
+check clean. No JVM and no preview left running.
 
 ## Phase 3-alt — Writing the rules core ourselves
 

@@ -88,7 +88,10 @@ const STATE = {
 }
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
-const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+// Service workers blocked, as in game-engine.spec.mjs: the built app's own
+// fetches every *.scryfall.io image past page.route, so the stand-in engine's
+// card faces (real Scryfall links) would not be the pixel routed below.
+const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, serviceWorkers: 'block' })
 const errors = []
 page.on('pageerror', (e) => errors.push(e.message))
 await page.route('**/api.scryfall.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))

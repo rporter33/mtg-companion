@@ -23,7 +23,8 @@
  * whose kept game could not be read back, which says so.
  *
  * Needs the built engine (scripts/engine-build.sh), and says so and passes
- * nothing where there is none, as game-engine.spec.mjs does.
+ * nothing where there is none, as game-engine.spec.mjs does — and fails where
+ * ENGINE_REQUIRED says there is one, as in CI (HANDOFF.md M9).
  *
  *   node tests/browser/engine-restart.spec.mjs http://localhost:4173/
  */
@@ -34,7 +35,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRelay } from '../../scripts/relay-server.mjs'
-import { findEngine } from '../../scripts/engine-bridge.mjs'
+import { findEngine, engineRequired } from '../../scripts/engine-bridge.mjs'
 
 const SHOT = (name) => join(tmpdir(), `engine-${name}.png`)
 const AXE = fileURLToPath(new URL('../../node_modules/axe-core/axe.min.js', import.meta.url))
@@ -61,6 +62,11 @@ const until = async (test, ms = 8000) => {
 }
 
 const engineCommand = findEngine()
+if (!engineCommand && engineRequired()) {
+  console.log('ENGINE_REQUIRED is set, and there is no engine where findEngine looks (scripts/engine-build.sh builds one).')
+  console.log('\n0 passed, 1 failed (no engine, where one is required)')
+  process.exit(1)
+}
 if (!engineCommand) {
   console.log('No engine is built here (scripts/engine-build.sh), so this spec has nothing to drive.')
   console.log('\n0 passed, 0 failed (skipped: no engine)')
@@ -112,7 +118,11 @@ const STATE = {
 }
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
-const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+// Service workers blocked, as in game-engine.spec.mjs: the built app's own
+// fetches every *.scryfall.io image past page.route, so the engine's card faces
+// would come from Scryfall, and a failure to reach it is a console error this
+// spec counts.
+const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, serviceWorkers: 'block' })
 const errors = []
 page.on('pageerror', (e) => errors.push(e.message))
 const consoleErrors = []
@@ -134,7 +144,11 @@ page.on('websocket', (ws) => ws.on('framereceived', ({ payload }) => {
 }))
 await page.route('**/api.scryfall.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"object":"list","data":[]}' }))
 await page.route('**/api.scryfall.com/cards/collection', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: CARDS }) }))
-await page.route('**/cards.scryfall.io/**', (route) => route.fulfill({ status: 200, contentType: 'image/gif', body: Buffer.from(PIXEL.split(',')[1], 'base64') }))
+let imagesAnswered = 0
+await page.route('**/cards.scryfall.io/**', (route) => {
+  imagesAnswered += 1
+  return route.fulfill({ status: 200, contentType: 'image/gif', body: Buffer.from(PIXEL.split(',')[1], 'base64') })
+})
 
 const axeViolations = async () => {
   await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'))
@@ -374,6 +388,12 @@ await page.screenshot({ path: SHOT('restart-gone-lobby') })
 
 check('no errors in the page', errors.length === 0, errors.join('; '))
 check('and none in its console', consoleErrors.length === 0, consoleErrors.join('; '))
+// That the console's silence is the table's and not Scryfall's luck: no service
+// worker stood between the page and its routes, and the pixel answered the
+// engine's card images.
+const controlled = await page.evaluate(() => Boolean(navigator.serviceWorker?.controller))
+check('the engine\'s card images were answered by the pixel, not fetched from Scryfall past a service worker',
+  !controlled && imagesAnswered > 0, `${controlled ? 'a service worker controls the page' : 'no service worker'}; ${imagesAnswered} images answered`)
 
 console.log(`\nPictures: ${['restart-coming-back', 'restart-coming-back-phone', 'restart-reloaded', 'restart-back', 'restart-engine', 'restart-on', 'restart-gone-lobby'].map(SHOT).join(', ')}`)
 await browser.close()

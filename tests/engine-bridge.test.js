@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { startEngine, findEngine } from '../scripts/engine-bridge.mjs'
+import { startEngine, findEngine, engineRequired } from '../scripts/engine-bridge.mjs'
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-engine.mjs', import.meta.url))
 const engines = []
@@ -144,5 +144,11 @@ describe('finding the engine', () => {
     expect(findEngine({ ENGINE_HOME: home }, 'win32')).toBe(join(bin, 'companion.bat'))
     expect(findEngine({ ENGINE_HOME: home }, 'linux')).toBe(join(bin, 'companion'))
     rmSync(home, { recursive: true, force: true })
+  })
+
+  it('is required only where ENGINE_REQUIRED says so, as CI does once it has built one', () => {
+    expect(engineRequired({})).toBe(false)
+    for (const no of ['', ' ', '0', 'false', 'FALSE', 'no', ' No ']) expect(engineRequired({ ENGINE_REQUIRED: no })).toBe(false)
+    for (const yes of ['1', 'true', 'yes', 'on']) expect(engineRequired({ ENGINE_REQUIRED: yes })).toBe(true)
   })
 })

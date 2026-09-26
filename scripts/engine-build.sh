@@ -3,6 +3,8 @@
 #
 #   scripts/engine-build.sh          # fetch the pinned commit, copy the module in, build
 #   scripts/engine-build.sh --play   # ...and then play one game through it
+#   scripts/engine-build.sh --rev    # say the commit it would build, and nothing else
+#   scripts/engine-build.sh --repo   # say where it fetches Argentum from, and nothing else
 #
 # ENGINE_HOME says where the checkout lives (default: ../argentum, beside this
 # repo). The module is copied, not linked, so the checkout stays a plain clone
@@ -17,6 +19,18 @@ repo=${ENGINE_REPO:-https://github.com/ronoccc/engine-choo-choo.git}
 # passed yesterday. Moving the pin is a deliberate commit, with the compile time
 # and a game measured again (engine/README.md).
 rev=${ENGINE_REV:-70d525c69845c4a8c14516a5c7214444096e1018}
+# CI keys its cache of the built engine on this (.github/workflows/deploy.yml),
+# and asks here rather than keep a copy of the pin that could drift from it. The
+# weekly offer to move the pin (.github/workflows/engine-pin.yml) asks for both,
+# for the same reason.
+if [ "${1:-}" = "--rev" ]; then
+  echo "$rev"
+  exit 0
+fi
+if [ "${1:-}" = "--repo" ]; then
+  echo "$repo"
+  exit 0
+fi
 
 if [ ! -d "$home/.git" ]; then
   echo "engine: fetching $repo at $rev into $home"

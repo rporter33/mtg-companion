@@ -11,6 +11,8 @@ same way the spike was:
 ```bash
 scripts/engine-build.sh            # fetches ../argentum at the pinned commit, copies this in, builds
 scripts/engine-build.sh --play     # then plays one game through it as a smoke test
+scripts/engine-build.sh --rev      # says the commit it would build, and does nothing else
+scripts/engine-build.sh --repo     # says where it fetches Argentum from, and does nothing else
 ```
 
 JDK 21 and Maven Central. The build compiles `rules-engine`, `gym`, `ai` and
@@ -37,6 +39,33 @@ name, and basic lands are the one card upstream defines in many sets.
 not at upstream `main`, which moves daily. `ENGINE_REV` overrides it for an
 experiment. Moving the default is a deliberate commit, with the first compile
 and a game measured again.
+
+**In CI** (`.github/workflows/deploy.yml`, since `HANDOFF.md` M9) the same
+script builds the engine on `ubuntu-latest` with Temurin 21, into `../argentum`
+beside the checkout, where `findEngine` looks. The install it leaves is cached
+whole, keyed on the pin as `--rev` says it and a hash of `build.gradle.kts`,
+`src/` and the script itself, so a push that changes none of them runs the
+engine without compiling it; one that does restores Gradle's own cache first.
+The job sets `ENGINE_REQUIRED`, and there a suite that finds no engine fails
+rather than skipping (`engineRequired` in `scripts/engine-bridge.mjs`).
+
+**Moving the pin, offered weekly** (`.github/workflows/engine-pin.yml`, since
+`HANDOFF.md` §3 item 12). Every Monday, and when run by hand, a workflow builds
+upstream `main` with this module, beside the pin's own build, and runs the live
+suite and the engine's two browser specs against it. Only where every one passes
+does it open a pull request moving the default above, and only where none it opened
+is open; its body, written by `scripts/engine-pin.mjs` from what the run kept, says
+the sets new since the pin from each engine's `hello.sets`, both engines' `load.ms`
+and `heapMb` as measured on the same runner, the build's time and the results. The
+owner merges it. Upstream's code is built and run on a branch the workflow makes for
+the one run, `engine-pin-try/`, and deletes after it, in a job whose token can only
+read the repository, whose checkout keeps no credentials and which has no step that
+saves a cache. Those settings govern the workflow's steps, not what upstream's code
+does beside them on the runner, where the token that writes the Actions cache is held;
+the branch is what keeps anything it wrote from `main`'s runs, since a run restores
+only its own branch's caches and `main`'s. The jobs that can write run none of it, and
+push only to the workflow's own branches, never `main`. It needs the repository
+setting "Allow GitHub Actions to create and approve pull requests" switched on.
 
 **`JAVA_HOME`.** Gradle builds with whatever `JAVA_HOME` names. Where that is
 a Java runtime rather than a JDK, the script builds with the JDK on `PATH`

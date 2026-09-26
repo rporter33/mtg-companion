@@ -17,6 +17,17 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # Named rather than left to the default, so every step runs with
+        # pipefail as well as -e.
+        shell: bash
+    env:
+      # The rules engine is built before anything that drives it, so here a
+      # suite that finds no engine fails instead of skipping (HANDOFF.md M9).
+      ENGINE_REQUIRED: '1'
+      # The JDK it is built with, named once for the build and its cache key.
+      ENGINE_JDK: '21'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,7 +35,94 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
+
+      # The rules engine: Argentum at the pin with engine/ built into it
+      # (scripts/engine-build.sh), in ../argentum beside the checkout, which
+      # is where the suites look for it. The install it leaves there is all
+      # they run, so it is cached whole, keyed on the pin and on everything
+      # that goes into the build (engine/'s README does not): a hit skips the
+      # fetch and the compile both. A miss restores Gradle's own cache first,
+      # so a change to engine/ alone recompiles little beyond it.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.ENGINE_JDK }}
+      - name: The engine's pin, and where it is built
+        id: pin
+        run: |
+          rev=$(sh scripts/engine-build.sh --rev)
+          if ! printf '%s' "$rev" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error title=Engine pin::scripts/engine-build.sh --rev said '$rev', not a commit"
+            exit 1
+          fi
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+          # ../argentum spelled from the root: the cache saves through
+          # @actions/glob, which refuses a path with a '..' in it.
+          echo "install=$(dirname "$GITHUB_WORKSPACE")/argentum/companion/build/install" >> "$GITHUB_OUTPUT"
+      - name: Restore the built engine
+        id: engine
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.pin.outputs.install }}
+          key: engine-${{ runner.os }}-temurin${{ env.ENGINE_JDK }}-${{ steps.pin.outputs.rev }}-${{ hashFiles('engine/build.gradle.kts', 'engine/src/**', 'scripts/engine-build.sh') }}
+      # v4, not the brief's v3: v3 caches through a service GitHub has since
+      # retired, and v6's caching is under terms of use that are the owner's to
+      # accept (HANDOFF.md §5 and §6).
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.engine.outputs.cache-hit != 'true'
+      # The budget (HANDOFF.md M9): about seven minutes with nothing cached, and
+      # far less with Gradle's cache; the time goes on the run's page.
+      - name: Build the engine
+        if: steps.engine.outputs.cache-hit != 'true'
+        env:
+          REV: ${{ steps.pin.outputs.rev }}
+        run: |
+          start=$SECONDS
+          npm run engine:build
+          took=$((SECONDS - start))
+          echo "::notice title=Engine built::Argentum ${REV:0:7} fetched and built with engine/ in ${took} s (no build of this pin and engine/ was cached)"
+          echo "- **Engine:** fetched and built in ${took} s, Argentum \`${REV:0:7}\`, no build of this pin and \`engine/\` cached" >> "$GITHUB_STEP_SUMMARY"
+      # Saved as soon as it is built, not at the end of the job, so a compile
+      # is kept even when a suite after it fails.
+      - uses: actions/cache/save@v4
+        if: steps.engine.outputs.cache-hit != 'true'
+        with:
+          path: ${{ steps.pin.outputs.install }}
+          key: ${{ steps.engine.outputs.cache-primary-key }}
+      - name: Where the suites will find the engine
+        env:
+          HIT: ${{ steps.engine.outputs.cache-hit }}
+          REV: ${{ steps.pin.outputs.rev }}
+        run: |
+          # findEngine as every suite calls it, and whether what it names can
+          # be run: a launcher restored without its mode would be found and fail.
+          launcher=$(node --input-type=module -e "
+            import { accessSync, constants } from 'node:fs'
+            import { findEngine } from './scripts/engine-bridge.mjs'
+            const launcher = findEngine()
+            try { accessSync(launcher, constants.X_OK); console.log(launcher) } catch { console.log('') }")
+          if [ -z "$launcher" ]; then
+            echo "::error title=No engine::findEngine found no engine it can run after the engine was built or restored"
+            exit 1
+          fi
+          echo "The suites will drive $launcher"
+          if [ "$HIT" = 'true' ]; then
+            echo "- **Engine:** restored from the cache, Argentum \`${REV:0:7}\`, no compile" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Unit suite, the engine's live test apart
+        run: npm test -- --exclude tests/engine-live.test.js
+      # Apart so that its time is its own and each of its tests is listed: it
+      # drives the real engine over the wire, and is the one unit suite with a
+      # budget to watch.
+      - name: The engine on the wire (tests/engine-live.test.js)
+        run: |
+          start=$SECONDS
+          npm test -- tests/engine-live.test.js --reporter=verbose
+          took=$((SECONDS - start))
+          echo "::notice title=Engine's live suite::tests/engine-live.test.js passed against the built engine in ${took} s"
+          echo "- **tests/engine-live.test.js:** passed against the built engine in ${took} s" >> "$GITHUB_STEP_SUMMARY"
+
       - run: npm run build
       # The browser suite drives the built app in a real Chromium. It has
       # caught every real regression so far and used to run only by hand,
@@ -33,9 +131,12 @@ jobs:
       - name: Browser suite against the build
         run: |
           npx vite preview --port 4173 --strictPort >/tmp/preview.log 2>&1 &
-          for i in $(seq 1 60); do curl -sf http://localhost:4173/ >/dev/null && break; sleep 1; done
+          for _ in $(seq 1 60); do curl -sf http://localhost:4173/ >/dev/null && break; sleep 1; done
           curl -sf -o /dev/null http://localhost:4173/ || { echo "preview did not start"; cat /tmp/preview.log; exit 1; }
-          npm run test:browser
+          # What npm run test:browser runs, spec by spec, with each spec's time
+          # said and set out in the job's summary, and none let off as skipped
+          # while ENGINE_REQUIRED is set (scripts/browser-suite.mjs).
+          node scripts/browser-suite.mjs http://localhost:4173/
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:

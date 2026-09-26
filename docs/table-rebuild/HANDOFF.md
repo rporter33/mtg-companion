@@ -37,6 +37,8 @@ again here:
   it and the run dies with timeouts that look like bugs.
 - **A new browser spec goes into the `test:browser` `&&` chain** in
   `package.json`, and it must print `N passed, M failed` on its last line.
+  Since M9 CI runs the chain through `scripts/browser-suite.mjs`, which reads
+  it from `package.json` and fails a spec whose last line is anything else.
 - **Comments explain why. British English on screen.** The dialogs follow
   `src/components/Confirm.jsx`: title is the situation, body the consequence,
   every button says what pressing it does.
@@ -94,7 +96,8 @@ ENGINE_REV=70d525c69845c4a8c14516a5c7214444096e1018   # ronoccc/engine-choo-choo
 **Things that are not in git.** The Argentum checkout lives beside the repo
 (`../argentum`, or `ENGINE_HOME`), made by `scripts/engine-build.sh`. Tests
 and the engine spec skip with a message when it is absent; they never fail
-for its absence.
+for its absence — except where `ENGINE_REQUIRED` is set, as CI sets it since
+M9, having built the engine first.
 
 ---
 
@@ -202,6 +205,41 @@ These are settled. Do not reopen them; build on them.
     sets, the load time and the heap measured. The printing choice is never
     steered towards the sets the engine has; a printing it lacks keeps the
     settled fallback (item 10).
+    **Built, 2026-09-25, once M9 was.** What was built, measured and found, and what is
+    left, are in `PLAN.md`, "§3 item 12: the pin offered weekly". In short:
+    `.github/workflows/engine-pin.yml`, every Monday at 05:17 UTC and whenever it is run
+    by hand, reads upstream `main`'s newest commit and, where it is not the pin and no
+    pull request the workflow opened is open, makes a branch of its own at `main`'s
+    commit, `engine-pin-try/<commit>-<run>`, and starts itself there. That run builds the
+    pin's engine (restored from `deploy.yml`'s cache where it can be) and upstream's
+    beside it, asks each what it holds, and runs `tests/engine-live.test.js` and both
+    engine specs against upstream's. Only where every one passed does it open a pull
+    request from another branch of its own, `engine-pin/<commit>`, moving `ENGINE_REV` in
+    `scripts/engine-build.sh` on `main` and nothing else; then it deletes the try branch.
+    Its body (`scripts/engine-pin.mjs`) is the run's own: the sets new since the pin from
+    `hello.sets`, both engines' `load.ms` and `heapMb`, the builds' times, and the
+    results. It never pushes to `main` and never merges, and run from any branch but
+    `main` it tries nothing. Upstream's code runs in one job, whose token can read and
+    nothing more, whose checkout keeps no credentials, and which has no step that saves a
+    cache; none of the jobs that can write runs any of it. What those settings cannot
+    govern is what upstream's code itself does on the runner, where a token that writes
+    the Actions cache is held — so it runs on the throwaway branch, whose cache GitHub
+    lets no run on `main` (`deploy.yml`'s among them) and no pull request restore (the
+    second review, in `PLAN.md`'s item 12 section). A commit whose pull request the
+    owner closed unmerged is not offered again, unless the workflow is run by hand with
+    `again`; a fork's pull request from a branch of the same name counts as neither
+    open nor closed. Its steps were run here against upstream's newest commit, `7cc9af8` (2026-09-22): five sets new (`NEC`,
+    `WHO`, `ACR`, `SLD`, `EOC`), 13,274 card names against the pin's 13,242, the live
+    suite 69 of 69 and both specs passing — once one check of the engine's spec stopped
+    writing down how many of each example deck's cards the pin knows, which upstream
+    changes, and asked the engine instead.
+    **The owner's step, which nothing in the repository can take:** on GitHub, Settings,
+    Actions, General, switch on "Allow GitHub Actions to create and approve pull
+    requests". GitHub's documentation says it is off by default for a repository in a
+    personal account. Until it is on, a run that gets as far as offering fails at its
+    last step and says this. And on each pull request the workflow opens, the
+    repository's own checks wait until **Approve workflows to run**, in the merge box, is
+    pressed: GitHub's rule for a pull request opened with a workflow's own token.
 13. **Decided at M3, 2026-09-24.** A first game against the engine is played
     at intermediate, with easy and hard a choice away in the lobby. The
     choice is remembered with the player's other table preferences.
@@ -1047,6 +1085,29 @@ are enough for the owner to deploy without the session.
 
 *Size: small.*
 
+**Done, 2026-09-25, as far as it can be without a run on GitHub:** its "done
+when" below is a pull request's run, which comes with the push. What was built,
+measured and found, where it departs from the letter below and why, and what
+only a real run can prove are in `PLAN.md`, "M9: CI builds the engine". In short:
+the `test` job builds the engine before any suite, with Temurin 21, and caches the
+install in `../argentum` on the pin (`scripts/engine-build.sh --rev`) and a hash of
+what goes into the build — the folder spelled from the root, since the cache action
+cannot save a path with `..` in it; `gradle/actions/setup-gradle@v4` rather than
+`@v3`, whose cache speaks a service GitHub retired in 2025. The job sets
+`ENGINE_REQUIRED`, and there the live suite and both engine specs fail instead of
+skipping, and
+`scripts/browser-suite.mjs`, which runs the browser suite spec by spec, fails any
+spec that ends skipped — so the skip message cannot appear in CI without failing
+the run. The compile, the live suite and every browser spec print their times,
+and the job's summary sets them out. The live suite now has a step of its own. A
+test that had failed one run in fifty (an unseeded deal with no land in the
+opening hand) is seeded. The workflow passes actionlint 1.7.12 with ShellCheck
+0.11.0, and every step it calls was run here in Git Bash but the actions
+themselves, which only a run on GitHub can prove. §3 item 12's weekly offer to move
+the pin, which M9 made possible, was built the same day (§3 item 12).
+
+The rest of this section is the brief it was built to, kept as written.
+
 `.github/workflows/deploy.yml` runs the unit and browser suites on
 `ubuntu-latest`. Add, in the same `test` job before the browser suite:
 `actions/setup-java@v4` (Temurin 21), `gradle/actions/setup-gradle@v3` for
@@ -1138,6 +1199,12 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 - **The engine's seat needs a deck** or it loses at its first draw.
 - **`cards.scryfall.io` is where the engine's image links point**, not the
   API host; specs route it to a pixel, and offline the drawn face stands in.
+  A spec that routes it opens its page with `serviceWorkers: 'block'`: the built
+  app's service worker (`public/sw.js`) fetches every `*.scryfall.io` image itself,
+  `page.route` never sees a service worker's requests (Playwright's documentation),
+  and the spec would load real faces from Scryfall, a failure to reach it a
+  console error in a spec every deploy waits on. `tests/browser-suite.test.js`
+  holds every such spec to it (§3 item 12's second review).
 - **A fanned hand covers the centre of a card** once past seven cards; hit-test
   for an uncovered point before clicking (the spec helpers do).
 - **`vitest` runs most files under jsdom**, where `import.meta.url` is not a
@@ -1155,6 +1222,55 @@ names), and leave it out of the lobby's copy, per the owner's rule.
   before is still the page's until the room says otherwise, so "a play is offered"
   is true at once and a time measured on it measures nothing (M7's first run of
   its spec: 827 ms that was really 16 s).
+- **A game a test deals without a seed is another deal every run.** The live
+  suite's goblin game was unseeded, and 6 deals in 300 hold no Mountain, which
+  moves the first stop turns on; it failed one run in fifty until M9 seeded it.
+  A test whose claims hang on the deal names its seed.
+- **`gradle/actions/setup-gradle@v3` caches nothing now.** Its last release is
+  built on `@actions/cache` 3.2.4, which speaks only the legacy cache service,
+  sunset from 2025-02-01 by the toolkit's own release notes (4.0.0 brought the
+  new one); `@v4` and `@v5` are built on 4.0.5. `@v6` speaks it too, but
+  its caching is a separate component under Gradle's own terms of use, which
+  are the owner's to accept (M9).
+- **The cache action will not save a path with `..` in it.** It saves through
+  `@actions/glob`, which refuses any such pattern, while restoring does not glob
+  and a failed save is only a warning, so `path: ../argentum/…` fails quietly:
+  every run misses and compiles. The workflow spells the folder from the root
+  instead (M9).
+- **On Windows, Argentum will not check out at a deep path.** Its file names
+  are long enough that a clone under a long `ENGINE_HOME` (a session's temp
+  folder, say) fails with "Filename too long"; `../argentum` beside the repo is
+  short enough. And Git Bash's `[ -x ]` says a `.bat` cannot be run, where
+  Node's `access(X_OK)` answers as Windows does; the workflow asks Node.
+- **A test that writes down what the pin's corpus holds stops the pin moving.** The
+  weekly offer (§3 item 12) opens a pull request only where the live suite and the
+  engine specs pass against upstream, and upstream adds cards: a check that the tile
+  says "54 of 100" failed against `7cc9af8`, which knows 55. Ask the engine what it
+  knows and check the screen says that — whether it knows a commander too, and not
+  only how many cards — and keep the pin's numbers in a comment. Two such facts stay
+  written down on purpose, and will stop an offer the day upstream changes them: the
+  Guff fixture (`tests/fixtures/example-guff.json`, which the live suite holds to the
+  engine), and `game-engine.spec.mjs`'s Guff gate, which takes its "other 45 cards"
+  and its commander unknown from the same deck; both are taken again with the move.
+- **A job's `permissions` do not govern the Actions cache.** They scope
+  `GITHUB_TOKEN`; the token that writes the cache is the runner's own, held beside
+  every step, where code the job runs as the runner's user can reach it. What keeps
+  a cache from another run is its branch: a run restores only its own branch's
+  caches and the default branch's (and, for a pull request, its base's). So code
+  that is not this repository's runs on a branch no deploy restores from
+  (`engine-pin.yml`'s `engine-pin-try/`, §3 item 12).
+- **actionlint on Windows stalls on a step whose script is over about 4 KB**, with
+  ShellCheck on (1.7.12 and 0.11.0, measured: 4,673 bytes of workflow passed, 5,433
+  stalled, whatever the script held). Lint the workflow with `-shellcheck=` and run
+  ShellCheck on each step's script by itself.
+- **A pull request a workflow opens runs no checks until somebody approves them**
+  (GitHub's rule for its `GITHUB_TOKEN`), and a scheduled workflow in a public
+  repository is switched off after 60 days with no activity in it, its failures mailed
+  to whoever last changed its `cron` (GitHub's documentation, read 2026-09-25).
+- **Never edit a shell script while `sh` is running it.** A shell reads its script as
+  it goes, from where it stopped; an edit above that point moves what it reads next,
+  and it runs half a line. `engine-build.sh` was edited while a build waited in
+  `gradlew` (§3 item 12); the edit was taken back until the build ended.
 
 ---
 
@@ -1216,6 +1332,39 @@ names), and leave it out of the lobby's copy, per the owner's rule.
   which reading to keep decides whether two more example decks can be played as
   Commander games before the pin moves.
 - M8: which provider, once `HOSTING.md` has verified notes for three.
+- M9: nothing asked, but four things found that are the owner's. `gradle/actions`
+  is at v6, whose caching is a proprietary component under Gradle's terms of use;
+  the workflow stays on v4 (MIT, and on the cache service GitHub runs now) until
+  the owner accepts those terms or says v4 is enough. The workflow's `concurrency`
+  group is one for every run, with `cancel-in-progress`, so a pull request's push
+  cancels a run on `main` still testing or deploying — true before M9, likelier
+  now the job is longer. GitHub's notice on the last run says `ubuntu-latest`
+  becomes Ubuntu 26 from 2026-10-19, and the browser suite's
+  `playwright install --with-deps` and the engine's build will be the first to
+  meet it. And §3
+  item 12's scheduled workflow — upstream Argentum built, the live suite and the
+  engine's spec run, a pull request opened with the new sets — was possible once M9
+  was, and was built the same day (§3 item 12); what it needs of the owner is below.
+- §3 item 12, the weekly offer to move the pin: one step and two questions. The step,
+  which nothing in the repository can take: Settings, Actions, General, "Allow GitHub
+  Actions to create and approve pull requests", switched on (§3 item 12). The first
+  question: whether the workflow should open its pull requests with a token of the
+  owner's (a GitHub App's, or a fine-grained personal one, kept as a secret) rather
+  than the workflow's own, which GitHub suggests so that a pull request's checks start
+  without **Approve workflows to run** being pressed; the workflow's own is used now,
+  since it needs no secret and can do nothing outside this repository. (A token of the
+  owner's would also change who opens them, and the workflow knows its own pull requests
+  by GitHub Actions opening them: `offersOf` in `scripts/engine-pin.mjs` would learn the
+  new author with it.) The second: whether `main` should have a rule that only a pull
+  request may change it, since three jobs can write to the repository — one makes the
+  throwaway branch, one pushes the offer's, one deletes the throwaway — and each is
+  kept from `main` by its own script alone. And one thing to know rather than decide:
+  a compromised upstream could make its own try look passed, since what the try kept
+  is written where upstream's code runs, and so have a pull request offered for it.
+  It could not deploy anything by that, nor reach `main`'s caches: the pull request's
+  own checks run every suite again with a token that can only read and deploy
+  nothing, and the merge is the owner's. `engine-pin-try/` is the workflow's own: a
+  branch given that name by hand is deleted by its next run.
 - M10: which desktop platform first (the owner's own), and whether a
   signed build matters yet.
 

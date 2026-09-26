@@ -1,0 +1,449 @@
+name: Offer to move the engine's pin
+
+# HANDOFF.md §3 item 12: the engine moves to newer sets by a pull request the
+# owner merges. Once a week, and whenever it is run by hand, this builds
+# upstream Argentum's main with engine/, runs the live suite and the engine's
+# browser specs against it, and only where every one of them passed opens a
+# pull request moving ENGINE_REV in scripts/engine-build.sh, its body the sets
+# new since the pin, the corpus's load time and heap as measured, and the
+# results (scripts/engine-pin.mjs). It never pushes to main, never merges, and
+# never opens a pull request while one it opened is still open.
+#
+# Each offer takes two runs. Run from main (the schedule, or by hand), it looks,
+# and where there is something new to try it makes a branch of its own at main's
+# commit, engine-pin-try/<commit>-<run>, and starts itself there. That second
+# run builds and tests upstream's code, offers, and deletes the branch. Why a
+# branch: upstream's build and tests run as the runner's user, beside the token
+# that writes the Actions cache, which a job's `permissions` do not govern, so
+# nothing here can promise they write no cache. GitHub keeps caches apart by
+# branch — a run restores only its own branch's and main's — so whatever they
+# might write is the throwaway branch's, and no run on main, deploy.yml's among
+# them, and no pull request ever restores it. Run from any other branch, it does
+# nothing: what it offers is main with the pin moved, and nothing else.
+#
+# Opening the pull request needs the repository's setting "Allow GitHub Actions
+# to create and approve pull requests" (Settings, Actions, General), off by
+# default, which nothing in the repository can switch on: the owner's step, in
+# HANDOFF.md §3 item 12.
+
+on:
+  schedule:
+    # Mondays at 05:17 UTC, off the hour, when GitHub delays scheduled runs most.
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      again:
+        description: Offer upstream main even where its pull request was closed unmerged before
+        type: boolean
+        default: false
+      next:
+        description: Leave empty. The upstream commit a run on main hands to the run it starts on its engine-pin-try/ branch
+        type: string
+        default: ''
+
+# Nothing by default: each job asks for what it uses.
+permissions: {}
+
+# One run at a time, and none in progress cancelled for another: "no pull
+# request is open" is only true until the run before this one opens it. The run
+# on engine-pin-try/ waits here until the run on main that started it has ended.
+# (GitHub does cancel a run still waiting when another joins the queue behind
+# it; hand-off deletes the branch such a run leaves.)
+concurrency:
+  group: engine-pin
+  cancel-in-progress: false
+
+jobs:
+  look:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read        # the checkout, for the pin, and GitHub's comparison
+      pull-requests: read   # whether one moving it is open already
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      go: ${{ steps.look.outputs.go }}
+      mode: ${{ steps.look.outputs.mode }}
+      pin: ${{ steps.look.outputs.pin }}
+      next: ${{ steps.look.outputs.next }}
+      repo: ${{ steps.look.outputs.repo }}
+      status: ${{ steps.look.outputs.status }}
+      ahead: ${{ steps.look.outputs.ahead }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Upstream main against the pin, and whether an offer is open
+        id: look
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGAIN: ${{ inputs.again }}
+          HANDED: ${{ inputs.next }}
+        run: |
+          stop() {
+            echo "::notice title=Engine pin::$1"
+            echo "- **Engine pin:** $1" >> "$GITHUB_STEP_SUMMARY"
+            echo 'go=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          # From main it looks; on a branch of its own it tries what the run on
+          # main handed it; anywhere else it does nothing.
+          case "$GITHUB_REF" in
+            refs/heads/main) mode=look ;;
+            refs/heads/engine-pin-try/*) mode=try ;;
+            *) mode=none ;;
+          esac
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          if [ "$mode" = none ]; then
+            stop "run from $GITHUB_REF, so nothing is tried: it tries upstream only when run from main, since what it offers is main with the pin moved and nothing else"
+          fi
+          # The pin and where upstream is, from the build script itself, so
+          # neither has a second copy here to drift from it.
+          pin=$(sh scripts/engine-build.sh --rev)
+          repo=$(sh scripts/engine-build.sh --repo)
+          if [ "$mode" = try ]; then next=$HANDED; else next=$(git ls-remote "$repo" refs/heads/main | cut -f1); fi
+          for rev in "$pin" "$next"; do
+            if ! printf '%s' "$rev" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "::error title=Engine pin::expected a commit and got '$rev' (the pin from scripts/engine-build.sh --rev; upstream from git ls-remote $repo, or on engine-pin-try/ from the run's input 'next')"
+              exit 1
+            fi
+          done
+          # A try is of main as it was, never of anything main does not hold:
+          # GitHub's comparison of main with this commit says so.
+          if [ "$mode" = try ]; then
+            held=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)
+            if [ "$held" != identical ] && [ "$held" != behind ]; then
+              echo "::error title=Engine pin::$GITHUB_REF is at ${GITHUB_SHA:0:7}, which main does not hold (GitHub's comparison says $held); a try is only ever made from main"
+              exit 1
+            fi
+          fi
+          { echo "pin=$pin"; echo "next=$next"; echo "repo=$repo"; } >> "$GITHUB_OUTPUT"
+          if [ "$next" = "$pin" ]; then
+            stop "upstream main is the pin, ${pin:0:7}, so there is nothing to offer"
+          fi
+          # GitHub's comparison, where upstream is on GitHub: how many commits
+          # on, and whether its history still holds the pin. Said in the pull
+          # request, never needed for it: if GitHub does not answer, the pull
+          # request goes without the count.
+          status=''
+          ahead=''
+          slug=${repo#https://github.com/}
+          slug=${slug%.git}
+          if printf '%s' "$slug" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' \
+            && compare=$(gh api "repos/$slug/compare/$pin...$next" --jq '"\(.status) \(.ahead_by)"' 2>/dev/null); then
+            status=${compare% *}
+            ahead=${compare#* }
+          fi
+          if [ "$status" = behind ] || [ "$status" = identical ]; then
+            stop "upstream main, ${next:0:7}, is not ahead of the pin, ${pin:0:7} (GitHub says $status)"
+          fi
+          if [ "$mode" = look ]; then
+            # Only the workflow's own pull requests count: from an engine-pin/
+            # branch of this repository, opened by GitHub Actions. A fork's from
+            # a branch of the same name is somebody else's (engine-pin.mjs offers).
+            open=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --json number,headRefName,isCrossRepository,author \
+              | node scripts/engine-pin.mjs offers)
+            if [ -n "$open" ]; then
+              stop "a pull request moving the pin is open already ($open); it is the owner's to merge or close before another is offered"
+            fi
+            # A commit the owner turned down once is not offered every week after.
+            if [ "$AGAIN" != true ]; then
+              closed=$(gh pr list --repo "$GITHUB_REPOSITORY" --state closed --limit 200 --head "engine-pin/${next:0:12}" --json number,headRefName,isCrossRepository,author \
+                | node scripts/engine-pin.mjs offers --head "engine-pin/${next:0:12}")
+              if [ -n "$closed" ]; then
+                stop "upstream main, ${next:0:7}, was offered before and its pull request closed unmerged ($closed); run this workflow by hand with 'again' to offer it anyway"
+              fi
+            fi
+          fi
+          { echo "status=$status"; echo "ahead=$ahead"; echo 'go=true'; } >> "$GITHUB_OUTPUT"
+          if [ "$mode" = look ]; then
+            echo "- **Engine pin:** upstream main, \`${next:0:7}\`, to be tried against the pin, \`${pin:0:7}\`, on a branch of this workflow's own" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- **Engine pin:** upstream main, \`${next:0:7}\`, tried here against the pin, \`${pin:0:7}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  hand-off:
+    needs: look
+    if: needs.look.outputs.go == 'true' && needs.look.outputs.mode == 'look'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Makes a branch and starts a run on it. Checks nothing out, and runs
+    # nothing of upstream's.
+    permissions:
+      contents: write   # the throwaway branch
+      actions: write    # this workflow, started on it
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NEXT: ${{ needs.look.outputs.next }}
+    steps:
+      - name: A branch of the workflow's own at main's commit, and this workflow started on it
+        run: |
+          # A throwaway branch no run deleted: GitHub cancels a run waiting its
+          # turn when another joins the queue behind it, and one cancelled before
+          # it started never reached its last job. None is in use: this is the
+          # one run of the workflow going.
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/heads/engine-pin-try/" --jq '.[].ref' | while read -r ref; do
+            [ -n "$ref" ] || continue
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/$ref" --silent
+            echo "::notice title=Engine pin::deleted ${ref#refs/heads/}, left by a run that never started"
+          done
+          branch="engine-pin-try/${NEXT:0:12}-$GITHUB_RUN_ID"
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/heads/$branch" -f "sha=$GITHUB_SHA" --silent
+          if ! gh workflow run engine-pin.yml --repo "$GITHUB_REPOSITORY" --ref "$branch" -f "next=$NEXT"; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch" --silent || true
+            echo "::error title=Engine pin::GitHub would not start this workflow on $branch, so nothing was tried; the branch is deleted"
+            echo "- **Engine pin:** not tried: GitHub would not start this workflow on \`$branch\`" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "::notice title=Engine pin::upstream main, ${NEXT:0:7}, handed to a run of this workflow on $branch"
+          echo "- **Engine pin:** upstream main, \`${NEXT:0:7}\`, handed to a run of this workflow on \`$branch\`, which tries it, offers it where every test passes, and deletes the branch" >> "$GITHUB_STEP_SUMMARY"
+
+  try:
+    needs: look
+    if: needs.look.outputs.go == 'true' && needs.look.outputs.mode == 'try'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Upstream's code is built and run here, and only on the throwaway branch:
+    # the token can read and nothing more, the checkout keeps no credentials,
+    # and no step saves a cache. Those govern this workflow's steps, not what
+    # upstream's code could do beside them; a cache it wrote would be this
+    # branch's, restored by no other run (the header above).
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      # As in deploy.yml: an engine gone missing fails a suite, never skips it.
+      ENGINE_REQUIRED: '1'
+      ENGINE_JDK: '21'
+      PIN: ${{ needs.look.outputs.pin }}
+      NEXT: ${{ needs.look.outputs.next }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # No npm cache: nothing is saved from the job that runs upstream's code.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.ENGINE_JDK }}
+      - name: Where the engine is built, and where the run keeps what it found
+        id: where
+        run: |
+          mkdir -p "$RUNNER_TEMP/engine-pin"
+          # ../argentum spelled from the root, as deploy.yml spells it for its cache.
+          echo "argentum=$(dirname "$GITHUB_WORKSPACE")/argentum" >> "$GITHUB_OUTPUT"
+          echo "install=$(dirname "$GITHUB_WORKSPACE")/argentum/companion/build/install" >> "$GITHUB_OUTPUT"
+
+      # The pin's engine, to say what is new since it and to measure beside:
+      # restored from deploy.yml's cache, main's, which a run on any branch may
+      # restore, under the key deploy.yml saves it with (a key that drifts from
+      # that one only costs a build), or built where the cache has let it go.
+      # Restored only, never saved.
+      - name: The pin's engine, from deploy.yml's cache
+        id: pinned
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.where.outputs.install }}
+          key: engine-${{ runner.os }}-temurin${{ env.ENGINE_JDK }}-${{ env.PIN }}-${{ hashFiles('engine/build.gradle.kts', 'engine/src/**', 'scripts/engine-build.sh') }}
+      - name: Build the pin's engine
+        id: pinbuild
+        if: steps.pinned.outputs.cache-hit != 'true'
+        run: |
+          start=$SECONDS
+          npm run engine:build
+          echo "took=$((SECONDS - start))" >> "$GITHUB_OUTPUT"
+      - name: What the pin's engine holds
+        env:
+          HIT: ${{ steps.pinned.outputs.cache-hit }}
+          TOOK: ${{ steps.pinbuild.outputs.took }}
+        run: |
+          if [ "$HIT" = true ]; then set -- --restored; else set -- --built "$TOOK"; fi
+          node scripts/engine-pin.mjs hello "$RUNNER_TEMP/engine-pin/pin.json" --rev "$PIN" "$@"
+
+      - name: Build upstream main, and what its engine holds
+        id: upstream
+        env:
+          ARGENTUM: ${{ steps.where.outputs.argentum }}
+        run: |
+          start=$SECONDS
+          ENGINE_REV=$NEXT npm run engine:build
+          took=$((SECONDS - start))
+          built=$(git -C "$ARGENTUM" rev-parse HEAD)
+          if [ "$built" != "$NEXT" ]; then
+            echo "::error title=Upstream build::asked for $NEXT and the checkout is at $built"
+            exit 1
+          fi
+          echo "::notice title=Upstream built::Argentum ${NEXT:0:7} fetched and built with engine/ in ${took} s"
+          node scripts/engine-pin.mjs hello "$RUNNER_TEMP/engine-pin/next.json" --rev "$NEXT" \
+            --date "$(git -C "$ARGENTUM" log -1 --format=%cI)" --built "$took"
+
+      # Each suite runs whatever the other did, so the summary says both; only
+      # the engine's build failing stops them.
+      - name: The live suite against upstream main
+        if: ${{ !cancelled() && steps.upstream.outcome == 'success' }}
+        run: npm test -- tests/engine-live.test.js --reporter=verbose --reporter=json --outputFile.json="$RUNNER_TEMP/engine-pin/live.json"
+      - run: npm run build
+        if: ${{ !cancelled() && steps.upstream.outcome == 'success' }}
+      - run: npx playwright install --with-deps chromium
+        if: ${{ !cancelled() && steps.upstream.outcome == 'success' }}
+      - name: The engine's browser specs against upstream main
+        if: ${{ !cancelled() && steps.upstream.outcome == 'success' }}
+        run: |
+          npx vite preview --port 4173 --strictPort >/tmp/preview.log 2>&1 &
+          for _ in $(seq 1 60); do curl -sf http://localhost:4173/ >/dev/null && break; sleep 1; done
+          curl -sf -o /dev/null http://localhost:4173/ || { echo "preview did not start"; cat /tmp/preview.log; exit 1; }
+          node scripts/browser-suite.mjs --only="$(node scripts/engine-pin.mjs specs)" \
+            --record="$RUNNER_TEMP/engine-pin/browser.json" http://localhost:4173/
+
+      - name: What the run found
+        if: ${{ !cancelled() }}
+        env:
+          REPO: ${{ needs.look.outputs.repo }}
+          STATUS: ${{ needs.look.outputs.status }}
+          AHEAD: ${{ needs.look.outputs.ahead }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          node scripts/engine-pin.mjs body "$RUNNER_TEMP/engine-pin" \
+            --repo "$REPO" --status "$STATUS" --ahead "$AHEAD" --run "$RUN_URL" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: engine-pin
+          path: ${{ runner.temp }}/engine-pin
+          retention-days: 30
+
+  offer:
+    needs: [look, try]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The job that writes the offer: a branch of its own and the pull request.
+    # It runs nothing of upstream's, only this repository's script, from main,
+    # over the files the try job kept, which it reads as data.
+    permissions:
+      contents: write        # the branch the pull request is opened from
+      pull-requests: write   # the pull request
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PIN: ${{ needs.look.outputs.pin }}
+      NEXT: ${{ needs.look.outputs.next }}
+    steps:
+      # main itself, not the branch this run is on: the pull request is main with
+      # the pin moved and nothing else, whichever branch the run was started on.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-pin
+          path: ${{ runner.temp }}/engine-pin
+      - name: main still pins what was tried against
+        id: main
+        run: |
+          now=$(sh scripts/engine-build.sh --rev)
+          if [ "$now" != "$PIN" ]; then
+            echo "::error title=Engine pin::main pins ${now:0:7} now, not ${PIN:0:7}, which upstream was tried against; the next run tries again from there"
+            exit 1
+          fi
+      - name: The pull request's body, only where every test passed
+        id: body
+        env:
+          REPO: ${{ needs.look.outputs.repo }}
+          STATUS: ${{ needs.look.outputs.status }}
+          AHEAD: ${{ needs.look.outputs.ahead }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          node scripts/engine-pin.mjs body "$RUNNER_TEMP/engine-pin" --offer \
+            --repo "$REPO" --status "$STATUS" --ahead "$AHEAD" --run "$RUN_URL" > "$RUNNER_TEMP/body.md"
+      - name: Move the pin, on a branch of its own
+        id: branch
+        run: |
+          branch="engine-pin/${NEXT:0:12}"
+          node scripts/engine-pin.mjs move "$PIN" "$NEXT"
+          if [ "$(sh scripts/engine-build.sh --rev)" != "$NEXT" ]; then
+            echo "::error title=Engine pin::the build script does not say $NEXT after the move"
+            exit 1
+          fi
+          # The pin and nothing else.
+          if [ "$(git status --porcelain)" != ' M scripts/engine-build.sh' ]; then
+            git status --porcelain
+            echo "::error title=Engine pin::something besides the pin changed"
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -q -c "$branch"
+          git commit -q -a -m "Move the engine's pin to Argentum ${NEXT:0:7}" \
+            -m "Upstream main, tried by .github/workflows/engine-pin.yml (HANDOFF.md §3 item 12); what it measured and tested is in the pull request."
+          # Only ever to the workflow's own branch, never to main. Forced: a
+          # branch left by a run that could not open its pull request (the
+          # setting still off, say) is written over rather than refused.
+          git push -q --force origin "HEAD:refs/heads/$branch"
+          echo "name=$branch" >> "$GITHUB_OUTPUT"
+      - name: Open the pull request
+        id: open
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
+        run: |
+          if ! url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+            --title "Move the engine's pin to Argentum ${NEXT:0:7}" --body-file "$RUNNER_TEMP/body.md"); then
+            echo "::error title=No pull request::GitHub would not open it. Where the log says Actions may not create pull requests, the owner switches on Settings, Actions, General, 'Allow GitHub Actions to create and approve pull requests' (HANDOFF.md §3 item 12); $BRANCH is pushed, and the next run writes over it."
+            exit 1
+          fi
+          echo "::notice title=Engine pin::offered in $url"
+          echo "- **Engine pin:** offered in $url" >> "$GITHUB_STEP_SUMMARY"
+      # The try job's summary says every test passed; this says what came of it.
+      - name: Why nothing was offered
+        if: failure()
+        env:
+          MAIN: ${{ steps.main.outcome }}
+          BODY: ${{ steps.body.outcome }}
+          MOVED: ${{ steps.branch.outcome }}
+          OPENED: ${{ steps.open.outcome }}
+        run: |
+          if [ "$MAIN" = failure ]; then why="main no longer pins the commit upstream was tried against"
+          elif [ "$BODY" = failure ]; then why="the pull request's body was refused, since the files the try job kept do not show every test passed"
+          elif [ "$MOVED" = failure ]; then why="the pin could not be moved on a branch of its own, or the branch pushed"
+          elif [ "$OPENED" = failure ]; then why="GitHub would not open the pull request; where the log says Actions may not create pull requests, the owner switches on Settings, Actions, General, 'Allow GitHub Actions to create and approve pull requests' (HANDOFF.md §3 item 12)"
+          else why="a step before the offer's own failed"; fi
+          echo "- **Engine pin:** not offered: $why. The \`offer\` job's log says more." >> "$GITHUB_STEP_SUMMARY"
+
+  clean:
+    needs: [look, try, offer]
+    if: ${{ always() && startsWith(github.ref, 'refs/heads/engine-pin-try/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The throwaway branch goes when its run is done, however it went. Checks
+    # nothing out, and runs nothing of upstream's.
+    permissions:
+      contents: write   # deleting the branch
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Delete the branch this run tried upstream on
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" --silent
+          echo "- **Engine pin:** \`$BRANCH\`, the branch this run tried upstream on, deleted" >> "$GITHUB_STEP_SUMMARY"

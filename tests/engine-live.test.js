@@ -4,10 +4,12 @@
  *
  * This runs only where scripts/engine-build.sh has been run (or ENGINE_CMD
  * points at a launcher). Everywhere else it is skipped and says so, because a
- * JVM and a five-minute compile are not something `npm test` may demand.
+ * JVM and a five-minute compile are not something `npm test` may demand —
+ * except where ENGINE_REQUIRED says the engine was built for it, as CI does
+ * (HANDOFF.md M9): there a missing engine fails instead of skipping.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { startEngine, findEngine } from '../scripts/engine-bridge.mjs'
+import { startEngine, findEngine, engineRequired } from '../scripts/engine-bridge.mjs'
 import { commanderOf, toEngine } from '../scripts/relay-engine.mjs'
 import { validateDeck } from '../src/lib/deck.js'
 import { leaveOut, seatDeck } from '../src/lib/engine/deck.js'
@@ -206,8 +208,14 @@ describe.skipIf(!command)('the engine on the wire', () => {
   }, 300_000)
 
   it('plays a game against the engine, passing for the human only where nothing is affordable', async () => {
+    // Seeded. The first view below is the opening hand only where that hand
+    // holds a Mountain; 6 deals in 300 hold none, and then the first stop worth
+    // making is turns later, with cards drawn — a failure one run in fifty, met
+    // while M9 was putting this suite in front of every deploy (HANDOFF.md). This
+    // seed deals a land and plays the same game every run.
     let status = await engine.call('new', {
       players: [{ name: 'You', deck, autoPass: true }, { name: 'Bot', deck, ai: 'random' }],
+      seed: 20260925,
     })
     expect(status.seats).toHaveLength(2)
     const you = status.seats[0].id
@@ -1879,6 +1887,12 @@ describe.skipIf(!command)('the engine on the wire', () => {
 
 if (!command) {
   describe('the engine on the wire', () => {
-    it.skip('is not built here: run scripts/engine-build.sh or set ENGINE_CMD', () => {})
+    if (engineRequired()) {
+      it('is built here, as ENGINE_REQUIRED says it is', () => {
+        throw new Error('ENGINE_REQUIRED is set, and there is no engine where findEngine looks: ENGINE_CMD, or companion/build/install under ENGINE_HOME or ../argentum (scripts/engine-build.sh builds it there)')
+      })
+    } else {
+      it.skip('is not built here: run scripts/engine-build.sh or set ENGINE_CMD', () => {})
+    }
   })
 }

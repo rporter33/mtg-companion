@@ -28,6 +28,22 @@ export function findEngine(env = process.env, platform = process.platform) {
 }
 
 /**
+ * Whether this run must have an engine to drive: `ENGINE_REQUIRED` set to
+ * anything but nothing, 0, false or no.
+ *
+ * The suites that drive the real engine skip where there is none, because a JVM
+ * and a long compile are not something every machine owes them. CI builds the
+ * engine before any of them runs (HANDOFF.md M9) and sets this, so there an
+ * engine gone missing — a build that left nothing where findEngine looks, a
+ * cache restored somewhere else — fails the run rather than skipping quietly
+ * and deploying on a green that drove nothing.
+ */
+export function engineRequired(env = process.env) {
+  const said = String(env.ENGINE_REQUIRED ?? '').trim().toLowerCase()
+  return !['', '0', 'false', 'no'].includes(said)
+}
+
+/**
  * Starts an engine and returns a way to talk to it.
  *
  *   const engine = startEngine({ command })

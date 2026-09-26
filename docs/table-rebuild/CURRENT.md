@@ -428,6 +428,67 @@ words for a stand-in, and the pile closed with nothing cast — and four changed
 Brawl tally read off the wire before the plate's silence about it is believed, and
 three for Duel Commander's citations.
 
+Added at M9 (2026-09-25), the engine built in CI (PLAN.md, "M9: CI builds the
+engine"). `Server.kt` unchanged, the engine not rebuilt.
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `scripts/browser-suite.mjs` | 131 | The browser suite as `npm run test:browser` runs it, read from `package.json`'s chain and run spec by spec, stopping at the first that fails, with each spec's time said and a table of them in the GitHub job's summary; fails a spec whose last line is not its tally, and, where `ENGINE_REQUIRED` is set, one that ended skipped. `specsOf`, `tallyOf`, `faultOf`, `summaryOf` exported. CI runs the suite through this. |
+| `tests/browser-suite.test.js` | 72 | The runner: the chain read whole and in order, and refused where it holds anything but a spec; a spec's last line read; a skip let off only where no engine is required; the table. |
+
+And these grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `.github/workflows/deploy.yml` | 157 | Before any suite: Temurin 21; the pin; the engine's install in `../argentum`, spelled from the root because the cache action cannot save a path with `..` in it, restored from the cache, keyed on the pin and a hash of `engine/build.gradle.kts`, `engine/src/` and the build script; on a miss, Gradle's cache, `npm run engine:build` and the install saved at once; `findEngine` asked where the engine is. `ENGINE_REQUIRED` for the whole job. The unit suite with the live suite apart, then the live suite in a step of its own, verbose; the browser suite through `scripts/browser-suite.mjs`. Times as notices and in the job's summary. |
+| `scripts/engine-build.sh` | 76 | `--rev`: says the commit it would build, for CI's cache key, and nothing else. |
+| `scripts/engine-bridge.mjs` | 151 | `engineRequired(env)`: `ENGINE_REQUIRED` set to anything but nothing, 0, false or no. |
+| `tests/engine-live.test.js` | 1,898 | Where `ENGINE_REQUIRED` is set and there is no engine, a failing test in place of the skip. The goblin game seeded (20260925): unseeded it failed one run in fifty. |
+| `tests/browser/game-engine.spec.mjs`, `engine-restart.spec.mjs` | 1,485, 389 | Where `ENGINE_REQUIRED` is set and there is no engine, `0 passed, 1 failed` and exit 1, in place of the skip. |
+
+`tests/engine-bridge.test.js` (154 lines) gains one, `engineRequired`'s readings.
+`engine/README.md` says how CI builds and caches the engine.
+
+Added for §3 item 12 (2026-09-25), the pin offered weekly (PLAN.md, "§3 item 12:
+the pin offered weekly"). `Server.kt` unchanged, the engine not rebuilt.
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `.github/workflows/engine-pin.yml` | 306 | Mondays at 05:17 UTC and by hand (`again`: offer a commit whose pull request was closed). `look` (reads the repository and its pull requests): the pin and where upstream is from the build script, upstream `main`'s head by `git ls-remote`, GitHub's comparison where it answers, and a stop, said, where upstream is the pin or not ahead of it, a pull request from an `engine-pin/` branch is open, or this commit's was closed unmerged. `try` (reads, keeps no credentials, saves no cache): the pin's engine restored from `deploy.yml`'s cache or built, asked `hello`; upstream built at its head and asked `hello`; the live suite and both engine specs against it, each whatever the other did; the run's summary and its files kept as an artifact. `offer` (writes; runs nothing of upstream's): the body, refused unless every test passed; the pin moved on `engine-pin/<commit>` and nothing else; the branch pushed, and the pull request opened, or the setting it needs named. One run at a time. |
+| `scripts/engine-pin.mjs` | 431 | `specs` (the engine's browser specs, `ENGINE_SPECS`), `hello` (an engine's answer kept with its commit, date and build time), `body` (the pull request's body, or the run's summary; `--offer` writes none unless every test passed) and `move` (ENGINE_REV moved in the build script, on its one line and only from the commit measured against). `setsSince`, `liveOf`, `browserOf`, `verdictOf`, `bodyOf`, `moved`, `mentionsOf`, `md`, `code` exported; everything read back read forgivingly. |
+| `tests/engine-pin.test.js` | 219 | The sets new, gone and whose mark changed; the reports read forgivingly; the verdict, where anything unrun is a reason; upstream's words kept from Markdown; the body, the summary, and one from nothing; the pin moved on its one line and refused otherwise; the files still naming the old pin. |
+
+And these grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `scripts/browser-suite.mjs` | 214 | Its own two arguments: `--only=` runs the named specs of the chain alone, in its order, a name that is no one spec of it refused; `--record=` writes what each did as JSON, with the checks it said failed (`failuresOf`). `optionsOf`, `pick`, `recordOf` and `failuresOf` exported. |
+| `scripts/engine-build.sh` | 83 | `--repo`: says where it fetches Argentum from, and nothing else. |
+| `tests/browser/game-engine.spec.mjs` | 1,498 | What the engine knows of each example deck asked of the engine through the relay's `POST /engine/check`, as the lobby asks it, instead of written down: the numbers move with the pin, and the weekly offer runs this spec against upstream. |
+
+`tests/browser-suite.test.js` (112 lines) gains four: the runner's own arguments, the
+specs picked, a check's failure read, and the record. `engine/README.md` says how the
+pin is offered, and `--repo`.
+
+Changed by §3 item 12's second review (2026-09-25; PLAN.md, "§3 item 12: the pin
+offered weekly", "What the second review found"). `Server.kt` unchanged, the engine
+not rebuilt.
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `.github/workflows/engine-pin.yml` | 447 | An offer takes two runs, so that upstream's code runs on a branch whose cache no run on `main` restores. From `main`: `look` as before, counting only the workflow's own pull requests (`engine-pin.mjs offers`), and doing nothing when run from any other branch; `hand-off` (writes a branch, starts a run) deletes any throwaway branch a cancelled run left, makes `engine-pin-try/<commit>-<run>` at `main`'s commit and starts the workflow on it with the commit as `next`. On that branch: `look` takes the commit handed, and checks by GitHub's comparison that the branch is `main` as it was; `try` as before; `offer` checks out `main` itself, refuses where `main` no longer pins what was tried against, and says in its summary why nothing was offered where a step failed; `clean` deletes the branch however the run went. |
+| `scripts/engine-pin.mjs` | 467 | `offersOf` (exported) and `offers`: of `gh pr list`'s answer, the pull requests from this repository's `engine-pin/` branches (or the one named) opened by GitHub Actions, as `#1, #2`; a fork's is none, and so is an entry that does not say. The run's summary says every test passed and that the `offer` job opens the pull request, not that it was opened. |
+| `scripts/browser-suite.mjs` | 215 | Its comment on `process.exitCode`: a pipe is written asynchronously on POSIX, where CI runs, and synchronously on Windows. |
+| `tests/browser/game-engine.spec.mjs`, `engine-restart.spec.mjs` | 1,521, 403 | The page opened with service workers blocked, so the routed pixel answers Scryfall's images; what it answered counted, and a check that it answered the engine's card images with no service worker controlling the page. In `game-engine.spec.mjs` the example decks' check asks the engine whether it knows each commander too, and expects the tile's line about the Commander game only where it does not. |
+| `tests/browser/decisions.spec.mjs`, `engine-commander.spec.mjs`, `engine-deck.spec.mjs`, `levels.spec.mjs` | 445, 550, 292, 214 | The page opened with service workers blocked, for the stand-in's card images, which are Scryfall's links too. |
+
+`tests/engine-pin.test.js` (248 lines) gains one, the workflow's own pull requests
+told from a fork's and a person's, and its summary check says the verdict and claims
+no pull request; `tests/browser-suite.test.js` (131) gains one, every spec of the chain
+that routes `*.scryfall.io` opening its pages with service workers blocked.
+`engine/README.md` and HANDOFF.md §3 item 12 say what the workflow ensures and what it
+cannot; HANDOFF.md §5 gains two traps and says more in two others, and §6 the rest.
+
 ## `src/lib/board/` — the rules-free table
 
 | File | Lines | What it holds |

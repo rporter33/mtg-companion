@@ -19,13 +19,15 @@
  *
  * Needs the built engine (scripts/engine-build.sh). Where there is none
  * this says so and passes nothing, rather than pretending: a JVM is not
- * something the browser suite may demand of every machine.
+ * something the browser suite may demand of every machine. Where
+ * ENGINE_REQUIRED says there is one, as in CI (HANDOFF.md M9), none is a
+ * failure.
  *
  *   node tests/browser/game-engine.spec.mjs http://localhost:4173/
  */
 import { chromium } from 'playwright'
 import { createRelay } from '../../scripts/relay-server.mjs'
-import { findEngine } from '../../scripts/engine-bridge.mjs'
+import { findEngine, engineRequired } from '../../scripts/engine-bridge.mjs'
 import { EXAMPLE_DECKS } from '../../src/data/example-decks.js'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -63,6 +65,11 @@ const until = async (test, ms = 8000) => {
 }
 
 const engineCommand = findEngine()
+if (!engineCommand && engineRequired()) {
+  console.log('ENGINE_REQUIRED is set, and there is no engine where findEngine looks (scripts/engine-build.sh builds one).')
+  console.log('\n0 passed, 1 failed (no engine, where one is required)')
+  process.exit(1)
+}
 if (!engineCommand) {
   console.log('No engine is built here (scripts/engine-build.sh), so this spec has nothing to drive.')
   console.log('\n0 passed, 0 failed (skipped: no engine)')
@@ -161,7 +168,14 @@ const STATE = {
 }
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
-const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+// Service workers blocked. The built app's own (public/sw.js) fetches every
+// *.scryfall.io image itself, and page.route never sees a service worker's
+// requests (Playwright's documentation says so, and advises this), so the pixel
+// routed below would stand in for nothing: the engine's card faces would come
+// from Scryfall, and a moment's failure to reach it is a console error this
+// spec counts, in a spec every deploy waits on (HANDOFF.md M9). Nothing here
+// tests the service worker; refresh.spec.mjs does.
+const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, serviceWorkers: 'block' })
 const errors = []
 page.on('pageerror', (e) => errors.push(e.message))
 // Not the same thing as a thrown error: a view applied wrongly, a delta the
@@ -188,8 +202,13 @@ await page.route('**/api.scryfall.com/cards/collection', (route) => route.fulfil
   status: 200, contentType: 'application/json', body: JSON.stringify({ data: CARDS }) }))
 // The engine's image links point at Scryfall's image host, which this
 // sandbox cannot reach; a pixel stands in so the printed face falls back
-// to the drawn one, as it does offline.
-await page.route('**/cards.scryfall.io/**', (route) => route.fulfill({ status: 200, contentType: 'image/gif', body: Buffer.from(PIXEL.split(',')[1], 'base64') }))
+// to the drawn one, as it does offline. Counted, so the spec can say the
+// pixel answered them rather than Scryfall.
+let imagesAnswered = 0
+await page.route('**/cards.scryfall.io/**', (route) => {
+  imagesAnswered += 1
+  return route.fulfill({ status: 200, contentType: 'image/gif', body: Buffer.from(PIXEL.split(',')[1], 'base64') })
+})
 
 await page.goto(TARGET, { waitUntil: 'networkidle' })
 await page.evaluate((state) => localStorage.setItem('mtg-companion:v1', JSON.stringify(state)), STATE)
@@ -845,6 +864,12 @@ check('the thinking pill breathes, and stops for somebody who asked for stillnes
   breath.found && breath.moving === 'plate-thinking' && breath.still === 'none', JSON.stringify(breath))
 check('no console error through a paced turn', consoleErrors.length === errorsBeforeTheTurn,
   consoleErrors.slice(errorsBeforeTheTurn).join('\n'))
+// What makes that check about the table and not about Scryfall: no service
+// worker stands between the page and its routes, so the engine's card images
+// were the pixel's to answer, and it answered them.
+const controlled = await page.evaluate(() => Boolean(navigator.serviceWorker?.controller))
+check('the engine\'s card images were answered by the pixel, not fetched from Scryfall past a service worker',
+  !controlled && imagesAnswered > 0, `${controlled ? 'a service worker controls the page' : 'no service worker'}; ${imagesAnswered} images answered`)
 
 console.log('\nA spell cast at a target')
 // Until M4 this table could not send a target with a play, so Volcanic Hammer
@@ -1179,7 +1204,8 @@ console.log('\nCommander: the example decks, and a commander cast from the comma
 // HANDOFF.md, M6. The app's four example Commander decks go on the shelf as a
 // player would have them, by name, and the real engine is asked about each. At
 // the pin it knows none of their commanders (PLAN.md, M6), so none can be dealt
-// a Commander game, and the lobby says so and why. The Commander game is then
+// a Commander game, and the lobby says so and why — a fact of the pin's corpus,
+// so the check asks the engine rather than assume it. The Commander game is then
 // played with what the engine can hold of one of them: the Esika example's
 // green-white cards the engine knows, led by the legendary creature among them
 // that fits those colours, Rhys the Redeemed, and basics to make a hundred —
@@ -1191,8 +1217,23 @@ const exampleDeck = (ex) => {
   // Stamped names alone, as a deck whose records have not loaded carries them (src/lib/deck.js, stampNames).
   return { id: `ex-${ex.id}`, name: ex.name, formatId: 'commander', commanders, signatureSpell: null, categoryOrder: [], versions: [], main, sideboard: [], cardNames, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }
 }
-// What the engine knows of each at the pin, measured on 2026-09-25 against the built engine (PLAN.md, M6).
-const EXAMPLE_KNOWN = { "Y'shtola, Night's Blessed": 50, 'Esika, God of the Tree': 54, 'Anikthea, Hand of Erebos': 55, 'Commodore Guff': 45 }
+// What the engine knows of each, asked of it as the lobby asks it — the deck's
+// names with its commander, to the relay's POST /engine/check — rather than
+// written down here: the numbers are the corpus's, and move with the pin (at the
+// pin, 2026-09-25: 50, 54, 55 and 45, and none of the commanders; PLAN.md, M6).
+// The weekly offer to move the pin runs this spec against upstream (HANDOFF.md §3
+// item 12), where they were 50, 55, 55 and 45 on the same day, the commanders
+// still unknown. What is checked is that the tile says the engine's own answer:
+// how many it knows, and, where the commander is not among them, why it cannot
+// deal the deck as a Commander game — and, where it is, no such line. Only the
+// hundred is the deck's own fact, and fixed.
+const exampleKnown = async (ex) => {
+  const deck = {}
+  for (const e of ex.main) deck[e.name] = (deck[e.name] ?? 0) + e.quantity
+  for (const name of ex.commanders) deck[name] = (deck[name] ?? 0) + 1
+  const said = await fetch(`${RELAY}/engine/check`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deck }) }).then((r) => r.json())
+  return { known: said.known, total: said.total, commanderKnown: !said.unknown.includes(ex.commanders[0]) }
+}
 // Rhys's deck: each card as the engine describes it (decklist, 2026-09-25), with no printing named, so the engine deals its own.
 const g = (id, name, type_line, mana_cost, color_identity) => c(id, name, type_line, { mana_cost, color_identity, colors: color_identity, set: undefined, set_name: undefined, collector_number: undefined, legalities: { commander: 'legal' } })
 const RHYS_CARDS = [
@@ -1243,10 +1284,12 @@ const commanderCode = await page.evaluate(() => location.hash.match(/engine\/([A
 // The shelf opens on Commander now that there are Commander decks on it.
 for (const ex of EXAMPLE_DECKS) {
   const leader = ex.commanders[0]
-  const known = EXAMPLE_KNOWN[leader]
-  check(`the example deck ${ex.name}: the engine knows ${known} of its 100 cards, and not its commander, so it cannot deal a Commander game with it`,
-    await until(() => tile(ex.name).textContent().then((t) => (t ?? '').includes(`The engine knows ${known} of 100 cards.`)
-      && (t ?? '').includes(`It does not know the commander, ${leader}, and every Commander deck has one (903.3), so it cannot deal a Commander game with this deck.`)), ENGINE_START_MS),
+  const { known, total, commanderKnown } = await exampleKnown(ex)
+  const count = known === total ? `The engine knows all ${total} cards.` : `The engine knows ${known} of ${total} cards.`
+  const cannot = `It does not know the commander, ${leader}, and every Commander deck has one (903.3), so it cannot deal a Commander game with this deck.`
+  check(`the example deck ${ex.name}: the tile says the engine knows ${known === total ? 'all' : known} of its ${total} cards, ${commanderKnown ? 'its commander among them, and says nothing of a Commander game it cannot deal' : 'and not its commander, so it cannot deal a Commander game with it'}`,
+    total === 100
+    && await until(() => tile(ex.name).textContent().then((t) => (t ?? '').includes(count) && (t ?? '').includes(cannot) === !commanderKnown), ENGINE_START_MS),
     await tile(ex.name).textContent())
 }
 check('the lobby says what a Commander deck is dealt as, citing the rules',
