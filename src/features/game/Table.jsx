@@ -190,9 +190,9 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   /*
    * How the person plays at the engine's table (HANDOFF.md §3 item 24; lib/engine/
    * pace.js): a preset and the settings it makes, kept with the player's other
-   * table preferences and read forgivingly. Controlled until they choose, the
-   * owner's choice. Asked once — `asked` — and changeable at any time from the
-   * table's own settings; a change goes to the room at once (useEngineRoom).
+   * table preferences and read forgivingly. Fast until they choose, the owner's
+   * choice since 2026-09-26. Asked once — `asked` — and changeable at any time
+   * from the table's own settings; a change goes to the room at once (useEngineRoom).
    */
   const pace = chosenPace(prefs.tablePace)
   const choosePace = useCallback((change) => {
@@ -693,7 +693,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
    * "How do you want to play?", asked once, the first time a person sits at the
    * engine's table (HANDOFF.md §3 item 24): on the table, never in front of it,
    * and from the moment they sit, while the engine deals — the seat is already
-   * taken, with Controlled in force until they choose. Never inside the
+   * taken, with Fast in force until they choose. Never inside the
    * battlefield's own box, which the prompt is placed at the foot of: there, every
    * line of the question pushed the opening hand's Keep further down the page, and
    * on a narrow phone the prompt rose over the question's own buttons. Beside the

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import {
-  PRESETS, PRESET_NAMES, PRESET_TAGLINES, PRESET_CHIPS, PRESET_LINES,
+  DEFAULT_PRESET, PRESETS, PRESET_NAMES, PRESET_TAGLINES, PRESET_CHIPS, PRESET_LINES,
   STOPS, STOPS_NAMES, STOPS_WORDS, SPEEDS, SPEED_NAMES, EXPLAIN_NAMES, PAYING_LINE, STACK_LINE, fixedLine, speedLine,
 } from '../../lib/engine/pace.js'
 
@@ -13,8 +13,9 @@ import {
  *
  * Asked once, the first time a person sits at the engine's table (`first`),
  * as a panel on the table rather than a dialog in front of it: the seat is
- * already taken and the engine deals behind it, with Controlled — the owner's
- * choice — in force until another is picked (HANDOFF.md §3 item 24). The same
+ * already taken and the engine deals behind it, with the owner's choice —
+ * `DEFAULT_PRESET`, Fast since 2026-09-26 — in force until another is picked
+ * (HANDOFF.md §3 item 24), and the words name whichever that is. The same
  * choice lives on in the table's own settings, where it can be changed at any
  * time, a change taking effect at once.
  *
@@ -71,7 +72,7 @@ export default function PaceChoice({ pace, room = null, first = false, taught = 
       <h2 id={`${id}-title`} className="pacechoice__title">{first ? 'How do you want to play?' : 'How you play'}</h2>
       <p className="faint tiny m0">
         {first
-          ? 'Asked once. Controlled is chosen until you pick another, and any of this can be changed later from the table’s More button (…), under “How you play”.'
+          ? `Asked once. ${PRESET_NAMES[DEFAULT_PRESET]} is chosen until you pick another, and any of this can be changed later from the table’s More button (…), under “How you play”.`
           : 'A change takes effect at once; where the game stops, from the next window.'}
       </p>
       <fieldset className="pacechoice__presets">

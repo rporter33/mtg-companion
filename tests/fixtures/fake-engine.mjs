@@ -72,7 +72,8 @@
 // the captured stop then says none were passed. Dealt with it true, or without
 // the key, as every test before this was, it passes them as the run did. Since
 // protocol 11 `stops` changes it mid-game, as Server.kt's does: from the next
-// window, the one the table stands at staying the person's to answer.
+// window, the one the table stands at staying the person's to answer, and over
+// the opening hand, before any window has come, from the first.
 // FAKE_PROTOCOL=10 plays an engine from before it, which knows no `stops`, and
 // which, dealt a person stopped everywhere, offers them the second of those
 // windows as Argentum's declaration of attackers with nothing to declare, alone
@@ -772,7 +773,8 @@ function handle(req) {
     // words: a seat it does not have, the engine's own, no `autoPass`. From the
     // next window: stopped everywhere from here, the window the table stands at
     // stays theirs and the rest before the captured stop are passed for them; the
-    // other way round, the next captured stop's run-up is offered.
+    // other way round, the next captured stop's run-up is offered; and over the
+    // opening hand, the first captured stop's run-up, whichever way it went.
     case 'stops': {
       if (protocol() < 11) { say({ id, ok: false, error: `Unknown op "${req.op}".` }); break }
       if (!lastNew) { say({ id, ok: false, error: 'No game yet. Send "new" first.' }); break }
@@ -784,8 +786,12 @@ function handle(req) {
       stopsAsked++
       lastStops = req
       everyWindow = !req.autoPass
+      // Over the opening hand no window has come yet, so the whole run-up to the first
+      // captured stop is still ahead, offered or passed as now asked: a person who picks
+      // Controlled before keeping, the table dealt Fast (pace.spec.mjs), stops at upkeep.
+      if (mulligan) arrive()
       // The window stood at keeps its step: the ones after it go, and so does their place in the count.
-      if (!everyWindow && windows > 1) { passedFor += windows - 1; windowsBefore -= windows - 1; windows = 1 }
+      else if (!everyWindow && windows > 1) { passedFor += windows - 1; windowsBefore -= windows - 1; windows = 1 }
       say({ id, ok: true, seat: req.seat, autoPass: req.autoPass })
       break
     }

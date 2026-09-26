@@ -13,11 +13,12 @@
  * the real engine to the same.
  *
  * What is checked: the question on the table the first time, above the
- * battlefield and never in front of it, with Controlled — the owner's choice —
- * chosen and in force from the sit; three presets as radios a keyboard and a
- * screen reader use, and under Advanced the settings each sets; Learning chosen
- * from the keyboard, its steps explained at the stops, counted, and its speed
- * the room's; the question answered and not asked again after a reload, the
+ * battlefield and never in front of it, with Fast — the owner's choice since
+ * 2026-09-26 — chosen and in force from the sit; three presets as radios a
+ * keyboard and a screen reader use, and under Advanced the settings each sets;
+ * Controlled a tap away over the opening hand, the engine asked, and a window
+ * with nothing in it then a stop; Learning chosen from the keyboard, its steps
+ * explained at the stops, counted, and its speed the room's; the question answered and not asked again after a reload, the
  * choice remembered; Fast chosen later from the table's own settings, after
  * which a window with nothing in it is passed and the log says so; axe clean at
  * both widths, nothing sideways at a phone's, and nothing animating.
@@ -120,8 +121,8 @@ check('the lobby offers the engine when the relay has one', await until(() => pl
 await playEngine.click()
 check('opening a table the engine holds changes the address', await until(() => page.evaluate(() => /#\/game\/engine\/[A-Z0-9]{5}$/.test(location.hash))), page.url())
 const code = await page.evaluate(() => location.hash.match(/engine\/([A-Z0-9]{5})/)?.[1])
-check('the lobby of that table says the game will stop at every window, as Controlled does until the person chooses',
-  await until(() => page.locator('.lobby__seats').textContent().then((t) => /the game stops for you at every priority window, as Controlled does until you choose at the table\./.test(t ?? ''))),
+check('the lobby of that table says the engine never stops the person where they have nothing to do, as Fast, the default, does',
+  await until(() => page.locator('.lobby__seats').textContent().then((t) => /the engine never stops you where you have nothing to do\./.test(t ?? ''))),
   await page.locator('.lobby__seats').textContent())
 await page.getByRole('button', { name: /^Goblins/ }).first().click()
 await page.getByRole('button', { name: /Sit down with Goblins/ }).click()
@@ -136,20 +137,21 @@ check('three presets, as radios a keyboard and a screen reader can use', await p
 check('each named by the preset and its tagline alone, what it does being its description',
   await panel.getByRole('radio', { name: 'Controlled See every window', exact: true }).count() === 1
   && (await panel.getByRole('radio', { name: 'Controlled See every window', exact: true }).evaluate((r) => r.getAttribute('aria-describedby').split(' ').map((id) => document.getElementById(id).textContent).join(' '))) === `${PRESET_LINES.controlled} More passing`)
-check('Controlled is chosen, the owner\'s choice, and the other two are not', await preset('Controlled').isChecked() && !(await preset('Fast').isChecked()) && !(await preset('Learning').isChecked()))
+// The owner's choice since 2026-09-26 (HANDOFF.md §3 item 24): Fast, where it had been Controlled.
+check('Fast is chosen, the owner\'s choice, and the other two are not', await preset('Fast').isChecked() && !(await preset('Controlled').isChecked()) && !(await preset('Learning').isChecked()))
 const panelText = (await panel.textContent()) ?? ''
 check('each preset says what it does, in the app\'s own words', Object.values(PRESET_LINES).every((line) => panelText.includes(line)), panelText)
-check('and the question says it is asked once, and where it can be changed later', /Asked once\. Controlled is chosen until you pick another, and any of this can be changed later from the table’s More button \(…\), under “How you play”\./.test(panelText), panelText)
+check('and the question says it is asked once, and where it can be changed later', /Asked once\. Fast is chosen until you pick another, and any of this can be changed later from the table’s More button \(…\), under “How you play”\./.test(panelText), panelText)
 check('nothing is kept until the person answers', (await kept()).pace === null)
 const engine = () => relayServer.rooms.get(code)?.engine?.engine
-check('Controlled is in force from the sit: the engine was dealt this person stopped at every window',
-  await until(async () => (await engine()?.call('lastNew'))?.request?.players?.[0]?.autoPass === false), JSON.stringify((await engine()?.call('lastNew'))?.request?.players?.map((p) => p.autoPass)))
+check('Fast is in force from the sit: the engine was dealt this person passed for where nothing is affordable',
+  await until(async () => (await engine()?.call('lastNew'))?.request?.players?.[0]?.autoPass === true), JSON.stringify((await engine()?.call('lastNew'))?.request?.players?.map((p) => p.autoPass)))
 const advanced = panel.getByRole('button', { name: 'Advanced' })
 check('the settings each preset sets are behind a disclosure, closed', await advanced.getAttribute('aria-expanded') === 'false' && !(await panel.locator('.pacechoice__advanced').isVisible()))
 check('the table with the question has no accessibility violations', await clean())
 await shoot('asked-1280')
 
-console.log('\nControlled, in force: a window with nothing in it is a stop')
+console.log('\nControlled, a tap away over the opening hand: a window with nothing in it is a stop')
 const prompt = page.locator('.prompt')
 const keep = prompt.getByRole('button', { name: /^Keep this hand/ })
 check('the opening hand is asked first, beside the question', await until(() => keep.count().then((n) => n === 1)))
@@ -157,14 +159,23 @@ check('with one primary button on screen, the hand\'s Keep: the question\'s own 
   await page.locator('.game .btn--primary').count() === 1 && /^Keep this hand/.test(await page.locator('.game .btn--primary').textContent())
   && /btn--ghost/.test(await panel.getByRole('button', { name: /^Play / }).getAttribute('class')),
   await page.locator('.game .btn--primary').allTextContents().then((t) => t.join(' | ')))
+const log = page.locator('.gamelog')
+check('the log says where the game stops for this person as dealt, Fast\'s, once',
+  await until(() => log.textContent().then((t) => (t ?? '').split('The game stops for you only where you can play; the engine passes every other window for you, and says how many.').length === 2)), await log.textContent())
+// Controlled, one tap away in the same question, taken before the hand is kept.
+await preset('Controlled').check()
+check('a tap chooses Controlled, kept at once, the question not yet answered',
+  await until(async () => (await kept()).pace?.preset === 'controlled' && (await kept()).pace?.asked === false), JSON.stringify(await kept()))
+check('the engine is asked to stop this person at every window, once',
+  await until(async () => (await engine().call('lastStops')).stopsAsked === 1) && (await engine().call('lastStops')).request.autoPass === false)
+check('and the log says so, once the engine has: from the next window',
+  await until(() => log.textContent().then((t) => (t ?? '').split('From the next window, the game stops for you at every priority window, both turns.').length === 2)), await log.textContent())
 // Where the tabletop stands in the table, with the question and, below, without it.
 const tabletopTop = () => page.evaluate(() => document.querySelector('.game__table').getBoundingClientRect().top - document.querySelector('.game').getBoundingClientRect().top)
 const tabletopAsked = await tabletopTop()
 await keep.click()
 const title = () => prompt.locator('.prompt__title').textContent().catch(() => null)
 check('then the table stops at the upkeep, with nothing to do but pass', await until(async () => (await title()) === 'Upkeep') && /Nothing to do here but pass\./.test(await prompt.textContent() ?? ''), await prompt.textContent())
-const log = page.locator('.gamelog')
-check('and the log says where the game stops for this person, once', await until(() => log.textContent().then((t) => (t ?? '').split('The game stops for you at every priority window, both turns: pass with Pass or Space.').length === 2)), await log.textContent())
 
 console.log('\nLearning, chosen from the keyboard')
 await preset('Controlled').focus()
@@ -267,7 +278,8 @@ await shoot('settings-1280', page)
 console.log('\nChanged later, from the table: Fast')
 await mine.getByRole('radio', { name: /^Fast/ }).check()
 check('Fast is chosen and kept', await until(async () => (await kept()).pace?.preset === 'fast'))
-check('the engine was asked to pass for this person from the next window, once', await until(async () => (await engine().call('lastStops')).stopsAsked === 1) && (await engine().call('lastStops')).request.autoPass === true)
+// The second change the engine is asked for: the first was Controlled, over the opening hand.
+check('the engine was asked to pass for this person from the next window, once', await until(async () => (await engine().call('lastStops')).stopsAsked === 2) && (await engine().call('lastStops')).request.autoPass === true)
 check('the log says so, once the engine has', await until(() => log.textContent().then((t) => (t ?? '').includes('From the next window, the game stops for you only where you can play.'))), await log.textContent())
 check('and the room is back at its own pace, Brisk', await until(async () => { const r = await peek(code); return r.speed === 'brisk' && r.pace === BASE_PACE }), JSON.stringify(await peek(code)))
 await page.setViewportSize({ width: 390, height: 844 })
@@ -332,13 +344,14 @@ check('at 360 too, where the prompt once rose over Advanced and Play', await unt
 check('and nothing scrolls sideways there', await fits())
 await shoot('first-360')
 await page.setViewportSize({ width: 390, height: 844 })
-await asked.getByRole('button', { name: 'Play Controlled →' }).focus()
+await asked.getByRole('button', { name: 'Play Fast →' }).focus()
 await page.keyboard.press('Enter')
 check('answered from the keyboard over the opening hand, focus goes to Keep this hand, not Mulligan',
   await until(() => page.evaluate(() => Boolean(document.activeElement?.closest('.prompt')) && /^Keep this hand/.test(document.activeElement?.textContent ?? ''))),
   await page.evaluate(() => document.activeElement?.outerHTML?.slice(0, 120)))
 await page.keyboard.press('Enter')
-check('so the next Enter keeps the hand, and takes no mulligan', await until(async () => (await title()) === 'Upkeep'), await prompt.textContent().catch(() => 'no prompt'))
+// Fast, kept: the empty windows before it passed, the next stop is the attack.
+check('so the next Enter keeps the hand, and takes no mulligan', await until(async () => (await title()) === 'Your attack'), await prompt.textContent().catch(() => 'no prompt'))
 await page.setViewportSize({ width: 1280, height: 900 })
 
 check('no uncaught errors', errors.length === 0, errors.join('; '))

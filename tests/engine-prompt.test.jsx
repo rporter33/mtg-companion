@@ -283,7 +283,7 @@ describe('the choice of how to play (§3 item 24)', () => {
   const radios = (el) => [...el.querySelectorAll('input[type="radio"]')]
   const labelOf = (input) => input.closest('label').textContent
 
-  it('asks, the first time, with Controlled chosen and the other two a tap away, and a button that names what it plays', async () => {
+  it('asks, the first time, with Fast chosen and the other two a tap away, and a button that names what it plays', async () => {
     const done = []
     const { el, chosen } = await mountChoice({ first: true, onDone: () => done.push(true) })
     expect(el.querySelector('section').getAttribute('aria-labelledby')).toBe(el.querySelector('h2').id)
@@ -294,15 +294,17 @@ describe('the choice of how to play (§3 item 24)', () => {
       `ControlledSee every window${PRESET_LINES.controlled}More passing`,
       `LearningExplain as you go${PRESET_LINES.learning}Steps explained`,
     ])
-    expect(presets.map((r) => r.checked)).toEqual([false, true, false])
+    // Fast, the owner's choice since 2026-09-26 (HANDOFF.md §3 item 24), and the words say so.
+    expect(presets.map((r) => r.checked)).toEqual([true, false, false])
+    expect(el.querySelector('section > p').textContent).toMatch(/^Asked once\. Fast is chosen until you pick another,/)
     // Each radio is named by its preset and tagline, and described by what it does.
     const words = (r, attr) => r.getAttribute(attr).split(' ').map((id) => document.getElementById(id).textContent).join(' ')
     expect(presets.map((r) => words(r, 'aria-labelledby'))).toEqual(['Fast Keep it moving', 'Controlled See every window', 'Learning Explain as you go'])
     expect(words(presets[1], 'aria-describedby')).toBe(`${PRESET_LINES.controlled} More passing`)
-    await act(async () => { presets[0].click() })
-    expect(chosen).toEqual([{ preset: 'fast' }])
+    await act(async () => { presets[1].click() })
+    expect(chosen).toEqual([{ preset: 'controlled' }])
     const play = [...el.querySelectorAll('button')].find((b) => b.textContent.startsWith('Play'))
-    expect(play.textContent).toBe('Play Controlled →')
+    expect(play.textContent).toBe('Play Fast →')
     await act(async () => { play.click() })
     expect(done).toEqual([true])
   })

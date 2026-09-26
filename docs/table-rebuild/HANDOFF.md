@@ -454,10 +454,10 @@ These are settled. Do not reopen them; build on them.
     presets"). Before the first game at the engine's table the player is asked "How do
     you want to play?" with three presets — Fast, Controlled, Learning — and an
     Advanced disclosure that shows the settings each actually sets. **Controlled is
-    pre-selected.** It is asked once, remembered per player like the other table
-    preferences, changeable later from the table's own settings, and never blocks
-    sitting down. Only settings that are real are built, and what a preset would need
-    that the wire cannot do is said on screen.
+    pre-selected** (revised to Fast on 2026-09-26, below). It is asked once,
+    remembered per player like the other table preferences, changeable later from the
+    table's own settings, and never blocks sitting down. Only settings that are real
+    are built, and what a preset would need that the wire cannot do is said on screen.
     **Built, 2026-09-25.** What was built, measured and found, and what is left, are in
     `PLAN.md`, "§3 item 24: the pace presets"; the defaults the decision left open are
     item 25. In short: protocol 11. Where the game stops for a person is the engine's
@@ -493,6 +493,16 @@ These are settled. Do not reopen them; build on them.
     battlefield where it is not. At an engine older than 11 the relay deals every
     person Law 1, which that engine could not stop everywhere without a stop that had
     no pass.
+    **Revised by the owner, 2026-09-26: Fast is pre-selected**, not Controlled, with
+    Controlled and Learning one tap away in the same question. The reason is the
+    measurement taken building it, at the real engine (`PLAN.md`, "§3 item 24",
+    Measured): to the start of turn 9 of the goblin game, Controlled stopped the person
+    61 times against Fast's 8, and `FRICTION.md` makes auto-passing, Law 1, "the
+    default and the only sensible behaviour". That answers the question §6 put to the
+    owner. The rest of the decision of 2026-09-25 stands, and its "Controlled is
+    pre-selected" is left above as it was decided, replaced by this revision.
+    `DEFAULT_PRESET` in `src/lib/engine/pace.js` holds the choice, and the question's
+    words follow it.
 25. **Taken as defaults building item 24, 2026-09-25, and the owner's to overturn:**
     the bundles are the app's own and said to be — Fast stops only where there is
     something to play at Brisk; Controlled at every window at Brisk; Learning at every
@@ -1451,7 +1461,9 @@ names), and leave it out of the lobby's copy, per the owner's rule.
   priority window — 61 stops against Law 1's 8 to turn 9 in the measured goblin game —
   where `FRICTION.md` makes Law 1 "the default and the only sensible behaviour"; the
   owner's choice is built as made, and the question sits on the table so Fast is one tap
-  away, but which of the two documents should give way is the owner's to say. And two
+  away, but which of the two documents should give way is the owner's to say. Answered
+  on 2026-09-26: `FRICTION.md` stands, and Fast is pre-selected, Controlled and Learning
+  a tap away (§3 item 24, revised). And two
   things the design source's Controlled does that this table cannot, said on screen
   under Advanced: tapping your own mana, and a window with a spell on the stack (which
   `engine/README.md` records as not in any milestone; Argentum's `stepExactlyOne` is

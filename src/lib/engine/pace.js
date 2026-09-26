@@ -27,8 +27,8 @@
  * no preset here can have you tap your own mana, and the choice says so.
  *
  * The bundles, the doubling and the three times are this app's own, and are
- * said to be; a first game is Controlled, the owner's choice (HANDOFF.md §3
- * item 24).
+ * said to be; a first game is Fast, the owner's choice (HANDOFF.md §3 item 24,
+ * revised 2026-09-26).
  *
  * Shared by the relay (scripts/relay-engine.mjs) and the app, so a word means
  * the same at both ends of the wire. Pure, and forgiving: anything here reads
@@ -37,8 +37,16 @@
 
 export const PRESETS = ['fast', 'controlled', 'learning']
 
-/** The owner's choice for a first game (2026-09-25): Controlled, with the other two a tap away. */
-export const DEFAULT_PRESET = 'controlled'
+/**
+ * The owner's choice for a first game: Fast, with the other two a tap away in the
+ * same question. It was Controlled from 2026-09-25 until the owner revised it on
+ * 2026-09-26, once measured at the real engine: to turn 9 of the goblin game,
+ * every window stopped a person 61 times where Law 1 stopped them 8, and
+ * FRICTION.md makes Law 1 "the default and the only sensible behaviour"
+ * (HANDOFF.md §3 item 24). What the question and the lobby say of the default
+ * reads it here.
+ */
+export const DEFAULT_PRESET = 'fast'
 
 /** Where the game stops for a person: only where they can play (Law 1), or at every priority window. */
 export const STOPS = ['playable', 'every']
@@ -210,8 +218,11 @@ export function fixedLine(stops) {
  * Where the game will stop for this person, as the end of the lobby's line about
  * rules-enforced play, from what they kept (`chosenPace`): the preset kept named,
  * whether or not the question was answered — a radio changed and left keeps its
- * preset — and Controlled said to be in force until they choose only where it is
- * Controlled that is kept, or nothing is.
+ * preset — and the default said to be in force until they choose only where it is
+ * the default that is kept, or nothing is. Only a default that stops at every
+ * window needs saying so: Fast, the default since 2026-09-26, has Law 1's line,
+ * which the lobby said before there was a choice and which is true of Fast
+ * however it came to be kept.
  */
 export function lobbyStopsLine(pace) {
   const p = chosenPace(pace)

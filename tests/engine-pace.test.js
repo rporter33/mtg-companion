@@ -21,10 +21,10 @@ import {
 import { STEPS } from '../src/data/turn-structure.js'
 
 describe('the presets', () => {
-  it('are Fast, Controlled and Learning, and a first game is Controlled', () => {
+  it('are Fast, Controlled and Learning, and a first game is Fast', () => {
     expect(PRESETS).toEqual(['fast', 'controlled', 'learning'])
-    // The owner's choice, 2026-09-25 (HANDOFF.md §3 item 24).
-    expect(DEFAULT_PRESET).toBe('controlled')
+    // The owner's choice, revised on 2026-09-26 from Controlled (HANDOFF.md §3 item 24).
+    expect(DEFAULT_PRESET).toBe('fast')
     for (const words of [PRESET_NAMES, PRESET_TAGLINES, PRESET_CHIPS, PRESET_LINES, PRESET_SETTINGS]) expect(Object.keys(words)).toEqual(PRESETS)
   })
 
@@ -51,9 +51,9 @@ describe('the presets', () => {
 })
 
 describe('the choice as it is kept', () => {
-  it('is Controlled, and not yet asked, where nothing readable was kept', () => {
-    for (const junk of [undefined, null, 'fast', 7, [], { preset: 'Fast' }, { preset: 'turbo', stops: 'sometimes', speed: 'ludicrous', explain: 'yes' }]) {
-      expect(chosenPace(junk)).toEqual({ preset: 'controlled', stops: 'every', speed: 'brisk', explain: false, asked: false })
+  it('is Fast, and not yet asked, where nothing readable was kept', () => {
+    for (const junk of [undefined, null, 'controlled', 7, [], { preset: 'Controlled' }, { preset: 'turbo', stops: 'sometimes', speed: 'ludicrous', explain: 'yes' }]) {
+      expect(chosenPace(junk)).toEqual({ preset: 'fast', stops: 'playable', speed: 'brisk', explain: false, asked: false })
     }
   })
 
@@ -72,7 +72,9 @@ describe('the choice as it is kept', () => {
   })
 
   it('changes by a preset or by one setting, keeping whether it was answered', () => {
-    const kept = answered(undefined)
+    // Answered with nothing picked, it is the default that is kept.
+    expect(answered(undefined)).toEqual({ preset: 'fast', stops: 'playable', speed: 'brisk', explain: false, asked: true })
+    const kept = answered({ preset: 'controlled' })
     expect(kept).toEqual({ preset: 'controlled', stops: 'every', speed: 'brisk', explain: false, asked: true })
     expect(paceWith(kept, { preset: 'learning' })).toEqual({ preset: 'learning', stops: 'every', speed: 'relaxed', explain: true, asked: true })
     // One setting changed makes a mix of the player's own, and changed back, the preset again.
@@ -144,15 +146,17 @@ describe('what the room says', () => {
     expect(stopsLine({ stops: 'playable', fixed: true }, { stops: 'playable' })).toBe('The game stops for you only where you can play; the engine passes every other window for you, and says how many.')
   })
 
-  it('says in the lobby the preset kept, and Controlled in force only where it is Controlled that is kept, or nothing', () => {
-    expect(lobbyStopsLine(undefined)).toBe('the game stops for you at every priority window, as Controlled does until you choose at the table.')
-    expect(lobbyStopsLine({ preset: 'controlled', asked: false })).toBe('the game stops for you at every priority window, as Controlled does until you choose at the table.')
-    // Learning picked at the table and the question left unanswered: kept, and named.
+  it('says in the lobby the preset kept, and the default in force only where it is the default that is kept, or nothing', () => {
+    // Nothing kept, or nothing readable, is Fast, the default, and its line is Law 1's.
+    expect(lobbyStopsLine(undefined)).toBe('the engine never stops you where you have nothing to do.')
+    expect(lobbyStopsLine('learning')).toBe('the engine never stops you where you have nothing to do.')
+    expect(lobbyStopsLine({ preset: 'fast', asked: false })).toBe('the engine never stops you where you have nothing to do.')
+    // Controlled or Learning picked at the table and the question left unanswered: kept, and named.
+    expect(lobbyStopsLine({ preset: 'controlled', asked: false })).toBe('the game stops for you at every priority window, as Controlled does, picked at the table.')
     expect(lobbyStopsLine({ preset: 'learning', asked: false })).toBe('the game stops for you at every priority window, as Learning does, picked at the table.')
     expect(lobbyStopsLine({ stops: 'every', speed: 'instant', explain: true, asked: false })).toBe('the game stops for you at every priority window, as your own mix at the table does.')
     expect(lobbyStopsLine({ preset: 'learning', asked: true })).toBe('the game stops for you at every priority window, as you chose.')
-    expect(lobbyStopsLine({ preset: 'fast', asked: false })).toBe('the engine never stops you where you have nothing to do.')
-    expect(lobbyStopsLine('learning')).toMatch(/as Controlled does until you choose/)
+    expect(lobbyStopsLine({ preset: 'controlled', asked: true })).toBe('the game stops for you at every priority window, as you chose.')
   })
 
   it('says a relay older than the choice only where the choice is not what it does anyway', () => {

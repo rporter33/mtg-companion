@@ -3930,7 +3930,7 @@ own, and it would be a setting under Advanced, but no decision names it. Priorit
 spell on the stack stays where engine/README.md put it. Tapping your own mana would need
 the client to answer `SelectManaSources` at every cast. The owner's question (HANDOFF.md
 §6): Controlled pre-selected makes a first game stop at every window, where `FRICTION.md`
-makes Law 1 the default.
+makes Law 1 the default. Answered on 2026-09-26, below.
 
 The bar at the end, against the pin with the engine rebuilt at protocol 11: `npm test`,
 2,229 tests in 101 files, 45 of them new and one file new, the live engine suite among
@@ -3941,6 +3941,15 @@ about nineteen minutes. Screenshots looked at, `ui-pace-*` in the system's tempo
 folder: the question at 1280 × 900 and at 390 × 844, Advanced open, a stop explained at
 both widths, the table's settings at both widths, and the table after Fast. The token
 check clean. No JVM and no preview left running.
+
+**Revised by the owner, 2026-09-26: Fast is pre-selected** (HANDOFF.md §3 item 24),
+Controlled and Learning a tap away in the same question. The reason is this section's
+own measurement: to turn 9, Controlled stopped a first game 61 times against Fast's 8,
+and `FRICTION.md` makes Law 1 the default. `DEFAULT_PRESET` is `'fast'`, and the
+question's "… is chosen until you pick another" names it from there. `pace.spec.mjs` now
+checks Fast chosen and in force from the sit, then takes Controlled with a tap over the
+opening hand and holds it to its own checks from there, the stand-in offering the windows
+before its first stop to a change made before any has come, as the real engine does.
 
 ### The seat opposite at a phone's width, and the shelf's archetype and bracket — 2026-09-26
 
