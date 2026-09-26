@@ -18,7 +18,8 @@
  */
 import { FORMATS, getFormat, isBasicLand } from '../formats.js'
 import { nameList, withArticle } from './deck.js'
-import { COMMANDER_GAME, leaderProblem, leaderlessFamily } from './commander.js'
+import { gameName, isCommanderGame, leaderProblem } from './commander.js'
+import { standInPhrase } from './stand-in.js'
 
 export const OPPONENT_KINDS = ['mirror', 'deck', 'own']
 
@@ -77,9 +78,22 @@ export const formatWord = (formatId) => getFormat(formatId)?.legalityKey ?? (typ
 /**
  * Whether the engine builds a deck of its own for this format: every sixty-card
  * format it has (Server.kt, `BUILDS`), and since M6 Commander, for a Commander
- * game (`COMMANDER_BUILDS`). The rest of the Commander family it builds none for.
+ * game (`COMMANDER_BUILDS`), and since §3 item 20 Brawl, for a Brawl game, by
+ * Argentum's own Brawl format. The rest of the Commander family it builds none
+ * for: Argentum has no Duel Commander card pool, and no Oathbreaker one.
  */
-export const buildsFor = (formatId) => Boolean(getFormat(formatId)) && (getFormat(formatId).group !== 'commander' || formatId === 'commander')
+export const OWN_FAMILY = ['commander', 'brawl']
+export const buildsFor = (formatId) => Boolean(getFormat(formatId)) && (getFormat(formatId).group !== 'commander' || OWN_FAMILY.includes(formatId))
+
+/**
+ * What the lobby says under the choice of the engine's deck where it builds none
+ * of its own for the format, with why where Argentum's want of a card pool is why.
+ */
+export function noOwnLine(formatId) {
+  const name = getFormat(formatId)?.name ?? formatId
+  const why = formatId === 'duel' ? ', as Argentum has no Duel Commander card pool to build one from' : ''
+  return `The engine builds no ${name} deck of its own${why}, so with ${withArticle(name)} deck it plays a copy of yours.`
+}
 
 const COLOUR_NAMES = { W: 'white', U: 'blue', B: 'black', R: 'red', G: 'green' }
 const WUBRG = ['W', 'U', 'B', 'R', 'G']
@@ -114,14 +128,28 @@ function fromWords(report) {
 }
 
 /**
+ * The engine's commander as a report names it, read forgivingly: its name, and
+ * where it stands in for a commander the engine does not know (HANDOFF.md §3
+ * item 19, `standsFor`, which the room adds), that it is a stand-in and for
+ * which. Null where the report names none.
+ */
+function ledBy(report) {
+  const name = typeof report?.commander === 'string' && report.commander ? report.commander : null
+  if (!name) return null
+  const real = typeof report.standsFor === 'string' && report.standsFor ? report.standsFor : null
+  return real ? standInPhrase({ name, for: real }) : name
+}
+
+/**
  * What the engine's seat is said to be playing, in the seat list: once dealt,
  * from the room's report; before that, from what was asked. "The engine, with
  * a deck of its own: red-green from Bloomburrow", the brief's own example.
  */
 export function seatWords({ report = null, asked = null, deckName = null } = {}) {
   const played = report ? report.played : asked
-  // At a Commander game the engine's commander is face up from the start (903.6), and named.
-  const led = typeof report?.commander === 'string' && report.commander ? `, led by ${report.commander}` : ''
+  // At a Commander game the engine's commander is face up from the start (903.6), and named;
+  // one standing in for a commander the engine does not know is said to be one (§3 item 19).
+  const led = ledBy(report) ? `, led by ${ledBy(report)}` : ''
   if (played === 'own') {
     return report?.played === 'own' ? `The engine, with a deck of its own: ${colourWords(report.colours)} from ${fromWords(report)}${led}` : 'The engine, with a deck of its own'
   }
@@ -184,7 +212,14 @@ const nameOfFormat = (formatId) => getFormat(formatId)?.name ?? formatId
 export function plannedWords({ choice = null, chosen = null, check = null, format = null, yours = null } = {}) {
   if (choice?.kind === 'own') {
     if (!buildsFor(format)) return copyBecause(`it builds no ${nameOfFormat(format)} deck of its own`)
-    if (format === COMMANDER_GAME && leaderProblem(yours?.seat, yours)) return copyBecause('it builds a Commander deck of its own only for a Commander game, and yours has no commander it can deal')
+    // A deck a stand-in can lead (HANDOFF.md §3 item 19) is a Commander game only if one is
+    // chosen at the sit, which has not happened yet: both are said, rather than either as settled.
+    // A Brawl deck the same, in Brawl's words (§3 item 20).
+    const called = gameName(format)
+    if (isCommanderGame(format) && leaderProblem(yours?.seat, yours) && yours?.standIns?.length) {
+      return `The engine, with a deck of its own if a stand-in leads yours, and a copy of yours if not: it builds ${withArticle(called)} deck of its own only for ${withArticle(called)} game`
+    }
+    if (isCommanderGame(format) && leaderProblem(yours?.seat, yours)) return copyBecause(`it builds ${withArticle(called)} deck of its own only for ${withArticle(called)} game, and yours has no commander it can deal`)
     return seatWords({ asked: 'own' })
   }
   if (choice?.kind === 'deck' && chosen && check?.state === 'asking') return seatWords({ asked: 'deck', deckName: chosen.name })
@@ -201,7 +236,7 @@ export function plannedWords({ choice = null, chosen = null, check = null, forma
  * it is before the deal. A room older than that says no format, and is said as asked.
  */
 export function dealingWords(report) {
-  if (report?.asked === 'own' && leaderlessFamily(report.format)) return copyBecause(`it builds no ${nameOfFormat(report.format)} deck of its own`)
+  if (report?.asked === 'own' && getFormat(report.format)?.group === 'commander' && !buildsFor(report.format)) return copyBecause(`it builds no ${nameOfFormat(report.format)} deck of its own`)
   return seatWords({ asked: report?.asked, deckName: report?.name })
 }
 
@@ -222,7 +257,8 @@ export function engineDeckLine(report, { asked = 'mirror', sets = [], game = nul
   }
   const format = formatName(report)
   // A Commander deck's commander, said by name: it is face up in the command zone from the start (903.6).
-  const led = typeof report.commander === 'string' && report.commander ? report.commander : null
+  // One standing in for a commander the engine does not know is said to be one (§3 item 19).
+  const led = ledBy(report)
   if (report.played === 'own') {
     const colours = led ? `${colourWords(report.colours)}, led by ${led}` : colourWords(report.colours)
     let line
@@ -239,23 +275,33 @@ export function engineDeckLine(report, { asked = 'mirror', sets = [], game = nul
     return line
   }
   if (report.played === 'mirror') {
+    // A copy led by the stand-in that leads the person's deck, said to be one wherever the copy is said.
+    const copyLed = report.standsFor && led ? `, led as yours is by ${led}` : ''
     if (report.fellBack === 'engine') return 'This relay\'s engine is older than decks of its own, so it plays a copy of yours.'
     // Another of the person's decks, sent to a Commander game with no commander to lead it (scripts/relay-engine.mjs).
-    if (report.fellBack === 'commander') return `${report.name ?? 'The deck chosen for the engine'} came with no commander to lead it in a Commander game, so the engine plays a copy of yours.`
+    // In the words of the game dealt, a Brawl or a Duel Commander one since §3 item 20.
+    if (report.fellBack === 'commander') return `${report.name ?? 'The deck chosen for the engine'} came with no commander to lead it in ${withArticle(gameName(game?.played))} game, so the engine plays a copy of yours${copyLed}.`
     if (report.fellBack === 'format') {
-      if (!report.format) return 'The engine was not told which format to build for, so it plays a copy of your deck.'
+      if (!report.format) return `The engine was not told which format to build for, so it plays a copy of your deck${copyLed}.`
       // Since protocol 8 the engine builds a Commander deck of its own, but only for a
       // Commander game: at a table dealt by the ordinary rules because a person had no
       // commander to deal (the room's `fellBack: 'commander'`), that is why. An engine
       // older than 8 builds none at all, and the room says so (`fellBack: 'engine'`), as
       // a room older than Commander does by saying nothing; for those, the old words
-      // hold (found in M6's review, where they were said at 8 too).
-      if (report.format === COMMANDER_GAME && game?.fellBack === 'commander') {
-        return 'The engine builds a Commander deck of its own only for a Commander game, and this one is played by the ordinary rules, so it plays a copy of yours.'
+      // hold (found in M6's review, where they were said at 8 too). Since protocol 10
+      // a Brawl deck of its own the same (§3 item 20), for a Brawl game, which a table
+      // of more than two or of different games is not either.
+      if (buildsFor(report.format) && isCommanderGame(report.format) && game?.played === 'standard' && ['commander', 'players', 'games'].includes(game?.fellBack)) {
+        const called = gameName(report.format)
+        return `The engine builds ${withArticle(called)} deck of its own only for ${withArticle(called)} game, and this one is played by the ordinary rules, so it plays a copy of yours.`
       }
-      return `The engine builds no ${format} deck of its own, so it plays a copy of yours.`
+      // At a Duel Commander table the copy is dealt for a deck of its own, led as the
+      // person's is, a stand-in too (found in the review of items 19 and 20).
+      return `The engine builds no ${format} deck of its own, so it plays a copy of yours${copyLed}.`
     }
-    if (report.fellBack) return `The engine could not build ${withArticle(format)} deck of its own, so it plays a copy of yours.`
+    if (report.fellBack) return `The engine could not build ${withArticle(format)} deck of its own, so it plays a copy of yours${copyLed}.`
+    // A copy of a deck led by a stand-in is led by it too, and said to be (§3 item 19).
+    if (copyLed) return `The engine plays a copy of your deck${copyLed}.`
     return 'The engine plays a copy of your deck.'
   }
   if (report.played === 'deck') return report.name ? `The engine plays your deck ${report.name}${led ? `, led by ${led}` : ''}.` : 'The engine plays one of your decks.'

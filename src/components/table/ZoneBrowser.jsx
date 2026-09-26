@@ -104,8 +104,9 @@ export default function ZoneBrowser({ instances, cardFor, nameFor, selected, onS
                     aria-pressed={selected === inst.id}
                   >
                     {nameFor(inst)}
-                    {/* A commander the engine marks (M6), in a graveyard as much as in the command zone. */}
-                    {inst.commander && <span className="pile__glow"> · a commander</span>}
+                    {/* A commander the engine marks (M6), in a graveyard as much as in the command zone;
+                        one standing in for a commander the engine does not know says for which (§3 item 19). */}
+                    {inst.commander && <span className="pile__glow"> · {inst.standsFor ? `a commander, standing in for ${inst.standsFor}` : 'a commander'}</span>}
                     {glow?.says && <span className="pile__glow"> · {glow.says}</span>}
                   </button>
                 </li>

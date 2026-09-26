@@ -216,8 +216,9 @@ function describe({ card, inst, name, type, stats, counters, finish, treatment, 
   if (finish && finish !== 'normal') parts.push(finish)
   if (treatment) parts.push(treatment)
   // A commander at the engine's table, which the engine marks (M6): the one card
-  // a Commander game treats apart from the rest, wherever it is.
-  if (inst?.commander) parts.push('a commander')
+  // a Commander game treats apart from the rest, wherever it is. One standing in
+  // for a commander the engine does not know says so, and for which (§3 item 19).
+  if (inst?.commander) parts.push(inst.standsFor ? `a commander, standing in for ${inst.standsFor}` : 'a commander')
   if (inst?.tapped) parts.push('tapped')
   for (const [label, n] of counters) parts.push(`${n} ${label} counter${Math.abs(n) === 1 ? '' : 's'}`)
   if (inst?.note) parts.push(`note: ${inst.note}`)

@@ -54,6 +54,16 @@
 // relay that read the text as JSON would round it, and another game would be
 // played. FAKE_PROTOCOL=8 plays an engine from before it, which knows neither op.
 //
+// And Duel Commander and Brawl (protocol 10): dealt `format: "duel"` or
+// `"brawl"` to two players, it deals the same Commander table at 20 or 25 life,
+// with the threshold of its commander damage past reach, as Server.kt asks
+// Argentum for a game in which commander damage loses nobody; its reply says the
+// game's `rules`, as the real one's does for every Commander game. An engine
+// seat's deck of its own at a Brawl table is a Brawl deck, and at a Duel
+// Commander table the copy, said as the real one says it. FAKE_PROTOCOL=9 plays
+// an engine from before them, which refuses both words; FAKE_FORMATS one whose
+// hello lists the games given, and deals those, whatever its protocol.
+//
 // It can be made to hold a request until the test lets it go (`holdActs`,
 // `holdSnapshot`, `release`, FAKE_HOLD_HELLO), which is how a test waits on
 // "the engine is still answering" without waiting on a clock.
@@ -115,7 +125,7 @@ let acts = 0
 let lastNew = null
 let lastAct = null
 let lastDecide = null
-const protocol = () => Number(process.env.FAKE_PROTOCOL) || 9
+const protocol = () => Number(process.env.FAKE_PROTOCOL) || 10
 // Protocol 9: how many games this stand-in has taken back, and the last text it
 // was given, so a test can see what the relay kept and passed back.
 let restores = 0
@@ -158,10 +168,42 @@ const played = (p) => {
 // thin to build from; the colours are the fake's own, one pair for each pool.
 const BUILDS = ['standard', 'pioneer', 'modern', 'legacy', 'vintage', 'pauper', 'premodern']
 const SETS = { POR: 'Portal', HOB: 'The Hobbit', TRC: 'Star Trek Commander' }
-const FORMAT_NAMES = { standard: 'Standard', pioneer: 'Pioneer', modern: 'Modern', legacy: 'Legacy', vintage: 'Vintage', pauper: 'Pauper', premodern: 'Premodern', commander: 'Commander' }
+const FORMAT_NAMES = { standard: 'Standard', pioneer: 'Pioneer', modern: 'Modern', legacy: 'Legacy', vintage: 'Vintage', pauper: 'Pauper', premodern: 'Premodern', commander: 'Commander', brawl: 'Brawl' }
+/**
+ * The games of the Commander family it deals, by protocol, each with Server.kt's
+ * numbers for it (`GAME_FORMATS`, `rulesOf`): the life total, the deck size, and
+ * the commander damage that loses it, null where none does. `threshold` is what
+ * the view's tally carries, Argentum's own, past reach where nothing loses.
+ */
+const GAME_RULES = {
+  commander: { life: 40, deckSize: 100, commanderDamage: 21, threshold: 21 },
+  duel: { life: 20, deckSize: 100, commanderDamage: null, threshold: 2147483647 },
+  brawl: { life: 25, deckSize: 100, commanderDamage: null, threshold: 2147483647 },
+}
+const GAME_NAMES = { commander: 'Commander', duel: 'Duel Commander', brawl: 'Brawl' }
+/**
+ * The games it deals, by protocol, as its hello lists them and `new` holds a deal
+ * to. FAKE_FORMATS, a list with commas, plays an engine whose list is that one
+ * whatever its protocol, so a test can hold the room to each half of its check —
+ * the protocol, and the word in `hello.formats` — on its own.
+ */
+const gamesDealt = () => {
+  if (process.env.FAKE_FORMATS !== undefined) return process.env.FAKE_FORMATS.split(',').map((w) => w.trim()).filter(Boolean)
+  return protocol() >= 10 ? ['standard', 'commander', 'duel', 'brawl'] : protocol() >= 8 ? ['standard', 'commander'] : ['standard']
+}
+/** The formats it builds a Commander-shaped deck of its own to, by the game dealt. */
+const OWN_BUILDS = () => (protocol() >= 10 ? ['commander', 'brawl'] : ['commander'])
 const count = (deck) => Object.values(deck ?? {}).reduce((sum, v) => sum + copiesOf(v), 0)
-/** A commander as `new` carries one (protocol 8): a name, or {name, set, number}. */
-const commanderName = (v) => (typeof v === 'string' ? v : typeof v?.name === 'string' ? v.name : null)
+/**
+ * A commander as `new` carries one (protocol 8): a name, or {name, set, number}.
+ * Named back as Server.kt's `resolveName` names a card of two faces sent as
+ * Scryfall's "Front // Back": by its front alone, in the reply and in the views.
+ */
+const commanderName = (v) => {
+  const name = typeof v === 'string' ? v : typeof v?.name === 'string' ? v.name : null
+  const [front, ...rest] = name?.split(' // ') ?? []
+  return rest.length && rest.every((face) => face !== front) ? front : name
+}
 /** The commander the fake's own Commander deck is led by, a real card the real engine knows. */
 const OWN_COMMANDER = "Sythis, Harvest's Hand"
 /**
@@ -171,8 +213,8 @@ const OWN_COMMANDER = "Sythis, Harvest's Hand"
  * colours as a word, sets with no code — so a test can see the room keep to
  * what a client may be told (`reportOf`, scripts/relay-engine.mjs).
  */
-const built = (p, players, commanderGame = false) => {
-  const said = plainlyBuilt(p, players, commanderGame)
+const built = (p, players, game = null) => {
+  const said = plainlyBuilt(p, players, game)
   if (process.env.FAKE_DECK_REPORT !== 'noisy' || !said.deck) return said
   return { deck: {
     ...said.deck,
@@ -181,8 +223,9 @@ const built = (p, players, commanderGame = false) => {
     missingSets: [3, null], commander: { name: 'Not a name' }, fellBack: 12,
   } }
 }
-const plainlyBuilt = (p, players, commanderGame = false) => {
+const plainlyBuilt = (p, players, game = null) => {
   if (!p?.ai || protocol() < 7) return {}
+  const commanderGame = Boolean(game)
   const person = (players ?? []).find((x) => !x.ai && x.deck && typeof x.deck === 'object')
   // A Commander deck counts its commander, and is named by its colours (Server.kt, coloursOf).
   const led = (name) => (commanderGame && name ? { commander: name } : {})
@@ -192,11 +235,13 @@ const plainlyBuilt = (p, players, commanderGame = false) => {
   if (p.deck === 'mirror') return mirror({})
   const format = typeof p.format === 'string' ? p.format.toLowerCase() : null
   if (commanderGame) {
-    if (format !== 'commander') return mirror({ ...(format ? { format } : {}), fellBack: 'format', why: `A Commander game is dealt a Commander deck of its own, and "${format}" is not one.` })
+    // Built only to the game's own format (Server.kt, `deckFor`): none at a Duel Commander table.
+    if (!OWN_BUILDS().includes(game)) return mirror({ ...(format ? { format } : {}), fellBack: 'format', why: `The engine builds no "${game}" deck of its own.` })
+    if (format !== game) return mirror({ ...(format ? { format } : {}), fellBack: 'format', why: `A ${GAME_NAMES[game]} game is dealt a ${GAME_NAMES[game]} deck of its own, and "${format}" is not one.` })
     const known = Array.isArray(p.sets) ? p.sets.map((s) => String(s).toUpperCase()).filter((s) => s in SETS) : []
-    return { deck: { asked: 'own', played: 'own', cards: 100, colours: ['W', 'G'], commander: OWN_COMMANDER, format, formatName: 'Commander', from: 'format', ...(Array.isArray(p.sets) ? { fellBack: known.length ? 'thin' : 'sets' } : {}) } }
+    return { deck: { asked: 'own', played: 'own', cards: 100, colours: ['W', 'G'], commander: OWN_COMMANDER, format, formatName: FORMAT_NAMES[game], from: 'format', ...(Array.isArray(p.sets) ? { fellBack: known.length ? 'thin' : 'sets' } : {}) } }
   }
-  if (!BUILDS.includes(format)) return mirror({ ...(format ? { format } : {}), fellBack: 'format', why: format === 'commander' ? 'A "commander" deck of its own is built only for a Commander game.' : `The engine builds no "${format}" deck of its own.` })
+  if (!BUILDS.includes(format)) return mirror({ ...(format ? { format } : {}), fellBack: 'format', why: OWN_BUILDS().includes(format) ? `A "${format}" deck of its own is built only for a ${GAME_NAMES[format]} game.` : `The engine builds no "${format}" deck of its own.` })
   const own = { asked: 'own', played: 'own', cards: 60, format, formatName: FORMAT_NAMES[format] }
   if (!Array.isArray(p.sets)) return { deck: { ...own, colours: ['B', 'G'], from: 'format' } }
   const known = p.sets.map((s) => String(s).toUpperCase()).filter((s) => s in SETS)
@@ -274,11 +319,13 @@ const commanderView = (view) => {
     zone.size += 1
     if (type !== 'Command' && !zones.some((z) => z.zoneId?.ownerId === seat && z.zoneId?.zoneType === 'Command')) zones.push({ zoneId: { ownerId: seat, zoneType: 'Command' }, cardIds: [], size: 0, isVisible: true })
   }
+  // The captured views are at 20 life; the game's own life total is laid over them (protocol 10).
+  const rules = GAME_RULES[commanders.game ?? 'commander']
   const players = view.players.map((p) => {
     const dealt = Object.entries(commanders.damage[p.playerId] ?? {}).filter(([, n]) => n > 0)
     return {
-      ...p, life: p.life + 20,
-      ...(dealt.length ? { commanderDamage: dealt.map(([seat, amount]) => ({ commanderId: COMMAND_ID(seat), commanderName: commanders.seats[seat].name, controllerId: seat, amount, threshold: 21 })) } : {}),
+      ...p, life: p.life + rules.life - 20,
+      ...(dealt.length ? { commanderDamage: dealt.map(([seat, amount]) => ({ commanderId: COMMAND_ID(seat), commanderName: commanders.seats[seat].name, controllerId: seat, amount, threshold: rules.threshold })) } : {}),
     }
   })
   const main = commanders.main ? { currentPhase: 'PRECOMBAT_MAIN', currentStep: 'PRECOMBAT_MAIN', combat: null } : {}
@@ -329,12 +376,14 @@ const status = () => {
  * the deal took, and the seats as Server.kt says them. A sideboard card it does
  * not know is left out and named, as the real engine does.
  */
-const dealtReply = (req, commanderGame, leaders) => ({
+const dealtReply = (req, game, leaders) => ({
   ...status(),
   ...(paced ? { paced: true } : {}),
   ...(mulligan ? { mulligans: true } : {}),
-  ...(commanderGame ? { format: 'commander' } : {}),
-  seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(typeof req.players?.[i]?.deck === 'object' ? req.players[i].deck : null), ...played(req.players?.[i]), ...asked(req.players?.[i]), ...built(req.players?.[i], req.players, commanderGame), ...(leaders[i] ? { commander: leaders[i] } : {}) })),
+  ...(game ? { format: game } : {}),
+  // What the game holds a player to (protocol 10), as Server.kt's `rulesOf` says it.
+  ...(game && protocol() >= 10 ? { rules: { life: GAME_RULES[game].life, deckSize: GAME_RULES[game].deckSize, commanderDamage: GAME_RULES[game].commanderDamage } } : {}),
+  seats: FIXTURE.seats.map((s, i) => ({ ...s, ai: req.players?.[i]?.ai ?? null, sideboardLeftOut: Object.keys(req.players?.[i]?.sideboard ?? {}).filter(unknownName), unknownPrintings: missedPrintings(typeof req.players?.[i]?.deck === 'object' ? req.players[i].deck : null), ...played(req.players?.[i]), ...asked(req.players?.[i]), ...built(req.players?.[i], req.players, game), ...(leaders[i] ? { commander: leaders[i] } : {}) })),
 })
 
 /** The log so far: one line a step, each carrying its words and its step, as M1 left them. */
@@ -401,8 +450,8 @@ function handle(req) {
         id, ok: true, engine: 'fake', protocol: protocol(), cards: 3,
         ...(protocol() >= 4 ? { levels: LEVELS } : {}),
         ...(protocol() >= 5 ? { choices: choices() } : {}),
-        ...(protocol() >= 7 ? { decks: { formats: protocol() >= 8 ? [...BUILDS, 'commander'] : BUILDS } } : {}),
-        ...(protocol() >= 8 ? { formats: ['standard', 'commander'] } : {}),
+        ...(protocol() >= 7 ? { decks: { formats: protocol() >= 8 ? [...BUILDS, ...OWN_BUILDS()] : BUILDS } } : {}),
+        ...(protocol() >= 8 ? { formats: gamesDealt() } : {}),
         ...(process.env.FAKE_NO_SETS ? {} : { sets: [
           { code: 'POR', name: 'Portal', released: '1997-05-01', incomplete: false },
           { code: 'TRC', name: 'Star Trek Commander', released: '2026-01-23', incomplete: true },
@@ -437,12 +486,15 @@ function handle(req) {
       // game, where a player has no commander, and where it does not know one. An
       // older engine has never heard of the key and deals the ordinary game.
       const format = protocol() >= 8 && typeof req.format === 'string' ? req.format.toLowerCase() : 'standard'
-      if (!['standard', 'commander'].includes(format)) { say({ id, ok: false, error: `The engine deals no "${format}" game; it deals "standard" and "commander".` }); break }
-      const commanderGame = format === 'commander'
+      if (!gamesDealt().includes(format)) { say({ id, ok: false, error: `The engine deals no "${format}" game; it deals ${gamesDealt().map((g) => `"${g}"`).join(', ').replace(/, ([^,]*)$/, ' and $1')}.` }); break }
+      // Duel Commander and Brawl are games of two (protocol 10), refused in Server.kt's words at a table of more.
+      if (['duel', 'brawl'].includes(format) && (req.players ?? []).length !== 2) { say({ id, ok: false, error: `A ${GAME_NAMES[format]} game is dealt to two players, and this one has ${(req.players ?? []).length}.` }); break }
+      const commanderGame = format !== 'standard'
+      const game = commanderGame ? format : null
       const leaders = (req.players ?? []).map((p, i) => {
         if (!commanderGame) return null
         if (!p.ai) return commanderName(p.commander)
-        return built(p, req.players, true).deck?.commander ?? null
+        return built(p, req.players, game).deck?.commander ?? null
       })
       if (commanderGame) {
         const i = leaders.findIndex((n) => !n)
@@ -451,7 +503,7 @@ function handle(req) {
         if (j >= 0) { say({ id, ok: false, error: `The engine does not know ${req.players[j].name ?? 'a player'}'s commander, ${leaders[j]}.` }); break }
       }
       commanders = commanderGame
-        ? { seats: Object.fromEntries(FIXTURE.seats.map((s, i) => [s.id, { name: leaders[i], where: 'command', casts: 0 }])), damage: {}, main: true }
+        ? { game, seats: Object.fromEntries(FIXTURE.seats.map((s, i) => [s.id, { name: leaders[i], where: 'command', casts: 0 }])), damage: {}, main: true }
         : null
       at = 0; steps = 0; pending = 0
       lastView.clear(); sentLines.clear()
@@ -461,7 +513,7 @@ function handle(req) {
       paced = protocol() >= 3 && (req.pace === true || (typeof req.pace === 'number' && req.pace > 0))
       // So is a mulligan phase, from protocol 6.
       mulligan = protocol() >= 6 && req.mulligans === true ? { taken: 0, kept: false } : null
-      say({ id, ...dealtReply(req, commanderGame, leaders) })
+      say({ id, ...dealtReply(req, game, leaders) })
       break
     }
     // The game as it stands, as text (protocol 9), with the generator's state
@@ -497,7 +549,7 @@ function handle(req) {
       restores++
       lastRestore = req.snapshot
       const leaders = FIXTURE.seats.map((s) => commanders?.seats?.[s.id]?.name ?? null)
-      say({ id, ...dealtReply(lastNew, Boolean(commanders), leaders), restored: true })
+      say({ id, ...dealtReply(lastNew, commanders ? commanders.game ?? 'commander' : null, leaders), restored: true })
       break
     }
     case 'lastRestore': say({ id, ok: true, snapshot: lastRestore, restores }); break

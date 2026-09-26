@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  DEFAULT_OPPONENT, buildsFor, chosenOpponent, colourWords, dealingWords, engineDeckLine, engineDeckRecord, formatWord, insteadLine, plannedWords, seatWords, setsOf,
+  DEFAULT_OPPONENT, buildsFor, chosenOpponent, colourWords, dealingWords, engineDeckLine, engineDeckRecord, formatWord, insteadLine, noOwnLine, plannedWords, seatWords, setsOf,
 } from '../src/lib/engine/opponent.js'
 
 describe('the choice kept with the player\'s preferences', () => {
@@ -65,9 +65,12 @@ describe('the format as the engine is asked for it', () => {
     expect(formatWord(undefined)).toBeNull()
   })
 
-  it('is one the engine builds a deck of its own for: outside the Commander family, and since M6 Commander itself', () => {
-    expect(['standard', 'pioneer', 'modern', 'legacy', 'vintage', 'pauper', 'commander'].every(buildsFor)).toBe(true)
-    expect(['duel', 'brawl', 'oathbreaker', 'constructor', null].some(buildsFor)).toBe(false)
+  it('is one the engine builds a deck of its own for: outside the Commander family, since M6 Commander itself, and since §3 item 20 Brawl', () => {
+    expect(['standard', 'pioneer', 'modern', 'legacy', 'vintage', 'pauper', 'commander', 'brawl'].every(buildsFor)).toBe(true)
+    // Argentum has no Duel Commander card pool, and no Oathbreaker one.
+    expect(['duel', 'oathbreaker', 'constructor', null].some(buildsFor)).toBe(false)
+    expect(noOwnLine('duel')).toBe('The engine builds no Duel Commander deck of its own, as Argentum has no Duel Commander card pool to build one from, so with a Duel Commander deck it plays a copy of yours.')
+    expect(noOwnLine('oathbreaker')).toBe('The engine builds no Oathbreaker deck of its own, so with an Oathbreaker deck it plays a copy of yours.')
   })
 })
 
@@ -139,7 +142,11 @@ describe('the seat list before the deal, as the sit will send it', () => {
 
   it('says what the sit will send, and why where that is the copy', () => {
     expect(plannedWords({ choice: own, format: 'standard' })).toBe('The engine, with a deck of its own')
-    expect(plannedWords({ choice: own, format: 'brawl' })).toBe('The engine, with a copy of your deck: it builds no Brawl deck of its own')
+    // Since §3 item 20 a Brawl deck of its own is built for a Brawl game; a Duel Commander one never is.
+    expect(plannedWords({ choice: own, format: 'brawl' })).toBe('The engine, with a deck of its own')
+    expect(plannedWords({ choice: own, format: 'duel' })).toBe('The engine, with a copy of your deck: it builds no Duel Commander deck of its own')
+    expect(plannedWords({ choice: own, format: 'brawl', yours: { state: 'complete', seat: { game: 'brawl', leaders: 0, commander: null } } }))
+      .toBe('The engine, with a copy of your deck: it builds a Brawl deck of its own only for a Brawl game, and yours has no commander it can deal')
     expect(plannedWords({ choice: own, format: 'commander' })).toBe('The engine, with a deck of its own')
     // A Commander deck the engine cannot lead is played by the ordinary rules, where a Commander deck of its own is not built.
     expect(plannedWords({ choice: own, format: 'commander', yours: { state: 'complete', seat: { game: 'commander', leaders: 2, commander: null } } }))
@@ -156,6 +163,8 @@ describe('the seat list before the deal, as the sit will send it', () => {
 
   it('says the copy while the engine deals where it builds no deck of its own, and a room that names no format as asked', () => {
     expect(dealingWords({ asked: 'own', pool: 'sets', format: 'oathbreaker' })).toBe('The engine, with a copy of your deck: it builds no Oathbreaker deck of its own')
+    expect(dealingWords({ asked: 'own', pool: 'sets', format: 'duel' })).toBe('The engine, with a copy of your deck: it builds no Duel Commander deck of its own')
+    expect(dealingWords({ asked: 'own', pool: 'sets', format: 'brawl' })).toBe('The engine, with a deck of its own')
     expect(dealingWords({ asked: 'own', pool: 'sets', format: 'standard' })).toBe('The engine, with a deck of its own')
     expect(dealingWords({ asked: 'own', pool: 'format' })).toBe('The engine, with a deck of its own')
     expect(dealingWords({ asked: 'deck', name: 'Elves' })).toBe('The engine, with your deck Elves')
@@ -205,6 +214,17 @@ describe('the log\'s line about the engine\'s deck', () => {
     expect(engineDeckLine(report, { game: { asked: 'commander', played: 'standard', fellBack: 'engine' } })).toBe(older)
     expect(engineDeckLine(report)).toBe(older)
     expect(engineDeckLine(report, { game: 'commander' })).toBe(older)
+  })
+
+  it('says why a Brawl deck of its own was not built: a Brawl game not dealt, for whatever reason the room gives, or an engine older than Brawl (§3 item 20)', () => {
+    const report = { asked: 'own', played: 'mirror', format: 'brawl', fellBack: 'format', why: 'A "brawl" deck of its own is built only for a Brawl game.' }
+    const only = 'The engine builds a Brawl deck of its own only for a Brawl game, and this one is played by the ordinary rules, so it plays a copy of yours.'
+    for (const fellBack of ['commander', 'players', 'games']) expect(engineDeckLine(report, { game: { asked: 'brawl', played: 'standard', fellBack } })).toBe(only)
+    expect(engineDeckLine(report, { game: { asked: 'brawl', played: 'standard', fellBack: 'engine' } })).toBe('The engine builds no Brawl deck of its own, so it plays a copy of yours.')
+    // At a Duel Commander table, which it builds none for, it says so by the engine's word.
+    expect(engineDeckLine({ asked: 'own', played: 'mirror', format: 'duel', fellBack: 'format' }, { game: { asked: 'duel', played: 'duel' } })).toBe('The engine builds no Duel Commander deck of its own, so it plays a copy of yours.')
+    // Another of the person's decks with no commander, in the words of the game dealt.
+    expect(engineDeckLine({ asked: 'deck', played: 'mirror', name: 'Leaderless', fellBack: 'commander' }, { game: { asked: 'brawl', played: 'brawl' } })).toBe('Leaderless came with no commander to lead it in a Brawl game, so the engine plays a copy of yours.')
   })
 
   it('names a format the app does not know by the engine\'s word for it', () => {

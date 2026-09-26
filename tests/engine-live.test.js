@@ -8,7 +8,12 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { startEngine, findEngine } from '../scripts/engine-bridge.mjs'
+import { commanderOf, toEngine } from '../scripts/relay-engine.mjs'
 import { validateDeck } from '../src/lib/deck.js'
+import { leaveOut, seatDeck } from '../src/lib/engine/deck.js'
+import { ledSeat, standInsFor } from '../src/lib/engine/stand-in.js'
+import { EXAMPLE_DECKS } from '../src/data/example-decks.js'
+import GUFF from './fixtures/example-guff.json'
 
 const command = findEngine()
 // Portal goblins: creatures to attack with and a burn spell that needs a target,
@@ -28,13 +33,13 @@ describe.skipIf(!command)('the engine on the wire', () => {
 
   it('says who it is, and knows the whole corpus rather than one set', async () => {
     expect(hello.engine).toBe('argentum')
-    expect(hello.protocol).toBe(9)
+    expect(hello.protocol).toBe(10)
     // The formats an engine's seat can be dealt a deck of its own in (protocol 7):
     // every one ConstructedDeckGenerator builds to, and since protocol 8 Commander,
-    // which CommanderDeckGenerator builds, at a Commander table.
-    expect(hello.decks.formats).toEqual(['standard', 'pioneer', 'modern', 'legacy', 'vintage', 'pauper', 'premodern', 'commander'])
-    // The games it deals (protocol 8).
-    expect(hello.formats).toEqual(['standard', 'commander'])
+    // which CommanderDeckGenerator builds, at a Commander table; since protocol 10 Brawl, at a Brawl table.
+    expect(hello.decks.formats).toEqual(['standard', 'pioneer', 'modern', 'legacy', 'vintage', 'pauper', 'premodern', 'commander', 'brawl'])
+    // The games it deals (protocol 8), and since protocol 10 Duel Commander and Brawl.
+    expect(hello.formats).toEqual(['standard', 'commander', 'duel', 'brawl'])
     // The levels, weakest first, each Argentum's own profile (Server.kt, LEVELS).
     expect(hello.levels).toEqual({ easy: 'v0', intermediate: 'production-raceclock', hard: 'production-candidate-expiring' })
     // What a person may choose (protocol 5): what `act` takes, the costs it can
@@ -1378,10 +1383,279 @@ describe.skipIf(!command)('the engine on the wire', () => {
       expect(plain.seats[1].deck).toMatchObject({ asked: 'own', played: 'mirror', fellBack: 'format', why: 'A "commander" deck of its own is built only for a Commander game.' })
     }, 120_000)
 
+    /*
+     * A stand-in commander (HANDOFF.md §3 item 19): the app's own example deck,
+     * Commodore Guff's, whose commander the engine does not know, led by the one
+     * legendary creature of its own the rules allow, found by the app's own code
+     * from the engine's own answers — which cards it knows, and how it describes
+     * each — and Scryfall's record of the commander (tests/fixtures/example-guff.json).
+     * Dealt and played as the table deals it: the stand-in sent as the commander
+     * the engine is told it is, and nothing of what it stands in for.
+     */
+    it('deals and plays a Commander game led by a stand-in: the Commodore Guff example deck, led by Narset, Enlightened Master', async () => {
+      const example = EXAMPLE_DECKS.find((d) => d.id === 'commodore-guff')
+      const names = { ...Object.fromEntries(example.main.map((e) => [e.name, e.quantity])), [example.commanders[0]]: 1 }
+      const told = await engine.call('check', { deck: names })
+      // What the fixture says the engine knows is what it knows, so the lobby's and the browser's tests hold to the pin.
+      expect(told).toMatchObject({ known: GUFF.known, total: GUFF.total, unknown: GUFF.unknown })
+      const known = Object.fromEntries(Object.entries(names).filter(([name]) => !told.unknown.includes(name)))
+      const plain = await engine.call('new', { players: [{ name: 'A', deck: known }, { name: 'B', deck: known, ai: 'heuristic' }], seed: 1 })
+      const described = (await engine.call('decklist', { seat: plain.seats[0].id })).cards
+      expect(described.map((c) => ({ name: c.name, type_line: c.typeLine, mana_cost: c.manaCost, color_identity: c.identity }))).toEqual(GUFF.cards)
+      // The deck as a player has it, each card with the fields a Scryfall record gives the app.
+      const records = new Map(described.map((c) => [c.name, { name: c.name, type_line: c.typeLine, color_identity: c.identity }]))
+      const deckOf = {
+        id: 'guff', formatId: 'commander', commanders: ['c0'],
+        main: example.main.map((e, i) => ({ cardId: `m${i}`, quantity: e.quantity })),
+        cardNames: { c0: example.commanders[0], ...Object.fromEntries(example.main.map((e, i) => [`m${i}`, e.name])) },
+      }
+      const byId = { c0: GUFF.commander, ...Object.fromEntries(example.main.map((e, i) => [`m${i}`, records.get(e.name) ?? null])) }
+      const find = (id) => byId[id] ?? null
+      expect(standInsFor(deckOf, find, told.unknown).map((s) => s.name)).toEqual(['Narset, Enlightened Master'])
+      const led = ledSeat(leaveOut(seatDeck(deckOf, find), told.unknown), 'Narset, Enlightened Master', { deck: deckOf, lookup: find, left: told.unknown })
+      expect(led.lead).toEqual({ name: 'Narset, Enlightened Master', for: 'Commodore Guff' })
+      expect(led.seat.commander.standsFor).toBe('Commodore Guff')
+      // Sent as the room sends it, through the relay's own reading of a sit's commander
+      // and its own shaping of it for the engine: the card by name, and nothing of what it
+      // stands in for (found in the review of items 19 and 20, where this test took the
+      // field off itself, and would have passed had the room stopped doing so).
+      const commander = toEngine(commanderOf(led.seat.commander))
+      const players = [{ name: 'You', deck: led.seat.deck, commander, autoPass: true, answers: hello.choices.decisions }, { name: 'Bot', ai: 'heuristic', level: 'intermediate', deck: 'mirror' }]
+      expect(commander).toEqual({ name: 'Narset, Enlightened Master' })
+      expect(JSON.stringify(players)).not.toMatch(/standsFor|Commodore Guff/)
+      let s = await engine.call('new', { format: 'commander', seed: 5, players })
+      expect(s.format).toBe('commander')
+      // The engine's copy of the deck is led by the same card, as the room then says.
+      expect(s.seats.map((x) => x.commander)).toEqual(['Narset, Enlightened Master', 'Narset, Enlightened Master'])
+      expect(s.seats[1].deck).toMatchObject({ asked: 'mirror', played: 'mirror', cards: 45, colours: ['W', 'U', 'R'], commander: 'Narset, Enlightened Master' })
+      const [you, bot] = s.seats.map((x) => x.id)
+      let { state } = await engine.call('view', { viewer: you })
+      expect(state.players.map((p) => p.life)).toEqual([40, 40])
+      for (const who of [you, bot]) {
+        const command = zoneOf(state, who, 'Command')
+        expect(command.cardIds.map((id) => state.cards[id])).toEqual([expect.objectContaining({ name: 'Narset, Enlightened Master', isCommander: true })])
+      }
+      // The other 44 cards in hand and library. (Nothing is asked here of the real
+      // commander being absent from the game: the engine does not know the card, so
+      // it could not be there whatever it was sent, and the check proved nothing.)
+      expect(zoneOf(state, you, 'Library').size + zoneOf(state, you, 'Hand').size).toBe(44)
+      // Played as the scripts here play a person: a stand-in the engine offers from the
+      // command zone cast at once, else a land, else the first play worth making, chosen
+      // whole by the engine; no attacks and no blocks; every question the engine's choice.
+      let cast = null
+      for (let n = 0; n < 800 && !s.over && s.turn <= 14; n++) {
+        if (s.waiting === 'decision') { s = await engine.call('decide', { auto: true }); continue }
+        const offers = s.actions ?? []
+        const fromCommand = offers.find((a) => a.from === 'command' && a.affordable)
+        if (fromCommand && !cast) { cast = { turn: s.turn, manaCost: fromCommand.manaCost, commanderTax: fromCommand.commanderTax }; s = await engine.call('act', { index: fromCommand.index, auto: true }); continue }
+        const land = offers.find((a) => a.type === 'PlayLand')
+        if (land) { s = await engine.call('act', { index: land.index }); continue }
+        const play = offers.find((a) => a.meaningful && a.affordable && !a.mana && !['DeclareAttackers', 'DeclareBlockers'].includes(a.type) && a.from !== 'command')
+        if (play) { s = await engine.call('act', { index: play.index, auto: true }); continue }
+        const declare = offers.find((a) => a.type === 'DeclareAttackers' || a.type === 'DeclareBlockers')
+        if (declare) { s = await engine.call('act', { index: declare.index, ...(declare.type === 'DeclareAttackers' ? { attackers: {} } : { blockers: {} }) }); continue }
+        s = await engine.call('act', { index: (offers.find((a) => a.type === 'PassPriority') ?? offers[0]).index })
+      }
+      // Cast from the command zone for its own cost, no tax the first time (903.8), and on the battlefield a commander.
+      expect(cast).toEqual({ turn: 11, manaCost: '{3}{U}{R}{W}', commanderTax: { casts: 0, generic: 0 } })
+      ;({ state } = await engine.call('view', { viewer: you }))
+      const narset = Object.values(state.cards).filter((c) => c.name === 'Narset, Enlightened Master' && c.ownerId === you)
+      expect(narset).toEqual([expect.objectContaining({ isCommander: true, zone: expect.objectContaining({ zoneType: 'Battlefield' }) })])
+      expect(zoneOf(state, you, 'Command').cardIds).toEqual([])
+      expect(s.turn).toBeGreaterThan(11)
+    }, 300_000)
+
     it('refuses a Commander game with a player who has no commander or one it does not know, and a game it does not deal', async () => {
       await expect(engine.call('new', { format: 'commander', players: [{ name: 'You', deck: LIBRARY }, person('B')] })).rejects.toThrow('You has no commander, and every player in a Commander game has one.')
       await expect(engine.call('new', { format: 'commander', players: [person('You', { commander: 'Made-Up Legend' }), person('B')] })).rejects.toThrow("The engine does not know You's commander, Made-Up Legend.")
-      await expect(engine.call('new', { format: 'brawl', players: [person('A'), person('B')] })).rejects.toThrow('The engine deals no "brawl" game; it deals "standard" and "commander".')
+      // Oathbreaker, which the owner's decisions leave to the ordinary rules (HANDOFF.md §3 items 18 and 20).
+      await expect(engine.call('new', { format: 'oathbreaker', players: [person('A'), person('B')] })).rejects.toThrow('The engine deals no "oathbreaker" game; it deals "standard", "commander", "duel" and "brawl".')
+    }, 60_000)
+  })
+
+  /**
+   * Duel Commander and Brawl (protocol 10, HANDOFF.md §3 item 20, the owner's
+   * decision of 2026-09-25): each Argentum's own Format.Commander at the game's
+   * own life total, for two players, in which commander damage loses nobody —
+   * Brawl's 903.12h, and Duel Commander's committee's 506.1a. Dealt and played
+   * against the real engine, and the one thing they change that a game can show
+   * played to it: a commander's combat damage past 21 ends a Commander game and
+   * not a Brawl one.
+   */
+  describe('Duel Commander and Brawl (protocol 10)', () => {
+    const LIBRARY = { Forest: 50, Plains: 49 }
+    const RHYS = { name: 'Rhys the Redeemed', set: 'shm', number: '237' }
+    const person = (name, extra = {}) => ({ name, deck: LIBRARY, commander: RHYS, autoPass: true, ...extra })
+    const zoneOf = (state, owner, type) => state.zones.find((z) => z.zoneId.zoneType === type && z.zoneId.ownerId === owner)
+    const NO_LOSS = 2147483647
+
+    it.each([
+      ['duel', 20],
+      ['brawl', 25],
+    ])('deals %s at its own life total, commanders in the command zone, and says the game\'s rules', async (format, life) => {
+      const status = await engine.call('new', { format, players: [person('A'), person('B')], seed: 3 })
+      expect(status.format).toBe(format)
+      expect(status.rules).toEqual({ life, deckSize: 100, commanderDamage: null })
+      expect(status.seats.map((s) => s.commander)).toEqual(['Rhys the Redeemed', 'Rhys the Redeemed'])
+      const [a, b] = status.seats.map((s) => s.id)
+      const { state } = await engine.call('view', { viewer: a })
+      expect(state.players.map((p) => p.life)).toEqual([life, life])
+      for (const who of [a, b]) {
+        const command = zoneOf(state, who, 'Command')
+        expect(command.cardIds.map((id) => state.cards[id])).toEqual([expect.objectContaining({ name: 'Rhys the Redeemed', isCommander: true })])
+        expect(zoneOf(state, who, 'Library').size + (zoneOf(state, who, 'Hand')?.size ?? 0) + 1).toBe(100)
+      }
+      // Commander says its own numbers too, as every Commander game since M6 was dealt.
+      expect((await engine.call('new', { format: 'commander', players: [person('A'), person('B')], seed: 3 })).rules).toEqual({ life: 40, deckSize: 100, commanderDamage: 21 })
+    }, 60_000)
+
+    it('plays a Duel Commander game: the commander cast from the command zone, and its damage tallied towards no loss', async () => {
+      let s = await engine.call('new', { format: 'duel', players: [person('A'), person('B')], seed: 3 })
+      const [A, B] = s.seats.map((x) => x.id)
+      const casts = []
+      for (let i = 0; i < 400 && !s.over && s.turn <= 9; i++) {
+        const who = s.actor
+        if (s.waiting === 'decision') { s = await engine.call('decide', { auto: true }); continue }
+        const offers = s.actions
+        const land = offers.find((a) => a.type === 'PlayLand')
+        if (land) { s = await engine.call('act', { index: land.index }); continue }
+        const cast = offers.find((a) => a.from === 'command' && a.affordable)
+        if (cast) { casts.push({ who, turn: s.turn, manaCost: cast.manaCost, commanderTax: cast.commanderTax }); s = await engine.call('act', { index: cast.index }); continue }
+        const attack = offers.find((a) => a.type === 'DeclareAttackers')
+        // A attacks with everything it can; B never does, and never blocks.
+        if (attack) { s = await engine.call('act', { index: attack.index, attackers: who === A ? Object.fromEntries((attack.validAttackers ?? []).map((id) => [id, B])) : {} }); continue }
+        const block = offers.find((a) => a.type === 'DeclareBlockers')
+        if (block) { s = await engine.call('act', { index: block.index, blockers: {} }); continue }
+        s = await engine.call('act', { index: offers.find((a) => a.type === 'PassPriority').index })
+      }
+      // Each commander cast from its command zone on its owner's first turn, no tax (903.8).
+      expect(casts.slice(0, 2)).toEqual([
+        { who: A, turn: 1, manaCost: '{G/W}', commanderTax: { casts: 0, generic: 0 } },
+        { who: B, turn: 2, manaCost: '{G/W}', commanderTax: { casts: 0, generic: 0 } },
+      ])
+      const { state } = await engine.call('view', { viewer: A })
+      const b = state.players.find((p) => p.playerId === B)
+      // A's commander hit B on its turns 3 to 9, a point each; Argentum tallies it, towards a threshold no game reaches.
+      expect(b.commanderDamage).toEqual([expect.objectContaining({ commanderName: 'Rhys the Redeemed', controllerId: A, amount: 4, threshold: NO_LOSS })])
+      expect(b.life).toBe(16)
+      expect(s.over).toBe(false)
+    }, 120_000)
+
+    /*
+     * Kamahl, Pit Fighter, a 6/1 with haste the engine knows (Onslaught), leads a
+     * deck of Mountains on each side; A casts it from the command zone the turn it
+     * can and attacks with it every turn after, and B never blocks. Four hits are 24
+     * combat damage from one commander: in Commander that loses B the game at 16
+     * life (903.10a), and in Brawl it does not (903.12h), and B plays on at 1.
+     */
+    const KAMAHL = (name) => ({ name, deck: { Mountain: 99 }, commander: 'Kamahl, Pit Fighter', autoPass: true })
+    const attackThrough = async (format) => {
+      let s = await engine.call('new', { format, players: [KAMAHL('A'), KAMAHL('B')], seed: 7 })
+      const [A, B] = s.seats.map((x) => x.id)
+      const hits = []
+      for (let i = 0; i < 600 && !s.over && s.turn <= 17; i++) {
+        const who = s.actor
+        if (s.waiting === 'decision') { s = await engine.call('decide', { auto: true }); continue }
+        const offers = s.actions
+        const land = offers.find((a) => a.type === 'PlayLand')
+        if (land) { s = await engine.call('act', { index: land.index }); continue }
+        const cast = offers.find((a) => a.from === 'command' && a.affordable)
+        if (cast && who === A) { s = await engine.call('act', { index: cast.index, auto: true }); continue }
+        const attack = offers.find((a) => a.type === 'DeclareAttackers')
+        if (attack) {
+          const go = who === A && (attack.validAttackers ?? []).length > 0
+          if (go) hits.push(s.turn)
+          s = await engine.call('act', { index: attack.index, attackers: go ? Object.fromEntries(attack.validAttackers.map((id) => [id, B])) : {} })
+          continue
+        }
+        const block = offers.find((a) => a.type === 'DeclareBlockers')
+        if (block) { s = await engine.call('act', { index: block.index, blockers: {} }); continue }
+        s = await engine.call('act', { index: offers.find((a) => a.type === 'PassPriority').index })
+      }
+      const { state } = await engine.call('view', { viewer: A })
+      return { s, A, hits, b: state.players.find((p) => p.playerId === B) }
+    }
+
+    it('ends a Commander game at 21 combat damage from one commander, and not a Brawl game, which plays on (903.10a, 903.12h)', async () => {
+      const commander = await attackThrough('commander')
+      expect(commander.hits).toEqual([11, 13, 15, 17])
+      expect(commander.s).toMatchObject({ over: true, winner: commander.A })
+      expect(commander.b.life).toBe(16)
+      expect(commander.b.commanderDamage).toEqual([expect.objectContaining({ amount: 24, threshold: 21 })])
+      const brawl = await attackThrough('brawl')
+      expect(brawl.hits).toEqual([11, 13, 15, 17])
+      expect(brawl.s.over).toBe(false)
+      expect(brawl.b.life).toBe(1)
+      expect(brawl.b.commanderDamage).toEqual([expect.objectContaining({ amount: 24, threshold: NO_LOSS })])
+    }, 180_000)
+
+    it('builds a Brawl deck of its own for a Brawl game, legal by the app\'s own validator, and plays it', async () => {
+      let s = await engine.call('new', { format: 'brawl', players: [person('You'), { name: 'Bot', ai: 'heuristic', level: 'intermediate', deck: 'own', format: 'brawl' }], seed: 1, pace: true })
+      const bot = s.seats[1]
+      expect(bot.deck).toMatchObject({ asked: 'own', played: 'own', cards: 100, format: 'brawl', formatName: 'Brawl', from: 'format' })
+      expect(bot.deck.commander).toBe(bot.commander)
+      const list = await engine.call('decklist', { seat: bot.id })
+      const KEYS = ['standard', 'pioneer', 'modern', 'legacy', 'vintage', 'commander', 'brawl', 'standardbrawl', 'pauper', 'premodern']
+      const cards = new Map(list.cards.map((c) => [c.name, { id: c.name, name: c.name, type_line: c.typeLine, color_identity: c.identity, legalities: Object.fromEntries(KEYS.map((k) => [k, c.legal.includes(k) ? 'legal' : 'not_legal'])) }]))
+      const copies = (v) => (Array.isArray(v) ? v.reduce((n, x) => n + copies(x), 0) : typeof v === 'number' ? v : v.count)
+      const appDeck = { formatId: 'brawl', main: Object.entries(list.deck).map(([name, v]) => ({ cardId: name, quantity: copies(v) })), sideboard: [], commanders: [list.commander], signatureSpell: null }
+      const verdict = validateDeck(appDeck, cards, { now: '2026-09-25' })
+      expect(verdict.violations.filter((v) => v.severity === 'error')).toEqual([])
+      expect(verdict.counts.total).toBe(100)
+      // Played on, paced as a room plays it, the person passing: the engine takes its turns at 25 life each.
+      const you = s.seats[0].id
+      for (let i = 0; i < 400 && !s.over && s.turn <= 6; i++) {
+        if (s.waiting === 'engine') { s = await engine.call('continue'); continue }
+        if (s.waiting === 'decision') { s = await engine.call('decide', { auto: true }); continue }
+        const pass = s.actions.find((a) => a.type === 'PassPriority') ?? s.actions.find((a) => a.type === 'DeclareAttackers' || a.type === 'DeclareBlockers')
+        s = await engine.call('act', { index: pass.index, ...(pass.type === 'DeclareAttackers' ? { attackers: {} } : pass.type === 'DeclareBlockers' ? { blockers: {} } : {}) })
+      }
+      expect(s.turn).toBeGreaterThan(6)
+      const { state } = await engine.call('view', { viewer: you })
+      expect(state.players.find((p) => p.playerId === you).life).toBeLessThanOrEqual(25)
+    }, 180_000)
+
+    it('deals the copy for a Duel Commander deck of its own, having no card pool to build one from, and says so', async () => {
+      const s = await engine.call('new', { format: 'duel', players: [person('You'), { name: 'Bot', ai: 'heuristic', deck: 'own', format: 'duel' }], seed: 2 })
+      expect(s.seats[1].deck).toMatchObject({ asked: 'own', played: 'mirror', format: 'duel', fellBack: 'format', why: 'The engine builds no "duel" deck of its own.', commander: 'Rhys the Redeemed' })
+      // A Brawl deck of its own asked at another game is the copy, as a Commander one is.
+      const other = await engine.call('new', { format: 'commander', players: [person('You'), { name: 'Bot', ai: 'heuristic', deck: 'own', format: 'brawl' }], seed: 2 })
+      expect(other.seats[1].deck).toMatchObject({ played: 'mirror', fellBack: 'format', why: 'A Commander game is dealt a Commander deck of its own, and "brawl" is not one.' })
+      const plain = await engine.call('new', { players: [{ name: 'You', deck }, { name: 'Bot', ai: 'heuristic', deck: 'own', format: 'brawl' }], seed: 2 })
+      expect(plain.seats[1].deck).toMatchObject({ played: 'mirror', fellBack: 'format', why: 'A "brawl" deck of its own is built only for a Brawl game.' })
+    }, 120_000)
+
+    it('deals a Brawl deck led by a legendary planeswalker (903.12c) as its commander, and casts it from the command zone', async () => {
+      // Garruk Wildspeaker, a Lorwyn planeswalker the engine knows, at the head of a deck of Forests: Argentum deals
+      // whatever card it is sent as the commander, and offers any but a land from the command zone. Whether the deck
+      // is legal in Brawl is the app's deck checker's to say, not the engine's.
+      const garruk = (name) => ({ name, deck: { Forest: 99 }, commander: 'Garruk Wildspeaker', autoPass: true })
+      let s = await engine.call('new', { format: 'brawl', seed: 3, players: [garruk('A'), garruk('B')] })
+      const A = s.seats[0].id
+      let cast = null
+      for (let i = 0; i < 400 && !s.over && s.turn <= 8; i++) {
+        if (s.waiting === 'decision') { s = await engine.call('decide', { auto: true }); continue }
+        const offers = s.actions
+        const land = offers.find((a) => a.type === 'PlayLand')
+        if (land) { s = await engine.call('act', { index: land.index }); continue }
+        const fromCommand = offers.find((a) => a.from === 'command' && a.affordable)
+        if (fromCommand && s.actor === A && !cast) { cast = { turn: s.turn, manaCost: fromCommand.manaCost }; s = await engine.call('act', { index: fromCommand.index, auto: true }); continue }
+        const declare = offers.find((a) => a.type === 'DeclareAttackers' || a.type === 'DeclareBlockers')
+        if (declare) { s = await engine.call('act', { index: declare.index, ...(declare.type === 'DeclareAttackers' ? { attackers: {} } : { blockers: {} }) }); continue }
+        s = await engine.call('act', { index: offers.find((a) => a.type === 'PassPriority').index })
+      }
+      // On A's fourth turn, its fourth Forest down, for {2}{G}{G}, and on the battlefield a commander with its loyalty.
+      expect(cast).toEqual({ turn: 7, manaCost: '{2}{G}{G}' })
+      const { state } = await engine.call('view', { viewer: A })
+      expect(Object.values(state.cards).filter((c) => c.name === 'Garruk Wildspeaker' && c.ownerId === A)).toEqual([
+        expect.objectContaining({ isCommander: true, typeLine: 'Legendary Planeswalker — Garruk', zone: expect.objectContaining({ zoneType: 'Battlefield' }) }),
+      ])
+    }, 120_000)
+
+    it('refuses either to more than two players, in words', async () => {
+      for (const [format, name] of [['duel', 'Duel Commander'], ['brawl', 'Brawl']]) {
+        await expect(engine.call('new', { format, players: [person('A'), person('B'), person('C')] })).rejects.toThrow(`A ${name} game is dealt to two players, and this one has 3.`)
+      }
     }, 60_000)
   })
 
@@ -1516,6 +1790,64 @@ describe.skipIf(!command)('the engine on the wire', () => {
       expect(vb.state.zones.some((z) => z.zoneId.zoneType === 'Command')).toBe(true)
       expect(JSON.stringify(vb)).toBe(JSON.stringify(va))
       await inStep(status, back, seats, 20)
+    }, 300_000)
+
+    /*
+     * A Brawl game taken back keeps Brawl's numbers, which travel only inside
+     * Argentum's own GameState (restoreTable keeps the word alone): 25 life, and
+     * commander damage towards a threshold no tally reaches (903.12h). Kamahl, Pit
+     * Fighter, a 6/1 with haste, leads a deck of Mountains on each side, as in the
+     * Brawl game above that plays on at 1 life; A attacks with it every turn it can
+     * and B never blocks. Kept after two hits, 12 damage, and taken back; played on
+     * in both to four hits, 24 damage, which would end a game at Argentum's 21, and
+     * the game taken back plays on as the one kept does (found in the review of item
+     * 20, where nothing read the `rules` a restore says, nor took back such a game).
+     */
+    it('takes back a Brawl game at Brawl\'s numbers: 25 life, and commander damage that loses nobody past 21', async () => {
+      const NO_LOSS = 2147483647
+      const kamahl = (name) => ({ name, deck: { Mountain: 99 }, commander: 'Kamahl, Pit Fighter', autoPass: true })
+      const dealt = await engine.call('new', { format: 'brawl', players: [kamahl('A'), kamahl('B')], seed: 7 })
+      const seats = dealt.seats.map((s) => s.id)
+      const [A, B] = seats
+      /** A's commander cast and sent in every turn, B passing and never blocking, every question the engine's choice. */
+      const attacking = (s) => {
+        if (s.waiting === 'decision') return ['decide', { auto: true }]
+        const offers = s.actions
+        const land = offers.find((a) => a.type === 'PlayLand')
+        if (land) return ['act', { index: land.index }]
+        const cast = offers.find((a) => a.from === 'command' && a.affordable)
+        if (cast && s.actor === A) return ['act', { index: cast.index, auto: true }]
+        const attack = offers.find((a) => a.type === 'DeclareAttackers')
+        if (attack) return ['act', { index: attack.index, attackers: s.actor === A ? Object.fromEntries((attack.validAttackers ?? []).map((id) => [id, B])) : {} }]
+        const block = offers.find((a) => a.type === 'DeclareBlockers')
+        if (block) return ['act', { index: block.index, blockers: {} }]
+        return ['act', { index: offers.find((a) => a.type === 'PassPriority').index }]
+      }
+      const tallyOf = async (e) => (await e.call('view', { viewer: A })).state.players.find((p) => p.playerId === B)
+      let status = dealt
+      for (let i = 0; i < 600 && !status.over && (await tallyOf(engine)).commanderDamage?.[0]?.amount !== 12; i++) status = await engine.call(...attacking(status))
+      const kept = await tallyOf(engine)
+      expect(kept.commanderDamage).toEqual([expect.objectContaining({ amount: 12, threshold: NO_LOSS })])
+      expect(kept.life).toBe(13)
+      const { snapshot } = await engine.call('snapshot')
+      const back = await other.call('restore', { snapshot, replace: true })
+      expect(back.format).toBe('brawl')
+      expect(back.rules).toEqual({ life: 25, deckSize: 100, commanderDamage: null })
+      expect(stopOf(back)).toBe(stopOf(status))
+      expect(await views(other, seats)).toBe(await views(engine, seats))
+      expect(await tallyOf(other)).toEqual(kept)
+      // Played on in both, the same choice in each, past 21 from the one commander.
+      let again = back
+      for (let i = 0; i < 600 && !status.over && (await tallyOf(engine)).commanderDamage[0].amount < 24; i++) {
+        const [op, params] = attacking(status)
+        ;[status, again] = await Promise.all([engine.call(op, params), other.call(op, params)])
+        expect(stopOf(again)).toBe(stopOf(status))
+      }
+      const after = await tallyOf(other)
+      expect(after.commanderDamage).toEqual([expect.objectContaining({ amount: 24, threshold: NO_LOSS })])
+      expect(after.life).toBe(1)
+      expect(again.over).toBe(false)
+      expect(await views(other, seats)).toBe(await views(engine, seats))
     }, 300_000)
 
     it('refuses in words a game into a process that holds one, and a text that is not a game it kept', async () => {

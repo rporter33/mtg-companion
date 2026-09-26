@@ -173,7 +173,9 @@ import java.util.Random
  *    commander in the command zone, commander tax, 21 combat damage from one commander —
  *    with the CR 903.9a question left to the commander's owner, as Argentum leaves it by
  *    default. Every player then names a commander, and the engine's seat may have one of its
- *    own built by Argentum's `CommanderDeckGenerator`.
+ *    own built by Argentum's `CommanderDeckGenerator`. Duel Commander and Brawl are the same
+ *    `Format.Commander` at their own life totals, for two players, with no loss by commander
+ *    damage (`GAME_FORMATS`).
  *  - **What is worth watching is Law 1's question turned around.** A paced
  *    table stops after each of the engine's own plays so they can be seen
  *    happening, but not after a priority pass or a mana ability: the same
@@ -233,7 +235,15 @@ import java.util.Random
 // number generator is a 64-bit number, which a relay reading JSON as JavaScript would round to another
 // one, and so to another game. An engine at 8 refuses both as unknown ops, so a relay reading 8 keeps
 // no game and must say so, rather than promise a room that could come back.
-const val PROTOCOL = 9
+// 10: a Commander game may be Duel Commander or Brawl (HANDOFF.md §3 item 20). "new" takes "format":
+// "duel" or "brawl" for a game of two, each Argentum's Format.Commander at that game's own life total,
+// with no loss by commander damage; an engine's seat asked for "own" at a Brawl table is built a Brawl
+// deck of its own (Argentum's DeckFormat.BRAWL), and at a Duel Commander table is dealt the copy, since
+// Argentum has no Duel Commander card pool. The reply to "new" and "restore" says "rules" for any
+// Commander game: its life total, its deck size and the commander damage that loses it, or null where
+// none does. "hello" lists the two in "formats". An engine at 9 refuses both words as games it does not
+// deal, so a relay reading 9 must not ask for either.
+const val PROTOCOL = 10
 
 /**
  * The decisions put to a person whatever their client said, because every client since the
@@ -295,28 +305,79 @@ private val MULLIGAN_OFFERS = setOf("KeepHand", "TakeMulligan", "BottomCards")
 private val BUILDS: Map<String, DeckFormat> = DeckFormat.entries.filterNot { it.isCommanderShape }.associateBy { it.scryfallKey }
 
 /**
+ * The commander damage that loses a Commander game whose own rules have no such loss (protocol 10):
+ * Brawl's (CR 903.12h, which sets aside the state-based action of 704.6c) and Duel Commander's (its
+ * committee's rules, 506.1a). Argentum's `Format.Commander` always has a threshold — a game uses
+ * commanders exactly where it has one (`Format.usesCommanders`) — and its state-based action loses a
+ * player whose tally from one commander reaches it (`CommanderDamageLossCheck`), so a game in which
+ * commander damage loses nobody is asked for as one whose threshold no tally can reach. Argentum still
+ * keeps the tally and puts it in the view, with this as its threshold; the reply's `rules` says null.
+ */
+private const val NO_COMMANDER_DAMAGE_LOSS = Int.MAX_VALUE
+
+/**
  * The game formats this process deals (protocol 8, HANDOFF.md M6), by the word `new` takes: the
  * ordinary rules, Argentum's `Format.Standard` — what every table before this was dealt, whatever the
  * decks' own format — and Commander, Argentum's `Format.Commander` as it stands: 40 life, a hundred
  * cards, the commander in the command zone, commander tax, and 21 combat damage from one commander.
  * Its `alwaysDivertToCommand` is left off, as Argentum leaves it, so the CR 903.9a question is the
  * commander's owner's to answer, a yes or no every client can already put on screen.
+ *
+ * Since protocol 10 (HANDOFF.md §3 item 20), Duel Commander and Brawl too, each as the same
+ * `Format.Commander` with its own numbers, which is how Argentum's own comments on the type say those
+ * games are to be had ("Commander-shaped data with different field values"). Duel Commander is not in
+ * the Comprehensive Rules; its numbers are its committee's (300.1a: 20 life; 402.1b: a hundred cards;
+ * 506.1a: no loss by commander damage). Brawl's are the Comprehensive Rules' for two players (903.12f:
+ * 25 life; 903.12h: no loss by commander damage), at a hundred cards, which is the Brawl the app's decks
+ * are built to (Scryfall's `brawl`, Argentum's `DeckFormat.BRAWL`) where 903.12d's is sixty; the deck
+ * size is Argentum's validator's to hold, and its initializer deals what it is sent. What Argentum does
+ * not take from the format is not dealt here either: Brawl's free first mulligan (903.12g) — Argentum
+ * makes a first mulligan free only at a table of more than two — and every rule of deck construction,
+ * which are the app's deck checker's. Argentum's own Brawl preset (`CommanderPreset.BRAWL`, 25 life and
+ * 16 commander damage) is its tuning for drafted sixty-card decks, and is not this.
  */
-private val GAME_FORMATS: Map<String, Format> = linkedMapOf("standard" to Format.Standard, "commander" to Format.Commander())
+private val GAME_FORMATS: Map<String, Format> = linkedMapOf(
+    "standard" to Format.Standard,
+    "commander" to Format.Commander(),
+    "duel" to Format.Commander(startingLife = 20, commanderDamageThreshold = NO_COMMANDER_DAMAGE_LOSS),
+    "brawl" to Format.Commander(startingLife = 25, commanderDamageThreshold = NO_COMMANDER_DAMAGE_LOSS),
+)
 
 /**
- * The formats an engine's seat can be built a Commander deck of its own in, at a Commander table:
- * Commander alone, the one commander-shaped game this process deals. `CommanderDeckGenerator` builds
- * Brawl's shapes too, and a Brawl game is not one this process deals.
+ * The games dealt only to two players (protocol 10): Duel Commander is made for one against one (its
+ * committee's rules, 205.1a), and Brawl's life total is 25 only in a game of two, and 30 in one of more
+ * (903.12f), which this process does not deal.
  */
-private val COMMANDER_BUILDS: Map<String, DeckFormat> = mapOf(DeckFormat.COMMANDER.scryfallKey to DeckFormat.COMMANDER)
+private val TWO_PLAYER_GAMES = setOf("duel", "brawl")
 
 /**
- * How many cards a Commander deck of the engine's own holds, its commander counted (CR 903.5a):
- * `Format.Commander`'s own deck size. `CommanderDeckGenerator` fills its library with basics to reach
- * it exactly, and a deck of another size is one it could not build.
+ * The formats an engine's seat can be built a Commander deck of its own in, by the game it is dealt
+ * in: at a Commander table a Commander deck, and since protocol 10 at a Brawl table a Brawl deck, by
+ * Argentum's own `DeckFormat.BRAWL` — Scryfall's `brawl`, a hundred cards. Argentum has no Duel
+ * Commander format among its `DeckFormat`s, and its legality data's word for one is dropped as it is
+ * read (`LegalityData`), so there is no Duel Commander card pool to build from, and none is built.
  */
-private val COMMANDER_SIZE = Format.Commander().deckSize
+private val COMMANDER_BUILDS: Map<String, DeckFormat> = mapOf(
+    DeckFormat.COMMANDER.scryfallKey to DeckFormat.COMMANDER,
+    DeckFormat.BRAWL.scryfallKey to DeckFormat.BRAWL,
+)
+
+/** A game format by name, as a reason says it. */
+private val GAME_NAMES = mapOf("commander" to "Commander", "duel" to "Duel Commander", "brawl" to "Brawl")
+
+/**
+ * What a Commander game dealt holds a player to (protocol 10), off the game's own `Format`: its life
+ * total, its deck size, and the commander damage that loses it, or null where none does. Read off the
+ * game itself, so a game taken back says what it was dealt with. Null for a game with no commanders.
+ */
+private fun rulesOf(format: Format): JsonObject? {
+    val commander = format as? Format.Commander ?: return null
+    return buildJsonObject {
+        put("life", commander.startingLife)
+        put("deckSize", commander.deckSize)
+        put("commanderDamage", commander.commanderDamageThreshold.takeIf { it != NO_COMMANDER_DAMAGE_LOSS })
+    }
+}
 
 /**
  * How many cards a deck of the engine's own must hold to be dealt: Draftsim's constructed shape, the
@@ -1740,9 +1801,11 @@ private fun generate(corpus: Corpus, codes: List<String>, format: DeckFormat, se
  * The generator returns no deck where the pool holds no legal commander with colours to build
  * around ("no Commander deck from three Portal sets", in its own words), which is a pool too thin;
  * and it refuses a set it has not got in words. What comes back is held to what this table can deal:
- * a commander and a library that come to `COMMANDER_SIZE` exactly, every card a name a deck may hold.
+ * a commander and a library that come to [size] exactly — the game's own deck size, its commander
+ * counted (CR 903.5a), which the generator fills its library with basics to reach — every card a name
+ * a deck may hold.
  */
-private fun generateCommander(corpus: Corpus, codes: List<String>, format: DeckFormat, seed: Long): Generated {
+private fun generateCommander(corpus: Corpus, codes: List<String>, format: DeckFormat, seed: Long, size: Int): Generated {
     val built = try {
         CommanderDeckGenerator(corpus.boosters, corpus.registry, kotlin.random.Random(seed)).generate(codes, format)
     } catch (e: IllegalArgumentException) {
@@ -1754,8 +1817,8 @@ private fun generateCommander(corpus: Corpus, codes: List<String>, format: DeckF
     } ?: return Generated.Failed("thin", "No legal commander with colours to build around.")
     val commander = built.commander ?: return Generated.Failed("failed", "It built a deck with no commander.")
     val lines = built.deckList.map { (key, n) -> generatedLine(key, n) }
-    val size = lines.sumOf { it.count ?: 0 } + 1
-    if (size != COMMANDER_SIZE) return Generated.Failed("thin", "The deck came to $size cards, where Commander takes $COMMANDER_SIZE.")
+    val came = lines.sumOf { it.count ?: 0 } + 1
+    if (came != size) return Generated.Failed("thin", "The deck came to $came cards, where ${format.displayName} takes $size.")
     val strange = (lines.map { it.name } + commander).distinct().filter { resolveName(corpus, it) == null }
     if (strange.isNotEmpty()) return Generated.Failed("failed", "It chose ${strange.joinToString(", ")}, which a deck here cannot hold.")
     return Generated.Dealt(lines, Line(commander, 1, null, null))
@@ -1786,9 +1849,13 @@ private fun commanderOf(v: JsonElement?): Line? = when (v) {
  *
  * At a Commander table (protocol 8) every seat has a commander: a list of names brings its own as
  * `commander`, a copy is the person's with theirs, and a deck of its own is a Commander deck, its
- * commander chosen first by Argentum's `CommanderDeckGenerator`, falling back the same way.
+ * commander chosen first by Argentum's `CommanderDeckGenerator`, falling back the same way. `game` is
+ * the word of a Commander game being dealt, and null at a table dealt by the ordinary rules; since
+ * protocol 10 a deck of its own is built to that game's own format and to no other — a Brawl deck at
+ * a Brawl table — and at a Duel Commander table, which has no format to build to, is the copy.
  */
-private fun deckFor(corpus: Corpus, o: JsonObject, name: String, person: Brought?, seed: Long, commanderGame: Boolean = false): Built {
+private fun deckFor(corpus: Corpus, o: JsonObject, name: String, person: Brought?, seed: Long, game: String? = null): Built {
+    val commanderGame = game != null
     val deck = o["deck"]
     if (deck is JsonObject) return Built("deck", "deck", readLines(deck), readLines(o["sideboard"] as? JsonObject), commander = commanderOf(o["commander"]))
     val word = (deck as? JsonPrimitive)?.takeIf { it.isString }?.content
@@ -1809,15 +1876,18 @@ private fun deckFor(corpus: Corpus, o: JsonObject, name: String, person: Brought
     // other a constructed one. A Commander deck of its own is not built for a table dealt by the
     // ordinary rules, where it would have no command zone to begin in, so there the copy is dealt, as
     // every engine before protocol 8 dealt it.
-    val builds = if (commanderGame) COMMANDER_BUILDS else BUILDS
+    val builds = if (game != null) COMMANDER_BUILDS.filterKeys { it == game } else BUILDS
+    val gameName = GAME_NAMES[game] ?: "Commander"
     val format = formatWord?.let(builds::get)
         ?: return mirror("own", "format", when {
             formatWord == null -> "No format was given."
-            commanderGame -> "A Commander game is dealt a Commander deck of its own, and \"$formatWord\" is not one."
-            formatWord in COMMANDER_BUILDS -> "A \"$formatWord\" deck of its own is built only for a Commander game."
+            game != null && game !in COMMANDER_BUILDS -> "The engine builds no \"$game\" deck of its own."
+            game != null -> "A $gameName game is dealt a $gameName deck of its own, and \"$formatWord\" is not one."
+            formatWord in COMMANDER_BUILDS -> "A \"$formatWord\" deck of its own is built only for a ${GAME_NAMES[formatWord] ?: "Commander"} game."
             else -> "The engine builds no \"$formatWord\" deck of its own."
         })
-    val build = { codes: List<String> -> if (commanderGame) generateCommander(corpus, codes, format, seed) else generate(corpus, codes, format, seed) }
+    val size = GAME_FORMATS[game]?.deckSize ?: 0
+    val build = { codes: List<String> -> if (commanderGame) generateCommander(corpus, codes, format, seed, size) else generate(corpus, codes, format, seed) }
     // Argentum's set codes are Scryfall's in capitals, as printings' are (pinOf). A list, even an
     // empty one, asks for the sets in it; no list asks for the whole format. An empty one is a
     // person's deck with no set to go by, and falls back as sets the engine has not got do.
@@ -1885,8 +1955,10 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
     // process deals no game in is refused rather than dealt by rules nobody asked for.
     val formatWord = (params["format"] as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase() ?: "standard"
     val gameFormat = GAME_FORMATS[formatWord]
-        ?: throw Refused("The engine deals no \"$formatWord\" game; it deals ${GAME_FORMATS.keys.joinToString(" and ") { "\"$it\"" }}.")
+        ?: throw Refused("The engine deals no \"$formatWord\" game; it deals ${GAME_FORMATS.keys.map { "\"$it\"" }.let { it.dropLast(1).joinToString(", ") + " and " + it.last() }}.")
     val commanderGame = gameFormat.usesCommanders
+    // Duel Commander and Brawl are games of two (protocol 10), refused in words at a table of more.
+    if (formatWord in TWO_PLAYER_GAMES && players.size != 2) throw Refused("A ${GAME_NAMES[formatWord]} game is dealt to two players, and this one has ${players.size}.")
     val objects = players.map { it.jsonObject }
     val names = objects.mapIndexed { i, o -> o["name"]?.jsonPrimitive?.contentOrNull ?: "Player ${i + 1}" }
     val kinds = objects.map { playerOf(it) }
@@ -1899,7 +1971,7 @@ private fun newTable(corpus: Corpus, params: JsonObject): Table {
     // A person's deck is what they brought. A seat the engine plays may ask for a copy of theirs or
     // one of its own instead (protocol 7). Each engine seat's randomness is its own, so two seats
     // asking for a deck of their own at one table are not dealt the same one.
-    val built = objects.mapIndexed { i, o -> if (kinds[i].first == null) null else deckFor(corpus, o, names[i], person, seed + i, commanderGame) }
+    val built = objects.mapIndexed { i, o -> if (kinds[i].first == null) null else deckFor(corpus, o, names[i], person, seed + i, formatWord.takeIf { commanderGame }) }
     val commanders = mutableListOf<String?>()
     val leftOutOfSideboards = mutableListOf<List<String>>()
     val printingsMissed = mutableListOf<List<String>>()
@@ -2174,7 +2246,9 @@ fun main() {
                     JsonObject(t.status() + mapOf("seats" to seatsOf(t, corpus), "seed" to JsonPrimitive(t.seed)) +
                         (if (t.paced) mapOf("paced" to JsonPrimitive(true)) else emptyMap()) +
                         (if (t.opening) mapOf("mulligans" to JsonPrimitive(true)) else emptyMap()) +
-                        (if (t.format != "standard") mapOf("format" to JsonPrimitive(t.format)) else emptyMap()))
+                        (if (t.format != "standard") mapOf("format" to JsonPrimitive(t.format)) else emptyMap()) +
+                        // What a Commander game holds a player to, off the game dealt (protocol 10).
+                        (rulesOf(t.env.state.format)?.let { mapOf("rules" to it) } ?: emptyMap()))
                 }
                 // The game as it stands, as text (protocol 9): the relay keeps it beside the room and
                 // gives it back to a fresh process with `restore`. Text rather than JSON on the wire,
@@ -2200,7 +2274,8 @@ fun main() {
                     JsonObject(t.status() + mapOf("seats" to seatsOf(t, corpus), "seed" to JsonPrimitive(t.seed), "restored" to JsonPrimitive(true)) +
                         (if (t.paced) mapOf("paced" to JsonPrimitive(true)) else emptyMap()) +
                         (if (t.opening) mapOf("mulligans" to JsonPrimitive(true)) else emptyMap()) +
-                        (if (t.format != "standard") mapOf("format" to JsonPrimitive(t.format)) else emptyMap()))
+                        (if (t.format != "standard") mapOf("format" to JsonPrimitive(t.format)) else emptyMap()) +
+                        (rulesOf(t.env.state.format)?.let { mapOf("rules" to it) } ?: emptyMap()))
                 }
                 "turn" -> (table ?: throw Refused("No game yet. Send \"new\" first.")).status()
                 // One more of the engine's own actions, on a paced table. The relay asks

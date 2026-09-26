@@ -56,12 +56,12 @@ One request per line, one reply per line, correlated by `id`:
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"engine":"argentum","protocol":9,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"levels":{"easy":"v0","intermediate":"production-raceclock","hard":"production-candidate-expiring"},"choices":{"act":["targets","x","damage","cost","auto","cards"],"costs":["DiscardCard",…],"decisions":["ChooseTargets","YesNo","ChooseOption","SelectCards",…]},"formats":["standard","commander"],"decks":{"formats":["standard","pioneer","modern","legacy","vintage","pauper","premodern","commander"]},"load":{"ms":27342,"legalitiesMs":601,"heapMb":127,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order; `levels` are the strengths an engine seat may play at, weakest first, each with the Argentum profile behind it; `choices` is what a person may choose over this protocol (below); `formats` the games it deals (protocol 8, below); `decks.formats` the formats an engine's seat can be dealt a deck of its own in (protocol 7, below; Commander's only at a Commander table); `load.legalitiesMs` what stamping every card with the formats it is legal in took, of `load.ms` |
+| `{"op":"hello"}` | `{"engine":"argentum","protocol":10,"cards":13242,"sets":[{"code":"POR","name":"Portal","released":"1997-05-01","incomplete":false},…],"levels":{"easy":"v0","intermediate":"production-raceclock","hard":"production-candidate-expiring"},"choices":{"act":["targets","x","damage","cost","auto","cards"],"costs":["DiscardCard",…],"decisions":["ChooseTargets","YesNo","ChooseOption","SelectCards",…]},"formats":["standard","commander","duel","brawl"],"decks":{"formats":["standard","pioneer","modern","legacy","vintage","pauper","premodern","commander","brawl"]},"load":{"ms":27342,"legalitiesMs":601,"heapMb":127,"maxHeapMb":2048}}` — `cards` counts the names a deck may hold; `sets` are in release order; `levels` are the strengths an engine seat may play at, weakest first, each with the Argentum profile behind it; `choices` is what a person may choose over this protocol (below); `formats` the games it deals (protocol 8, and since 10 Duel Commander and Brawl, below); `decks.formats` the formats an engine's seat can be dealt a deck of its own in (protocol 7, below; Commander's only at a Commander table, and Brawl's only at a Brawl one); `load.legalitiesMs` what stamping every card with the formats it is legal in took, of `load.ms` |
 | `{"op":"cards"}` | `{"names":[…]}` — every name a deck may hold: no tokens and no back faces, though the engine knows both |
 | `{"op":"check","deck":{"Delver of Secrets // Insectile Aberration":4,"Made-Up Card":2},"sideboard":{…}}` | `{"known":4,"total":6,"unknown":["Made-Up Card"],"unknownSideboard":[]}` — which of a deck's cards the engine knows, before any game; unknown names come back exactly as sent |
 | `{"op":"new","players":[{"name":"You","deck":{"Mountain":{"count":14,"set":"por","number":"208"},"Raging Goblin":12},"sideboard":{"Lava Axe":2},"autoPass":true,"answers":["SelectCards","CombatResolution"]},{"name":"Bot","deck":{…},"ai":"heuristic","level":"intermediate"}],"seed":20260921,"pace":true,"mulligans":true}` | the table's status (below) plus `seats` and the `seed` it was dealt from, `paced` when the table was paced, and `mulligans` when it was dealt with the hands to keep (protocol 6, below); each seat says `sideboardLeftOut`, the sideboard cards it did not know, and `unknownPrintings`, the cards whose named printing it has not got; a seat the engine plays with its own judgement also says the `level` it took (null for none) and the Argentum `profile` it plays with; a person's seat says `asked`, the decisions it will be put rather than have answered for it |
 | `{"op":"new","players":[{"name":"You","deck":{…}},{"name":"Bot","ai":"heuristic","deck":"own","format":"standard","sets":["blb","dsk"]}],…}` / `"deck":"mirror"` | as above, and the engine's seat says what it was dealt as `deck`: `{"asked":"own","played":"own","cards":60,"colours":["W","G"],"format":"standard","formatName":"Standard","from":"sets","sets":[{"code":"BLB","name":"Bloomburrow"},…],"missingSets":[…]?,"fellBack":…?,"why":…?}` — a seat the engine plays may bring no deck and ask for a copy of the first person's or one of its own (protocol 7, below) |
-| `{"op":"new","format":"commander","players":[{"name":"You","deck":{"Forest":50,"Plains":49},"commander":{"name":"Rhys the Redeemed","set":"shm","number":"237"}},{"name":"Bot","ai":"heuristic","deck":"own","format":"commander"}]}` | as above, dealt as a Commander game (protocol 8, below): the reply says `"format":"commander"`, each seat its `commander`, and a seat the engine plays says its commander in its `deck` too, with `cards` counting it — `{"asked":"own","played":"own","cards":100,"colours":["W"],"commander":"Jareth, Leonine Titan","format":"commander",…}` |
+| `{"op":"new","format":"commander","players":[{"name":"You","deck":{"Forest":50,"Plains":49},"commander":{"name":"Rhys the Redeemed","set":"shm","number":"237"}},{"name":"Bot","ai":"heuristic","deck":"own","format":"commander"}]}` | as above, dealt as a Commander game (protocol 8, below): the reply says `"format":"commander"` and, since protocol 10, `"rules":{"life":40,"deckSize":100,"commanderDamage":21}`, each seat its `commander`, and a seat the engine plays says its commander in its `deck` too, with `cards` counting it — `{"asked":"own","played":"own","cards":100,"colours":["W"],"commander":"Jareth, Leonine Titan","format":"commander",…}` |
 | `{"op":"decklist","seat":"e1"}` | `{"commander":"Jareth, Leonine Titan","deck":{"Plains":{"count":17,"set":"BLB","number":"262"},…},"cards":[{"name":"Plains","typeLine":"Basic Land — Plains","manaCost":"","colours":[],"identity":["W"],"legal":["standard",…]},…]}` — the deck a seat was dealt, with what the engine's own card data says of each card, its colour identity among it; at a Commander table the commander, apart from the deck as it was dealt apart; for measuring and tests, and never sent by the relay, since the engine's deck is as hidden as any opponent's |
 | `{"op":"turn"}` | the table's status |
 | `{"op":"continue"}` | the next step of a paced table: the status once the engine's seat has made its next play |
@@ -307,7 +307,8 @@ zone at the start (903.6), castable from there for {2} more for each time before
 (903.8), and 21 combat damage from one commander losing the game (903.10a) — and
 `"standard"`, or no key at all, the ordinary rules every engine before this
 dealt, whatever the decks' own format. Any other word is refused: "The engine
-deals no \"brawl\" game; it deals \"standard\" and \"commander\"." `hello.formats`
+deals no \"oathbreaker\" game; it deals \"standard\", \"commander\", \"duel\" and \"brawl\"."
+(since protocol 10, below; before it the words named the two it dealt). `hello.formats`
 lists them. Argentum's `alwaysDivertToCommand` is left off, as Argentum leaves it,
 so the question of CR 903.9a is the commander's owner's to answer (below).
 
@@ -351,7 +352,7 @@ The view is Argentum's own: `ClientGameState` lists each player's `Command`
 zone, public to every seat, and a commander card says `isCommander` wherever it
 goes; each `ClientPlayer` carries `commanderDamage`, one entry per commander that
 has dealt that player combat damage — `commanderId`, `commanderName`,
-`controllerId`, `amount` and `threshold` (21) — left off where there is none, as
+`controllerId`, `amount` and `threshold` (21, or past reach where commander damage loses nobody, below) — left off where there is none, as
 `encodeDefaults = false` leaves off an empty list. A delta carries `players`
 whole, so the tally travels in every one.
 
@@ -378,6 +379,71 @@ An engine at 7 ignores `format` and `commander`, and deals the decks as sent by
 the ordinary rules, so a relay reading 7 must not tell anybody a Commander game
 is coming (`scripts/relay-engine.mjs` deals it without the commanders, as every
 room before M6 did, and says why).
+
+A stand-in commander (HANDOFF.md §3 item 19, the owner's decision of 2026-09-25)
+asks nothing new of the process, and no new protocol. Where the engine does not
+know a Commander deck's commander, the person may choose in the lobby one of the
+deck's own legendary creatures the engine knows, in the deck's colours, to lead it
+instead (`src/lib/engine/stand-in.js`); the process is sent it as the player's
+`commander` like any other, out of the library, and deals it as the commander it
+is — `isCommander`, cast from the command zone with its tax, commander damage and
+all. What it stands in for is the relay's to know and say: the sit brings the
+commander with `standsFor`, which the room keeps and never sends here, and tells
+the person (`seated.format.standIn`, `seats[].standIn`) and says of the engine's
+copy of the deck, led by the same card (`seated.engineDeck.standsFor`). Played
+against the engine at the pin on 2026-09-25 with the app's Commodore Guff example
+deck, led by Narset, Enlightened Master, the one of its legendary creatures the
+engine knows (`tests/engine-live.test.js`, which sends the commander through the
+relay's own `commanderOf` and `toEngine`). Two things the process does that the
+room allows for: it names a card of two faces, sent as Scryfall's "Front //
+Back", by its front, in `seats[].commander` and in `deck.commander` (`resolveName`),
+so the room takes the two as one card (`sameCard`); and where it is asked for a
+deck of its own it builds none of — every Duel Commander table — its copy is the
+person's deck with their commander, a stand-in included, which the room says as
+such. In a game dealt by the ordinary rules the room sends a stand-in back in the
+library, as the deck line it is, and no `commander` (HANDOFF.md §7).
+
+**Duel Commander and Brawl (protocol 10, HANDOFF.md §3 item 20).** `new` takes
+`format: "duel"` and `format: "brawl"` too, each dealt as the same Argentum
+`Format.Commander` with the game's own numbers — which is how Argentum's own
+comments on the type say those games are to be had — for two players only, a
+table of more refused in words ("A Brawl game is dealt to two players, and this
+one has 3."). Every player brings a `commander` as at a Commander table, and
+everything above holds: the command zone, the cast from it and its tax, the
+903.9a question.
+
+| | Duel Commander | Brawl |
+| --- | --- | --- |
+| Life each | 20 (its committee's rules, 300.1a) | 25 (CR 903.12f, a game of two) |
+| Commander damage | loses nobody (506.1a) | loses nobody (903.12h, setting aside 704.6c) |
+| Deck | a hundred (402.1b) | a hundred: Scryfall's `brawl`, Argentum's `DeckFormat.BRAWL`; the CR's Brawl is sixty (903.12d) |
+| Deck of the engine's own | none: Argentum has no Duel Commander card pool, so the copy (`fellBack: "format"`) | a Brawl deck by `CommanderDeckGenerator` to `DeckFormat.BRAWL`, a hundred cards |
+
+Duel Commander is not in the Comprehensive Rules; its numbers are its rules
+committee's (mtgdc.info, read 2026-09-25, which keeps that document as an archive
+since the committee replaced the format with another on 2026-03-03). Argentum's
+`Format.Commander` always has a commander-damage threshold — a game uses
+commanders exactly where it has one — so a game in which commander damage loses
+nobody is dealt with a threshold no tally reaches (`Int.MAX_VALUE`,
+`NO_COMMANDER_DAMAGE_LOSS`): Argentum still keeps the tally and puts it in the
+view, with that as its `threshold`, and the reply's `rules` says null. Played
+against the engine at the pin: a 6/1 commander unblocked four times deals 24, which
+ends a Commander game at 16 life and leaves a Brawl game going at 1
+(`tests/engine-live.test.js`). What Argentum does not take from a format is not
+dealt either, and the table says so: Brawl's free first mulligan (903.12g) —
+Argentum makes a first mulligan free only at a table of more than two — and every
+rule of deck construction, which is the app's deck checker's, not the engine's.
+Argentum's own Brawl preset (`CommanderPreset.BRAWL`: 25 life, 16 commander damage,
+sixty cards) is its tuning for drafted decks, and not this.
+
+The reply to `new` and to `restore` says `rules` for any Commander game, read off
+the game itself — `{"life":25,"deckSize":100,"commanderDamage":null}` — so a game
+taken back says what it was dealt with. An engine at 9 refuses both words as games
+it does not deal, so a relay reading 9 asks for neither and deals such a deck by
+the ordinary rules without its commander, as every room before item 20 did, and
+says why (`fellBack: "engine"`); a relay also deals the ordinary game, and says
+why, at a table of more than two (`players`) and where the people at it asked for
+different games of the family (`games`).
 
 **Keeping a game (protocol 9, M7).** `snapshot` answers the game as it stands,
 and `restore` takes it back into another process at the same stop, so a room

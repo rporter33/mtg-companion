@@ -6,15 +6,16 @@ import { artUrl, faceIdFor } from '../../lib/deck-art.js'
 import { getPrefs, setPref } from '../../lib/storage.js'
 import { navigate } from '../../lib/router.js'
 import { EXAMPLE_DECKS } from '../../data/example-decks.js'
-import { byReason, nameList, reasonText } from '../../lib/engine/deck.js'
+import { byReason, nameList, reasonText, withArticle } from '../../lib/engine/deck.js'
 import Confirm from '../../components/Confirm.jsx'
 import DeckArt from '../../components/DeckArt.jsx'
 import ManaCost from '../../components/ManaCost.jsx'
 import useShelfCards from './useShelfCards.js'
 import useEngineCheck from './useEngineCheck.js'
 import { agreeToLeaveOut, chooseEngineDeck } from './useEngineRoom.js'
-import { chosenOpponent, engineDeckRecord } from '../../lib/engine/opponent.js'
-import { leaderProblem, leaderWords } from '../../lib/engine/commander.js'
+import { chosenOpponent, colourWords, engineDeckRecord } from '../../lib/engine/opponent.js'
+import { gameName, leaderProblem, leaderWords } from '../../lib/engine/commander.js'
+import { standInOffer, standInTileLine } from '../../lib/engine/stand-in.js'
 import { relayAddress } from './relayAddress.js'
 import Seats from './Seats.jsx'
 
@@ -157,7 +158,10 @@ export default function Lobby({ decks, room = null, engine = null }) {
   const gateDeck = gate ? inFormat.find((d) => d.id === gate) ?? null : null
   const gateCheck = gate ? checks.get(gate) : null
   const playAlone = (deck) => { setGate(null); navigate({ tab: 'game', gameDeckId: deck.id, gameRoom: null, gameEngine: null }) }
-  const playWithout = (deck, names) => { setGate(null); agreeToLeaveOut(engine, deck.id, names); start(deck) }
+  // Without the cards the engine does not know, and led by the stand-in the player
+  // chose in the gate where they chose one (§3 item 19), or by nothing: recorded with
+  // the table together, so a later sit without one does not keep an earlier choice.
+  const playWithout = (deck, names, lead = null) => { setGate(null); agreeToLeaveOut(engine, deck.id, names, lead); start(deck) }
   // The Wildcard at the engine's table draws from the decks it fully knows,
   // once any have been checked, so a random press lands on a game.
   const known = engine ? shown.filter((d) => checks.get(d.id)?.state === 'complete') : []
@@ -303,9 +307,11 @@ export default function Lobby({ decks, room = null, engine = null }) {
       </footer>
       {gateDeck && gateCheck && (
         <DeckGate
+          // Its own for each deck, so a stand-in chosen for one is never carried to another.
+          key={gateDeck.id}
           deck={gateDeck}
           check={gateCheck}
-          onWithout={(names) => playWithout(gateDeck, names)}
+          onWithout={(names, lead) => playWithout(gateDeck, names, lead)}
           onOrdinary={() => { setGate(null); start(gateDeck) }}
           onAlone={() => playAlone(gateDeck)}
           onClose={() => setGate(null)}
@@ -378,9 +384,12 @@ function DeckCheck({ check }) {
   // engine does not know is left out and said, since only a wish could fetch it.
   const side = check.unknownSideboard ?? []
   if (side.length) lines.push(`Left out of the sideboard, as the engine does not know ${side.length === 1 ? 'it' : 'them'}: ${nameList(side.map((u) => u.name))}.`)
-  // A Commander deck the engine cannot deal as a Commander game (M6), and why.
-  const led = leaderWords(leaderProblem(check.seat, check), check.seat?.commander?.name)
+  // A Commander deck the engine cannot deal as a Commander game (M6), and why;
+  // and, where the rules allow one, what could lead it instead (§3 item 19).
+  const led = leaderWords(leaderProblem(check.seat, check), check.seat?.commander?.name, check.seat?.game)
   if (led) lines.push(led)
+  const standIn = led ? standInTileLine(check.standIns) : null
+  if (standIn) lines.push(standIn)
   return (
     <span className={`lobby__deckcheck faint tiny${state === 'short' || led ? ' lobby__deckcheck--short' : ''}`}>
       {lines.map((line) => <span key={line}>{line}</span>)}
@@ -404,6 +413,12 @@ function DeckCheck({ check }) {
  * what it deals instead: without the unknown cards, commander among them, or
  * with its library alone, the ordinary game, since there is no Commander game
  * without a commander. The owner's M1 answer, both ways on, carried over.
+ *
+ * And where the commander is a card the engine does not know, one of the deck's
+ * own legendary creatures the rules allow may lead it as a stand-in (HANDOFF.md
+ * §3 item 19; lib/engine/stand-in.js): offered as a choice of the player's, each
+ * with its rules cited, none chosen until they choose one, and played by a
+ * button that names it. Where none is allowed, the gate is as M6 left it.
  */
 function DeckGate({ deck, check, onWithout, onOrdinary = null, onAlone, onClose }) {
   const unknown = check.unknown ?? []
@@ -419,8 +434,18 @@ function DeckGate({ deck, check, onWithout, onOrdinary = null, onAlone, onClose 
   // Whatever is left out, a deck the engine cannot lead is dealt the ordinary game.
   const leaderless = unknown.some((u) => u.commander) || Boolean(problem)
   const canGoOrdinary = !unknown.length && Boolean(problem) && !check.unloaded && Boolean(onOrdinary)
+  // Or, where the commander is what the engine does not know, one of the deck's own
+  // legendary creatures the rules allow to lead it, as a stand-in (§3 item 19),
+  // chosen here by the player and never for them: nothing is chosen until they do,
+  // and the press that plays it names the one chosen.
+  const real = unknown.find((u) => u.commander)?.name ?? null
+  const offered = canGoWithout && real && Array.isArray(check.standIns) ? check.standIns : []
+  const [lead, setLead] = useState(null)
+  const chosenLead = offered.find((s) => s.name === lead) ?? null
+  const names = unknown.map((u) => u.name)
   const actions = [
-    ...(canGoWithout ? [{ label: `Play the engine without ${copies === 1 ? 'it' : 'them'}`, kind: 'primary', onPress: () => onWithout(unknown.map((u) => u.name)) }] : []),
+    ...(chosenLead ? [{ label: `Play the engine led by ${chosenLead.name}`, kind: 'primary', onPress: () => onWithout(names, chosenLead.name) }] : []),
+    ...(canGoWithout ? [{ label: `Play the engine without ${copies === 1 ? 'it' : 'them'}`, kind: chosenLead ? 'ghost' : 'primary', onPress: () => onWithout(names) }] : []),
     ...(canGoOrdinary ? [{ label: 'Play the engine by the ordinary rules', kind: 'primary', onPress: onOrdinary }] : []),
     { label: 'Play it alone instead', kind: canGoWithout || canGoOrdinary ? 'ghost' : 'primary', onPress: onAlone },
     { label: 'Choose another deck', kind: 'ghost', onPress: onClose },
@@ -428,7 +453,7 @@ function DeckGate({ deck, check, onWithout, onOrdinary = null, onAlone, onClose 
   return (
     <Confirm
       open
-      title={unknown.length ? `The engine does not know every card in ${deck.name}` : problem ? `The engine cannot deal a Commander game with ${deck.name}` : `Not every card in ${deck.name} has loaded`}
+      title={unknown.length ? `The engine does not know every card in ${deck.name}` : problem ? `The engine cannot deal ${withArticle(gameName(check.seat?.game))} game with ${deck.name}` : `Not every card in ${deck.name} has loaded`}
       actions={actions}
       onClose={onClose}
     >
@@ -451,10 +476,23 @@ function DeckGate({ deck, check, onWithout, onOrdinary = null, onAlone, onClose 
         {check.unloaded > 0 && (
           <p>{check.unloaded === 1 ? 'One card did not load, so the engine was not asked about it.' : `${check.unloaded} cards did not load, so the engine was not asked about them.`}</p>
         )}
-        {problem && <p>{leaderWords(problem, check.seat?.commander?.name)}</p>}
+        {problem && <p>{leaderWords(problem, check.seat?.commander?.name, check.seat?.game)}</p>}
         {canGoWithout && (leaderless
           ? <p>Without {copies === 1 ? 'it' : 'them'}, the engine deals the other {check.known} cards by the ordinary rules: 20 life each, and no command zone. The table says what was left out.</p>
           : <p>Without {copies === 1 ? 'it' : 'them'}, the engine deals the other {check.known} cards, and the table says what was left out.</p>)}
+        {offered.length > 0 && (
+          <fieldset className="lobby__levels lobby__standins">
+            <legend className="lobby__label">Or lead it with a stand-in</legend>
+            <p>{standInOffer({ offered, real, known: check.known, game: check.seat?.game })}</p>
+            {offered.map((s) => (
+              <label key={s.name} className={`lobby__level${lead === s.name ? ' lobby__level--on' : ''}`}>
+                <input type="radio" name="stand-in" value={s.name} checked={lead === s.name} onChange={() => setLead(s.name)} />
+                <span className="lobby__levelname">{s.name}</span>
+                <span className="lobby__levelline faint tiny">A stand-in for {real}, its colour identity {colourWords(s.identity)}</span>
+              </label>
+            ))}
+          </fieldset>
+        )}
         {canGoOrdinary && (
           <p>By the ordinary rules the engine deals the {check.seat?.total - (check.seat?.leaders ?? 0)} cards of its library: 20 life each, and no command zone.</p>
         )}
@@ -552,7 +590,10 @@ function blurb(format) {
   switch (format) {
     case 'commander': return '100-card singleton.'
     case 'pauper': return 'Sixty cards, commons only.'
-    case 'brawl': return 'Sixty-card singleton with a commander.'
+    // The app's Brawl and Duel Commander are Scryfall's, a hundred cards each (lib/formats.js):
+    // Brawl said sixty here until §3 item 20, which is the Comprehensive Rules' Brawl (903.12d).
+    case 'brawl': return '100-card singleton with a commander.'
+    case 'duel': return '100-card singleton, one against one.'
     default: return getFormat(format) ? 'Sixty cards.' : ''
   }
 }

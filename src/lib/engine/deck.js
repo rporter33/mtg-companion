@@ -25,7 +25,7 @@ export function engineName(card) {
  * shape that can only be that, and the engine refuses it, so it goes by the
  * single name as engineName sends it.
  */
-function stampedEngineName(name) {
+export function stampedEngineName(name) {
   if (typeof name !== 'string' || !name) return null
   const halves = name.split(' // ')
   return halves.length === 2 && halves[0] === halves[1] ? halves[0] : name
@@ -108,12 +108,15 @@ function countNames(entries, lookup, stamped) {
  * says which game the deck asks for, `leaders` how many commanders it has (the
  * engine deals one, as Argentum's `PlayerConfig` does), and `total` counts the
  * commander, as the format counts it (903.5a). A commander that has not loaded
- * and has no stamped name is counted in `unloaded`, as any card is. Every other
- * deck, the rest of the Commander family included, is exactly what it was.
+ * and has no stamped name is counted in `unloaded`, as any card is. Since §3 item
+ * 20 a Duel Commander or a Brawl deck goes the same way, `game` its own word.
+ * Every other deck, Oathbreaker included, is exactly what it was.
  */
 export function seatDeck(deck, lookup) {
   const stamped = stampedNames(deck)
-  const commanderGame = deck?.formatId === 'commander'
+  // The formats dealt as Commander games (commander.js, COMMANDER_GAMES), named here
+  // rather than imported, since commander.js imports this file.
+  const commanderGame = ['commander', 'duel', 'brawl'].includes(deck?.formatId)
   const leaders = commanderGame ? [...new Set((Array.isArray(deck?.commanders) ? deck.commanders : []).filter((id) => typeof id === 'string' && id))] : []
   // The library alone: a commander listed in the main deck too is not one of the ninety-nine.
   const main = countNames(commanderGame ? (Array.isArray(deck?.main) ? deck.main : []).filter((e) => !leaders.includes(e?.cardId)) : deck?.main, lookup, stamped)
@@ -123,7 +126,7 @@ export function seatDeck(deck, lookup) {
   if (!commanderGame) return seat
   const commander = leaders.length === 1 ? leaderLine(leaders[0], lookup, stamped) : null
   const commanderUnloaded = leaders.length === 1 && !commander ? 1 : 0
-  return { ...seat, game: 'commander', leaders: leaders.length, commander, commanderUnloaded, total: main.total + leaders.length, unloaded: main.unloaded + commanderUnloaded }
+  return { ...seat, game: deck.formatId, leaders: leaders.length, commander, commanderUnloaded, total: main.total + leaders.length, unloaded: main.unloaded + commanderUnloaded }
 }
 
 /** A commander as the sit sends it: its name, and the printing chosen where one was; null where it has no name to go by. */

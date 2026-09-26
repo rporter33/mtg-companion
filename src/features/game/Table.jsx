@@ -37,8 +37,9 @@ import { glowsAt, heldBack, offeredElsewhere, pileHolding } from '../../lib/engi
 import { NO_CHOICES, advance, answerOf, beginBottom, beginDecision, beginPlay, complete, pickable, stepOf, toggle } from '../../lib/engine/choose.js'
 import { chosenLevel, LEVEL_NAMES, levelOf } from '../../lib/engine/levels.js'
 import { chosenOpponent } from '../../lib/engine/opponent.js'
-import { damageRule, damageWords } from '../../lib/engine/commander.js'
+import { damageLoses, damageRule, damageWords } from '../../lib/engine/commander.js'
 import { restoringLine } from '../../lib/engine/restart.js'
+import { standInPhrase } from '../../lib/engine/stand-in.js'
 import { dropTarget, actionsForDrop } from '../../lib/board/drop.js'
 import useRoom from './useRoom.js'
 import useEngineRoom from './useEngineRoom.js'
@@ -650,6 +651,10 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
   // At the engine's table the command zone is the engine's to say (M6): what is
   // in it now, which is nothing while the commander is on the battlefield.
   const commandCard = (who) => (engine ? zoneOf(board, who, 'command')[0] ?? null : null)
+  // What the command zone's tile says of what is in it: its name, and where it
+  // stands in for a commander the engine does not know, that it is a stand-in and
+  // for which (HANDOFF.md §3 item 19), which the tile also shows in a word.
+  const commandName = (inst) => `${nameFor(inst)}${inst.standsFor ? `, a stand-in for ${inst.standsFor}, not the deck's real commander` : ''}`
   // The commander a tap on the command zone casts, where the engine offers it.
   const castable = (who) => (engine && who === me ? zoneOf(board, me, 'command').find((inst) => offerFor(inst.id)) ?? null : null)
   const refusal = engine ? held.refusal : room ? shared.refusal : run.refusal
@@ -665,6 +670,11 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
     return shared.seats.find((s) => s.seat === p) ?? null
   }
   const nameOfSeat = (p) => seatOf(p)?.name ?? (engine ? 'The engine' : `Seat ${p.replace(/^p/, '')}`)
+  // Whether commander damage can lose this game (lib/engine/commander.js,
+  // `damageLoses`): not a Duel Commander or a Brawl game (§3 item 20), whose rules
+  // have no such loss, and where Argentum's tally counts towards nothing, so the
+  // plates say nothing of it. The log says so once, at the deal.
+  const tallied = !engine || damageLoses(held.game)
   // Whose a commander is, for a plate telling two tallies of one name apart
   // (lib/engine/commander.js, `damageWords`): its owner, read off the card, or
   // the controller the engine names for it where the card is out of sight.
@@ -875,7 +885,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
               target={glows.get(them)?.kind === 'target'}
               name={nameOfSeat(them)}
               life={sitting ? board.life[them] : null}
-              damage={board.engine?.commanderDamage?.[them] ?? null}
+              damage={tallied ? board.engine?.commanderDamage?.[them] ?? null : null}
               whose={whoseCommander}
             />
             <div className="game__theirhand" aria-label={`${nameOfSeat(them)}'s hand, ${theirHand} card${theirHand === 1 ? '' : 's'}`} role="img">
@@ -908,13 +918,14 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                     className={`ztile${open ? '' : ' ztile--closed'}${zoneOpen === zone && zoneWho === them ? ' ztile--open' : ''}${holds ? ` ztile--${holds === 'target' || holds === 'choice' ? 'target' : 'playable'}` : ''}`}
                     onClick={open ? () => openZone(zone, them) : undefined}
                     aria-expanded={open ? zoneOpen === zone && zoneWho === them : undefined}
-                    aria-label={`${nameOfSeat(them)}'s ${ZONE_LABELS[zone].toLowerCase()}, ${n} card${n === 1 ? '' : 's'}${led ? `: ${nameFor(led)}` : ''}${holds ? `, ${PILE_SAYS[holds]}` : ''}`}
+                    aria-label={`${nameOfSeat(them)}'s ${ZONE_LABELS[zone].toLowerCase()}, ${n} card${n === 1 ? '' : 's'}${led ? `: ${commandName(led)}` : ''}${holds ? `, ${PILE_SAYS[holds]}` : ''}`}
                   >
                     <span className="ztile__label" aria-hidden="true">{TILE_LABELS[zone]}</span>
                     <span className={`ztile__face${zone === 'library' && n ? ' ztile__face--back' : ''}`} style={zone === 'command' && face ? { backgroundImage: `url("${face}")` } : undefined} aria-hidden="true">
                       {!n && <span className="ztile__nil">—</span>}
                     </span>
                     {n > 0 && <span className="ztile__count" aria-hidden="true">{n}</span>}
+                    {led?.standsFor && <span className="ztile__standin" aria-hidden="true">stand-in</span>}
                   </Tag>
                 )
               })}
@@ -1027,6 +1038,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             placeOf={placeOf}
             players={board.players}
             nameOf={(id) => nameOf(board, id, lookup)}
+            standsForOf={(id) => board.cards[id]?.standsFor ?? null}
             nameOfSeat={nameOfSeat}
             can={can}
             choosing={choosing}
@@ -1054,7 +1066,7 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             name={away ? (prefs.playerName || 'You') : 'You'}
             life={board.life[me]}
             onLife={engine ? undefined : (delta) => doAction({ type: 'life', delta })}
-            damage={board.engine?.commanderDamage?.[me] ?? null}
+            damage={tallied ? board.engine?.commanderDamage?.[me] ?? null : null}
             whose={whoseCommander}
           >
             <div className="plate__mana">
@@ -1173,13 +1185,14 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
                 onPointerLeave={led ? () => hoverCard(null) : undefined}
                 aria-expanded={tapCasts ? undefined : isOpen}
                 aria-keyshortcuts={tapCasts ? 'Shift+Enter' : undefined}
-                aria-label={`${ZONE_LABELS[zone]}, ${n} card${n === 1 ? '' : 's'}${led ? `: ${nameFor(led)}` : ''}${holds ? `, ${PILE_SAYS[holds]}` : ''}${tapCasts ? `, ${OPENS_INSTEAD}` : ''}`}
+                aria-label={`${ZONE_LABELS[zone]}, ${n} card${n === 1 ? '' : 's'}${led ? `: ${commandName(led)}` : ''}${holds ? `, ${PILE_SAYS[holds]}` : ''}${tapCasts ? `, ${OPENS_INSTEAD}` : ''}`}
               >
                 <span className="ztile__label" aria-hidden="true">{TILE_LABELS[zone]}</span>
                 <span className={`ztile__face${zone === 'library' && n ? ' ztile__face--back' : ''}`} style={face ? { backgroundImage: `url("${face}")` } : undefined} aria-hidden="true">
                   {!n && <span className="ztile__nil">—</span>}
                 </span>
                 {n > 0 && <span className="ztile__count" aria-hidden="true">{n}</span>}
+                {led?.standsFor && <span className="ztile__standin" aria-hidden="true">stand-in</span>}
               </button>
             )
           })}
@@ -1194,11 +1207,16 @@ export default function Table({ deck: initialDeck, onOpenCard, room = null, engi
             <ul className="game__seatlist" role="list">
               {board.players.map((p) => {
                 const s = seatOf(p)
+                // A stand-in leading a seat's deck (§3 item 19): yours, and the engine's copy of it.
+                const lead = engine ? (p === me ? held.leads.own : s?.ai ? held.leads.engine : null) : null
                 return (
                   <li key={p} className={`game__seatrow${p === me ? ' game__seatrow--you' : ''}${s && !s.here ? ' game__seatrow--away' : ''}`}>
                     <span className="game__dot" aria-hidden="true" />
                     {/* The engine's seat says the level the room says it plays at, and nothing where it named none. */}
-                    <span>{p === me ? 'You' : s ? s.name : 'Open seat'}{s?.ai && levelOf(s.level) ? ` · ${LEVEL_NAMES[s.level]}` : ''}</span>
+                    <span>
+                      {p === me ? 'You' : s ? s.name : 'Open seat'}{s?.ai && levelOf(s.level) ? ` · ${LEVEL_NAMES[s.level]}` : ''}
+                      {lead && <span className="faint tiny"> · led by {standInPhrase(lead)}</span>}
+                    </span>
                     <span className="faint tiny">{!s ? '' : !s.here ? 'away' : board.active === p ? (p === me ? 'your turn' : 'their turn') : ''}</span>
                   </li>
                 )

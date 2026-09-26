@@ -51,7 +51,7 @@ export function placeWords(place, me, nameOfSeat = () => null) {
  */
 export function EnginePrompt({
   status, me, step, chosen = new Set(), blocks = {}, blocker = null, declaring = null, blocking = null,
-  glows = NO_GLOW, elsewhere = [], placeOf = () => null, players = [], nameOf, nameOfSeat, can = NO_CHOICES,
+  glows = NO_GLOW, elsewhere = [], placeOf = () => null, players = [], nameOf, standsForOf = () => null, nameOfSeat, can = NO_CHOICES,
   choosing = null, onPick = () => {}, onChange = () => {}, onDone = () => {}, onChooseForMe = null, onLetGo = () => {},
   handSize = null, active = null, onAct, onDecide,
 }) {
@@ -125,7 +125,7 @@ export function EnginePrompt({
     )
   }
   const pass = (status.actions ?? []).find((a) => a.type === 'PassPriority')
-  const sub = stopLine({ status, me, glows, elsewhere, placeOf, nameOf, nameOfSeat, can })
+  const sub = stopLine({ status, me, glows, elsewhere, placeOf, nameOf, standsForOf, nameOfSeat, can })
   return (
     <div className="prompt" role="group" aria-label="Your stop">
       <div className="prompt__lead">
@@ -613,7 +613,9 @@ function DecisionPrompt({ decision: d, players, me, nameOf, nameOfSeat, onDecide
  * docs/TURN_STRUCTURE.md keeps casting a spell, playing a land and activating
  * an ability apart (117.4, 305.2, 505.6a–b); a commander that can be cast
  * from the command zone, reached by a tap on that zone, with what the commander
- * tax adds to its cost (903.8, M6); a play offered for a card in a
+ * tax adds to its cost (903.8, M6), and where it stands in for a commander the
+ * engine does not know, that it is a stand-in (`standsForOf`, HANDOFF.md §3
+ * item 19); a play offered for a card in a
  * pile, which no tap on the table reaches and the actions panel does; and,
  * where nothing else is offered, the plays this seat cannot carry out with the
  * reason for each, so a stop made for one of those alone still says why it is
@@ -621,7 +623,7 @@ function DecisionPrompt({ decision: d, players, me, nameOf, nameOfSeat, onDecide
  *
  * Pure, and exported for its tests.
  */
-export function stopLine({ status, me, glows = NO_GLOW, elsewhere = [], placeOf = () => null, nameOf = (id) => id, nameOfSeat, can = NO_CHOICES }) {
+export function stopLine({ status, me, glows = NO_GLOW, elsewhere = [], placeOf = () => null, nameOf = (id) => id, standsForOf = () => null, nameOfSeat, can = NO_CHOICES }) {
   const lit = [...glows.values()].filter((g) => g?.kind === 'playable')
   // A commander that can be cast from the command zone (M6) is said on its own:
   // it is reached by a tap on that zone, and its cost says the commander tax.
@@ -643,7 +645,9 @@ export function stopLine({ status, me, glows = NO_GLOW, elsewhere = [], placeOf 
   for (const a of commanded) {
     const tax = taxWords(a)
     const cost = typeof a.manaCost === 'string' && a.manaCost ? ` for ${a.manaCost}` : ''
-    lines.push(`Your commander, ${nameOf(a.card)}, can be cast from the command zone${cost}${tax ? `: ${tax}` : ''}. Tap the command zone to cast it, or pass.`)
+    // One standing in for a commander the engine does not know is said to be one (HANDOFF.md §3 item 19).
+    const real = standsForOf(a.card)
+    lines.push(`Your commander, ${nameOf(a.card)}${real ? `, a stand-in for ${real},` : ','} can be cast from the command zone${cost}${tax ? `: ${tax}` : ''}. Tap the command zone to cast it, or pass.`)
   }
 
   if (elsewhere.length) {

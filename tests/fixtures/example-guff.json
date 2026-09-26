@@ -1,0 +1,313 @@
+{
+  "about": "The Commodore Guff example deck (src/data/example-decks.js) as the engine at ENGINE_REV 70d525c knows it, asked 2026-09-25: the names it does not know (check), and each card it knows as it describes it (decklist). Its commander is Scryfall's record, asked by name the same day: the engine does not know it.",
+  "asked": "2026-09-25",
+  "known": 45,
+  "total": 100,
+  "unknown": [
+    "Ajani Steadfast",
+    "Azorius Signet",
+    "Cartographer's Hawk",
+    "Cascade Bluffs",
+    "Chandra, Awakened Inferno",
+    "Chandra, Legacy of Fire",
+    "Chandra, Torch of Defiance",
+    "Commodore Guff",
+    "Deepglow Skate",
+    "Deploy the Gatewatch",
+    "Elspeth, Sun's Champion",
+    "Flux Channeler",
+    "Forge of Heroes",
+    "Frostboil Snarl",
+    "Furycalm Snarl",
+    "Gatewatch Beacon",
+    "Gideon Jura",
+    "Grateful Apparition",
+    "Guff Rewrites History",
+    "Honor-Worn Shaku",
+    "Interplanar Beacon",
+    "Jace, Architect of Thought",
+    "Jace, Mirror Mage",
+    "Jaya's Phoenix",
+    "Karn's Bastion",
+    "Kazuul, Tyrant of the Cliffs",
+    "Leori, Sparktouched Hunter",
+    "Mangara, the Diplomat",
+    "Mobilized District",
+    "Mystic Gate",
+    "Nahiri, the Harbinger",
+    "Narset of the Ancient Way",
+    "Narset, Parter of Veils",
+    "Norn's Annex",
+    "Oath of Gideon",
+    "Oath of Jace",
+    "Onakke Oathkeeper",
+    "Port Town",
+    "Promise of Loyalty",
+    "Repeated Reverberation",
+    "Rugged Prairie",
+    "Saheeli, Sublime Artificer",
+    "Sarkhan the Masterless",
+    "Semester's End",
+    "Silent Arbiter",
+    "Spark Double",
+    "Sparkshaper Visionary",
+    "Talisman of Conviction",
+    "Talisman of Creativity",
+    "Teyo, Geometric Tactician",
+    "The Chain Veil",
+    "The Wanderer",
+    "Thrummingbird",
+    "Vronos, Masked Inquisitor",
+    "Wall of Denial"
+  ],
+  "cards": [
+    {
+      "name": "Arcane Signet",
+      "type_line": "Artifact",
+      "mana_cost": "{2}",
+      "color_identity": []
+    },
+    {
+      "name": "Blasphemous Act",
+      "type_line": "Sorcery",
+      "mana_cost": "{8}{R}",
+      "color_identity": [
+        "R"
+      ]
+    },
+    {
+      "name": "Boros Signet",
+      "type_line": "Artifact",
+      "mana_cost": "{2}",
+      "color_identity": [
+        "W",
+        "R"
+      ]
+    },
+    {
+      "name": "Command Tower",
+      "type_line": "Land",
+      "mana_cost": "",
+      "color_identity": []
+    },
+    {
+      "name": "Exotic Orchard",
+      "type_line": "Land",
+      "mana_cost": "",
+      "color_identity": []
+    },
+    {
+      "name": "Fellwar Stone",
+      "type_line": "Artifact",
+      "mana_cost": "{2}",
+      "color_identity": []
+    },
+    {
+      "name": "Fog Bank",
+      "type_line": "Creature — Wall",
+      "mana_cost": "{1}{U}",
+      "color_identity": [
+        "U"
+      ]
+    },
+    {
+      "name": "Island",
+      "type_line": "Basic Land — Island",
+      "mana_cost": "",
+      "color_identity": [
+        "U"
+      ]
+    },
+    {
+      "name": "Izzet Signet",
+      "type_line": "Artifact",
+      "mana_cost": "{2}",
+      "color_identity": [
+        "U",
+        "R"
+      ]
+    },
+    {
+      "name": "Jace Beleren",
+      "type_line": "Legendary Planeswalker — Jace",
+      "mana_cost": "{1}{U}{U}",
+      "color_identity": [
+        "U"
+      ]
+    },
+    {
+      "name": "Mountain",
+      "type_line": "Basic Land — Mountain",
+      "mana_cost": "",
+      "color_identity": [
+        "R"
+      ]
+    },
+    {
+      "name": "Myriad Landscape",
+      "type_line": "Land",
+      "mana_cost": "",
+      "color_identity": []
+    },
+    {
+      "name": "Mystic Monastery",
+      "type_line": "Land",
+      "mana_cost": "",
+      "color_identity": [
+        "W",
+        "U",
+        "R"
+      ]
+    },
+    {
+      "name": "Narset, Enlightened Master",
+      "type_line": "Legendary Creature — Human Monk",
+      "mana_cost": "{3}{U}{R}{W}",
+      "color_identity": [
+        "W",
+        "U",
+        "R"
+      ]
+    },
+    {
+      "name": "Nevinyrral's Disk",
+      "type_line": "Artifact",
+      "mana_cost": "{4}",
+      "color_identity": []
+    },
+    {
+      "name": "Oath of Teferi",
+      "type_line": "Legendary Enchantment",
+      "mana_cost": "{3}{W}{U}",
+      "color_identity": [
+        "W",
+        "U"
+      ]
+    },
+    {
+      "name": "Oreskos Explorer",
+      "type_line": "Creature — Cat Scout",
+      "mana_cost": "{1}{W}",
+      "color_identity": [
+        "W"
+      ]
+    },
+    {
+      "name": "Path to Exile",
+      "type_line": "Instant",
+      "mana_cost": "{W}",
+      "color_identity": [
+        "W"
+      ]
+    },
+    {
+      "name": "Plains",
+      "type_line": "Basic Land — Plains",
+      "mana_cost": "",
+      "color_identity": [
+        "W"
+      ]
+    },
+    {
+      "name": "Prairie Stream",
+      "type_line": "Land — Plains Island",
+      "mana_cost": "",
+      "color_identity": [
+        "W",
+        "U"
+      ]
+    },
+    {
+      "name": "Reliquary Tower",
+      "type_line": "Land",
+      "mana_cost": "",
+      "color_identity": []
+    },
+    {
+      "name": "Skycloud Expanse",
+      "type_line": "Land",
+      "mana_cost": "",
+      "color_identity": [
+        "W",
+        "U"
+      ]
+    },
+    {
+      "name": "Sol Ring",
+      "type_line": "Artifact",
+      "mana_cost": "{1}",
+      "color_identity": []
+    },
+    {
+      "name": "Swords to Plowshares",
+      "type_line": "Instant",
+      "mana_cost": "{W}",
+      "color_identity": [
+        "W"
+      ]
+    },
+    {
+      "name": "Talisman of Progress",
+      "type_line": "Artifact",
+      "mana_cost": "{2}",
+      "color_identity": [
+        "W",
+        "U"
+      ]
+    },
+    {
+      "name": "Temple of Enlightenment",
+      "type_line": "Land",
+      "mana_cost": "",
+      "color_identity": [
+        "W",
+        "U"
+      ]
+    },
+    {
+      "name": "Temple of Epiphany",
+      "type_line": "Land",
+      "mana_cost": "",
+      "color_identity": [
+        "U",
+        "R"
+      ]
+    },
+    {
+      "name": "Temple of Triumph",
+      "type_line": "Land",
+      "mana_cost": "",
+      "color_identity": [
+        "W",
+        "R"
+      ]
+    },
+    {
+      "name": "Urza's Ruinous Blast",
+      "type_line": "Legendary Sorcery",
+      "mana_cost": "{4}{W}",
+      "color_identity": [
+        "W"
+      ]
+    },
+    {
+      "name": "Wayfarer's Bauble",
+      "type_line": "Artifact",
+      "mana_cost": "{1}",
+      "color_identity": []
+    }
+  ],
+  "commander": {
+    "name": "Commodore Guff",
+    "type_line": "Legendary Planeswalker — Guff",
+    "mana_cost": "{1}{U}{R}{W}",
+    "color_identity": [
+      "R",
+      "U",
+      "W"
+    ],
+    "set": "cmm",
+    "set_name": "Commander Masters",
+    "collector_number": "706"
+  }
+}

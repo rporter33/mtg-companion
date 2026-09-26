@@ -8,8 +8,8 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  COMMANDER_GAME, COMMANDER_TABLE, commanderDamageOf, commanderZoneRule, damageRule, damageWords, formatLine, gameOf,
-  leaderProblem, leaderWords, leaderlessFamily, leaderlessLine, taxWords,
+  BRAWL_MULLIGAN, COMMANDER_GAME, COMMANDER_GAMES, COMMANDER_TABLE, GAMES, commanderDamageOf, commanderZoneRule, damageLoses, damageRule, damageWords, formatLine, gameName, gameOf, gameRules,
+  isCommanderGame, leaderProblem, leaderWords, leaderlessFamily, leaderlessLine, tableLine, taxWords,
 } from '../src/lib/engine/commander.js'
 import { checkedDeck, leaveOut, seatDeck, verdictOf } from '../src/lib/engine/deck.js'
 import { GLOW_SAYS, glowsAt, offeredElsewhere, pileHolding } from '../src/lib/engine/glow.js'
@@ -27,16 +27,39 @@ const lookup = (id) => CARDS[id] ?? null
 const DECK = { id: 'c1', formatId: 'commander', commanders: ['rhys'], main: [{ cardId: 'forest', quantity: 50 }, { cardId: 'plains', quantity: 49 }] }
 
 describe('which game a deck asks the engine for', () => {
-  it('is Commander for a Commander deck, and the ordinary rules for every other, the rest of the family too', () => {
+  it('is its own Commander game for a Commander, a Duel Commander or a Brawl deck, and the ordinary rules for every other, Oathbreaker too', () => {
     expect(gameOf('commander')).toBe(COMMANDER_GAME)
-    for (const f of ['standard', 'pauper', 'brawl', 'duel', 'oathbreaker', undefined, 'made-up']) expect(gameOf(f)).toBe('standard')
-    expect(['brawl', 'duel', 'oathbreaker'].every(leaderlessFamily)).toBe(true)
-    expect(['commander', 'standard', 'made-up'].some(leaderlessFamily)).toBe(false)
-    expect(leaderlessLine('brawl')).toBe('The engine deals the Commander rules for Commander alone, so a Brawl deck is played by the ordinary rules: 20 life, and its commander is not dealt.')
+    // Since §3 item 20, the owner's decision of 2026-09-25.
+    expect(gameOf('duel')).toBe('duel')
+    expect(gameOf('brawl')).toBe('brawl')
+    expect(COMMANDER_GAMES).toEqual(['commander', 'duel', 'brawl'])
+    for (const f of ['standard', 'pauper', 'oathbreaker', undefined, 'made-up']) expect(gameOf(f)).toBe('standard')
+    expect(leaderlessFamily('oathbreaker')).toBe(true)
+    expect(['commander', 'duel', 'brawl', 'standard', 'made-up'].some(leaderlessFamily)).toBe(false)
+    expect(['commander', 'duel', 'brawl'].every(isCommanderGame)).toBe(true)
+    expect(['standard', 'oathbreaker', undefined, 7].some(isCommanderGame)).toBe(false)
     // An Oathbreaker deck's signature spell is kept apart from its main deck as its oathbreaker is, and neither is dealt.
-    expect(leaderlessLine('oathbreaker')).toBe('The engine deals the Commander rules for Commander alone, so an Oathbreaker deck is played by the ordinary rules: 20 life, and its oathbreaker and its signature spell are not dealt.')
+    expect(leaderlessLine('oathbreaker')).toBe('The engine deals Commander, Duel Commander and Brawl as Commander games, and not Oathbreaker, so an Oathbreaker deck is played by the ordinary rules: 20 life, and its oathbreaker and its signature spell are not dealt.')
     // The rules, each by its number in the Comprehensive Rules.
     for (const n of ['903.6', '903.7', '903.8', '903.10a']) expect(COMMANDER_TABLE).toContain(`(${n})`)
+    expect(tableLine('commander')).toBe(COMMANDER_TABLE)
+    expect(tableLine('oathbreaker')).toBeNull()
+    expect(tableLine('standard')).toBeNull()
+  })
+
+  it('says what a Duel Commander or a Brawl deck is dealt as, each number with its rule, and where the table does not follow Brawl\'s own', () => {
+    // Duel Commander is not in the Comprehensive Rules: its numbers are its committee's rules, said as theirs.
+    expect(tableLine('duel')).toBe("A Duel Commander deck is dealt as a Commander game for two, by Argentum's own Commander rules at Duel Commander's numbers, which are its rules committee's and not in the Comprehensive Rules: 20 life each (Duel Commander rules, 300.1a), each commander in its owner's command zone (903.6), {2} more to cast it from there for each time before (903.8), and commander damage loses nobody the game (Duel Commander rules, 506.1a).")
+    const brawl = tableLine('brawl')
+    for (const n of ['903.12f', '903.6', '903.8', '903.12h', '903.12g', '903.12d']) expect(brawl).toContain(`(${n})`)
+    expect(brawl.startsWith("A Brawl deck is dealt as a Commander game for two, by Argentum's own Commander rules at Brawl's numbers: 25 life each (903.12f)")).toBe(true)
+    // The two it does not follow: the free first mulligan, and sixty cards.
+    expect(brawl).toContain(BRAWL_MULLIGAN)
+    expect(brawl.endsWith("a Brawl deck here holds a hundred cards, as Scryfall's Brawl does, where the Comprehensive Rules' Brawl holds sixty (903.12d).")).toBe(true)
+    // The numbers the table says are the ones Server.kt asks Argentum for.
+    expect([GAMES.commander.life, GAMES.duel.life, GAMES.brawl.life]).toEqual([40, 20, 25])
+    expect([GAMES.commander.damage, GAMES.duel.damage, GAMES.brawl.damage]).toEqual([21, null, null])
+    expect([gameName('duel'), gameName('brawl'), gameName('commander'), gameName(undefined)]).toEqual(['Duel Commander', 'Brawl', 'Commander', 'Commander'])
   })
 })
 
@@ -69,10 +92,36 @@ describe('the deck as the sit sends it', () => {
     expect(leaderProblem(seatDeck(DECK, lookup))).toBeNull()
   })
 
-  it('leaves every other deck exactly as it was, the rest of the Commander family included', () => {
-    const brawl = seatDeck({ ...DECK, formatId: 'brawl' }, lookup)
-    expect(brawl).toEqual({ deck: seatDeck(DECK, lookup).deck, sideboard: {}, total: 99, unloaded: 0, sideboardUnloaded: 0 })
-    expect(leaderProblem(brawl)).toBeNull()
+  it('sends a Duel Commander or a Brawl deck\'s commander the same way, the game its own (§3 item 20)', () => {
+    for (const formatId of ['duel', 'brawl']) {
+      const seat = seatDeck({ ...DECK, formatId }, lookup)
+      expect(seat).toMatchObject({ game: formatId, leaders: 1, total: 100, commander: { name: 'Rhys the Redeemed', set: 'shm', number: '237' } })
+      expect(seat.deck).toEqual(seatDeck(DECK, lookup).deck)
+      expect(leaderProblem(seatDeck({ ...DECK, formatId, commanders: [] }, lookup))).toBe('none')
+      expect(leaderProblem(seatDeck({ ...DECK, formatId, commanders: ['rhys', 'sythis'] }, lookup))).toBe('partners')
+    }
+    expect(leaderWords('unknown', 'Rhys the Redeemed', 'brawl')).toBe('It does not know the commander, Rhys the Redeemed, and every Brawl deck has one (903.3), so it cannot deal a Brawl game with this deck.')
+    expect(leaderWords('partners', null, 'duel')).toBe('The engine deals one commander, and this deck has two, so it cannot deal a Duel Commander game with it.')
+    // Duel Commander's own rule that its deck has a commander, its committee's and not the
+    // Comprehensive Rules' (found in the review of item 20, where 903.3 was said of it).
+    expect(leaderWords('none', null, 'duel')).toBe('This deck has no commander, and every Duel Commander deck has one (Duel Commander rules, 402.1b), so the engine cannot deal a Duel Commander game with it.')
+    expect(leaderWords('unknown', 'Rhys the Redeemed', 'duel')).toBe('It does not know the commander, Rhys the Redeemed, and every Duel Commander deck has one (Duel Commander rules, 402.1b), so it cannot deal a Duel Commander game with this deck.')
+  })
+
+  it('cites a commander\'s rules by each game\'s own numbers: Duel Commander\'s committee\'s, which defer to 903, and 903 for the others', () => {
+    expect(gameRules('duel')).toMatchObject({ hasRule: 'Duel Commander rules, 402.1b', leaderRule: 'Duel Commander rules, 403.1a, which defers to 903.3', identityRule: 'Duel Commander rules, 103.4b and 403.1a, which defer to 903.4 and 903.5c' })
+    for (const game of ['commander', 'brawl', undefined, 'oathbreaker']) expect(gameRules(game)).toMatchObject({ hasRule: '903.3', leaderRule: '903.3', identityRule: '903.4, 903.5c' })
+    // Nothing said of Duel Commander cites 903.3 alone, as though it were Duel Commander's own rule.
+    for (const said of [leaderWords('unknown', 'X', 'duel'), leaderWords('none', null, 'duel'), formatLine({ asked: 'duel', played: 'standard', fellBack: 'commander' }, 'duel')]) {
+      expect(said).not.toMatch(/\(903\.3\)/)
+      expect(said).toMatch(/\(Duel Commander rules, 402\.1b\)/)
+    }
+  })
+
+  it('leaves every other deck exactly as it was, Oathbreaker included', () => {
+    const oathbreaker = seatDeck({ ...DECK, formatId: 'oathbreaker' }, lookup)
+    expect(oathbreaker).toEqual({ deck: seatDeck(DECK, lookup).deck, sideboard: {}, total: 99, unloaded: 0, sideboardUnloaded: 0 })
+    expect(leaderProblem(oathbreaker)).toBeNull()
     const sixty = seatDeck({ id: 's', formatId: 'standard', commanders: [], main: [{ cardId: 'forest', quantity: 60 }], sideboard: [] }, lookup)
     expect(sixty).not.toHaveProperty('commander')
     expect(sixty).not.toHaveProperty('game')
@@ -125,6 +174,38 @@ describe('what the table says of a Commander game', () => {
     expect(formatLine({ asked: 'standard', played: 'standard' }, 'standard')).toBeNull()
     expect(formatLine(undefined, 'standard')).toBeNull()
     expect(formatLine('commander', 'standard')).toBeNull()
+    // Since protocol 10 the room passes on the engine's numbers, which say the same.
+    expect(formatLine({ asked: 'commander', played: 'commander', rules: { life: 40, deckSize: 100, commanderDamage: 21 } }, 'commander')).toBe("Played by the Commander rules: 40 life each (903.7), and each commander begins in its owner's command zone (903.6).")
+  })
+
+  it('says a Duel Commander or a Brawl game dealt at its own numbers, and each way it was not (§3 item 20)', () => {
+    const brawl = { life: 25, deckSize: 100, commanderDamage: null }
+    expect(formatLine({ asked: 'brawl', played: 'brawl', rules: brawl }, 'brawl')).toBe(`Played by the Brawl rules, for two: 25 life each (903.12f), each commander begins in its owner's command zone (903.6), and commander damage loses nobody the game (903.12h). ${BRAWL_MULLIGAN}`)
+    expect(formatLine({ asked: 'duel', played: 'duel', rules: { life: 20, deckSize: 100, commanderDamage: null } }, 'duel')).toBe("Played by the Duel Commander rules, for two: 20 life each (Duel Commander rules, 300.1a), each commander begins in its owner's command zone (903.6), and commander damage loses nobody the game (Duel Commander rules, 506.1a).")
+    // A number the engine dealt that is not the rule's is said as the engine's, and not cited.
+    expect(formatLine({ asked: 'brawl', played: 'brawl', rules: { life: 30 } }, 'brawl').startsWith('Played by the Brawl rules, for two: 30 life each, as the engine dealt it, ')).toBe(true)
+    // No numbers passed on: the rule's.
+    expect(formatLine({ asked: 'duel', played: 'duel' }, 'duel')).toContain('20 life each (Duel Commander rules, 300.1a)')
+    const ordinary = 'played by the ordinary rules: 20 life each, and no commander dealt.'
+    expect(formatLine({ asked: 'brawl', played: 'standard', fellBack: 'engine' }, 'brawl')).toBe(`This relay's engine deals no Brawl game, so it is ${ordinary}`)
+    expect(formatLine({ asked: 'duel', played: 'standard', fellBack: 'players' }, 'duel')).toBe(`This table has more than two players, and Duel Commander is for two (Duel Commander rules, 205.1a), so it is ${ordinary}`)
+    expect(formatLine({ asked: 'brawl', played: 'standard', fellBack: 'players' }, 'brawl')).toBe(`This table has more than two players, and the engine deals Brawl only to two, at 25 life each (903.12f; more begin at 30), so it is ${ordinary}`)
+    expect(formatLine({ asked: 'brawl', played: 'standard', fellBack: 'games' }, 'duel')).toBe(`The decks at this table ask for different games of the Commander family, so it is ${ordinary}`)
+    expect(formatLine({ asked: 'brawl', played: 'standard', fellBack: 'commander' }, 'brawl')).toBe('With no commander to deal there is no Brawl game, since every Brawl deck has one (903.3), so it is played by the ordinary rules: 20 life each, and no command zone.')
+    expect(formatLine({ asked: 'duel', played: 'standard', fellBack: 'commander' }, 'duel')).toBe('With no commander to deal there is no Duel Commander game, since every Duel Commander deck has one (Duel Commander rules, 402.1b), so it is played by the ordinary rules: 20 life each, and no command zone.')
+    // A relay from before item 20 read the word as no game at all, and a relay from before Commander says nothing.
+    expect(formatLine({ asked: 'standard', played: 'standard' }, 'brawl')).toBe(`This relay deals no Brawl game, so it is ${ordinary}`)
+    expect(formatLine(undefined, 'duel')).toBe(`This relay is older than Duel Commander at the engine's table, so the game is ${ordinary}`)
+  })
+
+  it('says commander damage can lose only a game whose rules have that loss', () => {
+    expect(damageLoses({ asked: 'commander', played: 'commander', rules: { life: 40, commanderDamage: 21 } })).toBe(true)
+    expect(damageLoses({ asked: 'brawl', played: 'brawl', rules: { life: 25, commanderDamage: null } })).toBe(false)
+    // Duel Commander and Brawl have none whatever the engine said; the engine's null is believed of any game.
+    expect(damageLoses({ asked: 'duel', played: 'duel' })).toBe(false)
+    expect(damageLoses({ asked: 'commander', played: 'commander', rules: { life: 40, commanderDamage: null } })).toBe(false)
+    // Nothing said, or unreadable: as every Commander game before item 20.
+    for (const r of [undefined, null, 'brawl', { played: 'standard' }, { played: 'commander', rules: 'none' }]) expect(damageLoses(r)).toBe(true)
   })
 
   it('says the commander tax by the engine\'s own count, and nothing where there is none', () => {

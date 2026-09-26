@@ -331,6 +331,103 @@ behind now waits a small grace, not a second. `tests/engine-room.test.jsx` (741)
 four, `tests/engine-restart.test.js` (69) one, and the live test that leaned on its
 neighbours deals its own game.
 
+Added for HANDOFF.md §3 item 19 (2026-09-25), a stand-in commander (PLAN.md, "§3
+item 19: a stand-in commander"):
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/engine/stand-in.js` | 204 | Which of a Commander deck's own cards may stand in for a commander the engine does not know (`standInsFor`: a legendary creature card, 903.3, the engine knows, its colour identity within the deck's and holding every card dealt, 903.4 and 903.5c, off Scryfall's `color_identity`; none where a card to be dealt has no colours to read); the seat led by the one chosen (`leadWith`: out of the library, sent as the commander with `standsFor`); the choice read back from a table's record, the rules asked again (`ledSeat`); `leadOf`, forgiving; and every word said of it — the gate's offer, the tile's line, the log's line, a stand-in let go of, `standInPhrase`. Pure. |
+| `tests/engine-stand-in.test.js` | 283 | `stand-in.js` whole: what the rules allow and do not, the seat led, a choice read back and let go of, the words, the engine's copy said to be led by it, the stop's line, the board marking the card; and the app's Commodore Guff example deck, from the engine's own answers, led by Narset, Enlightened Master alone, the deck unchanged. |
+| `tests/fixtures/example-guff.json` | 313 | The Commodore Guff example deck as the engine at the pin knows it, asked 2026-09-25 — the 55 names it does not know, and each of the 30 it knows as it describes them — and Scryfall's record of Commodore Guff. The live test holds it to the engine; the unit test and the engine spec read it. |
+
+And these grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `scripts/relay-engine.mjs` | 1,353 | `commanderOf` reads `standsFor`; `toEngine` sends the engine a commander without it; `standIn` on a person's seat — as brought until the deal, as dealt after — in `seats`, in their `seated` (`format.standIn`) and in the room's file; `engineDeck.standsFor` where the engine's seat is dealt the same card; `savedRoomOf` reads both back forgivingly. |
+| `src/features/game/Lobby.jsx` | 632 | The gate offers the stand-ins as radios, none chosen, the rules cited, and a button naming the one chosen; the tile says one can lead the deck; the choice is recorded with the table. |
+| `src/features/game/useEngineRoom.js`, `useEngineCheck.js` | 564, 132 | `agreeToLeaveOut` records the stand-in with the cards left out; the sit brings it (`ledSeat`), one that can no longer lead is let go of and said; the log says once that it leads the deck and the engine's copy; `leads`, and the board marks each stand-in by its owner. The check carries `standIns`. |
+| `src/lib/engine/opponent.js`, `board.js`, `deck.js` | 300, 363, 334 | The engine's commander said as a stand-in where the room says it stands in (`standsFor`), and a deck of the engine's own said as depending on one before the sit; `boardFromView`'s `leaders` marks a stand-in card (`standsFor`); `stampedEngineName` exported. |
+| `src/features/game/Table.jsx`, `EnginePrompt.jsx`, `Seats.jsx` | 1,797, 677, 381 | The command zones' labels and the word "stand-in" on their tiles; the stop's line for a stand-in commander; the table's and the lobby's seat lists. |
+| `src/components/table/BoardCard.jsx`, `ZoneBrowser.jsx` | 314, 120 | A stand-in commander said to be "standing in for" the real one, on the table and in a pile. |
+| `src/features/game/game.css` | 498 | `.ztile__standin`, no wider than the tile's face. |
+
+`tests/relay-server.test.js` (2,754 lines) gains eight: a stand-in dealt as the
+commander it is and never named to the engine, said to the person, of the copy and
+in `GET /rooms`, and unchanged by a sit again; not said of another deck's commander,
+a deck of the engine's own, or a game by the ordinary rules; `standsFor` read
+forgivingly; kept through a restart; read back from a file forgivingly.
+`tests/engine-room.test.jsx` (874) eight of the seat's; `tests/engine-live.test.js`
+(1,631) one, the Guff example deck dealt and played against the built engine led by
+Narset; `tests/browser/engine-commander.spec.mjs` (431) thirty-one checks against
+the stand-in engine, a reload and a relay restart among them;
+`tests/browser/game-engine.spec.mjs` (1,384) fourteen against the real engine.
+
+Added for HANDOFF.md §3 item 20 (2026-09-25), Duel Commander and Brawl as Commander
+games (PLAN.md, "§3 item 20: Duel Commander and Brawl as Commander games"). No new
+file; these grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `engine/src/main/kotlin/companion/Server.kt` | 2,340 | Protocol 10. `GAME_FORMATS` deals `duel` (20 life) and `brawl` (25) as `Format.Commander`, commander damage losing nobody (`NO_COMMANDER_DAMAGE_LOSS`), for two players (`TWO_PLAYER_GAMES`); `COMMANDER_BUILDS` builds a deck of the engine's own to the game's own format, Brawl's by `DeckFormat.BRAWL`, and none for Duel Commander; `rulesOf` says `rules` in the reply to `new` and `restore`. |
+| `scripts/relay-engine.mjs` | 1,430 | `COMMANDER_GAMES`, `formatOf` reading `duel` and `brawl`; the game asked from the family's asks (`familyAsks`), dealt where the engine lists it at protocol 10, at a table of two, and nobody asked another; `fellBack` `engine`, `players`, `games` or `commander`; `rulesOf` passing the engine's numbers on, forgivingly, and `savedRoomOf` reading them back. |
+| `src/lib/engine/commander.js` | 290 | `COMMANDER_GAMES`, `isCommanderGame`, `GAMES` (each number with its citation), `gameName`, `tableLine`, `BRAWL_MULLIGAN`, `damageLoses`; `formatLine` and `leaderWords` in each game's words; `leaderlessLine` for Oathbreaker. |
+| `src/lib/engine/stand-in.js`, `opponent.js`, `deck.js` | 215, 319, 337 | A stand-in for a Duel Commander or Brawl deck, said in its game's words; `buildsFor` Brawl, `noOwnLine` with why for Duel Commander, the engine's deck lines for a Brawl game not dealt; `seatDeck` sends either deck's commander apart. |
+| `src/features/game/useEngineRoom.js`, `Table.jsx`, `Seats.jsx`, `Lobby.jsx` | 567, 1,802, 381, 635 | The sit asks for Duel Commander or Brawl with its commander; the log's lines; the plates keep no tally where commander damage loses nobody; the seats panel's line for each game; the gate and tile in each game's words; the lobby's line under the title says a hundred cards for Brawl and Duel Commander. |
+| `tests/fixtures/fake-engine.mjs` | 690 | Protocol 10 by default: `duel` and `brawl` at 20 and 25 life, the tally's threshold past reach, `rules` in its reply, a Brawl deck of its own and the copy at Duel Commander; FAKE_PROTOCOL=9 refuses both. |
+| `scripts/engine-commander.mjs` | 167 | `--kinds brawl,duel`, and the life each game was dealt at. |
+
+`tests/relay-server.test.js` (2,891 lines) gains nine and changes seven: each game
+asked for with its commanders and dealt at its numbers, the tally passed through; the
+engine's own Brawl deck, and the copy at Duel Commander with why; an engine at 9 asked
+for neither and still asked for Commander; a table of three, and one of two different
+games, dealt the ordinary game and why; a stand-in at a Brawl game; the room's file
+read back forgivingly. `tests/engine-commander.test.js` (317) four,
+`tests/engine-stand-in.test.js` (302) one, `tests/engine-opponent.test.js` (255) one,
+`tests/engine-room.test.jsx` (946) five; `tests/engine-live.test.js` (1,818) eight
+against the built engine — each game dealt at its life total, a Duel Commander game
+played and its tally past reach, a 6/1 commander's 24 damage ending a Commander game
+and not a Brawl one, a Brawl deck of the engine's own legal by the app's validator and
+played, the copy at Duel Commander, a Brawl deck led by a legendary planeswalker, three
+players refused; `tests/browser/engine-commander.spec.mjs` (519) twenty-four checks
+against the stand-in engine — a Brawl game at 25 whose plate keeps no tally, and a Duel
+Commander deck led by a stand-in at 20; `tests/browser/engine-deck.spec.mjs` (289)
+seven for the Brawl, Duel Commander and Oathbreaker lobbies in place of three; and
+`tests/browser/game-engine.spec.mjs` (1,478) twenty-three against the real engine, a
+Brawl game with a Brawl deck of the engine's own and a Duel Commander game with the copy.
+
+Added by the review of items 19 and 20 (2026-09-25; PLAN.md, "What the review of
+items 19 and 20 found, and what was done"). `Server.kt` unchanged, the engine not
+rebuilt.
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `src/lib/engine/names.js` | 21 | `sameCard(sent, named)`: whether the engine's name for a card is the one the table sent, a card of two faces sent as "Front // Back" and named back by its front (Server.kt, `resolveName`). Shared by the relay and the app. |
+
+And these grew:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `scripts/relay-engine.mjs` | 1,482 | The copy the engine deals for a deck of its own it builds none of — at Duel Commander always — says the stand-in that leads it (`engineDeck.standsFor`); the engine's commander matched to the one sent by `sameCard`; in a game dealt by the ordinary rules a person's stand-in put back in the library sent, theirs and the copy's (`withStandIn`), and said as `format.inLibrary`, written with the room and read back forgivingly; `commanderOf` and `toEngine` exported for the live suite. |
+| `src/lib/engine/commander.js` | 308 | `GAMES` gains each game's rules for a commander — `hasRule`, `leaderRule`, `identityRule` — Duel Commander's its committee's (402.1b; 403.1a and 103.4b, which defer to 903); `gameRules`; `leaderWords` and `formatLine` cite them. |
+| `src/lib/engine/stand-in.js`, `opponent.js`, `board.js` | 232, 323, 364 | `standInOffer` and `standInLine` in each game's own citations; `unledLine`, where a stand-in went in a game dealt by the ordinary rules; the copy's stand-in said in every line that says the copy; `boardFromView` matches by `sameCard`. |
+| `src/features/game/useEngineRoom.js` | 574 | The engine's copy's stand-in read off its commander by `sameCard`; the log says where a stand-in sent went in a game dealt by the ordinary rules. |
+| `tests/fixtures/fake-engine.mjs` | 708 | FAKE_FORMATS, the games its hello lists and it deals, whatever its protocol; a commander of two faces named back by its front, as Server.kt names it. |
+
+`tests/relay-server.test.js` (3,000 lines) gains five and changes three: the copy at
+Duel Commander said to be led by the stand-in; a stand-in of two faces; the stand-in
+put back in the library of the ordinary game, and a real commander not; each half of
+the room's check of `hello.formats` on its own; `inLibrary` through a restart and read
+back forgivingly. `tests/engine-commander.test.js` (331) one and two changed,
+`tests/engine-stand-in.test.js` (346) four, `tests/engine-room.test.jsx` (971) two and
+one changed; `tests/engine-live.test.js` (1,884) one — a Brawl game kept and taken
+back at 25 life, its commander damage past 21 losing nobody in either process — and
+the stand-in test sends its commander through the relay's own `commanderOf` and
+`toEngine`; `tests/browser/engine-commander.spec.mjs` (547) two checks — a pile's
+words for a stand-in, and the pile closed with nothing cast — and four changed: the
+Brawl tally read off the wire before the plate's silence about it is believed, and
+three for Duel Commander's citations.
+
 ## `src/lib/board/` — the rules-free table
 
 | File | Lines | What it holds |

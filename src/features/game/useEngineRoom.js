@@ -6,8 +6,10 @@ import { leaveOut, nameList, seatDeck } from '../../lib/engine/deck.js'
 import { levelLine, levelOf } from '../../lib/engine/levels.js'
 import { ANSWERS, NO_CHOICES, choicesFrom } from '../../lib/engine/choose.js'
 import { DEFAULT_OPPONENT, OPPONENT_KINDS, engineDeckLine, formatWord, insteadLine, setsOf } from '../../lib/engine/opponent.js'
-import { COMMANDER_GAME, formatLine, gameOf } from '../../lib/engine/commander.js'
+import { formatLine, gameName, gameOf, isCommanderGame } from '../../lib/engine/commander.js'
 import { restartOf, restoredLines } from '../../lib/engine/restart.js'
+import { leadOf, ledSeat, standInLine, standInLostLine, unledLine } from '../../lib/engine/stand-in.js'
+import { sameCard } from '../../lib/engine/names.js'
 
 /**
  * A seat at a table the engine holds.
@@ -64,7 +66,17 @@ import { restartOf, restoredLines } from '../../lib/engine/restart.js'
  * And which game the deck asks for (M6): the sit says so (`format`), a
  * Commander deck bringing its commander apart from its library (`commander`),
  * and the log says once which game the room reports was dealt — the Commander
- * rules, or the ordinary ones and why.
+ * rules, or the ordinary ones and why. Since §3 item 20 a Duel Commander or a
+ * Brawl deck asks for its own game the same way, and the room's report carries
+ * the engine's numbers for it (`game.rules`), which the table reads to know
+ * whether commander damage can lose it.
+ *
+ * And a stand-in (HANDOFF.md §3 item 19): where the lobby recorded that the
+ * player chose one of the deck's own legendary creatures to lead it in place of
+ * a commander the engine does not know, the sit brings it as the commander, out
+ * of the library, with `standsFor` naming the real one; the log says once that
+ * it is a stand-in and not the deck's real commander, and the board marks the
+ * card, the engine's copy of it too, for the table to say the same (`leads`).
  *
  * And a game that comes back (M7). A relay that restarts, or an engine that
  * stops, costs the room its engine for the fifteen seconds or so a new one
@@ -96,10 +108,15 @@ const recall = (code) => { try { return JSON.parse(localStorage.getItem(memoryKe
  * the lobby showed them the engine does not know. Kept with the seat rather
  * than passed along once, so a reload of the table still leaves them out
  * instead of sitting down with a deck the engine will refuse.
+ *
+ * With them, the stand-in the player chose to lead the deck in place of a
+ * commander the engine does not know (HANDOFF.md §3 item 19), by name, or none:
+ * recorded together, so a later sit without one does not keep an earlier one.
+ * The deck itself is never written to.
  */
-export function agreeToLeaveOut(code, deckId, names) {
+export function agreeToLeaveOut(code, deckId, names, lead = null) {
   if (!code) return
-  remember(code, { ...(recall(code) ?? {}), without: { deckId, names } })
+  remember(code, { ...(recall(code) ?? {}), without: { deckId, names }, standIn: typeof lead === 'string' && lead ? { deckId, name: lead } : null })
 }
 
 /**
@@ -193,8 +210,16 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   const memory = useMemo(() => recall(code) ?? {}, [code])
   // What the lobby agreed to leave out, for this deck only, read forgivingly:
   // it was written by whatever build was running when the player chose.
-  const agreed = memory.without?.deckId === deck?.id && Array.isArray(memory.without?.names) ? memory.without.names : []
-  const prepared = cardsReady ? leaveOut(seatDeck(deck, deckLookup), agreed) : null
+  const agreed = memory.without?.deckId === deck?.id && Array.isArray(memory.without?.names) ? memory.without.names.filter((n) => typeof n === 'string') : []
+  // And the stand-in the player chose there to lead this deck in place of a
+  // commander the engine does not know (HANDOFF.md §3 item 19), by name. The rules
+  // are asked again of this device's records (`ledSeat`), since the deck may have
+  // changed since: one that can no longer lead it is let go of, and said.
+  const agreedLead = memory.standIn?.deckId === deck?.id && typeof memory.standIn?.name === 'string' ? memory.standIn.name : null
+  const without = cardsReady ? leaveOut(seatDeck(deck, deckLookup), agreed) : null
+  const leading = without && agreedLead ? ledSeat(without, agreedLead, { deck, lookup: deckLookup, left: agreed }) : null
+  const prepared = without && leading?.seat ? { ...without, seat: leading.seat } : without
+  const leadLost = leading?.lost ?? null
   // A card that has not loaded has no name to send, and the deck sent without
   // it would be smaller than the player's, so the seat is not taken at all
   // while any is missing; the table says so instead.
@@ -205,7 +230,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   // A Commander deck's commander and the game it asks for go with it (M6): they
   // are part of what the seat is, and change with the deck.
   const deckKey = prepared && !unloaded
-    ? JSON.stringify({ deck: prepared.seat.deck, sideboard: prepared.seat.sideboard, ...(prepared.seat.game === COMMANDER_GAME ? { game: COMMANDER_GAME, commander: prepared.seat.commander ?? null, leaders: prepared.seat.leaders ?? 0 } : {}) })
+    ? JSON.stringify({ deck: prepared.seat.deck, sideboard: prepared.seat.sideboard, ...(isCommanderGame(prepared.seat.game) ? { game: prepared.seat.game, commander: prepared.seat.commander ?? null, leaders: prepared.seat.leaders ?? 0 } : {}) })
     : null
   const deckNames = useMemo(() => (deckKey ? JSON.parse(deckKey) : null), [deckKey])
   const leftKey = JSON.stringify(prepared?.left ?? [])
@@ -229,6 +254,14 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   // why where a Commander game was asked for and not dealt; undefined until the deal.
   const [game, setGame] = useState(undefined)
   const gameNoted = useRef(false)
+  // The commanders that stand in for ones the engine does not know (HANDOFF.md
+  // §3 item 19), `{ name, for }`: this person's and the engine's seat's, once the
+  // room has said, or null. Kept in a ref as well, since the board is laid from
+  // a view inside the socket's handler, and marks each stand-in card for the
+  // table to say (`boardFromView`'s `leaders`); `mySeat` is this seat's engine id.
+  const [leads, setLeads] = useState({ own: null, engine: null })
+  const leadsRef = useRef({ own: null, engine: null })
+  const mySeat = useRef(null)
   const sat = useRef(false)
   const sideNoted = useRef(false)
   const printingsNoted = useRef(false)
@@ -276,7 +309,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
     // game, bringing its commander where it has one to send, and every other deck
     // the ordinary rules. Said by a sixty-card deck too, since M6's review: a sit
     // that said nothing left a room's earlier Commander request standing.
-    const led = { format: gameOf(deck?.formatId), ...(deckNames.game === COMMANDER_GAME && deckNames.commander ? { commander: deckNames.commander } : {}) }
+    const led = { format: gameOf(deck?.formatId), ...(isCommanderGame(deckNames.game) && deckNames.commander ? { commander: deckNames.commander } : {}) }
     line.onOpen(() => line.send({ t: 'engine', op: 'sit', name, seat: memory.seat ?? null, deck: deckNames.deck, deltas: true, answers: ANSWERS, mulligans: true, ...side, ...(asked ? { level: asked } : {}), engineDeck: ask.sit, ...led }))
     line.onMessage((m) => {
       if (m?.t !== 'engine') return
@@ -325,10 +358,25 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
           // The game dealt goes with it, since it is why a Commander deck of the
           // engine's own was not built at a table dealt by the ordinary rules.
           const dealtGame = m.format && typeof m.format === 'object' && !Array.isArray(m.format) ? m.format : undefined
+          // A stand-in leading this person's deck (§3 item 19), only in a Commander
+          // game: the room's word, and where a relay older than stand-ins says none,
+          // the one this seat sent. And the engine's: a copy of the deck is led by
+          // the same card, which the room says (`standsFor`), and which a relay older
+          // than stand-ins leaves to be read off the copy's commander — named by the
+          // engine by its front where it has two faces (`sameCard`).
+          const sent = deckNames.commander?.standsFor ? { name: deckNames.commander.name, for: deckNames.commander.standsFor } : null
+          const ownLead = m.engineSeat && isCommanderGame(dealtGame?.played) ? leadOf(dealtGame.standIn) ?? sent : null
+          const raw = m.engineDeck && typeof m.engineDeck === 'object' ? m.engineDeck : undefined
+          const reported = raw && ownLead && !raw.standsFor && raw.played === 'mirror' && sameCard(ownLead.name, raw.commander) ? { ...raw, standsFor: ownLead.for } : raw
+          if (m.engineSeat) {
+            mySeat.current = m.engineSeat
+            leadsRef.current = { own: ownLead, engine: leadOf({ name: reported?.commander, for: reported?.standsFor }) }
+            setLeads(leadsRef.current)
+          }
           if (m.engineSeat && !deckNoted.current) {
             deckNoted.current = true
             const kind = 'ai' in m ? m.ai : seating.current.length ? seating.current.find((x) => x.ai)?.ai ?? null : undefined
-            const report = m.engineDeck && typeof m.engineDeck === 'object' ? m.engineDeck : undefined
+            const report = reported
             setEngineDeck(report ?? null)
             if (kind !== null) {
               const instead = insteadLine(ask.instead, ask.name)
@@ -344,12 +392,21 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
             gameNoted.current = true
             const report = dealtGame
             setGame(report ?? null)
-            const said = deckNames.game === COMMANDER_GAME && deckNames.leaders > 1 && report?.played !== COMMANDER_GAME
-              ? 'The engine deals one commander, and this deck has two, so the game is played by the ordinary rules: 20 life each, and no command zone.'
+            const line = isCommanderGame(deckNames.game) && deckNames.leaders > 1 && !isCommanderGame(report?.played)
+              ? `The engine deals one commander, and this deck has two, so the game is played by the ordinary rules${deckNames.game === 'commander' ? '' : `, not the ${gameName(deckNames.game)} rules`}: 20 life each, and no command zone.`
               : formatLine(report, deckNames.game ?? 'standard')
-            if (said) note(said)
+            if (line) note(line)
+            // And the stand-in that leads this deck, said as not its real commander;
+            // or, in a game dealt by the ordinary rules, where nothing leads it, where
+            // the card went: into the library, where the room says it put it back, and
+            // nowhere where a room older than that says nothing, since the sit took it
+            // out of the library to send it as the commander.
+            if (ownLead) note(standInLine(ownLead, report?.played))
+            else if (sent && !isCommanderGame(report?.played)) note(unledLine(sent, leadOf(report?.inLibrary)))
           }
           if (!sat.current) {
+            // A stand-in chosen in the lobby that can no longer lead this deck, let go of.
+            if (leadLost) note(standInLostLine(leadLost))
             if (leftOut.length) {
               const copies = leftOut.reduce((sum, l) => sum + l.count, 0)
               note(`Played without ${nameList(leftOut.map((l) => `${l.count} ${l.name}`), Infinity)}: the engine does not know ${copies === 1 ? 'it' : 'them'}.`)
@@ -411,7 +468,12 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
           // Seats in the room's order once the engine has named them all, so
           // the plates sit where the lobby said they would.
           const order = seating.current.length && seating.current.every((x) => x.engineSeat) ? seating.current.map((x) => ({ id: x.engineSeat })) : null
-          board.current = boardFromView(next, { prev: board.current, seats: order })
+          // Each stand-in commander by its owner, for the table to say it is one.
+          const leaders = {}
+          const botSeat = seating.current.find((x) => x.ai)?.engineSeat
+          if (mySeat.current && leadsRef.current.own) leaders[mySeat.current] = leadsRef.current.own
+          if (botSeat && leadsRef.current.engine) leaders[botSeat] = leadsRef.current.engine
+          board.current = boardFromView(next, { prev: board.current, seats: order, leaders })
           // Now that this view's own lines are in the log, what the engine did
           // for the player before them can be said under them, and what came
           // back after a restart under the table it came back to.
@@ -504,7 +566,7 @@ export default function useEngineRoom({ address, code, name, deck, deckLookup, c
   }, [])
 
   return {
-    run, seat, seats, status, refusal, gone, restoring, wireStatus, unloaded, leftOut, sideboardLeftOut, level, answering, slow, can, engineDeck, game,
+    run, seat, seats, status, refusal, gone, restoring, wireStatus, unloaded, leftOut, sideboardLeftOut, level, answering, slow, can, engineDeck, game, leads,
     act, decide, cardFor, moveCard,
     refuse: (message) => setRefusal({ message }),
     clearRefusal: () => setRefusal(null),

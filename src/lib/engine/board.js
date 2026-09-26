@@ -30,6 +30,7 @@ import { laneFor, snapToLane } from '../board/placement.js'
 import { freeAlong } from '../board/geometry.js'
 import { FIRST_STEP } from '../../data/turn-structure.js'
 import { commanderDamageOf } from './commander.js'
+import { sameCard } from './names.js'
 
 /**
  * What the table says while the engine is playing its own turn.
@@ -207,9 +208,13 @@ export function applyDelta(view, delta, { log = null } = {}) {
  *
  * `prev` is the board this replaces, for positions and arrival turns;
  * `seats` is the room's seating, so the players are listed in seat order
- * whether or not the engine mentions every one of them.
+ * whether or not the engine mentions every one of them. `leaders` is, by
+ * player, a commander that stands in for one the engine does not know
+ * (HANDOFF.md §3 item 19), `{ name, for }` as the room said it: the engine
+ * deals it as the commander it is and knows nothing of what it stands in for,
+ * so the card is marked here (`standsFor`) for the table to say.
  */
-export function boardFromView(view, { prev = null, seats = null } = {}) {
+export function boardFromView(view, { prev = null, seats = null, leaders = null } = {}) {
   const players = (seats?.length ? seats.map((s) => s.id ?? s) : view.players.map((p) => p.playerId))
   const board = createBoard({
     players,
@@ -274,6 +279,11 @@ export function boardFromView(view, { prev = null, seats = null } = {}) {
         // of the card (`isCommander`), so the table can say it in words.
         ...(card.isCommander === true ? { commander: true } : {}),
       }
+      // Its owner's stand-in, by name: a card of the same name that is no commander,
+      // or another player's, is not one. A card of two faces is sent by Scryfall's
+      // name for both, "Front // Back", and may be named by its front by the engine.
+      const lead = card.isCommander === true ? leaders?.[inst.owner] : null
+      if (lead && typeof lead.for === 'string' && sameCard(lead.name, card.name)) inst.standsFor = lead.for
       board.cards[id] = inst
       list.push(id)
       if (zoneId === 'battlefield' && was?.zone !== 'battlefield') arrivals.push(inst)

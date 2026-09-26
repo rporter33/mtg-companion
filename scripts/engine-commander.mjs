@@ -6,6 +6,7 @@
  *   bash scripts/engine-build.sh                 # once, if there is no engine yet
  *   node scripts/engine-commander.mjs            # 10 games of each kind, 12 turns each
  *   node scripts/engine-commander.mjs --games 3 --turns 6 --kinds commander
+ *   node scripts/engine-commander.mjs --kinds duel,brawl   # HANDOFF.md §3 item 20
  *
  * Three kinds of game, each dealt paced, as a room deals one, with the engine's
  * seat at intermediate, the first level a person meets:
@@ -16,6 +17,11 @@
  *              each, of the kind a person brings
  *   commander  a Commander deck of the engine's own against another, commander
  *              and all, by Argentum's own Format.Commander: a hundred cards each
+ *   brawl      a Brawl deck of the engine's own against another, dealt as a Brawl
+ *              game (protocol 10, §3 item 20): 25 life, a hundred cards each
+ *   duel       a Commander deck of the engine's own, dealt as a Duel Commander
+ *              game (protocol 10): 20 life, the engine's seat the copy, since
+ *              Argentum has no Duel Commander card pool to build one from
  *
  * The person's deck in the last two is one the engine built for a seat in a
  * game dealt only to read it (`decklist`), so both seats hold real decks of the
@@ -38,7 +44,7 @@
  * Options:
  *   --games N     games per kind (default 10), seeds from --seed (default 20260925)
  *   --turns N     turns each game is played to, at most (default 12)
- *   --kinds a,b   goblins, modern, commander (default all three)
+ *   --kinds a,b   goblins, modern, commander, brawl, duel (default the first three)
  *   --level L     the engine's level (default intermediate)
  */
 import { findEngine, startEngine } from './engine-bridge.mjs'
@@ -49,7 +55,10 @@ const GAMES = Number(flag('games', 10))
 const TURNS = Number(flag('turns', 12))
 const SEED = Number(flag('seed', 20260925))
 const LEVEL = flag('level', 'intermediate')
-const KINDS = flag('kinds', 'goblins,modern,commander').split(',').filter((k) => ['goblins', 'modern', 'commander'].includes(k))
+const KINDS = flag('kinds', 'goblins,modern,commander').split(',').filter((k) => ['goblins', 'modern', 'commander', 'brawl', 'duel'].includes(k))
+/** The game a kind is dealt as, and the format its decks are built to: a Duel Commander deck is a Commander one, there being no Duel pool. */
+const GAME = { goblins: null, modern: null, commander: 'commander', brawl: 'brawl', duel: 'duel' }
+const BUILT = { modern: 'modern', commander: 'commander', brawl: 'brawl', duel: 'commander' }
 const GOBLINS = { Mountain: 14, 'Raging Goblin': 6, 'Goblin Bully': 4, 'Hulking Goblin': 4, 'Volcanic Hammer': 4, 'Lava Axe': 2 }
 
 const command = findEngine()
@@ -57,6 +66,7 @@ if (!command) { console.log('No engine is built here (scripts/engine-build.sh).'
 const engine = startEngine({ command, timeoutMs: 180_000 })
 const hello = await engine.call('hello')
 if (hello.protocol < 8) { console.log(`This engine speaks protocol ${hello.protocol}; Commander came with 8.`); process.exit(1) }
+if (KINDS.some((k) => k === 'brawl' || k === 'duel') && hello.protocol < 10) { console.log(`This engine speaks protocol ${hello.protocol}; Duel Commander and Brawl came with 10.`); process.exit(1) }
 console.log(`engine: protocol ${hello.protocol}, ${hello.cards} cards, loaded in ${hello.load.ms} ms, ${hello.load.heapMb} MB`)
 
 const bytes = (o) => Buffer.byteLength(JSON.stringify(o))
@@ -70,9 +80,10 @@ const stats = (xs) => {
 
 /** The deck an engine's seat was built for this kind from this seed, as a person would bring it by name. */
 async function builtDeck(kind, seed) {
-  const own = kind === 'commander' ? { format: 'commander' } : { format: 'modern' }
+  const own = { format: BUILT[kind] }
+  const game = BUILT[kind] === 'modern' ? null : BUILT[kind]
   const dealt = await engine.call('new', {
-    ...(kind === 'commander' ? { format: 'commander' } : {}),
+    ...(game ? { format: game } : {}),
     players: [{ name: 'Bot', ai: 'heuristic', deck: 'own', ...own }, { name: 'Other', ai: 'heuristic', deck: 'own', ...own }],
     seed,
   })
@@ -83,10 +94,10 @@ async function builtDeck(kind, seed) {
 /** One game of a kind, played to TURNS turns or its end; what it cost. */
 async function play(kind, seed, out) {
   const mine = kind === 'goblins' ? { deck: GOBLINS, commander: null } : await builtDeck(kind, seed + 1_000_000)
-  const bot = kind === 'goblins' ? { deck: 'mirror' } : { deck: 'own', format: kind === 'commander' ? 'commander' : 'modern' }
+  const bot = kind === 'goblins' || kind === 'duel' ? { deck: 'mirror' } : { deck: 'own', format: BUILT[kind] }
   const started = now()
   let s = await engine.call('new', {
-    ...(kind === 'commander' ? { format: 'commander' } : {}),
+    ...(GAME[kind] ? { format: GAME[kind] } : {}),
     players: [
       { name: 'You', deck: mine.deck, ...(mine.commander ? { commander: mine.commander } : {}), autoPass: true },
       { name: 'Bot', ai: 'heuristic', level: LEVEL, ...bot },
@@ -96,6 +107,7 @@ async function play(kind, seed, out) {
   })
   out.deal.push(now() - started)
   const you = s.seats[0].id
+  out.life.add((await engine.call('view', { viewer: you })).state.players.map((p) => p.life).join('/'))
   const view = async (delta) => {
     const v = await engine.call('view', { viewer: you, delta })
     const body = v.state ? { state: v.state } : { delta: v.delta }
@@ -137,7 +149,7 @@ async function play(kind, seed, out) {
 }
 
 for (const kind of KINDS) {
-  const out = { deal: [], step: [], turns: [], whole: [], delta: [], stops: [], refused: [] }
+  const out = { deal: [], step: [], turns: [], whole: [], delta: [], stops: [], refused: [], life: new Set() }
   for (let g = 0; g < GAMES; g++) {
     try { await play(kind, SEED + g, out) } catch (e) { console.log(`${kind} seed ${SEED + g}: ${e.message}`) }
   }
@@ -149,6 +161,7 @@ for (const kind of KINDS) {
   console.log(`  whole view, bytes:     ${stats(out.whole)}`)
   console.log(`  delta, bytes:          ${stats(out.delta)}`)
   console.log(`  stops a game:          ${stats(out.stops)}`)
+  console.log(`  life at the deal:      ${[...out.life].join(', ')}`)
   for (const r of new Set(out.refused)) console.log(`  refused, when the engine chose for the person: ${r}`)
 }
 await engine.close()

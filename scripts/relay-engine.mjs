@@ -99,6 +99,31 @@
  * is no secret, since it begins the game face up in the command zone (CR 903.6),
  * so what the engine's seat plays says its commander by name.
  *
+ * Duel Commander and Brawl are Commander games too (HANDOFF.md §3 item 20, the
+ * owner's decision of 2026-09-25): a sit with such a deck says so (`format:
+ * 'duel'` or `'brawl'`) and brings its commander, and the room asks for that game
+ * where the engine deals it (protocol 10, and the word in its `hello.formats`),
+ * the table is two players — neither is dealt to more — and every person sitting
+ * with a deck asked for the same game and brought a commander. Anywhere else it
+ * is dealt as before, by the ordinary rules and without the commanders, and the
+ * `seated` says why (`fellBack`: `engine`, `players`, `games` or `commander`).
+ * The game dealt comes with the engine's own numbers for it (`format.rules`: its
+ * life total, its deck size and the commander damage that loses it, or null where
+ * none does), which the table says rather than its own.
+ *
+ * A commander may be a stand-in (HANDOFF.md §3 item 19, the owner's decision of
+ * 2026-09-25): one of the deck's own legendary creatures, chosen by the person to
+ * lead a deck whose commander the engine does not know, which the sit brings as
+ * its commander with `standsFor` naming the real one. The engine is dealt it as
+ * the commander it is and never told what it stands in for; the room keeps that
+ * and says it — on the person's seat in `seats` (`standIn`), in their `seated`
+ * after the deal (`format.standIn`), and beside the engine's commander where a
+ * copy of the deck is led by it too (`engineDeck.standsFor`) — and writes it to
+ * disk with the room, so a game that comes back says it as it did. A stand-in is
+ * one of the deck's own cards, which the sit took out of its library; in a game
+ * dealt by the ordinary rules, where nothing leads a deck, the room puts it back
+ * in the library it sends, and says so (`format.inLibrary`).
+ *
  * A game outlives its relay and its engine (HANDOFF.md, M7). After every stop
  * the room asks an engine that can keep a game (protocol 9) for a snapshot, and
  * holds the latest with the number of the stop it was taken at; the relay writes
@@ -125,6 +150,7 @@
  */
 import { startEngine } from './engine-bridge.mjs'
 import { levelOf } from '../src/lib/engine/levels.js'
+import { sameCard } from '../src/lib/engine/names.js'
 
 export const OP = {
   sit: 'sit', act: 'act', decide: 'decide', turn: 'turn', resync: 'resync',
@@ -175,6 +201,23 @@ const DECKS_PROTOCOL = 7
 const COMMANDER_PROTOCOL = 8
 /** The protocol that first kept a game (`snapshot`) and took one back (`restore`). */
 const KEEPING_PROTOCOL = 9
+/** The protocol that first dealt Duel Commander and Brawl as Commander games, and said each game's rules. */
+const FAMILY_PROTOCOL = 10
+
+/**
+ * The games of the Commander family a room asks an engine for, by the word the
+ * sit and the engine both use (HANDOFF.md, M6, and §3 item 20). Oathbreaker is
+ * not one: it is dealt by the ordinary rules, as the owner's decisions leave it.
+ */
+export const COMMANDER_GAMES = ['commander', 'duel', 'brawl']
+/**
+ * Of those, the games dealt only to two players: Duel Commander is made for one
+ * against one (its committee's rules, 205.1a), and Brawl's life total is 25 only
+ * in a game of two (903.12f).
+ */
+const TWO_PLAYER_GAMES = ['duel', 'brawl']
+/** Every game a room may deal, the ordinary rules first. */
+const GAMES = ['standard', ...COMMANDER_GAMES]
 
 /** A list of short words from the wire, read forgivingly: anything else in it is dropped. */
 const words = (list, most = 32) => (Array.isArray(list) ? list.filter((w) => typeof w === 'string' && w.length > 0 && w.length <= 40).slice(0, most) : [])
@@ -193,17 +236,82 @@ const ENGINE_DECKS = ['mirror', 'deck', 'own']
  * printing chosen for it by Scryfall's set and collector number, as a deck line
  * names one — or a bare name. Anything else is no commander, and a Commander
  * game is not asked for with none.
+ *
+ * A stand-in (HANDOFF.md §3 item 19) says which commander it stands in for,
+ * `standsFor`: one of the deck's own legendary creatures, chosen by the person to
+ * lead a deck whose commander the engine does not know. The room keeps the name to
+ * say, and never sends it to the engine, which deals the stand-in as the commander
+ * it is (`toEngine`).
  */
-const commanderOf = (v) => {
+export const commanderOf = (v) => {
   const name = typeof v === 'string' ? text(v, 200) : text(v?.name, 200)
   if (!name) return null
   const set = typeof v === 'object' ? word(v?.set) : null
   const number = typeof v === 'object' ? word(v?.number) : null
-  return { name, ...(set && number ? { set, number } : {}) }
+  const standsFor = typeof v === 'object' ? text(v?.standsFor, 200) : null
+  return { name, ...(set && number ? { set, number } : {}), ...(standsFor && standsFor !== name ? { standsFor } : {}) }
 }
 
-/** The game a sit asks for, read forgivingly: Commander, or the ordinary rules every room has dealt. */
-const formatOf = (v) => (v === 'commander' ? 'commander' : v === 'standard' ? 'standard' : null)
+/**
+ * A commander as the engine is sent it: its name and printing, and nothing of what
+ * it stands in for. Exported with `commanderOf` so the live suite sends the real
+ * engine a stand-in exactly as a room does (tests/engine-live.test.js).
+ */
+export const toEngine = (c) => (c ? { name: c.name, ...(c.set && c.number ? { set: c.set, number: c.number } : {}) } : null)
+
+/**
+ * A library with its stand-in back in it (§3 item 19), for a game dealt by the
+ * ordinary rules, where nothing leads a deck: the sit took the card out of the
+ * library to send it as the commander, and it is one of the deck's own cards, so
+ * without this it would be dealt nowhere (found in the review of items 19 and 20).
+ * One copy more, in the printing the sit named where it named one, beside any
+ * copies still there. A real commander is not put back: it was never in the
+ * library, and M6 deals the ordinary game without it.
+ */
+const withStandIn = (deck, c) => {
+  if (!c?.standsFor || !isDeck(deck)) return deck
+  const one = c.set && c.number ? { count: 1, set: c.set, number: c.number } : 1
+  const line = deck[c.name]
+  const lines = line === undefined ? [] : Array.isArray(line) ? line : [line]
+  return { ...deck, [c.name]: lines.length ? [...lines, one] : one }
+}
+
+/** A stand-in as the room says one to a client, `{ name, for }`, or null (§3 item 19). */
+const standInOf = (c) => (c?.standsFor ? { name: c.name, for: c.standsFor } : null)
+
+/** A stand-in read back from the room's file, forgivingly; null for anything else. */
+const savedStandIn = (v) => {
+  const name = text(v?.name, 200)
+  const real = text(v?.for, 200)
+  return v && typeof v === 'object' && name && real ? { name, for: real } : null
+}
+
+/**
+ * The game a sit asks for, read forgivingly: a game of the Commander family the
+ * engine may deal (Commander, and since §3 item 20 Duel Commander and Brawl), or
+ * the ordinary rules every room has dealt.
+ */
+const formatOf = (v) => (GAMES.includes(v) ? v : null)
+
+/**
+ * What a Commander game dealt holds a player to, as the engine said it (`rules`
+ * in its reply, protocol 10), read forgivingly: its life total, its deck size, and
+ * the commander damage that loses it, or null where none does. Null where the
+ * engine said nothing readable — an engine older than 10 says nothing — which a
+ * client reads as the Commander numbers every engine at 8 and 9 dealt. A
+ * commander damage it cannot read is left unsaid rather than read as none, so a
+ * garbled number never tells anybody a game has no such loss.
+ */
+const rulesOf = (v) => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const whole = (n) => Number.isInteger(n) && n > 0 && n < 10_000
+  if (!whole(v.life)) return null
+  return {
+    life: v.life,
+    ...(whole(v.deckSize) ? { deckSize: v.deckSize } : {}),
+    ...(v.commanderDamage === null ? { commanderDamage: null } : whole(v.commanderDamage) ? { commanderDamage: v.commanderDamage } : {}),
+  }
+}
 
 /**
  * What a sit asked the engine's seat to play (M5), read forgivingly: a copy
@@ -323,10 +431,16 @@ export function savedRoomOf(v) {
     seat: s.seat, name: text(s.name, 80), engineSeat: word(s.engineSeat),
     sideboardLeftOut: words(s.sideboardLeftOut, 200), unknownPrintings: words(s.unknownPrintings, 200),
     asked: Array.isArray(s.asked) ? words(s.asked) : null, seq: count(s.seq),
+    // The stand-in that leads this person's deck (§3 item 19); a file from before it has none.
+    standIn: savedStandIn(s.standIn),
+    // And the one put back in their library in a game dealt by the ordinary rules; a file from before that has none.
+    inLibrary: savedStandIn(s.inLibrary),
   }))
   const inFlight = r.inFlight && typeof r.inFlight === 'object' && word(r.inFlight.seat) && ['act', 'decide'].includes(r.inFlight.op) ? { seat: r.inFlight.seat, op: r.inFlight.op } : null
-  const format = r.format && typeof r.format === 'object' && ['commander', 'standard'].includes(r.format.played)
-    ? { asked: r.format.asked === 'commander' ? 'commander' : 'standard', played: r.format.played, ...(word(r.format.fellBack) ? { fellBack: r.format.fellBack } : {}) }
+  // The game dealt, and since §3 item 20 the engine's numbers for it; a file from before has none.
+  const rules = r.format && typeof r.format === 'object' ? rulesOf(r.format.rules) : null
+  const format = r.format && typeof r.format === 'object' && GAMES.includes(r.format.played)
+    ? { asked: GAMES.includes(r.format.asked) ? r.format.asked : 'standard', played: r.format.played, ...(word(r.format.fellBack) ? { fellBack: r.format.fellBack } : {}), ...(rules && r.format.played !== 'standard' ? { rules } : {}) }
     : null
   const deck = reportOf(r.engineDeck)
   return {
@@ -334,7 +448,13 @@ export function savedRoomOf(v) {
     level: levelOf(r.level), played: levelOf(r.played), profile: text(r.profile, 80),
     paced: r.paced === true, mulliganed: r.mulliganed === true,
     choices: choicesOf({ choices: r.choices }),
-    engineDeck: deck ? { ...deck, ...(text(r.engineDeck?.name, 80) ? { name: text(r.engineDeck.name, 80) } : {}) } : null,
+    // The room's own words beside the engine's report: another deck's name, and what the
+    // engine's commander stands in for, where it is a stand-in (§3 item 19).
+    engineDeck: deck ? {
+      ...deck,
+      ...(text(r.engineDeck?.name, 80) ? { name: text(r.engineDeck.name, 80) } : {}),
+      ...(deck.commander && text(r.engineDeck?.standsFor, 200) ? { standsFor: text(r.engineDeck.standsFor, 200) } : {}),
+    } : null,
     format,
     unkept: text(r.unkept),
     over: r.over === true,
@@ -356,6 +476,12 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
     answers: [], asked: null,
     // Whether the client at this seat said it can show a mulligan, until the deal.
     mulligans: false,
+    // A stand-in leading this person's deck (§3 item 19), `{ name, for }`: as the sit
+    // brought it until the deal, and after it only where the game dealt is a Commander game,
+    // so it is never said of a game in which nothing led the deck. In such a game, the
+    // stand-in the room put back in the library it sent instead, `{ name, for }`.
+    standIn: null,
+    inLibrary: null,
     // What this seat is still to be told of a game that came back (`restored`),
     // until a socket of theirs has heard it: a person away while the relay
     // restarted comes back to a table that says what happened. `said` is the
@@ -383,8 +509,11 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   // game belongs to the deck it came with (found in M6's review: a person who
   // sat again with a sixty-card deck left an earlier Commander request standing).
   // After the deal, `dealtFormat` is which game it was, and why where it was not
-  // the one asked for.
-  const wantedFormat = () => (seats.some((s) => !s.ai && s.deck && s.format === 'commander') ? 'commander' : 'standard')
+  // the one asked for. Since §3 item 20 the family has three games; the one asked
+  // is the first a person sitting with a deck asked for, in seat order, and it is
+  // dealt only where no person asked for another (`start`).
+  const familyAsks = () => seats.filter((s) => !s.ai && s.deck && COMMANDER_GAMES.includes(s.format)).map((s) => s.format)
+  const wantedFormat = () => familyAsks()[0] ?? 'standard'
   let dealtFormat = null
   // The level is said only once there is a deal to have taken it: before that,
   // a seated carries no `level`, rather than one the engine may yet refuse.
@@ -398,13 +527,20 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   // cannot send, as it did before there was anything to choose.
   //
   // And what the engine's seat plays, once dealt, where there is one; and the
-  // game that was dealt, Commander or the ordinary rules.
+  // game that was dealt, Commander or the ordinary rules, with the stand-in that
+  // leads this person's deck where one does (§3 item 19), or in a game dealt by
+  // the ordinary rules the stand-in put back in their library: the room's word for
+  // it, kept on its disk, so a person who comes back from anywhere is told it.
   const seated = (seat) => ({
     seat: seat.seat, engineSeat: seat.engineSeat, sideboardLeftOut: seat.sideboardLeftOut, unknownPrintings: seat.unknownPrintings,
     ...(seat.engineSeat ? { level: played, ai: ai ?? null } : {}),
     ...(seat.engineSeat && choices && !seat.ai ? { choices: { ...choices, decisions: seat.asked ?? [] } } : {}),
     ...(seat.engineSeat && dealtDeck ? { engineDeck: dealtDeck } : {}),
-    ...(seat.engineSeat && dealtFormat ? { format: dealtFormat } : {}),
+    ...(seat.engineSeat && dealtFormat ? { format: {
+      ...dealtFormat,
+      ...(seat.standIn && COMMANDER_GAMES.includes(dealtFormat.played) ? { standIn: seat.standIn } : {}),
+      ...(seat.inLibrary && dealtFormat.played === 'standard' ? { inLibrary: seat.inLibrary } : {}),
+    } } : {}),
   })
   const sockets = new Map()
   let engine = null
@@ -495,6 +631,8 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
         seat.unknownPrintings = s.unknownPrintings
         seat.asked = s.asked
         seat.seq = s.seq
+        seat.standIn = s.standIn
+        seat.inLibrary = s.inLibrary
         if (!seat.ai) seat.ready = true
       }
       finished = from.over
@@ -516,10 +654,13 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
   /** The status, numbered, as the seat at this socket may see it (`statusFor`). */
   const sayStatus = (socket) => say(socket, OP.status, { status: { ...statusFor(status, seats.find((x) => x.socket === socket)), stop } })
   // The engine's seat says the level it plays at: the room's setting until
-  // the deal, and what the engine took after it.
-  const seatList = () => seats.map(({ seat, name, here, ready, ai: bot, engineSeat }) => ({
+  // the deal, and what the engine took after it. A person's seat says the
+  // stand-in that leads their deck (§3 item 19), a commander being public from
+  // the start (CR 903.6): what the engine's seat plays says its own (`engineDeck`).
+  const seatList = () => seats.map(({ seat, name, here, ready, ai: bot, engineSeat, standIn }) => ({
     seat, name, here, ready: ready || Boolean(bot), ai: bot, engineSeat,
     ...(bot ? { level: engineSeat ? played : level } : {}),
+    ...(!bot && standIn ? { standIn } : {}),
   }))
 
   /**
@@ -777,17 +918,41 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       // command zone to begin in (CR 903.6), and the engine refuses such a game.
       // Anywhere else the decks go as every room has sent them, and the room says
       // which game it dealt and why after the deal.
-      const commanderAsked = wantedFormat() === 'commander'
-      const commanderGame = commanderAsked && protocol >= COMMANDER_PROTOCOL && seats.filter((s) => !s.ai).every((s) => s.commander)
+      //
+      // Since §3 item 20 the game asked may be Duel Commander or Brawl, dealt as a
+      // Commander game only by an engine that says it deals it (protocol 10, its
+      // `hello.formats`), only at a table of two, and only where no person sitting
+      // with a deck asked for another game of the family. Each reason it is not is
+      // said after the deal (`fellBack`), in the order the room asks them.
+      const game = wantedFormat()
+      const commanderAsked = game !== 'standard'
+      const people = seats.filter((s) => !s.ai)
+      const dealsIt = game === 'commander' ? protocol >= COMMANDER_PROTOCOL : protocol >= FAMILY_PROTOCOL && words(hello?.formats).includes(game)
+      const notDealt = !commanderAsked ? null
+        : !dealsIt ? 'engine'
+          : TWO_PLAYER_GAMES.includes(game) && seats.length !== 2 ? 'players'
+            : familyAsks().some((f) => f !== game) ? 'games'
+              : !people.every((s) => s.commander) ? 'commander'
+                : null
+      const commanderGame = commanderAsked && !notDealt
       // Another of the person's decks goes with its own commander at a Commander
       // game; one that came without is not sent, and the copy — which has one — is.
       const theirs = wants.kind === 'deck' && (!commanderGame || wants.commander) ? wants : null
       const unled = wants.kind === 'deck' && !theirs
+      // The commander the engine's seat is dealt, where it is dealt one the room was
+      // sent: a copy's is the person's, and another deck's its own. Either may be a
+      // stand-in (§3 item 19), which the engine is dealt as the commander it is, and
+      // the room says as a stand-in once dealt.
+      const botLed = commanderGame && !own ? (theirs ? theirs.commander : first?.commander) ?? null : null
+      // A person's library as it is sent: in a game dealt by the ordinary rules, with
+      // the stand-in they brought for a game of the family put back in it, as nothing
+      // leads a deck there (`withStandIn`). The copy of their deck is theirs, so it too.
+      const putBack = (s) => !commanderGame && !s.ai && COMMANDER_GAMES.includes(s.format) && s.commander?.standsFor ? s.commander : null
+      const libraryOf = (s) => (putBack(s) ? withStandIn(s.deck, s.commander) : s.deck)
       const botDeck = () => {
         if (own) return { deck: 'own', ...(wants.format ? { format: wants.format } : {}), ...(wants.sets ? { sets: wants.sets } : {}) }
         const side = forProtocol(hello?.protocol, theirs ? theirs.sideboard : first?.sideboard)
-        const led = commanderGame ? (theirs ? theirs.commander : first?.commander) : null
-        return { deck: forProtocol(hello?.protocol, theirs ? theirs.deck : (first?.deck ?? {})), ...(side ? { sideboard: side } : {}), ...(led ? { commander: led } : {}) }
+        return { deck: forProtocol(hello?.protocol, theirs ? theirs.deck : ((first && libraryOf(first)) ?? {})), ...(side ? { sideboard: side } : {}), ...(botLed ? { commander: toEngine(botLed) } : {}) }
       }
       // Taken only from an engine new enough to carry a choice in its `act`:
       // an older one ignores every key a choice would travel in.
@@ -798,10 +963,10 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       const levelled = level && protocol >= LEVELLED_PROTOCOL
       const player = (s) => {
         const side = forProtocol(hello?.protocol, s.sideboard)
-        const deck = s.ai ? botDeck() : { deck: forProtocol(hello?.protocol, s.deck ?? {}), ...(side ? { sideboard: side } : {}) }
+        const deck = s.ai ? botDeck() : { deck: forProtocol(hello?.protocol, libraryOf(s) ?? {}), ...(side ? { sideboard: side } : {}) }
         return {
           name: s.name ?? (s.ai ? 'The engine' : s.seat), ...deck, ai: s.ai, autoPass: !s.ai,
-          ...(commanderGame && !s.ai ? { commander: s.commander } : {}),
+          ...(commanderGame && !s.ai ? { commander: toEngine(s.commander) } : {}),
           // The decisions this seat's client can show, for a person's seat and an engine that asks them.
           ...(choices && !s.ai && s.answers.length ? { answers: s.answers } : {}),
           ...(levelled && s.ai === 'heuristic' ? { level } : {}),
@@ -822,19 +987,32 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
         // only as a yes: the waiting is this room's, not the process's.
         ...(asking ? { pace: paceMs } : {}),
         ...(opening ? { mulligans: true } : {}),
-        ...(commanderGame ? { format: 'commander' } : {}),
+        ...(commanderGame ? { format: game } : {}),
       })
       // Taken only where the engine says it took it, so a room never drives a
       // table that is not stopping for it.
       paced = asking && reply?.paced === true
       mulliganed = opening && reply?.mulligans === true
-      // The game dealt, in the engine's own word: Commander only where it said so.
-      // Asked for and not dealt, it says why — an engine that deals no Commander
-      // game, or a person at the table with no commander to bring.
-      const dealtCommander = commanderGame && reply?.format === 'commander'
+      // The game dealt, in the engine's own word: a Commander game only where it
+      // said so, with the engine's own numbers for it where it gave them (protocol
+      // 10). Asked for and not dealt, it says why — an engine that deals no such
+      // game, a table of more than two for a game of two, people asking for
+      // different games, or a person at the table with no commander to bring.
+      const dealtCommander = commanderGame && reply?.format === game
+      const rules = dealtCommander ? rulesOf(reply?.rules) : null
       dealtFormat = {
-        asked: commanderAsked ? 'commander' : 'standard', played: dealtCommander ? 'commander' : 'standard',
-        ...(commanderAsked && !dealtCommander ? { fellBack: commanderGame || protocol < COMMANDER_PROTOCOL ? 'engine' : 'commander' } : {}),
+        asked: game, played: dealtCommander ? game : 'standard',
+        ...(commanderAsked && !dealtCommander ? { fellBack: notDealt ?? 'engine' } : {}),
+        ...(rules ? { rules } : {}),
+      }
+      // A stand-in leads a person's deck only in a Commander game. In a game dealt by
+      // the ordinary rules it leads nothing, and the room says it put the card back in
+      // the library — where it did: a game the room asked for as a Commander game and
+      // the engine dealt as another had the card sent as the commander instead.
+      for (const s of seats) {
+        if (s.ai) continue
+        s.standIn = dealtCommander ? standInOf(s.commander) : null
+        s.inLibrary = standInOf(putBack(s))
       }
       reply.seats.forEach((es, i) => {
         seats[i].engineSeat = es.id
@@ -866,9 +1044,18 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       if (bot) {
         const said = protocol >= DECKS_PROTOCOL ? reportOf(bot.deck) : null
         const { cards, colours } = said ?? { colours: [] }
-        const counted = { ...(cards !== undefined ? { cards } : {}), colours, ...(said?.commander ? { commander: said.commander } : {}) }
+        // The engine names the commander it dealt; where that is the stand-in the room
+        // sent, the room says what it stands in for, which the engine was never told.
+        // The copy is led by the person's commander whether the room sent the copy or
+        // the engine dealt it for a deck of its own it would not build — at a Duel
+        // Commander table always, having no card pool (found in the review of items 19
+        // and 20, where the second was named a plain commander). The engine names a
+        // card of two faces by its front, where the sit sent both (`sameCard`).
+        const ledAs = !dealtCommander ? null : botLed ?? (own && said?.played === 'mirror' ? first?.commander ?? null : null)
+        const standsFor = ledAs?.standsFor && sameCard(ledAs.name, said?.commander) ? ledAs.standsFor : null
+        const counted = { ...(cards !== undefined ? { cards } : {}), colours, ...(said?.commander ? { commander: said.commander } : {}), ...(standsFor ? { standsFor } : {}) }
         dealtDeck = own
-          ? (said?.played ? said : { asked: 'own', played: null, colours: [] })
+          ? (said?.played ? { ...said, ...(standsFor ? { standsFor } : {}) } : { asked: 'own', played: null, colours: [] })
           : wants.kind === 'own'
             ? { asked: 'own', played: 'mirror', ...counted, ...(wants.format ? { format: wants.format } : {}), fellBack: 'engine' }
             : unled
@@ -1064,6 +1251,9 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
       seat.commander = commanderOf(commander)
       seat.format = formatOf(format) ?? 'standard'
       seat.ready = true
+      // A stand-in brought for a Commander game is said as asked until the deal, and
+      // after it as the room dealt it, which a sit that comes back does not change.
+      if (!engine && !starting && !dealt) seat.standIn = COMMANDER_GAMES.includes(seat.format) ? standInOf(seat.commander) : null
     }
     socket.seat = seat.seat
     // The level is the room's until the deal, and a sit that names one changes
@@ -1259,7 +1449,7 @@ export function createEngineRoom({ code, seats: seatCount, ai = 'heuristic', lev
         seats: seats.length, ai, pace: paceMs, level,
         ...(dealt ? {
           dealt: true, stop, played, profile, paced, mulliganed, choices, engineDeck: dealtDeck, format: dealtFormat,
-          seated: seats.map((s) => ({ seat: s.seat, name: s.name, engineSeat: s.engineSeat, sideboardLeftOut: s.sideboardLeftOut, unknownPrintings: s.unknownPrintings, asked: s.asked, seq: s.seq })),
+          seated: seats.map((s) => ({ seat: s.seat, name: s.name, engineSeat: s.engineSeat, sideboardLeftOut: s.sideboardLeftOut, unknownPrintings: s.unknownPrintings, asked: s.asked, seq: s.seq, ...(s.standIn ? { standIn: s.standIn } : {}), ...(s.inLibrary ? { inLibrary: s.inLibrary } : {}) })),
           ...(finished ? { over: true } : {}),
           ...(gone && final ? { gone } : {}),
         } : {}),

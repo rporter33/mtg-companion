@@ -153,17 +153,32 @@ check('at a Commander table, a deck of its own comes with the switch for its poo
 check('and the lobby says a Commander deck is dealt as a Commander game, citing the rules',
   /A Commander deck is dealt as a Commander game, by Argentum's own Commander rules: 40 life each \(903\.7\)/.test(await seatsText()), await seatsText())
 check('the lobby saying so has no accessibility violations', await axeClean())
-// The rest of the Commander family is dealt as it was before M6, and says so.
+// Since §3 item 20 Brawl is a Commander game of its own, and the engine builds a
+// Brawl deck of its own for one; Duel Commander is a Commander game too, and the
+// engine builds none, Argentum having no Duel Commander card pool; Oathbreaker is
+// dealt as the family was before M6. Each says so.
 await page.getByRole('button', { name: /More/ }).click()
 await page.getByRole('button', { name: /^Brawl/ }).click()
-check('a Brawl table says the engine builds no Brawl deck of its own, and that it deals no Brawl game by its rules',
-  await until(() => group.textContent().then((t) => (t ?? '').includes('The engine builds no Brawl deck of its own, so with a Brawl deck it plays a copy of yours.'))) && (await poolSwitch.count()) === 0
-  && (await seatsText()).includes('The engine deals the Commander rules for Commander alone, so a Brawl deck is played by the ordinary rules: 20 life, and its commander is not dealt.'),
+check('a Brawl table offers a deck of its own with the switch for its pool, and says what a Brawl deck is dealt as, each rule by its number (§3 item 20)',
+  await until(() => poolSwitch.count().then((n) => n === 1)) && /From the whole of Brawl/.test(await group.textContent())
+  && (await seatsText()).includes("A Brawl deck is dealt as a Commander game for two, by Argentum's own Commander rules at Brawl's numbers: 25 life each (903.12f)")
+  && (await seatsText()).includes("Brawl's first mulligan is free (903.12g), and not here"),
+  await seatsText())
+check('and the seat list says the engine brings a deck of its own', (await seatsText()).includes('The engine, with a deck of its own'), await seatsText())
+check('the Brawl lobby has no accessibility violations', await axeClean())
+await page.getByRole('button', { name: /^Duel Commander/ }).click()
+check('a Duel Commander table says the engine builds no Duel Commander deck of its own, and why, and what a Duel Commander deck is dealt as',
+  await until(() => group.textContent().then((t) => (t ?? '').includes('The engine builds no Duel Commander deck of its own, as Argentum has no Duel Commander card pool to build one from, so with a Duel Commander deck it plays a copy of yours.'))) && (await poolSwitch.count()) === 0
+  && (await seatsText()).includes('20 life each (Duel Commander rules, 300.1a)'),
   await seatsText())
 // Found in M6's review: the seat list said "a deck of its own" here, the choice as made, where the sit sends a copy.
 check('and the seat list says the copy the sit will send, and why, not the choice as made',
-  (await seatsText()).includes('The engine, with a copy of your deck: it builds no Brawl deck of its own') && !/The engine, with a deck of its own/.test(await seatsText()), await seatsText())
+  (await seatsText()).includes('The engine, with a copy of your deck: it builds no Duel Commander deck of its own') && !/The engine, with a deck of its own/.test(await seatsText()), await seatsText())
 check('the lobby saying so has no accessibility violations', await axeClean())
+await page.getByRole('button', { name: /^Oathbreaker/ }).click()
+check('an Oathbreaker table says it is dealt by the ordinary rules, as the family was before M6',
+  await until(() => seatsText().then((t) => t.includes('The engine deals Commander, Duel Commander and Brawl as Commander games, and not Oathbreaker, so an Oathbreaker deck is played by the ordinary rules: 20 life, and its oathbreaker and its signature spell are not dealt.'))),
+  await seatsText())
 
 await page.getByRole('button', { name: /^Standard/ }).click()
 await page.getByRole('button', { name: /^Goblins/ }).first().click()

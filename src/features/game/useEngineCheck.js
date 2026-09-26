@@ -3,6 +3,7 @@ import { rooms } from '../../lib/board/relay.js'
 import { getCardsByIds } from '../../lib/scryfall.js'
 import { checkedDeck, recordsByName, seatDeck, verdictOf } from '../../lib/engine/deck.js'
 import { setsOf } from '../../lib/engine/opponent.js'
+import { standInsFor } from '../../lib/engine/stand-in.js'
 
 /**
  * What the relay's engine says about each deck on the shelf, asked before a
@@ -18,7 +19,7 @@ import { setsOf } from '../../lib/engine/opponent.js'
  * so it is asked again when the chosen deck, the shelf or the address changes;
  * it is not retried on a timer.
  *
- * Returns a Map from deck id to `{ state, total, unloaded, seat?, sets?, … }`, where state is
+ * Returns a Map from deck id to `{ state, total, unloaded, seat?, sets?, standIns?, … }`, where state is
  * 'asking', 'complete', 'short', 'cannot-check', 'no-engine', 'failed' (with
  * the relay's words), 'unreachable' or 'unreadable'. With no address, nothing
  * is asked and the Map is empty: the lobby is not at the engine's table.
@@ -100,16 +101,21 @@ export default function useEngineCheck({ address, decks, first = null }) {
   // Each answer carries the seat it was asked about (`seat`, the map a sit
   // would send), so a deck chosen for the engine's own seat (M5) is sent as
   // exactly the names the engine was asked about, as a player's own deck is.
+  // And, for a Commander deck whose commander the engine does not know, the
+  // stand-ins the rules allow to lead it instead (`standIns`, HANDOFF.md §3
+  // item 19), read off the same records against the engine's answer.
   return useMemo(() => {
     const out = new Map()
     if (!address) return out
+    const lookup = cards?.key === idsKey ? (id) => cards.found.get(id) : null
     for (const deck of decks) {
       const seat = seats.get(deck.id)
       const done = seat && results.get(`${deck.id}=${listOf(seat)}`)
-      out.set(deck.id, { ...(done ?? { state: 'asking', total: seat?.total ?? 0, unloaded: seat?.unloaded ?? 0 }), ...(seat ? { seat, sets: setLists.get(deck.id) ?? [] } : {}) })
+      const standIns = done?.commanderUnknown && lookup ? standInsFor(deck, lookup, (done.unknown ?? []).map((u) => u.name)) : []
+      out.set(deck.id, { ...(done ?? { state: 'asking', total: seat?.total ?? 0, unloaded: seat?.unloaded ?? 0 }), ...(seat ? { seat, sets: setLists.get(deck.id) ?? [] } : {}), ...(done ? { standIns } : {}) })
     }
     return out
-  }, [address, decks, seats, setLists, results])
+  }, [address, decks, seats, setLists, results, cards, idsKey])
 }
 
 /** A deck's lists as one string: what is asked about, and what an answer is kept under. */

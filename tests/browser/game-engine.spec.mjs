@@ -12,7 +12,10 @@
  * the bottom, by the keyboard. And Commander (M6): the app's four example
  * Commander decks checked by the real engine, which knows none of their
  * commanders at the pin and says so, and a Commander game with a deck made from
- * one of them, its commander cast from the command zone by a tap.
+ * one of them, its commander cast from the command zone by a tap. And the
+ * Commodore Guff example deck itself dealt as a Commander game, led by Narset,
+ * Enlightened Master as a stand-in chosen in the gate (HANDOFF.md §3 item 19),
+ * said to be one by the log, the table and the room, through a reload.
  *
  * Needs the built engine (scripts/engine-build.sh). Where there is none
  * this says so and passes nothing, rather than pretending: a JVM is not
@@ -26,6 +29,7 @@ import { findEngine } from '../../scripts/engine-bridge.mjs'
 import { EXAMPLE_DECKS } from '../../src/data/example-decks.js'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 // Where the pictures go: the system's own temporary folder, so the same path
@@ -1208,6 +1212,19 @@ const RHYS_CARDS = [
   g('rx-grove', 'Vivid Grove', 'Land', '', ['G']), g('rx-zetalpa', 'Zetalpa, Primal Dawn', 'Legendary Creature — Elder Dinosaur', '{6}{W}{W}', ['W']),
 ]
 CARDS.push(...RHYS_CARDS)
+// The Commodore Guff example deck's records, where the lobby needs them to find a
+// stand-in (HANDOFF.md §3 item 19): each card the engine knows as it describes it
+// (decklist, 2026-09-25), and the commander as Scryfall has it, asked by name the
+// same day — the fields the rules are read from, and no printing, as Rhys's deck
+// has none (tests/fixtures/example-guff.json, which the live test holds to the
+// engine). The cards it does not know stay names alone, as they were.
+const GUFF = JSON.parse(readFileSync(fileURLToPath(new URL('../fixtures/example-guff.json', import.meta.url)), 'utf8'))
+const GUFF_EXAMPLE = EXAMPLE_DECKS.find((d) => d.id === 'commodore-guff')
+const guffKnown = new Map(GUFF.cards.map((x) => [x.name, x]))
+CARDS.push(
+  g('ex-commodore-guff-c0', GUFF.commander.name, GUFF.commander.type_line, GUFF.commander.mana_cost, GUFF.commander.color_identity),
+  ...GUFF_EXAMPLE.main.flatMap((e, i) => (guffKnown.has(e.name) ? [g(`ex-commodore-guff-${i}`, e.name, guffKnown.get(e.name).type_line, guffKnown.get(e.name).mana_cost, guffKnown.get(e.name).color_identity)] : [])),
+)
 const RHYS_DECK = {
   id: 'rhys', name: 'Rhys, from Esika', formatId: 'commander', commanders: ['rx-rhys'], signatureSpell: null, categoryOrder: [], versions: [],
   // Esika's own green-white cards the engine knows — 24 others, and 3 Forests and a Plains — and basics to a hundred with Rhys.
@@ -1292,8 +1309,169 @@ await page.locator('.game__field').scrollIntoViewIfNeeded()
 await page.screenshot({ path: SHOT('commander-cast') })
 console.log(`        (from Sit to the hand to keep: ${commanderDealMs} ms)`)
 
+console.log('\nA stand-in commander: the Commodore Guff example deck, led by Narset, Enlightened Master')
+// HANDOFF.md §3 item 19, the owner's decision of 2026-09-25. The engine at the pin
+// does not know Commodore Guff, and of the deck's legendary creatures it knows
+// Narset, Enlightened Master alone, in Guff's own colours (engine-live.test.js,
+// which plays the same game against the engine directly). Offered in the gate as
+// the player's choice, dealt as the commander, and said to be a stand-in by the
+// log, the table and the room, through a reload.
+await page.goto(`${TARGET}#/game`, { waitUntil: 'networkidle' })
+await page.getByRole('button', { name: 'Play the engine' }).click()
+await until(() => page.evaluate(() => /#\/game\/engine\/[A-Z0-9]{5}$/.test(location.hash)))
+const standInCode = await page.evaluate(() => location.hash.match(/engine\/([A-Z0-9]{5})/)?.[1])
+const guffDoc = () => page.evaluate(() => localStorage.getItem('mtg-companion:v1:deck:ex-commodore-guff'))
+const guffBefore = await guffDoc()
+check('the example deck\'s tile says Narset, Enlightened Master can lead it as a stand-in',
+  await until(() => tile('Commodore Guff').textContent().then((t) => (t ?? '').includes('A stand-in can lead it: a legendary creature of its own the engine knows, Narset, Enlightened Master.')), ENGINE_START_MS),
+  await tile('Commodore Guff').textContent())
+await tile('Commodore Guff').click()
+await page.getByRole('button', { name: /Sit down with Commodore Guff/ }).click()
+const standGate = page.getByRole('dialog', { name: 'The engine does not know every card in Commodore Guff' })
+await until(() => standGate.count().then((n) => n === 1))
+const standIns = standGate.getByRole('group', { name: 'Or lead it with a stand-in' })
+const narsetRadio = standIns.getByRole('radio', { name: /^Narset, Enlightened Master/ })
+check('the gate offers her alone, as the player\'s choice and not yet made, with the rules and what is dealt',
+  await standIns.getByRole('radio').count() === 1 && await narsetRadio.count() === 1 && !(await narsetRadio.isChecked())
+    && (await standIns.textContent() ?? '').includes("It begins in the command zone in Commodore Guff's place, said throughout to be a stand-in and not the deck's real commander, and the engine deals the other 44 cards with it as a Commander game: 40 life each (903.7), and 45 cards where a Commander deck holds a hundred (903.5a).")
+    && (await standIns.textContent() ?? '').includes('(903.4, 903.5c)'),
+  await standIns.textContent())
+await narsetRadio.check()
+const playNarset = standGate.getByRole('button', { name: 'Play the engine led by Narset, Enlightened Master' })
+check('chosen, a button plays the engine led by her', await until(() => playNarset.count().then((n) => n === 1)))
+check('the gate with her offered has no accessibility violations', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
+await page.screenshot({ path: SHOT('standin-gate') })
+wire.status = null
+wire.me = null
+await playNarset.click()
+const standKeep = page.getByRole('group', { name: 'Your opening hand' })
+check('the engine deals the game and asks whether to keep the hand', await until(() => standKeep.count().then((n) => n === 1), ENGINE_START_MS))
+await standKeep.getByRole('button', { name: /^Keep this hand/ }).click()
+const NARSET_LINE = "Narset, Enlightened Master leads your deck as a stand-in, as you chose: the engine does not know the deck's real commander, Commodore Guff, and a Commander game needs one (903.3)."
+check('the log says it is a Commander game, led by her as a stand-in, and the engine\'s copy by her too',
+  await until(() => logText().then((t) => t.includes("Played by the Commander rules: 40 life each (903.7), and each commander begins in its owner's command zone (903.6).")
+    && t.includes(NARSET_LINE) && t.includes('The engine plays a copy of your deck, led as yours is by Narset, Enlightened Master, a stand-in for Commodore Guff.')), 20_000),
+  await logText())
+check('both plates say 40 life', await until(async () => /, 40 life/.test(await page.locator('.plate--you').getAttribute('aria-label') ?? '') && /, 40 life/.test(await page.locator('.plate--them').getAttribute('aria-label') ?? '')))
+const narsetZone = page.locator('.game__you .ztile[data-zone="command"]')
+check('your command zone holds her, said to be a stand-in and not the deck\'s real commander, in its label and in a word',
+  (await narsetZone.getAttribute('aria-label') ?? '').startsWith("Command zone, 1 card: Narset, Enlightened Master, a stand-in for Commodore Guff, not the deck's real commander")
+    && (await narsetZone.locator('.ztile__standin').textContent()) === 'stand-in',
+  await narsetZone.getAttribute('aria-label'))
+check('and the engine\'s holds its copy of her, said the same',
+  /^The engine's command zone, 1 card: Narset, Enlightened Master, a stand-in for Commodore Guff, not the deck's real commander$/.test(await page.locator('.game__them .ztile[data-zone="command"]').getAttribute('aria-label') ?? ''),
+  await page.locator('.game__them .ztile[data-zone="command"]').getAttribute('aria-label'))
+check('the table\'s seat list says it of both seats',
+  await until(() => page.locator('.game__seats').textContent().then((t) => (t ?? '').split('led by Narset, Enlightened Master, a stand-in for Commodore Guff').length === 3)), await page.locator('.game__seats').textContent())
+check('the room dealt a Commander game led by her, and says so of both seats',
+  await fetch(`${RELAY}/rooms/${standInCode}`).then((r) => r.json()).then((r) => r.format?.played === 'commander' && r.seats?.[0]?.standIn?.name === 'Narset, Enlightened Master'
+    && r.seats[0].standIn.for === 'Commodore Guff' && r.engineDeck?.commander === 'Narset, Enlightened Master' && r.engineDeck?.standsFor === 'Commodore Guff'))
+check('the table led by a stand-in has no accessibility violations', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
+await page.locator('.game__you').scrollIntoViewIfNeeded()
+await page.screenshot({ path: SHOT('standin-table') })
+await page.reload({ waitUntil: 'networkidle' })
+check('after a reload the log and the command zone say it again',
+  await until(() => logText().then((t) => t.includes(NARSET_LINE)), 30_000)
+    && await until(() => narsetZone.getAttribute('aria-label').then((l) => (l ?? '').includes('a stand-in for Commodore Guff'))),
+  await logText())
+check('and the deck on the shelf is as it was', (await guffDoc()) === guffBefore)
+
+console.log('\nDuel Commander and Brawl, each a Commander game at its own life total')
+// HANDOFF.md §3 item 20, the owner's decision of 2026-09-25. Rhys's deck again, as
+// a Brawl deck and as a Duel Commander one, each dealt by the real engine as a
+// Commander game at its own numbers; the engine brings a Brawl deck of its own to
+// the first, and to the second, having no Duel Commander card pool, the copy.
+const inFormat = (formatId, name) => ({ ...RHYS_DECK, id: `rhys-${formatId}`, name, formatId })
+await page.evaluate((decks) => {
+  for (const deck of decks) localStorage.setItem(`mtg-companion:v1:deck:${deck.id}`, JSON.stringify(deck))
+}, [inFormat('brawl', 'Rhys, in Brawl'), inFormat('duel', 'Rhys, in Duel')])
+await page.goto(`${TARGET}#/game`, { waitUntil: 'networkidle' })
+await page.reload({ waitUntil: 'networkidle' })
+await page.getByRole('button', { name: 'Play the engine' }).click()
+await until(() => page.evaluate(() => /#\/game\/engine\/[A-Z0-9]{5}$/.test(location.hash)))
+const brawlCode = await page.evaluate(() => location.hash.match(/engine\/([A-Z0-9]{5})/)?.[1])
+await page.getByRole('button', { name: 'More' }).click()
+await page.getByRole('button', { name: /^Brawl/ }).click()
+const lobbySeats = page.locator('.lobby__seats')
+check('the lobby says what a Brawl deck is dealt as, each rule by its number, and where the table does not follow Brawl\'s own',
+  await until(() => lobbySeats.textContent().then((t) => (t ?? '').includes("A Brawl deck is dealt as a Commander game for two, by Argentum's own Commander rules at Brawl's numbers: 25 life each (903.12f)")
+    && (t ?? '').includes('(903.12g)') && (t ?? '').includes('(903.12d)'))),
+  await lobbySeats.textContent())
+const engineDeckGroup = page.getByRole('group', { name: 'The engine\'s deck' })
+await engineDeckGroup.getByRole('radio', { name: /^A deck of its own/ }).check()
+const wholePool = engineDeckGroup.getByRole('switch')
+check('the engine offers a Brawl deck of its own, with the switch for its pool', await until(() => wholePool.count().then((n) => n === 1)))
+await wholePool.check()
+check('the Brawl deck the engine knows whole, commander and all',
+  await until(() => tile('Rhys, in Brawl').textContent().then((t) => (t ?? '').includes('The engine knows all 100 cards.')), ENGINE_START_MS), await tile('Rhys, in Brawl').textContent())
+check('the Brawl lobby has no accessibility violations', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
+wire.status = null
+wire.me = null
+await tile('Rhys, in Brawl').click()
+await page.getByRole('button', { name: /Sit down with Rhys, in Brawl/ }).click()
+const brawlStart = Date.now()
+const brawlKeep = page.getByRole('group', { name: 'Your opening hand' })
+check('the engine deals a Brawl game and asks whether to keep the hand', await until(() => brawlKeep.count().then((n) => n === 1), ENGINE_START_MS))
+const brawlDealMs = Date.now() - brawlStart
+await brawlKeep.getByRole('button', { name: /^Keep this hand/ }).click()
+check('the log says it is played by the Brawl rules, citing them, and that its first mulligan is not free here',
+  await until(() => logText().then((t) => t.includes("Played by the Brawl rules, for two: 25 life each (903.12f), each commander begins in its owner's command zone (903.6), and commander damage loses nobody the game (903.12h). Brawl's first mulligan is free (903.12g), and not here"))),
+  await logText())
+check('and that the engine plays a Brawl deck of its own, built by Argentum\'s deck builder from the whole of Brawl, led by its commander',
+  await until(() => logText().then((t) => /The engine plays a deck of its own, built by Argentum's deck builder: [a-z, -]+, from the whole of Brawl, led by [^.]+\./.test(t))), await logText())
+check('both plates say 25 life', await until(async () => /, 25 life/.test(await page.locator('.plate--you').getAttribute('aria-label') ?? '') && /, 25 life/.test(await page.locator('.plate--them').getAttribute('aria-label') ?? '')))
+const brawlCommand = page.locator('.game__you .ztile[data-zone="command"]')
+check('your command zone holds your commander, named', /^Command zone, 1 card: Rhys the Redeemed/.test(await brawlCommand.getAttribute('aria-label') ?? ''), await brawlCommand.getAttribute('aria-label'))
+check('and the engine\'s holds the commander its own deck was built round', /^The engine's command zone, 1 card: \S/.test(await page.locator('.game__them .ztile[data-zone="command"]').getAttribute('aria-label') ?? ''),
+  await page.locator('.game__them .ztile[data-zone="command"]').getAttribute('aria-label'))
+const brawlBasic = page.locator('.tabletop__handcard').filter({ has: page.getByLabel(/^(Forest|Plains),/) }).first()
+check('a Forest or a Plains is in hand to play', await until(() => brawlBasic.count().then((n) => n === 1), 20_000))
+await until(() => wire.status?.actor === wire.me && wire.status?.waiting === 'action' && wire.status.actions.some((a) => a.type === 'PlayLand'), 20_000)
+await tapHand(brawlBasic)
+check('the command zone glows once the commander can be cast', await until(() => brawlCommand.getAttribute('class').then((c) => /ztile--playable/.test(c ?? '')), 20_000))
+await brawlCommand.click()
+check('a tap on it casts the commander, in the engine\'s words', await until(() => logText().then((t) => /You cast Rhys the Redeemed \(from command zone, paid 1 mana\)/.test(t)), 20_000), await logText())
+check('the room dealt a Brawl game, at the engine\'s own numbers',
+  await fetch(`${RELAY}/rooms/${brawlCode}`).then((r) => r.json()).then((r) => r.format?.played === 'brawl' && r.format?.rules?.life === 25 && r.format.rules.commanderDamage === null && r.engineDeck?.played === 'own' && r.engineDeck?.format === 'brawl'))
+check('the Brawl table has no accessibility violations', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
+await page.locator('.game__you').scrollIntoViewIfNeeded()
+await page.screenshot({ path: SHOT('brawl') })
+console.log(`        (from Sit to the hand to keep: ${brawlDealMs} ms)`)
+
+await page.goto(`${TARGET}#/game`, { waitUntil: 'networkidle' })
+await page.getByRole('button', { name: 'Play the engine' }).click()
+await until(() => page.evaluate(() => /#\/game\/engine\/[A-Z0-9]{5}$/.test(location.hash)))
+const duelCode = await page.evaluate(() => location.hash.match(/engine\/([A-Z0-9]{5})/)?.[1])
+await page.getByRole('button', { name: 'More' }).click()
+await page.getByRole('button', { name: /^Duel Commander/ }).click()
+check('the lobby says what a Duel Commander deck is dealt as, at its committee\'s numbers, and that the engine builds no such deck of its own',
+  await until(() => lobbySeats.textContent().then((t) => (t ?? '').includes('20 life each (Duel Commander rules, 300.1a)')
+    && (t ?? '').includes('The engine builds no Duel Commander deck of its own, as Argentum has no Duel Commander card pool to build one from'))),
+  await lobbySeats.textContent())
+check('the Duel Commander deck the engine knows whole',
+  await until(() => tile('Rhys, in Duel').textContent().then((t) => (t ?? '').includes('The engine knows all 100 cards.')), ENGINE_START_MS), await tile('Rhys, in Duel').textContent())
+wire.status = null
+wire.me = null
+await tile('Rhys, in Duel').click()
+await page.getByRole('button', { name: /Sit down with Rhys, in Duel/ }).click()
+const duelKeep = page.getByRole('group', { name: 'Your opening hand' })
+check('the engine deals a Duel Commander game and asks whether to keep the hand', await until(() => duelKeep.count().then((n) => n === 1), ENGINE_START_MS))
+await duelKeep.getByRole('button', { name: /^Keep this hand/ }).click()
+check('the log says it is played by the Duel Commander rules, citing them, and that the engine plays a copy, building none',
+  await until(() => logText().then((t) => t.includes("Played by the Duel Commander rules, for two: 20 life each (Duel Commander rules, 300.1a), each commander begins in its owner's command zone (903.6), and commander damage loses nobody the game (Duel Commander rules, 506.1a).")
+    && t.includes('The engine builds no Duel Commander deck of its own, so it plays a copy of yours.'))),
+  await logText())
+check('both plates say 20 life', await until(async () => /, 20 life/.test(await page.locator('.plate--you').getAttribute('aria-label') ?? '') && /, 20 life/.test(await page.locator('.plate--them').getAttribute('aria-label') ?? '')))
+check('both command zones hold Rhys, the copy\'s its own',
+  /^Command zone, 1 card: Rhys the Redeemed/.test(await page.locator('.game__you .ztile[data-zone="command"]').getAttribute('aria-label') ?? '')
+  && /^The engine's command zone, 1 card: Rhys the Redeemed$/.test(await page.locator('.game__them .ztile[data-zone="command"]').getAttribute('aria-label') ?? ''))
+check('the room dealt a Duel Commander game, at the engine\'s own numbers',
+  await fetch(`${RELAY}/rooms/${duelCode}`).then((r) => r.json()).then((r) => r.format?.played === 'duel' && r.format?.rules?.life === 20 && r.format.rules.commanderDamage === null))
+check('the Duel Commander table has no accessibility violations', await axeViolations().then((v) => v.length === 0 || (console.log(v.join('\n')), false)))
+await page.screenshot({ path: SHOT('duel') })
+
 check('no console errors throughout', errors.length === 0, errors.join('\n'))
-console.log(`\nScreenshots: ${SHOT('gate')}, ${SHOT('gate-reasons')}, ${SHOT('playable')}, ${SHOT('playable-season')}, ${SHOT('peek-prompt')}, ${SHOT('attack')}, ${SHOT('attack-focus')}${thinkingShot ? `, ${SHOT('thinking')}` : ''}, ${SHOT('aim')}, ${SHOT('aimed')}, ${SHOT('table')}, ${SHOT('targets')}, ${SHOT('mulligan')}, ${SHOT('bottom')}, ${SHOT('six')}, ${SHOT('examples')}, ${SHOT('example-gate')}, ${SHOT('command')} and ${SHOT('commander-cast')}`)
+console.log(`\nScreenshots: ${SHOT('gate')}, ${SHOT('gate-reasons')}, ${SHOT('playable')}, ${SHOT('playable-season')}, ${SHOT('peek-prompt')}, ${SHOT('attack')}, ${SHOT('attack-focus')}${thinkingShot ? `, ${SHOT('thinking')}` : ''}, ${SHOT('aim')}, ${SHOT('aimed')}, ${SHOT('table')}, ${SHOT('targets')}, ${SHOT('mulligan')}, ${SHOT('bottom')}, ${SHOT('six')}, ${SHOT('examples')}, ${SHOT('example-gate')}, ${SHOT('command')}, ${SHOT('commander-cast')}, ${SHOT('standin-gate')}, ${SHOT('standin-table')}, ${SHOT('brawl')} and ${SHOT('duel')}`)
 await browser.close()
 await relayServer.shutdown()
 console.log(`\n${pass} passed, ${fail} failed`)

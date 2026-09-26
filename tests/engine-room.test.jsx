@@ -397,6 +397,236 @@ describe('a Commander game (M6)', () => {
   })
 })
 
+/**
+ * Duel Commander and Brawl (HANDOFF.md §3 item 20). A deck of either sits asking
+ * for its own game, its commander apart as a Commander deck's is; the log says
+ * once which game the room reports was dealt, at its own numbers, or why the
+ * ordinary one was; and a Brawl deck of the engine's own is asked for as Brawl.
+ */
+describe('a Duel Commander or a Brawl game (§3 item 20)', () => {
+  CARDS.rhys = { name: 'Rhys the Redeemed', set: 'shm', collector_number: '237' }
+  CARDS.f = { name: 'Forest', set: 'por', collector_number: '211' }
+  CARDS.p = { name: 'Plains', set: 'por', collector_number: '196' }
+  const deckIn = (formatId) => ({ id: `${formatId}1`, formatId, commanders: ['rhys'], main: [{ cardId: 'f', quantity: 50 }, { cardId: 'p', quantity: 49 }] })
+  const gameLines = () => said().filter((t) => /rules|Commander|Brawl/.test(t))
+  const seated = (extra = {}) => ({ op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic', ...extra })
+
+  it.each([
+    ['duel', 20, "Played by the Duel Commander rules, for two: 20 life each (Duel Commander rules, 300.1a), each commander begins in its owner's command zone (903.6), and commander damage loses nobody the game (Duel Commander rules, 506.1a)."],
+    ['brawl', 25, "Played by the Brawl rules, for two: 25 life each (903.12f), each commander begins in its owner's command zone (903.6), and commander damage loses nobody the game (903.12h). Brawl's first mulligan is free (903.12g), and not here: the engine makes a first mulligan free only at a table of more than two, so each counts."],
+  ])('asks for %s with the commander apart, and says once that it was dealt at its own numbers', async (formatId, life, line) => {
+    const socket = await mount({ deck: deckIn(formatId) })
+    const sit = socket.sent.find((m) => m.op === 'sit')
+    expect(sit).toMatchObject({ format: formatId, commander: { name: 'Rhys the Redeemed', set: 'shm', number: '237' } })
+    expect(Object.keys(sit.deck)).toEqual(['Forest', 'Plains'])
+    const format = { asked: formatId, played: formatId, rules: { life, deckSize: 100, commanderDamage: null } }
+    await deliver(socket, seated({ format }), ...stop(RUN.views[0], 1))
+    await deliver(socket, seated({ format }))
+    expect(room.game).toEqual(format)
+    expect(gameLines()).toEqual([line])
+  })
+
+  it('says why the ordinary game was dealt instead, each way the room says', async () => {
+    const cases = [
+      ['engine', "This relay's engine deals no Brawl game, so it is played by the ordinary rules: 20 life each, and no commander dealt."],
+      ['players', 'This table has more than two players, and the engine deals Brawl only to two, at 25 life each (903.12f; more begin at 30), so it is played by the ordinary rules: 20 life each, and no commander dealt.'],
+    ]
+    for (const [fellBack, line] of cases) {
+      const socket = await mount({ deck: deckIn('brawl') })
+      await deliver(socket, seated({ format: { asked: 'brawl', played: 'standard', fellBack } }), ...stop(RUN.views[0], 1))
+      expect(gameLines()).toEqual([line])
+      await act(async () => { root.unmount() }); container.remove(); root = null
+    }
+    // A relay from before item 20 reads the word as no game, and says the ordinary rules were asked.
+    const socket = await mount({ deck: deckIn('duel') })
+    await deliver(socket, seated({ format: { asked: 'standard', played: 'standard' } }), ...stop(RUN.views[0], 1))
+    expect(gameLines()).toEqual(['This relay deals no Duel Commander game, so it is played by the ordinary rules: 20 life each, and no commander dealt.'])
+  })
+
+  it('asks for a Brawl deck of the engine\'s own as Brawl, and a Duel Commander one as asked, which the engine answers with the copy', async () => {
+    let socket = await mount({ deck: deckIn('brawl'), opponent: { kind: 'own', deckId: null, pool: 'format' } })
+    expect(socket.sent.find((m) => m.op === 'sit').engineDeck).toEqual({ kind: 'own', format: 'brawl', sets: null })
+    await deliver(socket, seated({
+      format: { asked: 'brawl', played: 'brawl', rules: { life: 25, deckSize: 100, commanderDamage: null } },
+      engineDeck: { asked: 'own', played: 'own', cards: 100, colours: ['W', 'G'], commander: "Sythis, Harvest's Hand", format: 'brawl', formatName: 'Brawl', from: 'format' },
+    }), ...stop(RUN.views[0], 1))
+    expect(said()).toContain("The engine plays a deck of its own, built by Argentum's deck builder: green-white, from the whole of Brawl, led by Sythis, Harvest's Hand.")
+    await act(async () => { root.unmount() }); container.remove(); root = null
+    socket = await mount({ deck: deckIn('duel'), opponent: { kind: 'own', deckId: null, pool: 'format' } })
+    await deliver(socket, seated({
+      format: { asked: 'duel', played: 'duel', rules: { life: 20, deckSize: 100, commanderDamage: null } },
+      engineDeck: { asked: 'own', played: 'mirror', cards: 100, colours: ['W', 'G'], commander: 'Rhys the Redeemed', format: 'duel', fellBack: 'format', why: 'The engine builds no "duel" deck of its own.' },
+    }), ...stop(RUN.views[0], 1))
+    expect(said()).toContain('The engine builds no Duel Commander deck of its own, so it plays a copy of yours.')
+  })
+
+  it('sends an Oathbreaker deck as every deck of the family went before M6, asking for the ordinary rules', async () => {
+    CARDS.o = { name: 'Some Oathbreaker', set: 'x', collector_number: '1' }
+    const socket = await mount({ deck: { id: 'o1', formatId: 'oathbreaker', commanders: ['o'], main: [{ cardId: 'f', quantity: 58 }] } })
+    const sit = socket.sent.find((m) => m.op === 'sit')
+    expect(sit.format).toBe('standard')
+    expect(sit).not.toHaveProperty('commander')
+  })
+})
+
+/**
+ * A stand-in commander (HANDOFF.md §3 item 19). Where the lobby recorded that the
+ * player chose one of the deck's own legendary creatures to lead it in place of a
+ * commander the engine does not know, the sit brings it as the commander, out of
+ * the library, naming the real one; the log says once that it is a stand-in, the
+ * board marks it, and a reload of the table sits the same way.
+ */
+describe('a stand-in commander (§3 item 19)', () => {
+  // Real cards as Scryfall has them, led by a commander no engine knows (a name beginning "Made-Up").
+  CARDS.sw = { name: 'Made-Up Warden', type_line: 'Legendary Creature — Elf', color_identity: ['G', 'W'] }
+  CARDS.sr = { name: 'Rhys the Redeemed', type_line: 'Legendary Creature — Elf Warrior', color_identity: ['G', 'W'], set: 'shm', collector_number: '237' }
+  CARDS.sf = { name: 'Forest', type_line: 'Basic Land — Forest', color_identity: ['G'], set: 'por', collector_number: '211' }
+  CARDS.sp = { name: 'Plains', type_line: 'Basic Land — Plains', color_identity: ['W'], set: 'por', collector_number: '196' }
+  CARDS.sm = { name: 'Made-Up Card', type_line: 'Creature — Elf', color_identity: ['G'] }
+  const WARDEN = { id: 'w1', formatId: 'commander', commanders: ['sw'], main: [{ cardId: 'sr', quantity: 1 }, { cardId: 'sm', quantity: 1 }, { cardId: 'sf', quantity: 49 }, { cardId: 'sp', quantity: 48 }] }
+  const LEFT = ['Made-Up Warden', 'Made-Up Card']
+  const LEAD = { name: 'Rhys the Redeemed', for: 'Made-Up Warden' }
+  const seated = (extra = {}) => ({ op: 'seated', seat: 'p1', engineSeat: YOU, level: null, ai: 'heuristic', ...extra })
+  const dealt = { format: { asked: 'commander', played: 'commander', standIn: LEAD }, engineDeck: { asked: 'mirror', played: 'mirror', cards: 98, colours: ['W', 'G'], commander: 'Rhys the Redeemed', standsFor: 'Made-Up Warden' } }
+  const standInLines = () => said().filter((t) => /stand-in/.test(t))
+  /** The captured first view with this seat's commander in its command zone, as the engine deals one. */
+  const withCommander = () => {
+    const state = RUN.views[0].state
+    const other = state.players.find((p) => p.playerId !== YOU).playerId
+    const commander = (id, owner) => ({ id, name: 'Rhys the Redeemed', typeLine: 'Legendary Creature — Elf Warrior', ownerId: owner, controllerId: owner, zone: { ownerId: owner, zoneType: 'Command' }, isCommander: true })
+    return {
+      other,
+      view: {
+        op: 'view', you: YOU, seq: 1, log: RUN.views[0].fullLog,
+        state: {
+          ...state,
+          cards: { ...state.cards, c0: commander('c0', YOU), c1: commander('c1', other) },
+          zones: [...state.zones, { zoneId: { ownerId: YOU, zoneType: 'Command' }, cardIds: ['c0'], size: 1, isVisible: true }, { zoneId: { ownerId: other, zoneType: 'Command' }, cardIds: ['c1'], size: 1, isVisible: true }],
+        },
+      },
+    }
+  }
+
+  it('sits with the stand-in the lobby recorded as the commander, out of the library, naming the real one; the rest as agreed', async () => {
+    agreeToLeaveOut('ABCD', 'w1', LEFT, 'Rhys the Redeemed')
+    const socket = await mount({ deck: WARDEN })
+    const sit = socket.sent.find((m) => m.op === 'sit')
+    expect(sit.format).toBe('commander')
+    expect(sit.commander).toEqual({ name: 'Rhys the Redeemed', set: 'shm', number: '237', standsFor: 'Made-Up Warden' })
+    expect(Object.keys(sit.deck)).toEqual(['Forest', 'Plains'])
+    // Recorded with the table, never in the deck, which is as it was.
+    expect(JSON.parse(localStorage.getItem('mtg-companion:engine:ABCD')).standIn).toEqual({ deckId: 'w1', name: 'Rhys the Redeemed' })
+    expect(WARDEN.main[0]).toEqual({ cardId: 'sr', quantity: 1 })
+  })
+
+  it('says once that it is a stand-in and not the deck\'s real commander, and that the engine\'s copy is led by it too', async () => {
+    agreeToLeaveOut('ABCD', 'w1', LEFT, 'Rhys the Redeemed')
+    const socket = await mount({ deck: WARDEN })
+    await deliver(socket, seated(dealt), ...stop(RUN.views[0], 1))
+    await deliver(socket, seated(dealt))
+    expect(standInLines()).toEqual([
+      'The engine plays a copy of your deck, led as yours is by Rhys the Redeemed, a stand-in for Made-Up Warden.',
+      "Rhys the Redeemed leads your deck as a stand-in, as you chose: the engine does not know the deck's real commander, Made-Up Warden, and a Commander game needs one (903.3).",
+    ])
+    expect(said()).toContain("Played by the Commander rules: 40 life each (903.7), and each commander begins in its owner's command zone (903.6).")
+    expect(room.leads).toEqual({ own: LEAD, engine: LEAD })
+  })
+
+  it('marks the stand-in on the board, its own and the engine\'s copy, for the table to say', async () => {
+    agreeToLeaveOut('ABCD', 'w1', LEFT, 'Rhys the Redeemed')
+    const socket = await mount({ deck: WARDEN })
+    const { other, view } = withCommander()
+    await deliver(socket, { op: 'seats', seats: [{ seat: 'p1', engineSeat: YOU }, { seat: 'p2', ai: 'heuristic', engineSeat: other }] }, seated(dealt), { op: 'status', status: { ...RUN.views[0].status, stop: 1 } }, view)
+    expect(room.run.board.cards.c0).toMatchObject({ commander: true, standsFor: 'Made-Up Warden' })
+    expect(room.run.board.cards.c1).toMatchObject({ commander: true, standsFor: 'Made-Up Warden' })
+  })
+
+  it('says it from what it sent where a relay older than stand-ins says nothing of one, the engine\'s copy too', async () => {
+    agreeToLeaveOut('ABCD', 'w1', LEFT, 'Rhys the Redeemed')
+    const socket = await mount({ deck: WARDEN })
+    await deliver(socket, seated({ format: { asked: 'commander', played: 'commander' }, engineDeck: { asked: 'mirror', played: 'mirror', cards: 98, colours: ['W', 'G'], commander: 'Rhys the Redeemed' } }), ...stop(RUN.views[0], 1))
+    expect(standInLines()).toHaveLength(2)
+    expect(room.leads).toEqual({ own: LEAD, engine: LEAD })
+    expect(room.engineDeck.standsFor).toBe('Made-Up Warden')
+  })
+
+  it('says in a game dealt by the ordinary rules that the stand-in leads nothing, and that it is back in the library, where the room says it put it there', async () => {
+    agreeToLeaveOut('ABCD', 'w1', LEFT, 'Rhys the Redeemed')
+    const socket = await mount({ deck: WARDEN })
+    await deliver(socket, seated({ format: { asked: 'commander', played: 'standard', fellBack: 'engine', inLibrary: LEAD } }), ...stop(RUN.views[0], 1))
+    expect(standInLines()).toEqual(['Rhys the Redeemed, chosen to lead this deck as a stand-in for Made-Up Warden, leads nothing in a game dealt by the ordinary rules, so it is dealt in your library with the rest of the deck.'])
+    expect(room.leads).toEqual({ own: null, engine: null })
+  })
+
+  it('says the deck is played without it where a room from before that says nothing, having taken it out of the library to send it', async () => {
+    agreeToLeaveOut('ABCD', 'w1', LEFT, 'Rhys the Redeemed')
+    for (const format of [{ asked: 'commander', played: 'standard', fellBack: 'engine' }, undefined]) {
+      const socket = await mount({ deck: WARDEN })
+      await deliver(socket, seated(format ? { format } : {}), ...stop(RUN.views[0], 1))
+      expect(standInLines()).toEqual(['Rhys the Redeemed, chosen to lead this deck as a stand-in for Made-Up Warden, leads nothing in a game dealt by the ordinary rules, and this relay did not put it back in the library, so the deck is played without it.'])
+      expect(room.leads).toEqual({ own: null, engine: null })
+      await act(async () => { root.unmount() }); container.remove(); root = null
+    }
+  })
+
+  it('knows a stand-in of two faces on the engine\'s copy, which the engine names by its front, where the room says nothing of it', async () => {
+    // Edgar, Charmed Groom transforms; the sit sends Scryfall's name for both faces, and the engine names its front.
+    CARDS.se = { name: "Edgar, Charmed Groom // Edgar Markov's Coffin", layout: 'transform', type_line: 'Legendary Creature — Vampire Noble // Legendary Artifact', color_identity: ['W', 'B'], card_faces: [{ name: 'Edgar, Charmed Groom', type_line: 'Legendary Creature — Vampire Noble' }, { name: "Edgar Markov's Coffin", type_line: 'Legendary Artifact' }] }
+    CARDS.sv = { name: 'Made-Up Vampire', type_line: 'Legendary Creature — Vampire', color_identity: ['W', 'B'] }
+    const VAMPIRE = { id: 'v1', formatId: 'commander', commanders: ['sv'], main: [{ cardId: 'se', quantity: 1 }, { cardId: 'sp', quantity: 98 }] }
+    agreeToLeaveOut('ABCD', 'v1', ['Made-Up Vampire'], CARDS.se.name)
+    const socket = await mount({ deck: VAMPIRE })
+    expect(socket.sent.find((m) => m.op === 'sit').commander).toEqual({ name: CARDS.se.name, standsFor: 'Made-Up Vampire' })
+    await deliver(socket, seated({ format: { asked: 'commander', played: 'commander' }, engineDeck: { asked: 'mirror', played: 'mirror', cards: 99, colours: ['W', 'B'], commander: 'Edgar, Charmed Groom' } }), ...stop(RUN.views[0], 1))
+    expect(room.engineDeck.standsFor).toBe('Made-Up Vampire')
+    expect(room.leads).toEqual({ own: { name: CARDS.se.name, for: 'Made-Up Vampire' }, engine: { name: 'Edgar, Charmed Groom', for: 'Made-Up Vampire' } })
+    expect(said()).toContain('The engine plays a copy of your deck, led as yours is by Edgar, Charmed Groom, a stand-in for Made-Up Vampire.')
+  })
+
+  it('sits as the lobby left it on a reload, the stand-in still leading', async () => {
+    agreeToLeaveOut('ABCD', 'w1', LEFT, 'Rhys the Redeemed')
+    const first = await mount({ deck: WARDEN })
+    const sat = first.sent.find((m) => m.op === 'sit')
+    await act(async () => { root.unmount() }); container.remove(); root = null
+    const again = await mount({ deck: WARDEN })
+    const resat = again.sent.find((m) => m.op === 'sit')
+    expect(resat.commander).toEqual(sat.commander)
+    expect(resat.deck).toEqual(sat.deck)
+    // After the deal the room's word is said, whatever this device remembered: one that
+    // remembers nothing sits with the deck as it is, and is told what leads it.
+    localStorage.clear()
+    await act(async () => { root.unmount() }); container.remove(); root = null
+    const elsewhere = await mount({ deck: WARDEN })
+    expect(elsewhere.sent.find((m) => m.op === 'sit').commander).toEqual({ name: 'Made-Up Warden' })
+    await deliver(elsewhere, seated(dealt), ...stop(RUN.views[0], 1))
+    expect(room.leads.own).toEqual(LEAD)
+    expect(standInLines()).toHaveLength(2)
+  })
+
+  it('lets go of a stand-in that can no longer lead the deck, and says so, sending no commander', async () => {
+    agreeToLeaveOut('ABCD', 'w1', LEFT, 'Rhys the Redeemed')
+    const gone = { ...WARDEN, main: WARDEN.main.filter((e) => e.cardId !== 'sr') }
+    const socket = await mount({ deck: gone })
+    const sit = socket.sent.find((m) => m.op === 'sit')
+    expect(sit.format).toBe('commander')
+    expect(sit).not.toHaveProperty('commander')
+    await deliver(socket, seated({ format: { asked: 'commander', played: 'standard', fellBack: 'commander' } }), ...stop(RUN.views[0], 1))
+    expect(said()).toContain('Rhys the Redeemed, chosen in the lobby to lead this deck as a stand-in, can no longer lead it, so the deck is sent with no commander.')
+  })
+
+  it('reads a record that says nothing it can use as no stand-in, and a later sit without one clears it', async () => {
+    for (const standIn of [{ deckId: 'w1', name: 7 }, { deckId: 'other', name: 'Rhys the Redeemed' }, 'Rhys', null]) {
+      localStorage.setItem('mtg-companion:engine:ABCD', JSON.stringify({ without: { deckId: 'w1', names: LEFT }, standIn }))
+      const socket = await mount({ deck: WARDEN })
+      expect(socket.sent.find((m) => m.op === 'sit')).not.toHaveProperty('commander')
+      await act(async () => { root.unmount() }); container.remove(); root = null
+    }
+    agreeToLeaveOut('ABCD', 'w1', LEFT, 'Rhys the Redeemed')
+    agreeToLeaveOut('ABCD', 'w1', LEFT)
+    expect(JSON.parse(localStorage.getItem('mtg-companion:engine:ABCD')).standIn).toBeNull()
+  })
+})
+
 describe('the views arriving', () => {
   it('lays the table from the first whole view and moves it on by deltas', async () => {
     const socket = await mount()

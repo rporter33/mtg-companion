@@ -3,9 +3,10 @@ import { rooms } from '../../lib/board/relay.js'
 import { navigate } from '../../lib/router.js'
 import { getPrefs, setPref } from '../../lib/storage.js'
 import { chosenLevel, LEVELS, LEVEL_LINES, LEVEL_NAMES, LEVELS_MEASURED, roomLevel } from '../../lib/engine/levels.js'
-import { OPPONENT_KINDS, buildsFor, dealingWords, engineDeckLine, plannedWords, seatWords } from '../../lib/engine/opponent.js'
-import { COMMANDER_GAME, COMMANDER_TABLE, leaderProblem, leaderlessFamily, leaderlessLine } from '../../lib/engine/commander.js'
-import { nameList, withArticle } from '../../lib/engine/deck.js'
+import { OPPONENT_KINDS, buildsFor, dealingWords, engineDeckLine, noOwnLine, plannedWords, seatWords } from '../../lib/engine/opponent.js'
+import { isCommanderGame, leaderProblem, leaderlessFamily, leaderlessLine, tableLine } from '../../lib/engine/commander.js'
+import { nameList } from '../../lib/engine/deck.js'
+import { leadOf, standInPhrase } from '../../lib/engine/stand-in.js'
 import { getFormat } from '../../lib/formats.js'
 import { relayAddress, setRelayAddress, inviteLink } from './relayAddress.js'
 
@@ -145,15 +146,19 @@ export default function Seats({ room, engine = null, engineDeck = null }) {
               {(seated.length ? seated : [{ seat: 'p1' }, { seat: 'p2', ai: 'heuristic' }]).map((s, i) => (
                 <li key={s.seat} className={`lobby__seat${s.here || s.ai ? '' : ' lobby__seat--open'}`}>
                   <span className="lobby__avatar" aria-hidden="true">{s.ai ? '⚙' : s.name ? s.name.slice(0, 1).toUpperCase() : i + 1}</span>
-                  <span className={s.here || s.ai ? '' : 'faint'}>{s.ai ? engineLine : s.here ? s.name : 'You, once you sit'}</span>
+                  <span className={s.here || s.ai ? '' : 'faint'}>
+                    {s.ai ? engineLine : s.here ? s.name : 'You, once you sit'}
+                    {/* The stand-in that leads a person's deck, as the room says it (§3 item 19), whether they are here or away. */}
+                    {!s.ai && leadOf(s.standIn) && <span className="faint tiny"> · led by {standInPhrase(leadOf(s.standIn))}</span>}
+                  </span>
                 </li>
               ))}
             </ul>
             {stage === 'dealt' && report && (report.fellBack || report.played == null) && (
               <p className="lobby__notice tiny">{engineDeckLine(report, { game })}</p>
             )}
-            {/* Which game a deck of this format is dealt as (M6), before anyone sits. */}
-            {stage === 'open' && engineDeck?.format === COMMANDER_GAME && <p className="lobby__notice tiny">{COMMANDER_TABLE}</p>}
+            {/* Which game a deck of this format is dealt as (M6; Duel Commander and Brawl since §3 item 20), before anyone sits. */}
+            {stage === 'open' && isCommanderGame(engineDeck?.format) && <p className="lobby__notice tiny">{tableLine(engineDeck.format)}</p>}
             {stage === 'open' && engineDeck && leaderlessFamily(engineDeck.format) && <p className="lobby__notice tiny">{leaderlessLine(engineDeck.format)}</p>}
             {stage === 'open' && engineDeck && <EngineDeckChoice {...engineDeck} />}
             {stage === 'dealing' ? (
@@ -369,7 +374,7 @@ function EngineDeckChoice({ choice, onChoose, format, decks = [], checks = null,
           </span>
         </label>
       ) : (
-        <p className="faint tiny m0">The engine builds no {formatName} deck of its own, so with {withArticle(formatName)} deck it plays a copy of yours.</p>
+        <p className="faint tiny m0">{noOwnLine(format)}</p>
       ))}
     </fieldset>
   )

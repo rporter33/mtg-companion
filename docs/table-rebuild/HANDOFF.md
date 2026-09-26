@@ -271,6 +271,21 @@ These are settled. Do not reopen them; build on them.
     Commander Masters (`cmm`) among its sets, so moving the pin (item 12) would not
     bring the example decks' commanders; the stand-in is how those decks come to be
     played as Commander games. Not built in M7.
+    **Built, 2026-09-25.** What was built, measured and found, and what is left, are
+    in `PLAN.md`, "§3 item 19: a stand-in commander"; the defaults the decision left
+    open are item 22. In short: the lobby's gate offers, where the engine does not
+    know a deck's one commander, the deck's own legendary creatures the engine knows
+    whose colour identity lies within the deck's and holds every card dealt (903.3,
+    903.4, 903.5c), as radios none of which is chosen until the player chooses; the
+    sit sends the one chosen as the commander, out of the library, with `standsFor`
+    naming the real one, which the relay keeps, writes to disk and never sends the
+    engine; the log, the command zones, the prompt, the battlefield, both seat lists
+    and the room say it is a stand-in and name the real commander, through a reload
+    and a restarted relay. The Commodore Guff example deck is dealt and played
+    against the real engine led by Narset, Enlightened Master — the one legendary
+    creature of its own the engine knows at the pin — 45 cards, 40 life each. No
+    change to `Server.kt` and no new protocol: the engine deals the stand-in as the
+    commander it is.
 20. **Decided by the owner 2026-09-25, to be built after M7.** Duel Commander and
     Brawl are to be dealt as real Commander games at their own life totals and card
     rules, where Argentum supports them, measured and tested as M6 was. This
@@ -279,6 +294,32 @@ These are settled. Do not reopen them; build on them.
     stands until then; Oathbreaker is not named
     in the decision and stays as item 18 has it until the owner says otherwise. Not
     built in M7.
+    **Built, 2026-09-25.** What was built, measured and found, and what is left, are
+    in `PLAN.md`, "§3 item 20: Duel Commander and Brawl as Commander games"; the
+    defaults the decision left open are item 23. In short: protocol 10. Argentum's
+    `Format.Commander` is data — life, deck size, commander-damage threshold — and its
+    own comments name Brawl and one-on-one Commander as that type with other numbers,
+    so the process deals `format: "duel"` and `"brawl"` as it, for two players:
+    Duel Commander at 20 life (its committee's rules, 300.1a; the Comprehensive Rules
+    have no Duel Commander), Brawl at 25 (903.12f, a game of two), each a hundred
+    cards and each with no loss by commander damage (506.1a; 903.12h), which Argentum,
+    whose Commander game always has a threshold, is asked for as one no tally reaches.
+    Where the rules and Argentum differ the table says which it follows: Brawl's own
+    deck is sixty (903.12d), and the table's is the app's and Scryfall's hundred;
+    Brawl's first mulligan is free (903.12g), and Argentum gives a free one only at a
+    table of more than two, so it is not free here, and said; Argentum's own Brawl
+    preset (25 life, 16 commander damage) is its tuning for drafted decks, and not
+    followed. The engine builds a Brawl deck of its own by `DeckFormat.BRAWL`; it has
+    no Duel Commander card pool, so a Duel Commander table's deck of its own is the
+    copy, said. Anything else — an engine older than 10, a table of more than two,
+    people asking for different games of the family — is dealt as before, by the
+    ordinary rules without the commander, and said. The lobby says each game's rules
+    before the sit, the log once at the deal, the plate keeps no tally of commander
+    damage in a game it cannot end, and a stand-in (item 19) may lead a Duel Commander
+    or Brawl deck by the same rules. Played against the real engine: a Duel Commander
+    game at 20 and a Brawl game at 25, each cast from the command zone; and a 6/1
+    commander unblocked four times, 24 damage, ending a Commander game at 16 life and
+    leaving a Brawl game going at 1. `Server.kt` changed, and the engine was rebuilt.
 21. **Taken as defaults at M7, and the owner's to overturn:** a room the engine holds
     is written to disk from the moment it opens, and its game after every stop, the
     engine's own text of it gzipped; a relay that comes back starts an engine for
@@ -304,6 +345,72 @@ These are settled. Do not reopen them; build on them.
     move may stop it again and end the game, where one lost to a relay restart is
     simply the person's to make again; and a lobby asking a relay with no engine
     about such a table says the relay has none, not that the table has gone.
+22. **Taken as defaults building item 19, 2026-09-25, and the owner's to overturn:**
+    a stand-in is offered only where the engine does not know the deck's one
+    commander, and only a legendary creature card (903.3), as the decision says —
+    not a planeswalker that "can be your commander", which Argentum also allows;
+    "within the deck's colour identity" is read with 903.5c whole, so a stand-in's
+    own colour identity must lie within the real commander's and hold every card
+    dealt with it, which, where the cards dealt span the deck's colours, leaves only
+    legends of all of them — and is, at the pin, why the Esika and Anikthea example
+    decks are offered no stand-in, where the plain reading, within the real
+    commander's colours alone, would offer them three and two (M6's note; found in
+    the review of items 19 and 20);
+    colours are Scryfall's, and where a card to be dealt has no record to read them
+    from, none is offered rather than one unchecked; the cards the engine does not
+    know are left out with the real commander, the owner's M1 answer, and the game
+    is dealt at 40 life with fewer than a hundred cards, which the gate says (45
+    for the Guff deck, 903.5a); the choice is radios with none chosen and a button
+    that names the one chosen, beside the ways on M6 offered, which stand; it is
+    recorded with the table, never in the deck, and a stand-in recorded that can no
+    longer lead the deck — the card gone, or its colours no longer allowing it — is
+    let go of and said, the deck then sent with no commander; the engine's copy of
+    the deck is led by the same stand-in and said to be; another of the player's
+    decks chosen for the engine's seat is not led by a stand-in, and is sent as the
+    copy as before, since the engine does not know every card in it; and the command
+    zones, the prompt, the seat lists and the log say "a stand-in for" the real
+    commander, a card on the battlefield or in a pile "standing in for" it, and the
+    command zone's tile shows the word "stand-in" as well, while the plate's tally
+    of commander damage names the card alone, as M6 has it. Taken at the review of
+    items 19 and 20, the same day, and the owner's to overturn: a stand-in brought
+    to a table dealt by the ordinary rules instead — an engine that deals no such
+    game, a table of more than two, different games asked, a person with no
+    commander — leads nothing, and is dealt in its owner's library and the copy's,
+    being one of the deck's own cards, and the log says so; the engine's copy dealt
+    for a deck of its own it builds none of, as at every Duel Commander table, is
+    led by the same stand-in and said to be; and a stand-in of two faces, which the
+    engine names by its front, is known as the one sent.
+23. **Taken as defaults building item 20, 2026-09-25, and the owner's to overturn:**
+    Duel Commander's numbers are its rules committee's, the Comprehensive Rules
+    holding no Duel Commander — 20 life (300.1a), a hundred cards (402.1b), one
+    against one (205.1a) and no loss by commander damage (506.1a) — as read on
+    2026-09-25 from the committee's own document, which since 2026-03-03 it keeps as an
+    archive, saying the format is replaced by another; commander damage loses nobody
+    in Duel Commander or Brawl (506.1a; 903.12h), following the formats' rules rather
+    than Argentum's default 21 or its drafted Brawl's 16, which the process asks of
+    Argentum as a threshold no tally reaches, Argentum still keeping the tally, and
+    the plate says nothing of the tally in such a game; a Brawl deck is the app's and
+    Scryfall's hundred cards, as the app's own format and Argentum's `DeckFormat.BRAWL`
+    have it, and not 903.12d's sixty, which the lobby says; Brawl's free first mulligan
+    (903.12g) is not dealt, Argentum giving one only at a table of more than two, and
+    the lobby and the log say so; both games are dealt only to two players, a table
+    of more being dealt the ordinary rules and said (Brawl's 30 life for more, 903.12f,
+    is not dealt), and so is a table whose people asked for different games of the
+    family; a deck of the engine's own at a Brawl table is a Brawl deck by
+    `DeckFormat.BRAWL`, and at a Duel Commander table the copy, said with why; a
+    stand-in may lead a Duel Commander or Brawl deck by item 22's rules, a legendary
+    creature only, though 903.12c lets a legendary planeswalker lead a Brawl deck; a
+    Brawl deck led by its own legendary planeswalker is sent as its commander and
+    dealt as one, Argentum dealing whatever card it is sent; and the words say each
+    number with its rule, Duel Commander's as "Duel Commander rules, 300.1a", so its
+    committee's numbers are never mistaken for the Comprehensive Rules'. So are its
+    rules for a commander, since the review of items 19 and 20, where 903.3 alone
+    was said of Duel Commander: every Duel Commander deck has one (Duel Commander
+    rules, 402.1b); a commander is chosen by 903.3 and the rules after it (403.1a,
+    "which defers to 903.3"); and colour identity is Commander's (103.4b and 403.1a,
+    "which defer to 903.4 and 903.5c") — the committee's numbers first, and the
+    Comprehensive Rules' they defer to after, read from the committee's document on
+    2026-09-25.
 
 ---
 
@@ -792,7 +899,26 @@ hundred cards and none of their four commanders (Final Fantasy Commander and
 Commander Masters, where Scryfall prints three of them, are not in it, and
 Kaldheim, Esika's, only in part), so the lobby says so, citing 903.3, and offers
 the rest by the ordinary rules or the whole deck alone. That waits on the pin
-moving (§3 item 12). A review the same day made fifteen findings, which were
+moving (§3 item 12). Since §3 item 19 was built (2026-09-25), the Commodore Guff
+example is dealt and played as a Commander game led by a stand-in, Narset,
+Enlightened Master. The other three wait on the pin still, two of them because of a
+default and not for want of a card. The Esika and Anikthea decks do hold legendary
+creatures the engine knows, inside their commanders' colours: Archangel Avacyn,
+Rhys the Redeemed and Zetalpa, Primal Dawn in Esika's (all five colours), and
+Arasta of the Endless Web and Sythis, Harvest's Hand in Anikthea's (white, black
+and green). None is offered, because §3 item 22 reads 903.5c whole: a stand-in must
+also hold every card dealt with it, and the cards the engine knows of the Esika
+deck span all five colours, and of the Anikthea deck white, black and green, which
+no one of those legends covers.
+Under the plain reading — within the real commander's colours alone — the Esika
+deck would be offered three stand-ins and the Anikthea deck two; that is the
+owner's to weigh (§6). The Y'shtola deck is another case: it holds no legendary
+creature the engine knows at all, its own being Final Fantasy's, so neither reading
+offers one. (Found in the review of items 19 and 20, where this said none of the
+three held such a legend.) Since §3 item 20 was
+built (the same day), Duel Commander and Brawl decks are dealt as Commander games
+too, at their own life totals, where item 18 dealt them by the ordinary rules;
+Oathbreaker is as item 18 has it. A review the same day made fifteen findings, which were
 twelve faults, all fixed; what each was and what was done is in `PLAN.md`, M6,
 "What the review found".
 
@@ -1072,7 +1198,23 @@ names), and leave it out of the lobby's copy, per the owner's rule.
 - After M7: build §3 items 19 and 20, the owner's decisions of 2026-09-25 — the
   stand-in commander, and Duel Commander and Brawl as Commander games — each
   measured and tested as M6 was. Where they fall against M8 and the rest is the
-  owner's to say.
+  owner's to say. Item 19 was built on 2026-09-25 (PLAN.md, "§3 item 19: a stand-in
+  commander"), with the defaults it left open taken as §3 item 22, the owner's to
+  overturn; item 20 the same day (PLAN.md, "§3 item 20: Duel Commander and Brawl as
+  Commander games"), its defaults item 23. Found building it and the owner's: the Duel
+  Commander rules committee's document, from which the table takes Duel Commander's
+  numbers, has said since 2026-03-03 that the format is replaced by another and the
+  document kept as an archive, so whether "Duel Commander" should go on being offered,
+  and by those rules, is the owner's; and the app's own format table
+  (`src/lib/formats.js`) gives Duel Commander and Brawl a commander-damage loss at 21,
+  which the hand-held life counter tracks, where both formats' rules have none —
+  not changed here, since it is the rest of the app's, and said. Found by the review
+  of items 19 and 20, and the owner's: item 22's reading of 903.5c whole — a
+  stand-in must hold every card dealt, not only lie within the real commander's
+  colours — is what keeps the Esika and Anikthea example decks from a stand-in at
+  the pin (M6's note), where the plain reading would offer them three and two, so
+  which reading to keep decides whether two more example decks can be played as
+  Commander games before the pin moves.
 - M8: which provider, once `HOSTING.md` has verified notes for three.
 - M10: which desktop platform first (the owner's own), and whether a
   signed build matters yet.
@@ -1088,6 +1230,51 @@ Between the browser and the relay, over the room's socket, all
 `seats`, `status`, `view { you, seq, state | delta, log }`, `refused { error, stale?, answering?, restoring? }`, `gone`,
 `restoring { reason }`, `restored { reason, behind, lost?, at }`.
 Over HTTP, before any room: `POST /engine/check`.
+
+§3 item 20 (2026-09-25) added Duel Commander and Brawl as Commander games (protocol
+10 on the process's side). A sit's `format` may be `"duel"` or `"brawl"` besides
+`"commander"` and `"standard"`, bringing its `commander` as a Commander deck's sit
+does; a relay from before it reads either word as none and deals the ordinary game.
+The room asks the engine for that game (`format` on `new`) only where the engine
+says it deals it (protocol 10, the word in `hello.formats`), the table is two
+players, no person sitting with a deck asked for another game of the family, and
+every person brought a commander; the game asked is the first of the family a person
+sitting with a deck asked for. Every `seated` after the deal says `format: { asked,
+played, fellBack?, rules? }`: `played` is the game's word or `standard`; `fellBack`
+is `engine`, `players`, `games` or `commander`; and `rules`, passed on from the
+engine's reply, is `{ life, deckSize?, commanderDamage }`, `commanderDamage` null
+where commander damage loses nobody — read forgivingly, a number it cannot read left
+unsaid rather than read as none. An engine at 8 or 9 says no `rules`, and a client
+reads a Commander game then as the Commander numbers. The view's tally of commander
+damage in a Duel Commander or Brawl game carries Argentum's threshold past reach
+(2147483647), which a client does not show. `GET /rooms/<code>` says the same
+`format`, and the room's file keeps it, `rules` and all, read back forgivingly.
+
+§3 item 19 (2026-09-25) added a stand-in commander, without a protocol number on
+either side. A sit's `commander` may say `standsFor`, the name of the commander it
+stands in for: one of the deck's own legendary creatures, chosen in the lobby to
+lead a deck whose commander the engine does not know. The room keeps it with the
+seat and sends the engine the commander alone (`{ name, set?, number? }`), which
+deals it as the commander it is. It says the stand-in back as `{ name, for }`: on
+the person's entry in `seats` (and so in `GET /rooms/<code>`), as brought until the
+deal and as dealt after it; in their `seated` after the deal, `format.standIn`, only
+where the game dealt is a Commander game (Commander, and since §3 item 20 Duel
+Commander or Brawl); and beside the engine's commander, `engineDeck.standsFor`, where
+the engine's seat is dealt the same card — a copy of the deck, whether the room sent
+the copy or the engine dealt it for a deck of its own it builds none of, as at every
+Duel Commander table. The engine names a card of two faces by its front, where the
+sit sent "Front // Back", and the room and the client take the two as one card
+(`sameCard`, `src/lib/engine/names.js`). Since the review of items 19 and 20, in a
+game dealt by the ordinary rules, where nothing leads a deck, the room puts the
+stand-in back in the library it sends — the person's and the copy's, in the printing
+brought — and says so in their `seated`, `format.inLibrary` (`{ name, for }`); a
+real commander is not put back, having never been in the library. The room's file
+keeps all three (`seated[].standIn`, `seated[].inLibrary`, `engineDeck.standsFor`),
+read back forgivingly, so a game that comes back says them as it did. A sit again
+after the deal changes none of them. A relay from before stand-ins drops `standsFor`
+and deals the card as the person's commander; a client then says the stand-in from
+what it sent, and in a game dealt by the ordinary rules, where such a relay says no
+`inLibrary`, that the deck is played without it.
 
 M7 added keeping a game (protocol 9 on the process's side). After every stop the
 room asks an engine at 9 for `snapshot` — the game as text, which the room never
@@ -1243,8 +1430,10 @@ an engine's player in `new` and `deck` on its seat in the reply, `decks` and
 `new` and `commander` on a player, `format` in the reply and `commander` on each
 seat and in the engine's `deck`, `formats` in `hello`, `from` and `commanderTax`
 on an offer, `commanderZone` on a yes or no, and `commander` and `identity` in
-`decklist`; M7 `snapshot` and `restore` (with `replace`, for measuring). `engine/README.md` is the
-contract and is updated with every op added. `PROTOCOL` is 9 since M7; an engine
+`decklist`; M7 `snapshot` and `restore` (with `replace`, for measuring); §3 item 20 `duel` and `brawl` as
+`format` on `new`, and `rules` in the reply to `new` and `restore`. `engine/README.md` is the
+contract and is updated with every op added. `PROTOCOL` is 10 since item 20; an engine at 9 refuses
+`duel` and `brawl` as games it does not deal, so a relay reading 9 asks for neither; an engine
 at 8 answers neither op, so a relay reading 8 keeps no game and says so if it
 restarts; an engine
 at 7 ignores `format` and `commander` and deals the ordinary game, so a relay

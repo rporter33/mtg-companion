@@ -659,8 +659,10 @@ describe('an enforced room', () => {
     // One room each: a room is an engine started, and several in one test
     // outran its time beside the JVM of the live suite (found in M5's run).
     it.each([
-      ['a format it builds none to', { kind: 'own', format: 'brawl', sets: ['por'] }, { asked: 'own', played: 'mirror', format: 'brawl', fellBack: 'format', why: 'The engine builds no "brawl" deck of its own.' }],
+      ['a format it builds none to', { kind: 'own', format: 'duel', sets: ['por'] }, { asked: 'own', played: 'mirror', format: 'duel', fellBack: 'format', why: 'The engine builds no "duel" deck of its own.' }],
       ['a Commander deck of its own, at a table dealt by the ordinary rules', { kind: 'own', format: 'commander', sets: ['por'] }, { asked: 'own', played: 'mirror', format: 'commander', fellBack: 'format', why: 'A "commander" deck of its own is built only for a Commander game.' }],
+      // Since protocol 10 the engine builds a Brawl deck of its own, but only for a Brawl game (§3 item 20).
+      ['a Brawl deck of its own, at a table dealt by the ordinary rules', { kind: 'own', format: 'brawl', sets: ['por'] }, { asked: 'own', played: 'mirror', format: 'brawl', fellBack: 'format', why: 'A "brawl" deck of its own is built only for a Brawl game.' }],
       ['sets too thin to build from', { kind: 'own', format: 'standard', sets: ['trc'] }, { asked: 'own', played: 'own', from: 'format', fellBack: 'thin', why: 'The deck came to 12 cards, short of 60.' }],
       ['sets it has not got', { kind: 'own', format: 'standard', sets: ['zzz'] }, { asked: 'own', played: 'own', from: 'format', fellBack: 'sets', missingSets: ['zzz'] }],
       ['a deck with no set to go by', { kind: 'own', format: 'standard', sets: [] }, { asked: 'own', played: 'own', from: 'format', fellBack: 'sets' }],
@@ -769,6 +771,8 @@ describe('an enforced room', () => {
     const LIBRARY = { Forest: 50, Plains: 49 }
     const RHYS = { name: 'Rhys the Redeemed', set: 'shm', number: '237' }
     const sitCommander = (extra = {}) => ({ deck: LIBRARY, format: 'commander', commander: RHYS, ...extra })
+    // The engine's numbers for a Commander game, which a relay passes on since protocol 10 (§3 item 20).
+    const RULES = { life: 40, deckSize: 100, commanderDamage: 21 }
 
     it('asks the engine for one, the person\'s commander with their deck and the copy\'s with its, and says so after the deal', async () => {
       const api = roomsApi(base)
@@ -782,7 +786,7 @@ describe('an enforced room', () => {
       expect(sent.players[0]).toMatchObject({ deck: LIBRARY, commander: RHYS })
       // The copy is the whole of what the person brought, commander and all.
       expect(sent.players[1]).toMatchObject({ ai: 'heuristic', deck: LIBRARY, commander: RHYS })
-      expect(dealtSeat(you).format).toEqual({ asked: 'commander', played: 'commander' })
+      expect(dealtSeat(you).format).toEqual({ asked: 'commander', played: 'commander', rules: RULES })
       // The engine's commander is said by name: it begins face up in the command zone.
       expect(dealtSeat(you).engineDeck).toEqual({ asked: 'mirror', played: 'mirror', cards: 100, colours: ['R'], commander: 'Rhys the Redeemed' })
       expect(await api.peek(code)).toMatchObject({ format: { asked: 'commander', played: 'commander' } })
@@ -900,7 +904,7 @@ describe('an enforced room', () => {
       you.leave()
       const again = await join(code, 'Robin', { seat: 'p1', format: 'standard' })
       await until(() => dealtSeat(again), 5000)
-      expect(dealtSeat(again).format).toEqual({ asked: 'commander', played: 'commander' })
+      expect(dealtSeat(again).format).toEqual({ asked: 'commander', played: 'commander', rules: RULES })
       again.leave()
     }, 15_000)
 
@@ -937,13 +941,311 @@ describe('an enforced room', () => {
       you.leave()
     })
 
+    /*
+     * A stand-in commander (HANDOFF.md §3 item 19): one of the deck's own legendary
+     * creatures the person chose to lead it in place of a commander the engine does
+     * not know, brought as the commander with `standsFor` naming the real one.
+     */
+    const NARSET = { name: 'Narset, Enlightened Master', set: 'ktk', number: '190', standsFor: 'Commodore Guff' }
+    const LEAD = { name: 'Narset, Enlightened Master', for: 'Commodore Guff' }
+
+    it('deals a stand-in as the commander it is, never telling the engine what it stands in for, and says it is one', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitCommander({ commander: NARSET }))
+      // Asked, not yet dealt: the person's seat says the stand-in they brought.
+      expect((await api.peek(code)).seats[0].standIn).toEqual(LEAD)
+      await until(() => dealtSeat(you), 5000)
+      const sent = await lastNew(code)
+      expect(sent.format).toBe('commander')
+      // The engine is sent the card and its printing, and nothing of what it stands in for.
+      expect(sent.players[0].commander).toEqual({ name: 'Narset, Enlightened Master', set: 'ktk', number: '190' })
+      expect(sent.players[1].commander).toEqual({ name: 'Narset, Enlightened Master', set: 'ktk', number: '190' })
+      expect(JSON.stringify(sent)).not.toMatch(/Commodore Guff|standsFor/)
+      // The person is told the stand-in leads their deck, and the copy's commander is said to be one.
+      expect(dealtSeat(you).format).toEqual({ asked: 'commander', played: 'commander', rules: RULES, standIn: LEAD })
+      expect(dealtSeat(you).engineDeck).toEqual({ asked: 'mirror', played: 'mirror', cards: 100, colours: ['R'], commander: 'Narset, Enlightened Master', standsFor: 'Commodore Guff' })
+      const seen = await api.peek(code)
+      expect(seen.seats[0].standIn).toEqual(LEAD)
+      expect(seen.seats[1]).not.toHaveProperty('standIn')
+      expect(seen.engineDeck.standsFor).toBe('Commodore Guff')
+      // Everybody's seat list says it too.
+      expect(you.last('seats').seats[0].standIn).toEqual(LEAD)
+      // A sit again after the deal, from a device that remembers no stand-in, changes nothing said.
+      you.leave()
+      const again = await join(code, 'Robin', { seat: 'p1', ...sitCommander({ commander: { name: 'Commodore Guff' } }) })
+      await until(() => dealtSeat(again), 5000)
+      expect(dealtSeat(again).format.standIn).toEqual(LEAD)
+      expect((await api.peek(code)).seats[0].standIn).toEqual(LEAD)
+      again.leave()
+    }, 15_000)
+
+    it('says the engine\'s commander is a stand-in only where it is the one sent: another deck\'s own, or a deck of its own, is not', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const SYTHIS = { name: "Sythis, Harvest's Hand" }
+      const you = await join(code, 'Robin', sitCommander({ commander: NARSET, engineDeck: { kind: 'deck', name: 'Enchantress', deck: LIBRARY, commander: SYTHIS } }))
+      await until(() => dealtSeat(you), 5000)
+      expect(dealtSeat(you).format.standIn).toEqual(LEAD)
+      expect(dealtSeat(you).engineDeck).toMatchObject({ played: 'deck', commander: "Sythis, Harvest's Hand" })
+      expect(dealtSeat(you).engineDeck).not.toHaveProperty('standsFor')
+      you.leave()
+      const other = await api.open({ seats: 2, enforced: true })
+      const own = await join(other.code, 'Robin', sitCommander({ commander: NARSET, engineDeck: { kind: 'own', format: 'commander', sets: null } }))
+      await until(() => dealtSeat(own), 5000)
+      expect(dealtSeat(own).engineDeck).toMatchObject({ played: 'own', commander: "Sythis, Harvest's Hand" })
+      expect(dealtSeat(own).engineDeck).not.toHaveProperty('standsFor')
+      own.leave()
+    }, 15_000)
+
+    it('says no stand-in of a game dealt by the ordinary rules, which nothing leads, and deals the card in the library it came out of, and says so', async () => {
+      process.env.FAKE_PROTOCOL = '7'
+      try {
+        const api = roomsApi(base)
+        const { code } = await api.open({ seats: 2, enforced: true })
+        const you = await join(code, 'Robin', sitCommander({ commander: NARSET }))
+        await until(() => dealtSeat(you), 5000)
+        expect(dealtSeat(you).format).toEqual({ asked: 'commander', played: 'standard', fellBack: 'engine', inLibrary: LEAD })
+        expect(dealtSeat(you).engineDeck).not.toHaveProperty('standsFor')
+        expect((await api.peek(code)).seats[0]).not.toHaveProperty('standIn')
+        // The stand-in is one of the deck's own cards, which the sit took out of the library to
+        // send as the commander: put back, in its printing, in the person's library and in the copy's.
+        const sent = await lastNew(code)
+        const library = { ...LIBRARY, 'Narset, Enlightened Master': { count: 1, set: 'ktk', number: '190' } }
+        expect(sent.players.map((p) => p.deck)).toEqual([library, library])
+        expect(sent.players.every((p) => !('commander' in p))).toBe(true)
+        you.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
+    })
+
+    it('puts no real commander back in the library of a game dealt by the ordinary rules: it was never in it', async () => {
+      process.env.FAKE_PROTOCOL = '7'
+      try {
+        const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+        const you = await join(code, 'Robin', sitCommander())
+        await until(() => dealtSeat(you), 5000)
+        expect((await lastNew(code)).players.map((p) => p.deck)).toEqual([LIBRARY, LIBRARY])
+        expect(dealtSeat(you).format).not.toHaveProperty('inLibrary')
+        you.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
+    })
+
+    it('knows a stand-in of two faces, which the engine names by its front, as the one it sent, on the engine\'s copy too', async () => {
+      // Edgar, Charmed Groom transforms, and Argentum has it; the sit sends Scryfall's name for both faces.
+      const EDGAR = "Edgar, Charmed Groom // Edgar Markov's Coffin"
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitCommander({ commander: { name: EDGAR, standsFor: 'Commodore Guff' } }))
+      await until(() => dealtSeat(you), 5000)
+      expect(dealtSeat(you).format.standIn).toEqual({ name: EDGAR, for: 'Commodore Guff' })
+      // Named back by its front, as Server.kt's resolveName names it, and still said to be the stand-in.
+      expect(dealtSeat(you).engineDeck).toMatchObject({ played: 'mirror', commander: 'Edgar, Charmed Groom', standsFor: 'Commodore Guff' })
+      expect((await api.peek(code)).engineDeck.standsFor).toBe('Commodore Guff')
+      you.leave()
+    })
+
+    it.each([
+      ['a name that is not text', { name: 'Narset, Enlightened Master', standsFor: 7 }],
+      ['its own name', { name: 'Narset, Enlightened Master', standsFor: 'Narset, Enlightened Master' }],
+      ['an empty name', { name: 'Narset, Enlightened Master', standsFor: '  ' }],
+    ])('reads what a commander stands in for forgivingly: %s is no stand-in', async (_, commander) => {
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitCommander({ commander }))
+      await until(() => dealtSeat(you), 5000)
+      expect(dealtSeat(you).format).toEqual({ asked: 'commander', played: 'commander', rules: RULES })
+      expect(dealtSeat(you).engineDeck).not.toHaveProperty('standsFor')
+      you.leave()
+    })
+
     it('reads a game it has no word for as none, and deals the ordinary one', async () => {
       const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
-      const you = await join(code, 'Robin', sitCommander({ format: 'brawl' }))
+      // Oathbreaker, which the owner's decisions leave to the ordinary rules (§3 items 18 and 20).
+      const you = await join(code, 'Robin', sitCommander({ format: 'oathbreaker' }))
       await until(() => dealtSeat(you), 5000)
       expect(await lastNew(code)).not.toHaveProperty('format')
       expect(dealtSeat(you).format).toEqual({ asked: 'standard', played: 'standard' })
       you.leave()
+    })
+  })
+
+  /**
+   * Duel Commander and Brawl (HANDOFF.md §3 item 20, the owner's decision of
+   * 2026-09-25): each a Commander game at its own life total, asked of an engine
+   * that deals it (protocol 10), for two players, with the engine's own numbers
+   * for the game passed on; anywhere else the ordinary game, as before, and why.
+   */
+  describe('Duel Commander and Brawl', () => {
+    const dealtSeat = (who) => [...who.got].reverse().find((m) => m.op === 'seated' && m.engineSeat) ?? null
+    const engineAt = (code) => relayServer.rooms.get(code).engine.engine
+    const lastNew = async (code) => (await engineAt(code).call('lastNew')).request
+    const LIBRARY = { Forest: 50, Plains: 49 }
+    const RHYS = { name: 'Rhys the Redeemed', set: 'shm', number: '237' }
+    const sitIn = (format, extra = {}) => ({ deck: LIBRARY, format, commander: RHYS, ...extra })
+    const NO_LOSS = 2147483647
+
+    it.each([
+      ['brawl', 25],
+      ['duel', 20],
+    ])('asks the engine for %s, commanders and all, and passes on the game\'s own numbers', async (game, life) => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitIn(game))
+      expect((await api.peek(code)).format).toEqual({ asked: game })
+      await until(() => you.last('view'), 5000)
+      const sent = await lastNew(code)
+      expect(sent.format).toBe(game)
+      expect(sent.players[0]).toMatchObject({ deck: LIBRARY, commander: RHYS })
+      expect(sent.players[1]).toMatchObject({ deck: LIBRARY, commander: RHYS })
+      const format = { asked: game, played: game, rules: { life, deckSize: 100, commanderDamage: null } }
+      expect(dealtSeat(you).format).toEqual(format)
+      expect((await api.peek(code)).format).toEqual(format)
+      expect(you.last('view').state.players.map((p) => p.life)).toEqual([life, life])
+      // Argentum's own tally goes through untouched, its threshold past reach where nothing loses.
+      await engineAt(code).call('commanderDamage', { to: 'e1', from: 'e0', amount: 3 })
+      you.send({ op: 'resync' })
+      await until(() => you.last('view')?.state?.players?.[1]?.commanderDamage, 5000)
+      expect(you.last('view').state.players[1].commanderDamage[0]).toMatchObject({ amount: 3, threshold: NO_LOSS })
+      you.leave()
+    })
+
+    it('asks for a Brawl deck of the engine\'s own at a Brawl table, and deals the copy at a Duel Commander one, which has no card pool, and says why', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitIn('brawl', { engineDeck: { kind: 'own', format: 'brawl', sets: null } }))
+      await until(() => dealtSeat(you), 5000)
+      expect((await lastNew(code)).players[1]).toMatchObject({ deck: 'own', format: 'brawl' })
+      expect(dealtSeat(you).engineDeck).toMatchObject({ asked: 'own', played: 'own', cards: 100, format: 'brawl', formatName: 'Brawl', commander: "Sythis, Harvest's Hand" })
+      you.leave()
+      const other = await api.open({ seats: 2, enforced: true })
+      const duel = await join(other.code, 'Robin', sitIn('duel', { engineDeck: { kind: 'own', format: 'duel', sets: null } }))
+      await until(() => dealtSeat(duel), 5000)
+      expect(dealtSeat(duel).format).toMatchObject({ asked: 'duel', played: 'duel' })
+      expect(dealtSeat(duel).engineDeck).toMatchObject({ asked: 'own', played: 'mirror', format: 'duel', fellBack: 'format', why: 'The engine builds no "duel" deck of its own.', commander: 'Rhys the Redeemed' })
+      duel.leave()
+    }, 15_000)
+
+    it('never asks an engine older than 10 for either, deals the ordinary game as before, and says that is why; Commander it still deals', async () => {
+      process.env.FAKE_PROTOCOL = '9'
+      try {
+        const api = roomsApi(base)
+        const { code } = await api.open({ seats: 2, enforced: true })
+        const you = await join(code, 'Robin', sitIn('brawl', { commander: { ...RHYS, standsFor: 'Somebody Else' } }))
+        await until(() => dealtSeat(you), 5000)
+        const sent = await lastNew(code)
+        expect(sent).not.toHaveProperty('format')
+        expect(sent.players.every((p) => !('commander' in p))).toBe(true)
+        expect(dealtSeat(you).format).toEqual({ asked: 'brawl', played: 'standard', fellBack: 'engine', inLibrary: { name: 'Rhys the Redeemed', for: 'Somebody Else' } })
+        // Nothing leads a deck in the ordinary game, so no stand-in is said; the card is back in the library.
+        expect((await api.peek(code)).seats[0]).not.toHaveProperty('standIn')
+        expect(sent.players[0].deck).toEqual({ ...LIBRARY, 'Rhys the Redeemed': { count: 1, set: 'shm', number: '237' } })
+        you.leave()
+        const other = await api.open({ seats: 2, enforced: true })
+        const commander = await join(other.code, 'Robin', sitIn('commander'))
+        await until(() => dealtSeat(commander), 5000)
+        expect((await lastNew(other.code)).format).toBe('commander')
+        // An engine at 9 deals Commander and says no numbers for it, and none is made up.
+        expect(dealtSeat(commander).format).toEqual({ asked: 'commander', played: 'commander' })
+        commander.leave()
+      } finally {
+        delete process.env.FAKE_PROTOCOL
+      }
+    }, 15_000)
+
+    it('asks for either only of an engine at 10 or later that lists it in its hello: each half of the check on its own', async () => {
+      // An engine that deals Brawl and not Duel Commander, as hello.formats says: Duel Commander is not asked
+      // for, where asking would have the engine refuse the deal and the room lose it.
+      process.env.FAKE_FORMATS = 'standard,commander,brawl'
+      try {
+        const api = roomsApi(base)
+        const { code } = await api.open({ seats: 2, enforced: true })
+        const duel = await join(code, 'Robin', sitIn('duel'))
+        await until(() => dealtSeat(duel), 5000)
+        expect(await lastNew(code)).not.toHaveProperty('format')
+        expect(dealtSeat(duel).format).toEqual({ asked: 'duel', played: 'standard', fellBack: 'engine' })
+        duel.leave()
+        // Brawl, which it lists, it is asked for.
+        const other = await api.open({ seats: 2, enforced: true })
+        const brawl = await join(other.code, 'Robin', sitIn('brawl'))
+        await until(() => dealtSeat(brawl), 5000)
+        expect((await lastNew(other.code)).format).toBe('brawl')
+        brawl.leave()
+        // And an engine at 9 that lists Brawl is still not asked for it: none before 10 deals it.
+        process.env.FAKE_PROTOCOL = '9'
+        const older = await api.open({ seats: 2, enforced: true })
+        const again = await join(older.code, 'Robin', sitIn('brawl'))
+        await until(() => dealtSeat(again), 5000)
+        expect(await lastNew(older.code)).not.toHaveProperty('format')
+        expect(dealtSeat(again).format).toEqual({ asked: 'brawl', played: 'standard', fellBack: 'engine' })
+        again.leave()
+      } finally {
+        delete process.env.FAKE_FORMATS
+        delete process.env.FAKE_PROTOCOL
+      }
+    }, 15_000)
+
+    it('says the copy the engine deals for a deck of its own it builds none of is led by the stand-in too: always at Duel Commander', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitIn('duel', { commander: { name: 'Narset, Enlightened Master', standsFor: 'Commodore Guff' }, engineDeck: { kind: 'own', format: 'duel', sets: null } }))
+      await until(() => dealtSeat(you), 5000)
+      expect((await lastNew(code)).players[1]).toMatchObject({ deck: 'own', format: 'duel' })
+      expect(dealtSeat(you).format.standIn).toEqual({ name: 'Narset, Enlightened Master', for: 'Commodore Guff' })
+      expect(dealtSeat(you).engineDeck).toMatchObject({ asked: 'own', played: 'mirror', format: 'duel', fellBack: 'format', commander: 'Narset, Enlightened Master', standsFor: 'Commodore Guff' })
+      expect((await api.peek(code)).engineDeck).toMatchObject({ commander: 'Narset, Enlightened Master', standsFor: 'Commodore Guff' })
+      you.leave()
+    })
+
+    it('deals neither to more than two players, and says that is why', async () => {
+      const { code } = await roomsApi(base).open({ seats: 3, enforced: true })
+      const a = await join(code, 'Robin', sitIn('brawl'))
+      const b = await join(code, 'Sam', sitIn('brawl'))
+      await until(() => dealtSeat(a) && dealtSeat(b), 5000)
+      expect(await lastNew(code)).not.toHaveProperty('format')
+      expect(dealtSeat(a).format).toEqual({ asked: 'brawl', played: 'standard', fellBack: 'players' })
+      a.leave(); b.leave()
+    }, 15_000)
+
+    it('deals none of the family where the people at the table asked for different games, and says that is why', async () => {
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true, ai: null })
+      const a = await join(code, 'Robin', sitIn('brawl'))
+      expect((await api.peek(code)).format).toEqual({ asked: 'brawl' })
+      const b = await join(code, 'Sam', sitIn('duel'))
+      await until(() => dealtSeat(a) && dealtSeat(b), 5000)
+      expect(await lastNew(code)).not.toHaveProperty('format')
+      expect(dealtSeat(b).format).toEqual({ asked: 'brawl', played: 'standard', fellBack: 'games' })
+      a.leave(); b.leave()
+    }, 15_000)
+
+    it('says a stand-in leading a deck in a Brawl game, as in a Commander one (§3 item 19)', async () => {
+      const LEAD = { name: 'Narset, Enlightened Master', for: 'Commodore Guff' }
+      const api = roomsApi(base)
+      const { code } = await api.open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', sitIn('brawl', { commander: { name: 'Narset, Enlightened Master', standsFor: 'Commodore Guff' } }))
+      await until(() => dealtSeat(you), 5000)
+      expect(JSON.stringify(await lastNew(code))).not.toMatch(/Commodore Guff|standsFor/)
+      expect(dealtSeat(you).format).toMatchObject({ played: 'brawl', standIn: LEAD })
+      expect(dealtSeat(you).engineDeck).toMatchObject({ commander: 'Narset, Enlightened Master', standsFor: 'Commodore Guff' })
+      expect((await api.peek(code)).seats[0].standIn).toEqual(LEAD)
+      you.leave()
+    })
+
+    it('reads the game and its numbers back from a file forgivingly, and a file from before them as it was', () => {
+      const read = (format) => savedRoomOf({ dealt: true, seated: [{ seat: 'p1', engineSeat: 'e0' }], format }).format
+      expect(read({ asked: 'brawl', played: 'brawl', rules: { life: 25, deckSize: 100, commanderDamage: null } })).toEqual({ asked: 'brawl', played: 'brawl', rules: { life: 25, deckSize: 100, commanderDamage: null } })
+      expect(read({ asked: 'duel', played: 'standard', fellBack: 'players' })).toEqual({ asked: 'duel', played: 'standard', fellBack: 'players' })
+      // A file from before item 20 says no numbers, and none are made up.
+      expect(read({ asked: 'commander', played: 'commander' })).toEqual({ asked: 'commander', played: 'commander' })
+      // Numbers that are not numbers are dropped; a commander damage that cannot be read is left unsaid, never read as none.
+      expect(read({ asked: 'brawl', played: 'brawl', rules: { life: 'lots' } })).toEqual({ asked: 'brawl', played: 'brawl' })
+      expect(read({ asked: 'brawl', played: 'brawl', rules: { life: 25, deckSize: -1, commanderDamage: '21' } })).toEqual({ asked: 'brawl', played: 'brawl', rules: { life: 25 } })
+      // A game this build has no word for is none, as before; an ask it has no word for is the ordinary rules.
+      expect(read({ asked: 'brawl', played: 'oathbreaker' })).toBeNull()
+      expect(read({ asked: 'someday', played: 'standard', rules: { life: 20 } })).toEqual({ asked: 'standard', played: 'standard' })
     })
   })
 
@@ -1641,6 +1943,75 @@ describe('an enforced room', () => {
       await moved(back, { op: 'act', stop: now.stop, index: 0 })
       expect(back.last('status').status.stop).toBe(now.stop + 1)
       back.leave()
+    })
+
+    it('keeps a stand-in commander through a restart, said to the person and of the engine\'s copy as it was (§3 item 19)', async () => {
+      const LEAD = { name: 'Narset, Enlightened Master', for: 'Commodore Guff' }
+      const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+      const you = await join(code, 'Robin', { deck: { Island: 50, Plains: 49 }, format: 'commander', commander: { name: 'Narset, Enlightened Master', standsFor: 'Commodore Guff' } })
+      const dealtSeat = (who) => [...who.got].reverse().find((m) => m.op === 'seated' && m.engineSeat) ?? null
+      await until(() => you.last('view'), 5000)
+      await keptThrough(code, you)
+      relayServer.flush()
+      // On disk with the room: the person's stand-in beside their seat, and the copy's beside the engine's deck.
+      const saved = readRoom(code)
+      expect(saved.room.seated[0].standIn).toEqual(LEAD)
+      expect(saved.room.engineDeck).toMatchObject({ commander: 'Narset, Enlightened Master', standsFor: 'Commodore Guff' })
+      you.leave()
+      await restart()
+      // Back from a device that remembers no stand-in, and sits with the deck as it is.
+      const back = await join(code, 'Robin', { seat: 'p1', deck: { Island: 50, Plains: 49 }, format: 'commander', commander: { name: 'Commodore Guff' } })
+      await until(() => back.last('view'), 5000)
+      expect(back.last('restored')).toMatchObject({ reason: 'relay' })
+      expect(dealtSeat(back).format).toEqual({ asked: 'commander', played: 'commander', rules: { life: 40, deckSize: 100, commanderDamage: 21 }, standIn: LEAD })
+      expect(dealtSeat(back).engineDeck).toMatchObject({ commander: 'Narset, Enlightened Master', standsFor: 'Commodore Guff' })
+      const seen = await roomsApi(base).peek(code)
+      expect(seen.seats[0].standIn).toEqual(LEAD)
+      expect(seen.engineDeck.standsFor).toBe('Commodore Guff')
+      back.leave()
+    })
+
+    it('reads a stand-in back from a file forgivingly, and a file from before stand-ins as none', () => {
+      const seated = [{ seat: 'p1', engineSeat: 'e0' }, { seat: 'p2', engineSeat: 'e1' }]
+      const read = (standIn, engineDeck = { asked: 'mirror', played: 'mirror', commander: 'Narset, Enlightened Master', standsFor: 'Commodore Guff' }) =>
+        savedRoomOf({ dealt: true, seated: [{ ...seated[0], standIn }, seated[1]], engineDeck })
+      expect(read({ name: 'Narset, Enlightened Master', for: 'Commodore Guff' }).seated[0].standIn).toEqual({ name: 'Narset, Enlightened Master', for: 'Commodore Guff' })
+      for (const bad of [undefined, null, 'Narset', { name: 'Narset' }, { for: 'Guff' }, { name: 3, for: 'Guff' }, []]) expect(read(bad).seated[0].standIn).toBeNull()
+      expect(read(undefined).engineDeck.standsFor).toBe('Commodore Guff')
+      // What a commander stands in for is said only beside a commander, and only as text.
+      expect(read(undefined, { asked: 'mirror', played: 'mirror', standsFor: 'Commodore Guff' }).engineDeck).not.toHaveProperty('standsFor')
+      expect(read(undefined, { asked: 'mirror', played: 'mirror', commander: 'Narset, Enlightened Master', standsFor: { name: 'x' } }).engineDeck).not.toHaveProperty('standsFor')
+      expect(savedRoomOf({ dealt: true, seated }).seated.map((s) => s.standIn)).toEqual([null, null])
+      // And the stand-in put back in a library, in a game dealt by the ordinary rules; a file from before it has none.
+      const back = (inLibrary) => savedRoomOf({ dealt: true, seated: [{ ...seated[0], inLibrary }, seated[1]] }).seated[0].inLibrary
+      expect(back({ name: 'Narset, Enlightened Master', for: 'Commodore Guff' })).toEqual({ name: 'Narset, Enlightened Master', for: 'Commodore Guff' })
+      for (const bad of [undefined, null, 'Narset', { name: 'Narset' }, { name: 3, for: 'Guff' }, []]) expect(back(bad)).toBeNull()
+    })
+
+    it('keeps a stand-in put back in the library through a restart, and says it as it did', async () => {
+      const LEAD = { name: 'Narset, Enlightened Master', for: 'Commodore Guff' }
+      const sitting = { deck: { Island: 50, Plains: 49 }, format: 'brawl', commander: { name: 'Narset, Enlightened Master', standsFor: 'Commodore Guff' } }
+      // An engine that keeps games and deals no Brawl: the ordinary game, the stand-in in the library.
+      process.env.FAKE_FORMATS = 'standard,commander'
+      try {
+        const dealtSeat = (who) => [...who.got].reverse().find((m) => m.op === 'seated' && m.engineSeat) ?? null
+        const { code } = await roomsApi(base).open({ seats: 2, enforced: true })
+        const you = await join(code, 'Robin', sitting)
+        await until(() => you.last('view'), 5000)
+        expect(dealtSeat(you).format).toEqual({ asked: 'brawl', played: 'standard', fellBack: 'engine', inLibrary: LEAD })
+        await keptThrough(code, you)
+        relayServer.flush()
+        expect(readRoom(code).room.seated[0].inLibrary).toEqual(LEAD)
+        you.leave()
+        await restart()
+        const back = await join(code, 'Robin', { seat: 'p1', ...sitting, commander: { name: 'Commodore Guff' } })
+        await until(() => back.last('view'), 5000)
+        expect(back.last('restored')).toMatchObject({ reason: 'relay' })
+        expect(dealtSeat(back).format).toEqual({ asked: 'brawl', played: 'standard', fellBack: 'engine', inLibrary: LEAD })
+        back.leave()
+      } finally {
+        delete process.env.FAKE_FORMATS
+      }
     })
 
     it('says while it comes back that it is, refuses a press that crossed that on the wire, and says it as dealt', async () => {
