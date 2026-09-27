@@ -1,0 +1,60 @@
+# AN EXAMPLE until the owner chooses a provider (HANDOFF.md §3 item 27).
+# What each line is for, and the traps, are in deploy/HOSTING.md, "Railway".
+#
+# Railway reads a railway.toml at the repository root by default. This one is
+# read only once the service's settings name it, as an absolute path from the
+# root: /deploy/railway.toml. Settings here override the dashboard's for every
+# deploy made with this file.
+#
+# Not settable here, and done in the dashboard: the volume (mount path /data)
+# and the public domain. The region can be either (below).
+
+[build]
+builder = "DOCKERFILE"
+# The service's root directory stays "/", so the build context is the whole
+# repository, as `docker build -f deploy/Dockerfile .` has it.
+dockerfilePath = "deploy/Dockerfile"
+# Only a commit that changes what goes into the image deploys it: every deploy
+# stops the relay, drops every socket and starts every kept room's engine again
+# at once, so a commit to docs/ or tests/ alone should not. The same list as the
+# root .dockerignore lets in (tests/image.test.js holds the two together), in
+# Railway's gitignore-style patterns, from the repository root; the notes in
+# deploy/ go into no image. A deploy asked for by hand deploys regardless.
+watchPatterns = [
+  "/package.json",
+  "/package-lock.json",
+  "/index.html",
+  "/vite.config.js",
+  "/src/**",
+  "/public/**",
+  "/scripts/**",
+  "/engine/**",
+  "/deploy/**",
+  "!/deploy/*.md",
+]
+
+[deploy]
+# Railway asks this path until it answers 2xx, then switches traffic; it does
+# not ask again once the deploy is live. /health answers as soon as the relay
+# listens, so the default five-minute timeout is never approached.
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+# Railway sends SIGTERM and, by default, SIGKILL straight after it (0 s). The
+# relay needs up to three seconds to write every room and say goodbye.
+drainingSeconds = 10
+# One instance: replicas cannot be used with a volume, and rooms live in one
+# process's memory.
+numReplicas = 1
+# Serverless is off unless asked for; said here so that it stays off. A slept
+# service loses every engine's corpus and its first request may be a 502.
+sleepApplication = false
+restartPolicyType = "ON_FAILURE"
+# Railway's regions page says a region's identifier "can be used in your Config
+# as Code file", and its schema has deploy.region for it; its reference page
+# describes only multi-region replicas, so what this key does is not described
+# there. Choose before the volume holds anything: moving a service with a volume
+# means migrating the volume, and downtime. Uncomment one, nearest the people
+# who will play, or choose it in the service's settings instead:
+# us-west2 (California), us-east4-eqdc4a (Virginia),
+# europe-west4-drams3a (Amsterdam), asia-southeast1-eqsg3a (Singapore).
+# region = "europe-west4-drams3a"

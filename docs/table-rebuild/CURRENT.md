@@ -575,6 +575,46 @@ And these changed:
 `tests/turn-structure.test.js` (79) and `tests/relay-server.test.js` (3,221) gain the
 review's tests. `engine/README.md` and HANDOFF.md §3 items 24 to 26 and §7 say what changed.
 
+Added for M8 (2026-09-26), hosting prepared (PLAN.md, "M8: hosting, prepared"). No change
+to the engine or the wire.
+
+| File | Lines | What it holds |
+| --- | --- | --- |
+| `deploy/Dockerfile` | 129 | The image: the engine built by `engine-build.sh` with Temurin's JDK 21 (pinned by digest: that stage never ships), the app built with Node 22 and `VITE_RELAY_URL=same-origin`, and a runtime of `node:22-trixie-slim` with Temurin's Java 21 runtime copied in, the relay's traced files, the engine's install and the built app; tini, the entrypoint, the health check, `/data` for the rooms, `COMPANION_OPTS="-Xmx384m -XX:+ExitOnOutOfMemoryError"`. |
+| `deploy/entrypoint.sh` | 24 | Started as root only to give `ROOMS_DIR` to the `node` user, then the relay as that user by `setpriv`, keeping its process id; started as another user, the relay as it is. |
+| `deploy/relay-files.mjs` | 110 | `relayImports`, `packageFolders`, `relayFiles`: what `scripts/relay-server.mjs` reads when it runs, traced through its imports and src/, with the packages they name and theirs; stops at an import it cannot follow. `--copy` lays it out for the image. |
+| `deploy/healthcheck.mjs` | 26 | The image's health check: `/health` on `PORT`, healthy on `ok: true`; `engine: true` there means configured, not loaded. |
+| `.dockerignore` | 15 | Everything left out of the build context but what the image is built from. |
+| `.github/workflows/image.yml` | 321 | Builds the image (buildx, the gha cache, nothing pushed), runs it with a volume, waits for its health check, runs `hosted.spec.mjs` against it with `ENGINE_REQUIRED`, checks the relay and its JVMs run as uid 1000, records `docker stats` idle, during, after and coming back, stops it with SIGTERM (exit 0, rooms written, the log read whole before it is searched) and starts it again on the same volume, its rooms counted back; then runs it on a folder root owns, the relay as uid 1000, the rooms' folder given to it and a room written there. |
+| `scripts/engine-memory.mjs` | 188 | One or more engine JVMs, with `COMPANION_OPTS` as given, loading the corpus and playing the heaviest game the table deals (the Guff example deck led by Narset against a Commander deck of the engine's own) to its end, at the level asked (`--level`, intermediate by default), their memory sampled from outside: working set, private bytes and private working set on Windows, the resident set on Linux; and the profile the engine's seat took. PLAN.md's M8 tables are its output. |
+| `tests/browser/hosted.spec.mjs` | 359 | The app, the relay and the engine at one address, on this machine only (any other address refused before it is asked anything): the lobby finding the relay with no address given, a deck checked, a seat, a land played, every request and socket at the page's own address; from another origin, a room opened, read, a deck checked and a seat taken; the service worker allowed, never answering the relay from its cache. Against a relay at the address given, or one started here serving the app built as the image builds it. Screenshots `hosted-lobby`, `hosted-land`. |
+| `tests/relay-address.test.js` | 82 | The relay address: none, the build's, `same-origin` read forgivingly as the folder the page came from, a person's own winning, and nothing that is not a web address. |
+| `tests/service-worker.test.js` | 161 | `public/sw.js` run as a browser runs it: the rule of the app's own files, the relay's answers never cached nor answered from a cache, the app's files cached, version.json left alone, the offline page replaced only by a page, Scryfall as before. |
+| `tests/relay-files.test.js` | 91 | The trace: the relay's files and `ws` alone, enough copied into an empty folder for a relay to start and answer, every kind of import followed, and a run-time import or a missing file refused by name. |
+| `tests/image.test.js` | 288 | The Dockerfile and `.dockerignore` read: three stages from versioned bases, the engine's JDK pinned by digest and what ships not, the pin nowhere, `same-origin` built in, tini and the entrypoint, the environment the notes name, nothing copied that the context leaves out; the entrypoint's non-root branch run; the relay serving each kind of file the build writes with its type and cache, stopping in words where it cannot keep rooms; the health check against a relay and against none; the Railway and Render examples deploying only for what the ignore file lets in; no workflow piping a writer into `grep -q`; `image.yml`'s run on a root's volume and what it checks. |
+| `deploy/HOSTING.md` | 717 | The provider notes: what the service needs and the variables the image sets; memory and CPU, measured, with the JVMs each size holds; building and running it locally; Fly.io, Railway and Render, each with its settings, steps, traps, prices and sources read 2026-09-26; the three side by side; where a provider bends the contract and what the image does; pointing the Pages app at the relay (`RELAY_URL`); what is left for the owner. |
+| `deploy/fly.toml` | 77 | Fly.io's configuration. **An example until the owner chooses.** One Machine on a performance CPU with 2 GB, SIGTERM with 10 s, port 8788, autostop off, `/health`, the `rooms` volume at `/data`; `app` and `primary_region` placeholders that fail until replaced. |
+| `deploy/railway.toml` | 60 | Railway's configuration. **An example until the owner chooses.** The Dockerfile builder at `deploy/Dockerfile`, watch patterns for what goes into the image, `/health`, 10 s of draining, one replica, no sleeping, restarts on failure, a region to uncomment. |
+| `deploy/render.yaml` | 52 | A Render Blueprint. **An example until the owner chooses.** A Docker web service from the root, plan `1c-2g`, one instance, `/health`, a 30 s shutdown delay, deploys once checks pass and only for what goes into the image, the `rooms` disk at `/data`, the region to choose. |
+| `tests/seats-no-relay.test.jsx` | 43 | The seats panel with no relay's address says the app has none, never whether one is hosted, and asks no relay anything. |
+| `tests/hosted-spec.test.js` | 30 | `hosted.spec.mjs` refuses a relay not on this machine, with its reason, before asking it anything. |
+| `tests/deploy-workflow.test.js` | 65 | `deploy.yml` read: the app the browser suite drives has no relay address; `RELAY_URL` is read once, after the suite, into `dist-pages`, which is what Pages is given. |
+
+And these changed:
+
+| File | Lines | What changed |
+| --- | --- | --- |
+| `public/sw.js` | 137 | `isAppFile`: only this origin's files inside the worker's scope, named as the build names them, are cached or answered from the cache; the offline page replaced only by a page. |
+| `src/features/game/relayAddress.js` | 60 | `SAME_ORIGIN`: a build carrying `same-origin` means the folder the page came from (its origin where the app is at the root); `relayAddress` takes what it reads as parameters. |
+| `src/features/game/Seats.jsx` | 383 | With no relay's address, says the app has none, rather than that no relay is hosted. |
+| `scripts/relay-server.mjs` | 698 | As a program, stops with words where `ROOMS_DIR` cannot be written; serves `.webp` as `image/webp`; marks immutable only the build's own `assets/`, found from the served folder, on Windows too. |
+| `.github/workflows/deploy.yml` | 194 | The browser suite's build carries no relay address; after the suite, on `main`, the Pages copy is built with `VITE_RELAY_URL` from the repository variable `RELAY_URL` into `dist-pages` and checked to carry it, or, unset, is the suite's build. |
+| `tests/browser-suite.test.js` | 151 | A page with the worker allowed passes only from a browser that cannot reach Scryfall, and only in `hosted.spec.mjs`. |
+
+`package.json`'s `test:browser` runs `hosted` after `engine-restart`. HANDOFF.md's M8, §3
+items 11 and 21, §5 and §6 say what changed; `deploy/HOSTING.md` holds the provider notes. M8's review
+(PLAN.md, "What the review found") changed the files above as their lines say.
+
 ## `src/lib/board/` — the rules-free table
 
 | File | Lines | What it holds |

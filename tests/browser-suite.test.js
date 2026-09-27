@@ -104,17 +104,37 @@ describe('the browser suite, run spec by spec', () => {
   // spec that answers Scryfall's images with a route and leaves the worker on
   // loads real faces from Scryfall instead, and a moment's failure to reach it
   // is a console error in a spec every deploy waits on (PLAN.md, §3 item 12).
+  //
+  // One part of one spec needs the worker on: hosted.spec.mjs proves the worker
+  // never answers the relay's own answers from its cache (HANDOFF.md M8). It opens
+  // that page from a browser of its own that cannot reach Scryfall at all — its
+  // hosts resolve to nothing (Chromium's --host-resolver-rules) — so the worker's
+  // image requests fail where they are made rather than leave the machine. That
+  // is the one way a page with the worker on is let through here.
   it('opens every page with service workers blocked in a spec that answers Scryfall\'s images by a route', () => {
     const routing = specsOf(chain).filter((spec) => /\.route\(\s*'[^']*scryfall\.io[^']*'/.test(readFileSync(resolve(process.cwd(), spec), 'utf8')))
     // The engine's specs and the stand-in's, whose cards carry Scryfall's image links.
-    expect(routing.length).toBeGreaterThanOrEqual(6)
+    expect(routing.length).toBeGreaterThanOrEqual(7)
+    const walledOff = []
     for (const spec of routing) {
       const source = readFileSync(resolve(process.cwd(), spec), 'utf8')
-      // A page or a context opened from the browser itself; a context's own pages take its options.
-      const opened = [...source.matchAll(/\bbrowser\.new(?:Page|Context)\(([^)]*)\)/g)].map((m) => m[1])
+      // Every browser the spec launches, by name, with the options it is launched with.
+      const launched = new Map([...source.matchAll(/\bconst (\w+) = await chromium\.launch\(([^)]*)\)/g)].map((m) => [m[1], m[2]]))
+      // A constant holding a rule that sends Scryfall's image host nowhere.
+      const rules = [...source.matchAll(/\bconst (\w+) = '([^']*)'/g)]
+        .filter((m) => /--host-resolver-rules=/.test(m[2]) && /MAP \*\.scryfall\.io ~NOTFOUND/.test(m[2])).map((m) => m[1])
+      const cutOff = (name) => rules.some((rule) => new RegExp(`args:\\s*\\[[^\\]]*\\b${rule}\\b`).test(launched.get(name) ?? ''))
+      // A page or a context opened from a browser itself; a context's own pages take its options.
+      const opened = [...source.matchAll(/\b(\w+)\.new(?:Page|Context)\(([^)]*)\)/g)]
+        .filter((m) => m[1] === 'browser' || launched.has(m[1])).map((m) => ({ from: m[1], options: m[2] }))
       expect(opened.length, spec).toBeGreaterThan(0)
-      for (const options of opened) expect(options, spec).toMatch(/serviceWorkers:\s*'block'/)
+      for (const { from, options } of opened) {
+        if (/serviceWorkers:\s*'block'/.test(options)) continue
+        expect(cutOff(from), `${spec}: ${from}.new…(${options}) lets the worker fetch Scryfall's images`).toBe(true)
+        walledOff.push(spec)
+      }
     }
+    expect(walledOff).toEqual(['tests/browser/hosted.spec.mjs'])
   })
 
   it('records a run as passed only where every spec picked ran and none failed', () => {

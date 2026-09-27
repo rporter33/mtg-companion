@@ -1,0 +1,52 @@
+# AN EXAMPLE until the owner chooses a provider (HANDOFF.md §3 item 27).
+# What each line is for, and the traps, are in deploy/HOSTING.md, "Render".
+#
+# Render reads this as a Blueprint when one is created with its Blueprint Path
+# set to deploy/render.yaml (by default Render looks for render.yaml at the
+# root). Paths below are relative to the repository root.
+services:
+  - type: web
+    name: mtg-companion-relay
+    runtime: docker
+    dockerfilePath: ./deploy/Dockerfile
+    # The whole repository, as `docker build -f deploy/Dockerfile .` has it.
+    dockerContext: .
+    # The smallest plan that holds one engine game with its deck check
+    # (HOSTING.md, "Memory"). A disk needs a paid plan; free has none.
+    plan: 1c-2g
+    # Omitted, the region is oregon, and it cannot be changed after creation.
+    # Add one of oregon, ohio, virginia, frankfurt or singapore before the
+    # Blueprint is first applied, nearest the people who will play.
+    # region: frankfurt
+    # One instance: a service with a disk cannot be scaled.
+    numInstances: 1
+    # Render also restarts an instance that fails this for 60 seconds.
+    healthCheckPath: /health
+    # SIGTERM, then SIGKILL after this many seconds. The relay needs three.
+    maxShutdownDelaySeconds: 30
+    # Deploy a commit only once its GitHub checks have passed, as the Pages
+    # deploy waits on the same checks.
+    autoDeployTrigger: checksPass
+    # And only a commit that changes what goes into the image: every deploy
+    # stops the relay, drops every socket and starts every kept room's engine
+    # again at once, so a commit to docs/ or tests/ alone should not. The same
+    # list as the root .dockerignore lets in (tests/image.test.js holds the two
+    # together), as globs from the repository root; the notes in deploy/ go into
+    # no image. A deploy asked for by hand deploys regardless.
+    buildFilter:
+      paths:
+        - package.json
+        - package-lock.json
+        - index.html
+        - vite.config.js
+        - src/**
+        - public/**
+        - scripts/**
+        - engine/**
+        - deploy/**
+      ignoredPaths:
+        - deploy/*.md
+    disk:
+      name: rooms
+      mountPath: /data
+      sizeGB: 1

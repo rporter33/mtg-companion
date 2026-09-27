@@ -4234,6 +4234,570 @@ and `ui-shelf-390-after` (both filters open); and the real engine's `engine-cont
 stop in its turn titled "The engine's declare blockers" with Done. The token check clean.
 No JVM and no preview left running.
 
+### M8: hosting, prepared — 2026-09-26
+
+**What was built.** The app, the relay and the rules engine in one image, served at one
+address, and CI to prove it. The provider notes (`deploy/HOSTING.md` and the three example
+files beside it) were written apart, at the same time, to this image's contract.
+
+- `deploy/Dockerfile`, three stages. *The engine:* `eclipse-temurin:21-jdk-noble` (pinned by
+  digest since the review, 8) with git,
+  running `scripts/engine-build.sh` into `/argentum`, so the pin is read from the script
+  and written nowhere else. *The app:* `node:22-trixie-slim`, `npm ci` and `npm run build`
+  with `VITE_RELAY_URL=same-origin` (an `ARG`, so a build can say otherwise) and the commit
+  as `GITHUB_SHA`; then `deploy/relay-files.mjs --copy /out`, which traces what
+  `scripts/relay-server.mjs` imports — the relay, `relay-engine.mjs`, `engine-bridge.mjs` and
+  nineteen files of `src/` (the board model, the engine's levels, names and pace, and what
+  those import), `ws` from node_modules and `package.json` for its `"type": "module"` — and
+  copies only that. *The runtime:* `node:22-trixie-slim` with tini, Temurin's Java 21
+  runtime copied in from `eclipse-temurin:21-jre-noble` (Temurin's documented way into a
+  base it does not publish), the engine's install at `/app/engine`, the traced files and
+  the built app at `/app/dist`; `ROOMS_DIR=/data/rooms`, `STATIC_DIR=/app/dist`,
+  `ENGINE_CMD=/app/engine/bin/companion`, `COMPANION_OPTS="-Xmx384m
+  -XX:+ExitOnOutOfMemoryError"`, `NODE_ENV=production`, `PORT` left to the host (8788
+  unset); a health check (`deploy/healthcheck.mjs`, Node's own fetch of `/health`, since
+  the slim image has no curl); `STOPSIGNAL SIGTERM`; `ENTRYPOINT tini -- sh
+  /app/deploy/entrypoint.sh` and `CMD node scripts/relay-server.mjs`, both exec form.
+  Nothing secret goes in: `.dockerignore` leaves the whole repository out and lets back in
+  only what the build reads.
+- *Who runs it.* `deploy/entrypoint.sh` starts as root only to make `ROOMS_DIR` and give it
+  to the `node` user (uid 1000), then becomes the relay as that user with `setpriv`
+  (util-linux, in every Debian image), by `exec`, so the relay keeps the process id tini
+  forwards SIGTERM to; started as another user already, it starts the relay as it is. The
+  image's files stay root's. The relay runs as uid 1000, and so do the JVMs it starts.
+- *Why tini, and why the JVMs die with the relay.* Node's own image documentation says
+  Node was not designed to run as PID 1 and advises `--init` or tini
+  (github.com/nodejs/docker-node, `docs/BestPractices.md`, read 2026-09-26). The relay
+  handles SIGTERM and SIGINT itself, so signals would reach it either way, but only a PID 1
+  that reaps collects a process orphaned under it; and the kernel ends every process in a
+  PID namespace with SIGKILL when its init ends (pid_namespaces(7), man7.org, read
+  2026-09-26), so when the relay exits, tini exits with its code, and no engine JVM outlives
+  the container. The relay's own shutdown asks each engine to quit and kills it after two
+  seconds before that.
+- *The relay at the page's own address.* `VITE_RELAY_URL=same-origin` — the web's own
+  name for the idea, as fetch and Referrer-Policy spell it — makes `relayAddress()` answer
+  the folder the page came from, its origin where the app is served at the root as the
+  image serves it (`src/features/game/relayAddress.js`, `SAME_ORIGIN`; the origin alone
+  until the review, 10). Read forgivingly:
+  any case, and a hyphen, underscore, space or nothing between the words; nothing else is
+  taken for it, and a page with no web address of its own (a file) has none. A person's own
+  address, set in the seats panel, still wins, and the form stays for running one's own.
+  `deploy.yml` builds the Pages copy with `VITE_RELAY_URL` from the repository variable
+  `RELAY_URL`, empty while unset, which publishes exactly what it published before; since
+  the review (2) that copy is built apart from the one the browser suite drives, after it.
+- *The service worker.* `public/sw.js` caches, and answers from its cache, only the app's
+  own files: this origin, inside the worker's scope, named with an ending the build uses
+  (`isAppFile`). The relay's answers go to the network untouched, and an answer an older
+  worker kept is never given back. A navigation replaces the offline page only with a page.
+- `tests/browser/hosted.spec.mjs`, in `test:browser` after `engine-restart`: the lobby
+  finding the relay and its engine with no address given and asking for none; a deck
+  checked by the relay's engine; a seat, the hand kept, a Mountain tapped onto the
+  battlefield and the log saying so; every request the page made of a relay, and its room's
+  socket, at the address the page came from, and no address saved. Then, from a page served
+  at another origin, a room opened with a preflighted POST, read back, a deck checked and a
+  seat taken over the socket, the engine dealing. Then the service worker, allowed, in a
+  browser of its own that cannot reach Scryfall: the relay's `/health` asked afresh after a
+  room is opened behind the page's back, the app's own files in the cache and none of the
+  relay's, and the offline page still the app after a tab is opened on `/health`. The deal
+  is not seeded (an image's relay deals as it deals), so the deck, 26 Mountains and 8
+  Raging Goblins, makes a hand with no Mountain one deal in about 670,000. It refuses an
+  address not on the machine it runs on (the review, 9). Its argument
+  decides its target: a relay that answers `/health` there, or, where the address answers
+  as something else (the suite's preview, which every spec is given), a relay started in
+  the spec serving the app built into a folder of its own with `VITE_RELAY_URL=same-origin`;
+  an address where nothing answers fails it. Without an engine it skips as
+  `game-engine.spec.mjs` does, and fails where `ENGINE_REQUIRED` is set.
+- `.github/workflows/image.yml`: on pushes to main and pull requests into it that touch
+  what goes into the image or proves it (the app, the relay, the engine, `deploy/`, the
+  spec, the workflow), and by hand; `contents: read`; its own concurrency group per branch.
+  Builds with `docker/build-push-action@v7` on `docker/setup-buildx-action@v4` (the
+  current majors; the build's record not uploaded, nothing pushed, the image loaded into
+  the runner's Docker), the gha cache with every stage kept (`mode=max`), so the engine's
+  layer is reused while `engine/`, its build script and the stage's base are unchanged (the
+  base pinned by digest for it, the review's 8). Runs it with a named
+  volume at `/data`, waits for Docker's own health status, checks the relay runs as uid
+  1000, runs the spec against it with `ENGINE_REQUIRED`, and checks every JVM runs as 1000.
+  Samples `docker stats` beside the spec. Stops it with `docker stop -t 10` and fails
+  unless it exits 0 (not 137, SIGKILL) having said it heard SIGTERM; starts it again on the
+  same volume, and fails unless as many rooms come back; samples memory while the kept
+  rooms' engines load; stops it again. Then (the review, 7) runs it once more on a folder
+  root made and owns, mounted over `/data`, and fails unless the relay runs as uid 1000, the
+  rooms' folder is 1000's, and a room opened is written there. The job's summary: build
+  time, image size, the memory idle, during the spec, after it with the JVMs counted, and
+  coming back, and the run on a root's volume.
+- *The contract checked without Docker.* `tests/image.test.js` reads the Dockerfile and
+  `.dockerignore` (three stages, versioned bases, the pin nowhere, `same-origin` built in,
+  tini and the entrypoint, the environment the notes name, every `COPY` source let in by
+  the context, nothing private let in), runs the entrypoint's non-root branch, and runs the
+  health check against a relay and against none. `tests/relay-files.test.js` copies the
+  traced files alone into an empty folder and starts a relay from them.
+- `scripts/relay-server.mjs`, as a program, says in words and stops where `ROOMS_DIR`
+  cannot be written, rather than dying in a stack trace inside loading the rooms; and,
+  serving the app, gives `.webp` its type and marks immutable only the build's own
+  `assets/` (below, "Found on the way", 3 and 4).
+- `scripts/engine-memory.mjs`, the measurement below, kept to run again.
+
+**Measured on the owner's machine.** Windows 11, a Ryzen 5 5600X (12 threads), 64 GB; the
+engine at the pin (protocol 11, 13,242 cards) run on the JDK the image's is closest to
+here, Microsoft's build of OpenJDK 21.0.12 (`JAVA_HOME` set to it for the runs; the image
+runs Temurin 21.0.12.1). The heaviest game the table deals: the Commodore Guff example deck
+as the engine knows it (45 of its cards), led by Narset, Enlightened Master as a stand-in,
+against a hundred-card Commander deck the engine builds itself, the engine at
+intermediate, paced, played by `scripts/engine-memory.mjs` to its end (over at turn 18
+from seed 20260927, and at turn 20 from 20260928, the second JVM's where two ran). Memory
+sampled every half second from outside the JVM with `Get-Process`: the working set (the
+Windows counterpart of the resident set Docker counts) and private bytes, in MB of 2^20
+bytes; the corpus's load and heap as `hello` gives them. One pass, each line one run, one
+after another:
+
+| `COMPANION_OPTS` | Corpus loaded | First answer | Peak working set | Peak private bytes | The game |
+| --- | --- | --- | --- | --- | --- |
+| none (the launcher's `-Xmx2g`, G1) | 26.9 s | 28.1 s | 898 MB | 1,189 MB | to its end |
+| `-Xmx384m` | 27.2 s | 28.4 s | 743 MB | 776 MB | to its end |
+| `-Xmx256m` | 28.0 s | 29.0 s | 711 MB | 742 MB | to its end |
+| `-Xmx384m -XX:+UseSerialGC` | 31.7 s | 33.1 s | 747 MB | 798 MB | to its end |
+| `-Xmx256m -XX:+UseSerialGC` | 31.9 s | 33.3 s | 690 MB | 659 MB | to its end |
+| `-Xmx384m -XX:+UseSerialGC -XX:TieredStopAtLevel=1` | 53.8 s | 55.0 s | 659 MB | 736 MB | to its end |
+| `-Xmx384m -XX:+UseSerialGC -XX:ActiveProcessorCount=1` | 32.4 s | 33.8 s | 703 MB | 755 MB | to its end |
+
+The heap held 125–128 MB after loading in every run whose record kept it (`hello`'s
+`load.heapMb`). A first run at the launcher's default, played to turn 12, peaked at 1,001 MB, so one setting varies by about 100 MB from run to
+run; and another session on this machine loaded a corpus of its own during the
+`UseSerialGC` runs, which may have slowed their loads. The JVM chooses its collector by
+itself (`-XX:+PrintFlagsFinal`, 21.0.12): G1 with two processors or more, even at
+`-XX:MaxRAM=1g`, and the serial collector with one.
+
+The same game with the engine at hard, whose rollouts play its bigger choices out a turn
+or two ahead, measured by the review (3) with the image's options, the same way, one run
+after another, the heap logged by the JVM itself (`-Xlog:gc:file=…` added to
+`COMPANION_OPTS`): the most the heap held after a young or full collection, and the most
+it held when one began. Every reply named the profile the engine's seat took
+(`production-candidate-expiring` at hard, `production-raceclock` at intermediate), which
+`engine-memory.mjs` records since. The person's seat plays as in every run above: the
+first play worth making, else a pass.
+
+| `COMPANION_OPTS`, level | Corpus loaded | Peak working set | Heap after a collection, at most | Heap when one began, at most | The game |
+| --- | --- | --- | --- | --- | --- |
+| `-Xmx384m -XX:+ExitOnOutOfMemoryError`, hard | 22.8 s | 808 MB | 147 MB | 293 MB | over at turn 18, 14.2 s of play, the slowest step 4.6 s |
+| the same, hard, again | 21.8 s | 760 MB | 141 MB | 273 MB | over at turn 18, 14.1 s, 4.4 s |
+| the same, hard, two at once | 29.2 and 28.8 s | 792 and 743 MB (1,535 together) | 143 and 159 MB | 274 and 277 MB | over at turns 18 and 22 |
+| the same, intermediate | 23.5 s | 713 MB | 155 MB | 273 MB | over at turn 18, 2.5 s of play |
+
+Each log's one full collection was the engine's own `System.gc()` after loading, which
+`hello`'s heap figure comes from (192–230 MB before it, 127 MB after); no collection was
+forced by a full heap, and none of the JVMs ran out. So at hard the ceiling of 384 MB left
+more than twice what a game held; but hard's working set peaked at 760 and 808 MB alone,
+against 713 and 743 MB at intermediate, so the careful figure for a JVM is 810 MB, not
+750.
+
+And two series measured by the lead the same day, before the image's options were
+chosen, with `scripts/engine-play.mjs` playing one sixty-card goblin game and the working
+set of `java.exe` sampled from outside: at the
+launcher's `-Xmx2g`, 1,031 MB; at `-Xmx512m`, `-Xmx320m`, `-Xmx256m` and `-Xmx192m`,
+688, 625, 634 and 602 MB, every game finished. And the JVM's own native memory tracking
+at `-Xmx256m`, committed at exit: 728 MB — the Java
+heap 256 (G1 grew to its ceiling), Metaspace 181 and class space 42 (77,203 classes, the
+card corpus), GC 61, Compiler 48, Symbol 37, Code 36, Arena 21 — with `hello` saying the
+corpus loaded in 25.3 s and first answering at 26.3 s. That is where the classes' count
+below comes from; `deploy/HOSTING.md` §2 gives both series too.
+
+Class-data sharing, measured and not adopted:
+
+| | |
+| --- | --- |
+| A training run, `-Xmx384m -XX:ArchiveClassesAtExit`, the same game | corpus 60.6 s; the archive written in 13.6 s as the JVM quit: 246,087,680 bytes |
+| One JVM with it (`-XX:SharedArchiveFile`) | corpus 17.9 s (first answer 18.4 s); 799 MB peak working set, 769 MB of it private |
+| Two JVMs at once, without it | corpus 29.7 and 29.0 s; together 1,480 MB, 1,438 MB of it private |
+| Two JVMs at once, with it | corpus 22.8 and 23.1 s; together 1,655 MB, 1,604 MB of it private |
+
+The relay itself, laid out as the image lays it out (`deploy/relay-files.mjs --copy`, the
+app built with `same-origin`, the same environment, the `.bat` launcher for the POSIX one),
+its whole process tree's working set sampled every second while `hosted.spec.mjs` ran
+against it: Node alone 54–58 MB; with the deck checker's JVM 754 MB; with a room's too
+1,427 MB; with the room sat at from another origin 2,096 MB. Stopped, and started again on
+the same folder: three rooms back from disk, two of them the engine's, whose engines loaded
+at once: 1,382 MB. The whole spec: 24 checks in 82 s against it, 59 s against a relay it
+started itself (the app's build into its own folder took 3.3 s); from Sit to the hand to
+keep, 22.5–25.7 s.
+
+What the image weighs could not be measured here. Its parts, compressed, as their
+registries give them (read 2026-09-26): `node:22-trixie-slim` 81.4 MB (Docker Hub's API,
+amd64, pushed 2026-09-23); Temurin's 21.0.12.1 Linux x64 runtime 52.1 MB (Adoptium's API);
+the engine's install 72.0 MB as it lies here, jars already compressed; the traced relay
+files, `ws` and the built app 4.0 MB. About 210 MB to pull, then; on disk more, which the
+image workflow's summary says for every build.
+
+**The JVM's options, chosen.** `-Xmx384m -XX:+ExitOnOutOfMemoryError`. A JVM holding the
+corpus cost 690–750 MB at a ceiling of 256 or 384 MB at intermediate, up to 810 MB at
+hard (the review, 3), and 900–1,000 MB at 2 GB, most of it not heap (the 77,203
+classes of the corpus in metaspace and class space, compiled code, the collector); the
+ceiling moves only the heap, which fills towards whatever it is allowed. Against the
+launcher's 2 GB, 384 MB saves 150–250 MB a JVM and finished the heaviest game, at
+intermediate and, measured by the review, at hard, whose heap never held more than 159 MB
+after a collection; 256 MB saved 32 MB more and finished it too at intermediate, but
+leaves twice the corpus's 128 MB for everything a game adds, where 384 leaves three times. G1 stays: the serial collector was no smaller at
+384 MB (747 against 743) and loaded more slowly here, and on a one-processor host the JVM
+chooses it by itself. The client compiler alone (`TieredStopAtLevel=1`) saved 84 MB and
+doubled the corpus's load to 54 s: refused. `ExitOnOutOfMemoryError` is not a measurement
+but the room's own recovery: a JVM out of heap ends at once, and the room starts the engine
+again from the last stop (M7), and ends the game in words if it stops again at the same
+place, rather than a JVM limping on. `engine/build.gradle.kts`'s `-Xmx2g` stays as it is:
+the image sets its own, and the default serves the machines where memory is not billed —
+CI, the scripts that play dozens of games in one JVM (`engine-levels.mjs`,
+`engine-commander.mjs`), which were not measured at 384 MB, and the desktop client (M10).
+
+**Class-data sharing, left for the owner.** It pays in loading: a JVM with the archive
+loaded the corpus in 17.9 s against 27.2 s, and two loading at once in 23 s against 29 s —
+the wait a relay coming back puts on every kept room (§3 item 21). It did not pay in
+memory: no sharing of the archived classes between two JVMs showed on this machine (their
+private working sets together grew by 166 MB rather than shrank), which Linux, where the
+image runs, may do differently and nothing here could measure. It would add 246 MB to the
+image and a training run of about 75 s to its build, and an archive holds only for the JVM
+and options it was made with. Not simple enough for what it was shown to save; the numbers
+are here for the owner.
+
+**Deviations from the brief, each with why.**
+
+1. *The runtime is Node's image with Temurin's runtime copied in*, where M8's first brief
+   said `eclipse-temurin:21-jre` plus Node 22. Temurin documents copying its Java home into
+   a base it does not publish (its Docker Hub page, read 2026-09-26); neither Node's image
+   documentation nor Temurin's describes copying Node into Temurin's Ubuntu, and Node's
+   image brings its `node` user.
+2. *Debian 13 (trixie)*, not the Node image's default Debian 12 (bookworm), whose regular
+   security support ended on 2026-07-11 (debian.org/releases, read 2026-09-26).
+3. *tini is PID 1, and the relay its child*, where the brief says "SIGTERM reaches node as
+   PID 1". The brief left the choice open; the reasons are above. tini passes SIGTERM on,
+   the shutdown runs, and the container's exit code is the relay's.
+4. *The container starts as root, and the relay does not run as root.* The brief asked for
+   a non-root user owning `/data`. The image gives `/data` to `node`, which is enough for a
+   volume Docker creates; but a volume a host mounts over `/data` is the host's, and the
+   provider notes found one host that documents its volumes as root's and running as root
+   as its fix. So the entrypoint hands `ROOMS_DIR` to `node` and drops to it before the
+   relay starts, and no `USER` is set. The relay, and every JVM, runs as uid 1000; the
+   workflow checks both.
+5. *No Gradle cache mount in the engine stage.* It would speed the owner's rebuilds after a
+   change to `engine/`, but the provider notes found a host whose page prescribes its own
+   format for a cache mount's id, and what it does with another is not stated; CI does not
+   keep cache mounts anyway (Docker's GitHub Actions cache page, read 2026-09-26). An
+   unchanged `engine/` costs nothing either way, by the layer cache.
+6. *`health` says `engine: true` for an engine configured, not loaded*, as the brief
+   allowed: the engine starts when a deck is first checked or a room sat at, and the first
+   answer then waits 25–30 s on the corpus. The health check's comment, the Dockerfile's
+   and the notes say so.
+7. *The spec builds its own copy of the app* where the brief says "the built dist": the
+   suite's own build carries no relay address (or, once `RELAY_URL` is set, the hosted
+   one), and must stay so for Pages; the image's is built with `same-origin`, so the spec
+   builds that, into a folder of its own, in 3.3 s here, touching nothing the suite serves.
+8. *The spec reads its argument* rather than taking any address given as its target:
+   `scripts/browser-suite.mjs` and the chain give every spec the preview's address.
+9. *No `VOLUME` in the Dockerfile.* One would make Docker create an anonymous volume on
+   every run given none, so a run without the volume would look like one with it until its
+   container was removed. The run command, the workflow and the notes mount it.
+10. *`image.yml` builds through buildx and the build-push action* rather than `docker
+    build` itself, for the gha cache; it builds the same Dockerfile from the same context
+    with the same tag.
+11. *Measured on Windows, with Microsoft's OpenJDK 21 and the `.bat` launcher*: there is no
+    Docker, WSL or Linux here. The image workflow measures the image itself on every run.
+
+**Found on the way, and fixed.**
+
+1. *A tab opened on the relay's `/health` would have replaced the offline page.* The
+   worker kept every navigation's answer as the offline page; served from the relay, a
+   navigation can be the relay's JSON. Only a page replaces it now (`sw.js`, its test and
+   the spec).
+2. *A relay that cannot write its rooms died with a stack trace* from inside loading them.
+   It says so in words now, with the folder and the user, and stops: a relay that went on
+   without writing would lose every table at its next restart.
+3. *The relay served the season art as `application/octet-stream`*: its table of types had
+   no `.webp`, which only mattered once it served the built app. It has now.
+4. *The relay's cache rule for hashed assets read the path's spelling*: `/\/assets\//`
+   against the file's path, which on Windows is spelt with backslashes, so there it marked
+   nothing immutable (the desktop client, M10, will serve from Windows); and on Linux it
+   also matched `mtg-assets/assets/`, art named without a hash, marking it immutable for a
+   year. Now only the build's own `assets/` folder, found relative to the served folder.
+   `tests/image.test.js` serves each kind of file the build writes and checks its type
+   and its cache, the shell and the art always asked again.
+5. *The spec's first run failed its seat from another origin*: a sit is answered `seated`
+   at once and again once the engine has dealt, and it read the first. It waits for the
+   engine's seat, or a refusal, now.
+6. *Git Bash left a POSIX path unconverted*: a check of the relay's words above, run with
+   `ROOMS_DIR=/c/Users/Robert/Desktop/Nexus Table/package.json/rooms`, reached Node as it
+   was written, which Node on Windows read as
+   `C:\c\Users\Robert\Desktop\Nexus Table\package.json\rooms`, and made there, empty; the
+   session was not allowed to remove it. Why it was not converted, as the review measured it
+   (5): the path runs through an existing file. HANDOFF.md §5 says so. The empty folders
+   were deleted before the commit.
+
+And one left as it is: the bridge's `close` waits out its whole grace even after the engine
+has gone (a timer racing the exit, not cleared), so a script ends up to two seconds after
+its last engine; the relay's shutdown calls `process.exit` and is not held by it.
+
+**What only a run on GitHub can prove.** That the image builds: the engine compiling
+inside the JDK stage (Argentum asks up to 2 GB for Gradle and 6 GB for the Kotlin daemon;
+`ubuntu-latest` has 16 GB for a public repository, which this is, by GitHub's runner
+reference, read 2026-09-26), `npm ci` and the build on Linux, the trace copying
+what the relay reads. That Temurin's runtime copied into Debian 13 runs the engine, and the
+POSIX launcher under `sh` reads `COMPANION_OPTS` after its own `-Xmx2g`. That the
+entrypoint's `setpriv` drops to `node` and the relay keeps tini's child's process id. That
+Docker's health status reaches healthy, a named volume starts as `node`'s, the spec passes
+against the container, and `docker stop` ends it with 0 inside ten seconds, having said it
+heard SIGTERM, and a start brings its rooms back. That on a folder root owns the
+entrypoint's root branch gives the rooms' folder to `node` and a room is written there
+(the review, 7). That BuildKit pulls the engine's JDK by its pinned digest (the review, 8).
+The image's size, the build's times cold and warm, the gha cache round-tripping the
+engine's layer, and the memory on Linux, which may differ from this machine's working sets.
+And `RELAY_URL` reaching the Pages copy, and only it, which needs the owner to set it; the
+step that builds that copy was run here with it unset, set, and set but lost from the
+build (the review, 2).
+
+A run's cost, estimated rather than measured, since nothing here runs Docker: cold, the
+engine's compile as M9 measured it with nothing cached (280 s, and 153 s for the other
+eras) plus the app's stage (about a minute) and exporting the cache, then Playwright and
+the spec (about a minute and a half with two corpus loads): 12–15 minutes. Warm, with
+`engine/`, its build script and the engine stage's base unchanged — the base pinned by
+digest so that it is (the review, 8) — the engine's layer comes from the cache and a
+change to the app rebuilds its stage and the runtime's copies: 4–6 minutes, and a minute or
+so more when a new `node:22-trixie-slim` has been published, whose `npm ci` then runs
+again. The run on a root's volume adds one start and stop without an engine, seconds.
+Each run's summary gives its own.
+
+**Not done, and where it goes.** The provider notes and their example files are the other
+half of M8, written beside this, and reconciled with it by the review (4). The owner's, in
+HANDOFF.md §6, each as a question: which provider and what size (about 60 MB for the relay
+and 690–810 MB a JVM, a JVM per room the engine holds, one for checking decks, and all the
+kept rooms' at once when the relay comes back; on Fly, a performance CPU or the risk of a
+shared one); whether an engine room nobody is in should let its JVM go, and whether kept
+rooms' engines should start only as people sit; whether a room the engine holds should be
+endable over the wire; `RELAY_URL`, once there is a relay; whether something should move the
+engine stage's digest, and whether the bases that ship should be pinned too; class-data
+sharing; and whether the launcher's `-Xmx2g` should come down everywhere. This record said
+actionlint and ShellCheck were not run because neither was on this machine and downloading
+them was the owner's to allow: both were, as M9 downloaded them, and the review ran them
+(12). Each step's script was also checked with `bash -n`, the summary step run here on
+sample `docker stats` lines, and the two `docker top` checks on a sample listing.
+
+The bar at the end: `npm test`, 2,308 tests in 106 files, 31 of them new in four, none
+skipped, the live engine suite among them, 98 s. Built, and against its preview the
+specs whose areas this touched, through the runner: `import` 44, `deckart` 32, `data`
+25, `relay` 16, `game-room` 30, `game-engine` 218 against the real engine,
+`engine-restart` 42, `hosted` 24, `refresh` 43 and `bundle` 12 — 10 specs, 486 checks,
+none failed, 603 s; then `relay`, `game-room` and `hosted` again after the relay's two
+serving fixes, 70 checks, none failed. `hosted.spec.mjs` also 24 of 24 against the relay
+laid out as the image lays it out. Each fault put back once and caught: the old
+`sw.js` failed four of `service-worker.test.js`'s eight and three of `hosted.spec.mjs`'s
+checks (the relay's `/health` answered from the cache, 2 then 2; `/health` and
+`/rooms/<code>` in the cache; the offline page replaced); the old `relayAddress.js` five
+of its eight; a traced file left out, the copy's relay failing to start; the old relay the
+serving test and the rooms-folder test; a `USER node` with no entrypoint, and a `COPY` of
+a file the context leaves out, `image.test.js`'s two checks; the worker's browser able to
+reach Scryfall, `browser-suite.test.js`'s rule. Screenshots looked at: `hosted-lobby`
+(the lobby at the relay's own address, "Play the engine" offered, no address asked) and
+`hosted-land` (the Mountain in the lands row, the engine's turn begun) in the system's
+temporary folder. The token check clean. No JVM, relay or preview left running.
+
+**What the review found.** A reading-over the same day through three lenses — the image,
+the app, and the provider notes — its findings checked by a sceptic before they were passed
+on, found seventeen faults, one of them three times from different ends (2). Every one is
+fixed, and none of them is left to the owner as a fault; where a fix has a cost that is the
+owner's to weigh, the question is in HANDOFF.md §6. Each fix that could be tested has a test
+that failed with the fault put back once, and is said below.
+
+1. *The Fly example could not load the engine in time.* It asked for `shared-cpu-1x`, and
+   the notes sized every provider by memory alone. Fly's CPU page (read 2026-09-26) gives a
+   shared CPU a baseline of 6.25% of its time, with a burst balance of 5 s for a new
+   Machine: by the page's own formula about 12.5 s of CPU inside the relay's 120 s for an
+   engine's first answer (`STARTUP_MS`), against 27–32 s one corpus load took of a desktop
+   CPU, and every kept room loading one at once after a restart. Arithmetic, not a run on
+   Fly. The example asks for `performance-1x` with 2 GB now, $31.00 for 30 days at `iad`
+   by the constants Fly's pricing page prices with (which give its own shared figures to
+   the cent); `HOSTING.md` reads the CPU page, adds CPU to §1, §2 and §7 and says what
+   Railway's and Render's pages do not; shared is a question for the owner.
+2. *Once the owner set `RELAY_URL`, the deploy would have hung on the hosted relay.*
+   `deploy.yml` built the one app with it, which the browser suite drives and Pages
+   publishes, so every spec that opens `#/game` without an address of its own would ask the
+   deployed relay's `/health` from CI, on every run, and the specs that count console
+   errors fail where it does not answer: built with an address where nothing listened,
+   `unknownformat.spec.mjs` failed "no console errors throughout", 66 passed and 1 failed,
+   against 67 of 67 with none (the sceptic's run, and the finder's). A relay down or
+   mid-deploy — and every provider here has a gap at each deploy — would have held back the
+   Pages deploy, a fix included. Found three times. The suite's build has no relay address
+   now, whatever the variable says (`VITE_RELAY_URL: ''`); after the suite, on `main` only,
+   the Pages copy is built again with `RELAY_URL` into `dist-pages`, checked to carry the
+   address, and uploaded, or, unset, the suite's own build is copied there and published as
+   before. The sceptic of one finding preferred filtering the failed load out of the specs,
+   to keep publishing the build the suite drove; that would still send CI's traffic to the
+   owner's relay and change what the specs meet whenever it answered, so the build is split
+   instead, and differs from the one tested only by the address. Test:
+   `tests/deploy-workflow.test.js` (the suite's build carries no address, the variable is
+   read once, after the suite, into a folder of its own that is uploaded); with the old
+   step put back, all three of its checks failed. The step itself was run here as a step
+   runs, with the address unset (the suite's build copied whole), set (built again, the
+   address found in the bundle, `dist` untouched) and set but lost from the build (fails,
+   saying so). `HOSTING.md` §9 says what setting it does to CI.
+3. *384 MB was proven only at intermediate.* Every run behind "finished the heaviest game"
+   played the engine at intermediate, which looks one move ahead; hard, which the lobby
+   offers, plays its bigger choices out a turn or two ahead. Measured now (above): three
+   Commander games at hard under the image's options, one of them two JVMs at once, all to
+   their end, the heap never holding more than 159 MB after a collection nor more than
+   293 MB when one began, no collection forced by a full heap; the working set 743–808 MB,
+   above intermediate's, so the figures here, in the Dockerfile, `HOSTING.md` and HANDOFF.md
+   say 690–810 MB, and the notes size at 810 MB, which moves 4 GB from five JVMs to four.
+   The finding's other half, a table with several engine seats, was dropped by its sceptic:
+   the app only ever opens an engine room of two seats with the engine in one
+   (`Seats.jsx`'s `challenge`, `createEngineRoom`). `engine-memory.mjs` records the profile
+   the engine's seat took, and its header says how to log the heap.
+4. *The provider notes were left unreconciled with the image as built.* `HOSTING.md` still
+   had seven "the lead reconciles" placeholders; a trap for a Gradle cache mount the image
+   does not have; traps saying the relay might not start on a root's volume, which the
+   entrypoint handles; `RAILWAY_RUN_UID=0` as a fix; "`RELAY_URL` (check deploy.yml)"; CI
+   pushing to a registry as a fallback, where `image.yml` pushes nothing; and per-JVM
+   figures of 700–750 and 600–700 MB against PLAN's. Rewritten against the Dockerfile, the
+   workflows and this record: the variables the image sets with their values, the
+   entrypoint and who runs what, the measured table with how each figure was taken, the
+   JVMs per size recounted, the volume's owner settled in §8 for all three with the one
+   caveat (the container must start as root, Docker's default for an image with no user,
+   which none of the three pages contradicts), `RELAY_URL` named, and what an image built
+   elsewhere needs. HANDOFF.md §6's line that a volume must be writable by uid 1000, which
+   contradicted the entrypoint, is gone. Not testable as code; read against the files.
+5. *The Git Bash trap recorded a mechanism nobody measured.* It said Git Bash converts a
+   POSIX path in a program's arguments but not in a variable set on the command line.
+   Measured here: `/c/Users/Robert/nothing` is converted in both, as an argument, a variable
+   on the command line and an exported one, with a space in the path or not; what is left
+   alone is a path running through an existing file —
+   `/c/Users/Robert/Desktop/Nexus Table/package.json/rooms`, the very path that made the
+   stray folder, and `/c/Windows/win.ini/x` — as an argument and a variable alike, and
+   anything passed through Node's own `spawn`. HANDOFF.md §5 and "Found on the way" 6 say
+   that now.
+6. *A `grep -q` in a pipe could fail the image's stop check at random.* `docker logs … |
+   grep -q 'SIGTERM: closing'` runs under `pipefail`; grep stops at its match, and the
+   relay logs its engines' last words after that line, so `docker logs` could die of
+   SIGPIPE and the step say the relay never heard SIGTERM. Shown here:
+   `( echo hit; sleep 0.2; echo more ) | grep -q hit` gives 141. The log is read whole
+   first now. Test: `tests/image.test.js` holds every workflow to piping only `printf` of one
+   value into `grep -q`; with the old line put back it failed. The step was run here with
+   `docker` stood in for and 3,000 lines after the match: it passed, and failed, saying so,
+   with the line taken out. HANDOFF.md §5 has the trap.
+7. *Nothing ran the image on a volume that is root's*, the case the entrypoint's root
+   branch exists for: Docker fills an empty named volume from the image's `/data`, already
+   `node`'s, so CI never reached it. `image.yml` now runs the image once more on a folder root
+   made and owns (`sudo install -d -o root`), mounted over `/data`, and fails unless the
+   relay runs as uid 1000, the rooms' folder is 1000's and a room opened is written there,
+   then stops it and wants 0. Test: `image.test.js` holds the step to those checks; with the
+   step taken out it failed. The step was run here with `docker`, `sudo`, `stat` and `curl`
+   stood in for, in six cases: passing, and each of a folder not root's, the relay as root,
+   the rooms' folder root's, no room written and a stop by SIGKILL failing with its own
+   words.
+8. *The engine's layer would have compiled cold whenever Temurin republished its JDK.* The
+   engine stage was `FROM eclipse-temurin:21-jdk-noble`, a tag that moves (Docker Hub gave
+   it as pushed 2026-09-25T23:24:57Z), and a moved base invalidates the cached layers
+   built on it, so the first run after each republish would compile Gradle, its
+   dependencies and the corpus from nothing, while the comments said the layer is kept
+   while `engine/` and the script are unchanged. The stage only compiles and is thrown away,
+   so it gains nothing from a newer JDK: its base is pinned by digest now,
+   `sha256:d0aa6704…3085`, the tag's multi-platform index as the registry gave it on
+   2026-09-26 (its `docker-content-digest`, and Docker Hub's API, agreeing). What ships
+   still floats for its fixes. The Dockerfile's, `image.yml`'s and this record's words say
+   so; moving the digest, and pinning what ships, are the owner's questions. Test:
+   `image.test.js` wants the engine stage pinned and the shipped bases not; with the tag
+   put back it failed.
+9. *`hosted.spec.mjs` would have filled a deployed relay.* Its header offered running it
+   against the relay already there; a run leaves two tables the engine holds, one played to
+   a land and one sat at from another origin, and nothing ends one over the wire, so each
+   keeps its JVM for seven idle days and starts it again at every restart — on the example
+   2 GB instance, one run is past what it holds. The spec now refuses any address not on
+   the machine it runs on (`localhost`, `127.0.0.1`, `[::1]`: the image in CI, one started by
+   hand, the desktop client), before asking it anything, and its header says why. Test:
+   `tests/hosted-spec.test.js` runs it at three addresses elsewhere, which it refuses with
+   its reason; with the refusal taken out it went on to ask them, and failed. Ending a room
+   over the wire, which would let the spec clean up after itself, is a question for the
+   owner.
+10. *`same-origin` dropped the page's path.* It resolved to the page's origin alone, so an
+    image behind a proxy serving the relay under a path (`https://host/mtg/`) would have
+    asked `https://host/health`, while the service worker in the same change reads its own
+    scope with the path. It is the folder the page came from now (`new URL('.', href)`),
+    which is the origin wherever the app is served at the root, as the image serves it.
+    Test: `tests/relay-address.test.js`, the root on three routes, a path, a path with
+    `index.html`, and a file and `about:blank` still none; with the origin put back it
+    failed.
+11. *The seats panel said "There is no hosted one yet".* True of the app until a relay is
+    deployed and then not, while a build without `RELAY_URL` would go on saying it; whether a
+    relay is hosted anywhere is not something a build can know. It says what the app knows:
+    "Playing together needs a relay, and this app has not been given one. Run npm run relay
+    and put its address here, or the address of a hosted relay." (the lead's wording, after
+    the review's). Test:
+    `tests/seats-no-relay.test.jsx`; with the old line put back it failed.
+12. *The record said actionlint and ShellCheck were not on this machine.* Both were, as M9
+    downloaded them (actionlint 1.7.12, its archive's SHA-256 matching the release's
+    `checksums.txt`; ShellCheck 0.11.0). Run now: actionlint with `-shellcheck=` on all three
+    workflows (HANDOFF.md §5's Windows trap), clean; ShellCheck on each of the twenty step
+    scripts of `image.yml` and `deploy.yml`, taken out of the files, clean (SC2154 left out,
+    since the variables come from the steps' `env`).
+13. *The Railway example said its region could not be set in the file.* Railway's regions
+    page says a region's identifier "can be used in your Config as Code file", and its
+    schema has `deploy.region`; its reference page describes only multi-region replicas.
+    The example has `region` commented out with the four identifiers, and `HOSTING.md` §5
+    gives both ways, the dashboard as the documented one.
+14. *The Railway and Render examples deployed on every push to `main`*, docs and tests
+    included, and every deploy drops every socket and starts every kept room's engine again.
+    They deploy now only for what goes into the image: Railway's `watchPatterns` and Render's
+    `buildFilter`, what the root `.dockerignore` lets in less `deploy/*.md` (their pages:
+    gitignore-style patterns from `/`; globs from the repository root; a manual deploy goes
+    ahead regardless). Of the last thirty commits, five touched only documents. Test:
+    `image.test.js` holds both lists to the ignore file; with each taken out, each failed.
+15. *Two series of measurements were used here without being recorded*: the lead's goblin
+    game at five ceilings and its native memory tracking, where the 77,203 classes come
+    from, and on which `HOSTING.md` built its `-Xmx2g` column. Recorded above, with how they
+    were taken.
+16. *The Dockerfile's run line named the volume `mtg-rooms`*, where `HOSTING.md` and
+    `image.yml` name it `mtg-companion-rooms`: an owner following one then the other would
+    start on an empty volume. It says `mtg-companion-rooms`.
+17. *CURRENT.md's list of M8's files left out the four provider files.* Added, with their
+    lines, the three configurations marked as examples.
+
+**Checked, and how.** The unit suite whole; the specs the fixes touched through the runner
+against a preview of this build on its own port; `hosted.spec.mjs` among them against a
+relay it started, serving the app built as the image builds it; the token check. The
+workflow steps changed — the stop check, the run on a root's volume and the Pages build —
+run here as a step runs (`bash -eo pipefail`), with what this machine lacks stood in for,
+as said under each. The measurements at hard with the engine on this machine, nothing else
+running on it.
+
+**Not done, of what the review offered.** Nothing. Seen, and found to be the spec's and not
+the plate's: in `hosted-land` the plate under the hand says "Untapped sources: None
+untapped" with the Mountain just played untapped on the battlefield. The plate counts a
+card by its Scryfall record's `produced_mana`, looked up by the instance's `cardId`; an
+engine card's `cardId` is the real Scryfall id read from its image link (`scryfallIdOf`,
+`src/lib/engine/board.js`), and the spec's stand-in records are keyed `mountain` and
+`goblin`, so the lookup finds nothing and the Mountain is not counted. Against Scryfall
+itself the record is the printing's own and carries `produced_mana`. The spec claims
+nothing about the plate, so it is left as it is.
+
+The bar at the end of the review, against the pin: `npm test`, 2,319 tests in 109 files, 11
+of them new (three files new), none skipped, the live engine suite among them, 117 s. Built,
+and against a preview of that build on port 4390, through the runner with `ENGINE_REQUIRED`
+set, the specs whose areas the fixes touched: `routing` 32, `game` 98, `relay` 16,
+`game-room` 30, `seat-opposite` 110, `hosted` 24 against a relay it started, `unknownformat`
+67 and `a11y` 25 — 8 specs, 402 checks, none failed, 197 s. The whole browser suite is the
+lead's to run on the combined change. Each fault put back once and caught, as each item
+says: the Pages address in the suite's build (`deploy-workflow.test.js`, three of three),
+the old `grep -q` line, the step on a root's volume taken out, the engine's base by tag, and
+each provider filter taken out (`image.test.js`, one each), the refusal taken out
+(`hosted-spec.test.js`), the origin alone (`relay-address.test.js`) and the old line of the
+seats panel (`seats-no-relay.test.jsx`). The measurements at hard: four JVMs, one after
+another and two at once, every game to its end. actionlint 1.7.12 clean on the three
+workflows with `-shellcheck=`, ShellCheck 0.11.0 clean on each of the twenty step scripts of
+`image.yml` and `deploy.yml`, and the changed steps run here with stand-ins as said. Screenshots
+looked at: `hosted-lobby` and `hosted-land` again, from this run, and the seats panel with no
+relay's address, its new line whole and the form under it, no console error. The token
+check clean. No JVM, relay or preview left running.
+
+Then the combined change, run by the lead: `npm test` again, 2,319 tests in 109 files, none
+skipped; built, and the whole browser suite through the runner against a preview on 4173
+with `ENGINE_REQUIRED` set — 43 specs, 1,969 checks, none failed and none skipped, 1,237 s,
+`hosted` 24 and the real engine's `game-engine` 218 among them. After it, the seats panel's
+new line was reworded ("this app has not been given one"), its unit test with it; no browser
+spec reads that line.
+
 ## Phase 3-alt — Writing the rules core ourselves
 
 Only if the owner wants the engine to be ours. `src/lib/engine/`, TypeScript,

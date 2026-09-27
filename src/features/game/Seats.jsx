@@ -297,7 +297,7 @@ export default function Seats({ room, engine = null, engineDeck = null }) {
         <form className="lobby__field" onSubmit={(e) => { e.preventDefault(); setRelayAddress(draft); setAddress(relayAddress()) }}>
           <span className="lobby__label">No relay to reach</span>
           <p className="faint tiny m0">
-            Playing together needs a relay. There is no hosted one yet; run <code>npm run relay</code> and put its address here.
+            Playing together needs a relay, and this app has not been given one. Run <code>npm run relay</code> and put its address here, or the address of a hosted relay.
           </p>
           <div className="row">
             <input className="input" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="http://localhost:8788" aria-label="Relay address" />

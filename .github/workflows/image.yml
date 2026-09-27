@@ -1,0 +1,321 @@
+name: Prove the image
+
+# HANDOFF.md M8: the app, the relay and the rules engine in one image
+# (deploy/Dockerfile), which the owner deploys. This builds it, runs it as a
+# host would — its own volume at /data, the port it listens on — waits for its
+# health check, and plays the engine through it from a real Chromium with no
+# relay address given (tests/browser/hosted.spec.mjs, ENGINE_REQUIRED set). Then
+# it stops it the way a host does, with SIGTERM, and starts it again on the same
+# volume to see the rooms come back; and runs it once more on a folder root owns,
+# as a host's volume may be, to see the relay given its rooms' folder and still
+# run as node. What the image weighs and what the running
+# container takes — idle, during the game, after it, and coming back with its
+# rooms — goes into the job's summary, since that is what hosting it costs.
+#
+# Nothing is pushed anywhere: no registry, no login, and the build's record is
+# not uploaded. The image lives in this job's Docker and goes with the runner.
+#
+# When: every push to main and every pull request into it that touches what goes
+# into the image or proves it — the app, the relay, the engine, deploy/, this file
+# and its spec — so a change that would break the image is seen before it is
+# merged and main always says whether what the owner would deploy works. Not on a
+# change to docs/ or to the other tests alone, which cannot change the image. By
+# hand too, for a base image that has moved under an unchanged main.
+#
+# Cost: the engine's compile is the long part, as in deploy.yml, and here it is
+# one layer of the build, cached in GitHub's Actions cache (buildx's gha cache,
+# every stage kept) and reused while engine/, scripts/engine-build.sh and the
+# engine stage's base are unchanged. That base is pinned by digest in the
+# Dockerfile for this reason: a tag would move under it with every republish,
+# and the next run would compile cold for nothing. PLAN.md, M8, has the estimate
+# for a cold and a warm run; each run says its own build time in its summary.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - '.dockerignore'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'index.html'
+      - 'vite.config.js'
+      - 'src/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'engine/**'
+      - 'tests/browser/hosted.spec.mjs'
+      - '.github/workflows/image.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - '.dockerignore'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'index.html'
+      - 'vite.config.js'
+      - 'src/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'engine/**'
+      - 'tests/browser/hosted.spec.mjs'
+      - '.github/workflows/image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per branch, the newer replacing the older: an image superseded by a
+# newer push proves nothing anyone will deploy. Its own group, so it never
+# cancels deploy.yml's.
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        # Named, so every step runs with pipefail as well as -e.
+        shell: bash
+    env:
+      # The image carries the engine, so the spec fails rather than skips without one.
+      ENGINE_REQUIRED: '1'
+      IMAGE: mtg-companion
+      NAME: mtg-companion-relay
+      # The run on a volume that is root's, a container of its own.
+      ROOT_NAME: mtg-companion-root-volume
+      VOLUME: mtg-companion-rooms
+      RELAY: http://localhost:8788
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # For the spec alone: Playwright, and the relay modules it imports. The
+      # image installs its own.
+      - run: npm ci
+
+      - uses: docker/setup-buildx-action@v4
+      - name: Start the clock
+        run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
+      # What `docker build -f deploy/Dockerfile -t mtg-companion .` does, through
+      # buildx for its cache, and loaded into this runner's Docker to be run.
+      - name: Build the image
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          context: .
+          file: deploy/Dockerfile
+          tags: ${{ env.IMAGE }}
+          load: true
+          push: false
+          build-args: |
+            GITHUB_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=mtg-companion-image
+          cache-to: type=gha,mode=max,scope=mtg-companion-image
+
+      - name: What was built
+        run: |
+          took=$(( $(date +%s) - BUILD_START ))
+          bytes=$(docker image inspect "$IMAGE" --format '{{.Size}}')
+          mb=$(( bytes / 1000000 ))
+          echo "::notice title=Image built::${IMAGE} in ${took} s, ${mb} MB"
+          {
+            echo "### The image"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Built in | ${took} s (the engine's layer from the cache where \`engine/\`, its build script and the engine stage's base are unchanged) |"
+            echo "| Size, as \`docker image inspect\` gives it | ${mb} MB (${bytes} bytes) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          docker history --format '{{.Size}}\t{{.CreatedBy}}' "$IMAGE" | cut -c1-160
+
+      - name: Run it, with a volume, and wait for its health check
+        run: |
+          docker volume create "$VOLUME"
+          docker run -d --name "$NAME" -p 8788:8788 -v "$VOLUME:/data" "$IMAGE"
+          healthy=''
+          for _ in $(seq 1 60); do
+            if [ "$(docker inspect -f '{{.State.Running}}' "$NAME")" != true ]; then
+              echo "::error title=Image::the container stopped before it was healthy"
+              docker logs "$NAME"
+              exit 1
+            fi
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' "$NAME")" = healthy ]; then healthy=yes; break; fi
+            sleep 2
+          done
+          if [ -z "$healthy" ]; then
+            echo "::error title=Image::no healthy answer within two minutes"
+            docker inspect -f '{{json .State.Health}}' "$NAME"
+            docker logs "$NAME"
+            exit 1
+          fi
+          curl -sf "$RELAY/health"; echo
+          # What runs, and as whom: tini first, as root, and the relay under it as
+          # uid 1000, the node user the entrypoint handed it to.
+          docker top "$NAME" -eo pid,ppid,uid,rss,args | tee /tmp/top-idle.txt
+          relay_uid=$(awk '$5 ~ /(^|\/)node$/ && /scripts\/relay-server\.mjs/ { print $3; exit }' /tmp/top-idle.txt)
+          if [ "$relay_uid" != 1000 ]; then echo "::error title=Image::the relay runs as uid '${relay_uid}', not 1000"; exit 1; fi
+          echo "IDLE_MEM=$(docker stats --no-stream --format '{{.MemUsage}}' "$NAME")" >> "$GITHUB_ENV"
+
+      - run: npx playwright install --with-deps chromium
+
+      # The spec, with the container's memory sampled beside it all the while. The
+      # sampler lives in this step, so it ends with it.
+      - name: Play the engine through the image (tests/browser/hosted.spec.mjs)
+        run: |
+          : > /tmp/mem-game.log
+          ( while true; do docker stats --no-stream --format '{{.MemUsage}}' "$NAME" >> /tmp/mem-game.log 2>/dev/null || true; done ) &
+          sampler=$!
+          start=$SECONDS
+          status=0
+          node tests/browser/hosted.spec.mjs "$RELAY/" || status=$?
+          took=$((SECONDS - start))
+          kill "$sampler" 2>/dev/null || true
+          echo "SPEC_SECONDS=$took" >> "$GITHUB_ENV"
+          echo "AFTER_MEM=$(docker stats --no-stream --format '{{.MemUsage}}' "$NAME")" >> "$GITHUB_ENV"
+          docker top "$NAME" -eo pid,ppid,uid,rss,args | cut -c1-160 | tee /tmp/top-after.txt
+          echo "JVMS_AFTER=$(grep -c 'java' /tmp/top-after.txt || true)" >> "$GITHUB_ENV"
+          # The engines are the relay's children, and run as it does.
+          if awk '/java/ && $3 != 1000 { found = 1 } END { exit !found }' /tmp/top-after.txt; then
+            echo "::error title=Image::an engine JVM runs as a user other than 1000"
+            status=1
+          fi
+          exit "$status"
+
+      # A host stops a container with SIGTERM and gives it a grace before SIGKILL
+      # (ten seconds by default, docker stop's documentation). The relay closes
+      # every socket with 1012 and writes every room, within three seconds; then
+      # the container comes back on the same volume, and its rooms with it, an
+      # engine started for each one the engine held (§3 item 21).
+      - name: Stop it with SIGTERM, and start it again on the same volume
+        run: |
+          before=$(curl -sf "$RELAY/health" | node -e "process.stdin.on('data', (d) => console.log(JSON.parse(d).rooms))")
+          start=$(date +%s%N)
+          docker stop -t 10 "$NAME"
+          ms=$(( ($(date +%s%N) - start) / 1000000 ))
+          code=$(docker inspect -f '{{.State.ExitCode}}' "$NAME")
+          docker logs "$NAME" 2>&1 | tail -n 5
+          echo "STOP_MS=$ms" >> "$GITHUB_ENV"
+          echo "STOP_CODE=$code" >> "$GITHUB_ENV"
+          if [ "$code" != 0 ]; then echo "::error title=Image::stopped with exit code $code, not 0 (137 is SIGKILL: the relay did not go down within the grace)"; exit 1; fi
+          # Read whole first, then searched: `docker logs | grep -q` under pipefail
+          # fails where the log goes on past the line, since grep stops reading at
+          # the match and docker logs dies of SIGPIPE writing the rest (141).
+          logs=$(docker logs "$NAME" 2>&1)
+          if ! grep -q 'SIGTERM: closing' <<<"$logs"; then echo "::error title=Image::the relay never said it heard SIGTERM"; exit 1; fi
+
+          docker start "$NAME"
+          for _ in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' "$NAME")" = healthy ] && break
+            sleep 2
+          done
+          after=$(curl -sf "$RELAY/health" | node -e "process.stdin.on('data', (d) => console.log(JSON.parse(d).rooms))")
+          docker logs "$NAME" 2>&1 | grep 'back from disk' | tail -n 1
+          echo "ROOMS_KEPT=$before then $after" >> "$GITHUB_ENV"
+          if [ "$after" != "$before" ]; then echo "::error title=Image::$before room(s) before the restart, $after after"; exit 1; fi
+          # The engines for the kept rooms load at once; their memory, sampled while they do.
+          : > /tmp/mem-back.log
+          for _ in $(seq 1 25); do docker stats --no-stream --format '{{.MemUsage}}' "$NAME" >> /tmp/mem-back.log 2>/dev/null || true; done
+          docker top "$NAME" -eo pid,ppid,rss,args | cut -c1-160 | tee /tmp/top-back.txt
+          echo "JVMS_BACK=$(grep -c 'java' /tmp/top-back.txt || true)" >> "$GITHUB_ENV"
+
+          start=$(date +%s%N)
+          docker stop -t 10 "$NAME"
+          echo "STOP2_MS=$(( ($(date +%s%N) - start) / 1000000 ))" >> "$GITHUB_ENV"
+          echo "STOP2_CODE=$(docker inspect -f '{{.State.ExitCode}}' "$NAME")" >> "$GITHUB_ENV"
+
+      # A host's volume that is root's, as Railway documents its own
+      # (deploy/HOSTING.md §5). The named volume above cannot stand in for one:
+      # Docker fills an empty named volume from the image's /data, which the
+      # image gives to node, so there the entrypoint's root branch had nothing
+      # to hand over. Here /data is a folder root made and keeps: the entrypoint
+      # must make the rooms' folder in it and give it to node, the relay must
+      # still run as node, and a room opened must be written there.
+      - name: Run it on a volume that is root's
+        env:
+          ROOT_VOLUME_DIR: /tmp/mtg-companion-root-volume
+        run: |
+          sudo install -d -o root -g root -m 755 "$ROOT_VOLUME_DIR"
+          if [ "$(stat -c %u "$ROOT_VOLUME_DIR")" != 0 ]; then echo "::error title=Image::the folder standing in for a root's volume is not root's"; exit 1; fi
+          docker run -d --name "$ROOT_NAME" -p 8788:8788 -v "$ROOT_VOLUME_DIR:/data" "$IMAGE"
+          healthy=''
+          for _ in $(seq 1 60); do
+            if [ "$(docker inspect -f '{{.State.Running}}' "$ROOT_NAME")" != true ]; then
+              echo "::error title=Image::on a volume that is root's, the container stopped before it was healthy"
+              docker logs "$ROOT_NAME"
+              exit 1
+            fi
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' "$ROOT_NAME")" = healthy ]; then healthy=yes; break; fi
+            sleep 2
+          done
+          if [ -z "$healthy" ]; then
+            echo "::error title=Image::on a volume that is root's, no healthy answer within two minutes"
+            docker logs "$ROOT_NAME"
+            exit 1
+          fi
+          docker top "$ROOT_NAME" -eo pid,ppid,uid,args | tee /tmp/top-root.txt
+          relay_uid=$(awk '$4 ~ /(^|\/)node$/ && /scripts\/relay-server\.mjs/ { print $3; exit }' /tmp/top-root.txt)
+          if [ "$relay_uid" != 1000 ]; then echo "::error title=Image::on a volume that is root's, the relay runs as uid '${relay_uid}', not 1000"; exit 1; fi
+          rooms_uid=$(sudo stat -c %u "$ROOT_VOLUME_DIR/rooms")
+          if [ "$rooms_uid" != 1000 ]; then echo "::error title=Image::on a volume that is root's, the rooms' folder belongs to uid '${rooms_uid}', not 1000"; exit 1; fi
+          # A room opened is written within a moment (FLUSH_MS, a quarter of a second).
+          code=$(curl -sf -X POST "$RELAY/rooms" -H 'content-type: application/json' -d '{"seats":2}' | node -e "process.stdin.on('data', (d) => console.log(JSON.parse(d).code))")
+          written=''
+          for _ in $(seq 1 20); do
+            if sudo test -f "$ROOT_VOLUME_DIR/rooms/$code.json"; then written=yes; break; fi
+            sleep 0.5
+          done
+          sudo ls -ln "$ROOT_VOLUME_DIR" "$ROOT_VOLUME_DIR/rooms"
+          if [ -z "$written" ]; then
+            echo "::error title=Image::a room opened on a volume that is root's was not written there"
+            docker logs "$ROOT_NAME"
+            exit 1
+          fi
+          echo "ROOT_VOLUME=the relay as uid ${relay_uid}, the rooms' folder given to uid ${rooms_uid}, room ${code} written there" >> "$GITHUB_ENV"
+          docker stop -t 10 "$ROOT_NAME"
+          stopped=$(docker inspect -f '{{.State.ExitCode}}' "$ROOT_NAME")
+          if [ "$stopped" != 0 ]; then echo "::error title=Image::on a volume that is root's, stopped with exit code $stopped, not 0"; exit 1; fi
+
+      - name: What it took
+        if: always()
+        run: |
+          # The largest of the samples, as docker stats wrote them ("712.3MiB / 15.6GiB").
+          peak() {
+            [ -s "$1" ] || { echo 'not sampled'; return; }
+            node -e "
+              const units = { B: 1, KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3, kB: 1e3, MB: 1e6, GB: 1e9 }
+              const lines = require('fs').readFileSync(process.argv[1], 'utf8').split('\n')
+              const mib = lines.map((l) => /^([0-9.]+)([A-Za-z]+)/.exec(l.trim())).filter((m) => m && units[m[2]]).map((m) => Number(m[1]) * units[m[2]] / 1024 ** 2)
+              console.log(mib.length ? Math.round(Math.max(...mib)) + ' MiB, the largest of ' + mib.length + ' samples' : 'not sampled')
+            " "$1"
+          }
+          {
+            echo
+            echo "### The running container, by \`docker stats\`"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Idle, healthy, no engine started | ${IDLE_MEM:-not reached} |"
+            echo "| During the spec (${SPEC_SECONDS:-?} s: the deck checker, a room played, a room sat at from another origin) | $(peak /tmp/mem-game.log) |"
+            echo "| After it, ${JVMS_AFTER:-?} engine JVM(s) running | ${AFTER_MEM:-not reached} |"
+            echo "| Stopped with SIGTERM | ${STOP_MS:-?} ms, exit code ${STOP_CODE:-?} |"
+            echo "| Rooms before and after coming back | ${ROOMS_KEPT:-not reached} |"
+            echo "| Coming back, ${JVMS_BACK:-?} engine JVM(s) loading at once | $(peak /tmp/mem-back.log) |"
+            echo "| Stopped again | ${STOP2_MS:-?} ms, exit code ${STOP2_CODE:-?} |"
+            echo "| Run on a volume that is root's | ${ROOT_VOLUME:-not reached} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: The containers' logs
+        if: always()
+        run: |
+          docker logs "$NAME" 2>&1 | tail -n 60 || true
+          docker logs "$ROOT_NAME" 2>&1 | tail -n 20 || true

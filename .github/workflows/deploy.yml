@@ -123,7 +123,17 @@ jobs:
           echo "::notice title=Engine's live suite::tests/engine-live.test.js passed against the built engine in ${took} s"
           echo "- **tests/engine-live.test.js:** passed against the built engine in ${took} s" >> "$GITHUB_STEP_SUMMARY"
 
-      - run: npm run build
+      # The app the browser suite drives, built with no relay address whatever
+      # the repository says: the specs were written against an app that has
+      # none unless they give it one. Built with the owner's RELAY_URL (below),
+      # every spec that sets no address of its own would ask the deployed relay's
+      # /health from here, on every run, and a relay that was down or
+      # mid-deploy would fail the suite as a console error and hold back the
+      # Pages deploy, a fix included (HANDOFF.md M8, the review).
+      - name: Build the app
+        env:
+          VITE_RELAY_URL: ''
+        run: npm run build
       # The browser suite drives the built app in a real Chromium. It has
       # caught every real regression so far and used to run only by hand,
       # which meant a bug in routing or storage could deploy green.
@@ -137,10 +147,37 @@ jobs:
           # said and set out in the job's summary, and none let off as skipped
           # while ENGINE_REQUIRED is set (scripts/browser-suite.mjs).
           node scripts/browser-suite.mjs http://localhost:4173/
+      # The copy GitHub Pages serves, once the suite has passed. The relay it
+      # talks to, once the owner has one, is the repository variable RELAY_URL
+      # (Settings, Secrets and variables, Actions, Variables), its https address
+      # (HANDOFF.md M8, deploy/HOSTING.md §9). Unset, it is empty, and what is
+      # published is the very build the suite drove, as before. Set, the app is
+      # built again with it into a folder of its own — dist, which the preview
+      # may still be serving, is left alone — and the one line of difference,
+      # the address, is checked to be in it; the rest is the same commit and the
+      # same build.
+      - name: Build the app for Pages
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          VITE_RELAY_URL: ${{ vars.RELAY_URL }}
+        run: |
+          if [ -z "$VITE_RELAY_URL" ]; then
+            cp -R dist dist-pages
+            echo "- **Pages:** the build the browser suite drove, with no relay address (RELAY_URL is not set)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          npm run build -- --outDir dist-pages --emptyOutDir
+          # The address as the app reads it: what it was given, without a trailing slash.
+          address="${VITE_RELAY_URL%/}"
+          if ! grep -rqF -- "$address" dist-pages/assets; then
+            echo "::error title=Pages build::RELAY_URL is set, and the Pages build does not carry it"
+            exit 1
+          fi
+          echo "- **Pages:** built again with the relay at \`${address}\`" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:
-          path: dist
+          path: dist-pages
 
   deploy:
     needs: test

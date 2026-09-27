@@ -50,8 +50,8 @@
  */
 import { createServer } from 'node:http'
 import { randomInt } from 'node:crypto'
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, existsSync, statSync } from 'node:fs'
-import { join, extname, normalize } from 'node:path'
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, existsSync, statSync, accessSync, constants } from 'node:fs'
+import { join, extname, normalize, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync, gunzipSync } from 'node:zlib'
 import { WebSocketServer } from 'ws'
@@ -105,6 +105,8 @@ export const FLUSH_MS = 250
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon',
+  // The season art under mtg-assets/ (M8, when the relay began serving the built app).
+  '.webp': 'image/webp',
   '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.map': 'application/json',
 }
 
@@ -535,7 +537,11 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
     if (!existsSync(file)) { json(res, 404, { error: 'not found' }); return }
     const type = TYPES[extname(file)] ?? 'application/octet-stream'
     // Hashed assets are immutable; the shell is not, so it is always re-checked.
-    const cache = /\/assets\//.test(file) ? 'public, max-age=31536000, immutable' : 'no-cache'
+    // The build's own assets/ folder only, found from the served folder and not by
+    // the path's spelling: a path on Windows is spelt with backslashes, and
+    // mtg-assets/assets/ holds art named without a hash, which may change (M8).
+    const hashed = relative(staticDir, file).split(sep)[0] === 'assets'
+    const cache = hashed ? 'public, max-age=31536000, immutable' : 'no-cache'
     res.writeHead(200, { 'content-type': type, 'cache-control': cache })
     res.end(readFileSync(file))
   }
@@ -659,8 +665,22 @@ export function createRelay({ roomsDir = null, pingMs = 30 * 1000, staticDir = n
 
 const asProgram = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]
 if (asProgram) {
+  const roomsDir = process.env.ROOMS_DIR || '/tmp/rooms'
+  // Said in words where the rooms cannot be kept, rather than as a stack trace
+  // from somewhere inside loading them. The image runs the relay as uid 1000 and
+  // a host may mount its volume as root's (HANDOFF.md, M8): a relay that went on
+  // without writing would lose every table at its next restart, so it stops.
+  try {
+    mkdirSync(roomsDir, { recursive: true })
+    accessSync(roomsDir, constants.W_OK)
+  } catch (e) {
+    const who = process.getuid ? ` as user ${process.getuid()}` : ''
+    console.error(`relay: cannot keep rooms in ${roomsDir} (${e.code ?? e.message})${who}; `
+      + 'give this user the folder, or point ROOMS_DIR at one it can write.')
+    process.exit(1)
+  }
   const relay = createRelay({
-    roomsDir: process.env.ROOMS_DIR || '/tmp/rooms',
+    roomsDir,
     staticDir: process.env.STATIC_DIR || null,
     pingMs: Number(process.env.PING_MS) || 30 * 1000,
   })

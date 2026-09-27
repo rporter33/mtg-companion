@@ -1,0 +1,77 @@
+# AN EXAMPLE until the owner chooses a provider (HANDOFF.md §3 item 27).
+# What each line is for, and the traps, are in deploy/HOSTING.md, "Fly.io".
+#
+# flyctl reads this file only when it is named. From the repository root:
+#
+#   fly deploy --config deploy/fly.toml --ha=false
+#
+# The build context is the folder fly deploy runs in, so running it from the
+# root sends the whole repository, as `docker build -f deploy/Dockerfile .`
+# does. The dockerfile below is resolved against this file's own folder, so
+# "Dockerfile" is deploy/Dockerfile (flyctl's resolveDockerfilePath, read
+# 2026-09-26).
+
+# Both placeholders fail loudly until they are replaced: the app is the name
+# `fly apps create` was given, the region one of `fly platform regions`,
+# nearest the people who will play.
+app = "REPLACE-with-the-app-name"
+primary_region = "REPLACE-with-a-region"
+
+# The relay writes every room and closes every socket with 1012 on SIGTERM,
+# within three seconds. Fly sends SIGINT unless told otherwise (the relay
+# handles that the same way, but the contract names SIGTERM), and waits
+# kill_timeout seconds, best effort, before forcing the stop.
+kill_signal = "SIGTERM"
+kill_timeout = 10
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Fly does not set PORT. The image listens on 8788 when it is unset; said
+  # here so that the port and internal_port below are read in one place.
+  PORT = "8788"
+
+[http_service]
+  internal_port = 8788
+  force_https = true
+  # Kept running. A stopped Machine loses the card corpus every engine holds in
+  # memory, and on the way back starts an engine for every room it kept, all
+  # loading at once (HOSTING.md, "Memory"). Fly's own advice is to switch both
+  # of these off together.
+  auto_stop_machines = "off"
+  auto_start_machines = false
+
+  # /health answers as soon as the relay listens (about a tenth of a second on
+  # the owner's machine), whatever the engines are doing, so a short grace is
+  # enough. A failing check stops traffic reaching the Machine; it does not
+  # restart it.
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    timeout = "5s"
+    method = "GET"
+    path = "/health"
+
+# One volume, one Machine: rooms live in this process and on this volume, and
+# a second Machine would get an empty volume of its own. Create it before the
+# first deploy, in primary_region:
+#   fly volumes create rooms --region <the region above> --size 1 -a <the app>
+[mounts]
+  source = "rooms"
+  destination = "/data"
+
+# The smallest size that holds one engine game with its deck check (HOSTING.md,
+# "Memory"), on a performance CPU. A shared CPU runs at 6.25% of its time once
+# its burst balance is spent, and a new Machine starts with 5 s of it
+# (docs.fly.io/machines/cpu-performance/, read 2026-09-26): an engine loading
+# the corpus — some 30 s of one CPU on the owner's machine — would get about
+# 12 s of CPU inside the 120 s the relay waits for it (STARTUP_MS), with every
+# kept room loading one at once. Whether a deploy starts the balance again is
+# not stated. Arithmetic on Fly's numbers, not a run on Fly (HOSTING.md,
+# "Fly.io"). A performance CPU carries 2 to 8 GB, in steps of 2 GB.
+# This section wins over `fly scale memory` at the next deploy, so a size is
+# changed here.
+[[vm]]
+  size = "performance-1x"
+  memory = "2gb"

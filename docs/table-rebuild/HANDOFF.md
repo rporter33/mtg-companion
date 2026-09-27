@@ -196,7 +196,12 @@ These are settled. Do not reopen them; build on them.
     draws from the decks it fully knows; a reversible card goes by its
     single name; the engine's heap ceiling is 2 GB, with one process per
     room and one for checking decks, until M8 sizes hosting from the
-    measured 110 MB.
+    measured 110 MB. (Sized by M8, 2026-09-26, in PLAN.md's "M8: hosting,
+    prepared": the corpus holds 128 MB of heap, but a JVM costs 690–810 MB
+    at a ceiling of 256 or 384 MB, the engine at intermediate or at hard, and
+    900–1,030 at 2 GB; the image sets `-Xmx384m`, under which a game at hard
+    never held more than 159 MB after a collection, and the launcher's 2 GB
+    default stands everywhere else.)
 12. **Decided 2026-09-21, with released-first printings** (`PROJECT_BRIEF.md`
     §10): the engine moves to newer sets by a pull request the owner
     merges. Until M9 that is a deliberate commit moving `ENGINE_REV`; after
@@ -363,7 +368,8 @@ These are settled. Do not reopen them; build on them.
     engine's own text of it gzipped; a relay that comes back starts an engine for
     every such room at once, rather than when somebody sits, so the corpus loads
     while their clients find their way back — one JVM per room at start-up, which
-    M8 sizes; an engine that stops mid-game is started again from the last stop
+    M8 sizes (PLAN.md, "M8: hosting, prepared": 0.7–0.8 GB a JVM, and a relay
+    coming back with two such rooms took 1.4 GB, itself included); an engine that stops mid-game is started again from the last stop
     kept, and again only once the game has gone on since, so a crash that waits at
     the same place ends the game in words rather than in a loop; a move being
     answered when the relay or the engine went is let go of, and its person told,
@@ -566,6 +572,19 @@ These are settled. Do not reopen them; build on them.
     words what is needed, the kinds on offer and how the build takes one,
     and never commits a certificate, a password or a key; an unsigned build
     must still be possible for development, and say that it is unsigned).
+28. **Decided by the owner 2026-09-26, while M8 was built.** Two questions put to
+    the owner once the machine and the engine had been measured. *The image is
+    proved in CI:* this machine has no Docker and no WSL, so M8's "done when" —
+    `docker build` and `docker run` on the owner's machine — is met instead by
+    `.github/workflows/image.yml`, which builds the image on GitHub's Linux runner,
+    runs it and plays the engine against it; nothing was installed here, and
+    installing Docker Desktop for a local run stays the owner's to do or not. *No
+    cap on engine games, for now:* each game the engine holds is a JVM of 690–810 MB
+    whatever its heap ceiling (PLAN.md, M8), and a relay coming back starts every kept
+    room's at once (item 21); M8 documents what each machine size holds
+    (`deploy/HOSTING.md` §2) and builds no cap, and the questions that would change
+    that — an idle room letting its JVM go, kept rooms starting as people sit, a room
+    ended over the wire — are in §6 under M8.
 
 ---
 
@@ -1176,6 +1195,36 @@ restores into a fresh process and continues to the same next stop.
 
 *Size: small to medium. The owner deploys.*
 
+**Done, 2026-09-26, as far as it can be without Docker:** this machine has none, so the
+image itself is built and played only by `.github/workflows/image.yml`, which comes with
+the push. What was built, measured and found, where it departs from the letter below and
+why, and what only a run on GitHub can prove are in `PLAN.md`, "M8: hosting, prepared".
+In short: `deploy/Dockerfile` in three stages — the engine compiled by
+`scripts/engine-build.sh` (the pin read from it) with Temurin's JDK 21 (its image pinned by
+digest, since that stage never ships and a moved tag would only compile it cold), the app built with
+Node 22 and `VITE_RELAY_URL=same-origin`, and a runtime of Node 22 on Debian 13 with
+Temurin's Java 21 runtime copied in, holding only the files the relay imports (traced by
+`deploy/relay-files.mjs` as it builds), the engine's install and the built app, the relay
+run under tini as the `node` user — an entrypoint gives that user the rooms' folder first,
+since a host's volume may be mounted as root's — `/data` its volume, with a health check. `same-origin` is how a
+build says "the relay is the address this page came from", read as the page's folder; a
+person's own address still wins. The service worker keeps only the app's own files now,
+and never the relay's answers. `tests/browser/hosted.spec.mjs` plays the engine to a land
+at one address with no address typed, opens a room and sits from another origin, and holds
+the worker to it; it refuses a relay not on the machine it runs on, since it leaves two
+engine rooms behind. The image workflow runs it against the running image, records its
+memory, and runs the image again on a folder root owns. The JVM's options were measured:
+an engine JVM costs 690–810 MB at a heap ceiling of 256 or 384 MB, at intermediate or at
+hard, and 900–1,030 MB at the launcher's 2 GB (the heap is not most of it), so the image
+sets `-Xmx384m`, the corpus's 128 MB three times over, and the launcher's `-Xmx2g` default
+stays for everywhere else. `deploy.yml` builds the Pages copy, after the browser suite and
+apart from the build the suite drives, with `VITE_RELAY_URL` from the repository variable
+`RELAY_URL`, empty until the owner sets it. The provider notes (`deploy/HOSTING.md`) were
+written beside this, apart, and reconciled with it by the review; the Fly example asks for a
+performance CPU, since a shared one's quota would not load the corpus in time.
+
+The rest of this section is the brief it was built to, kept as written.
+
 Build in the repo, not on a provider:
 
 - `deploy/Dockerfile`: multi-stage. Stage one clones Argentum at
@@ -1404,6 +1453,56 @@ names), and leave it out of the lobby's copy, per the owner's rule.
   and the table replaces the lobby inside it without resetting it, so what is first on
   the table may open above the top of the screen; the first question brings itself into
   view (2026-09-26).
+- **Served from the relay, the app shares its origin with the relay's answers.** The
+  service worker used to cache every same-origin GET and answer it from the cache ever
+  after, so `/health` and `/rooms/<code>` would have said for good what they said the first
+  time; and a tab opened on `/health` is a navigation, whose answer the worker kept as the
+  offline page. It keeps only the app's own files now — this origin, inside its scope,
+  named as the build names a file — and only a page as the offline page
+  (`tests/service-worker.test.js`, `hosted.spec.mjs`; M8). A relay route with a file
+  ending in its path would be taken for a file.
+- **A JVM's memory is not its heap.** `-Xmx` moves only the heap; an engine JVM measured
+  690–810 MB of working set at a ceiling of 256 MB and of 384 MB, at intermediate and at
+  hard, and 900–1,030 MB at 2 GB (M8), most of it not heap: the 77,203 classes of the card
+  corpus (metaspace and class space), compiled code and the collector. Size a host by JVMs,
+  not by `-Xmx`: one per room the engine holds, one more for checking decks, and all the
+  kept rooms' at once when the relay comes back.
+- **Git Bash converts a POSIX path only where its guess allows.** Measured on this machine
+  (2026-09-26): `/c/Users/Robert/nothing` reaches Node as `C:/Users/Robert/nothing` both as
+  an argument and in a variable set on the command line or exported, a space in the path
+  or not; but a path that runs through an existing file, as
+  `/c/Users/Robert/Desktop/Nexus Table/package.json/rooms` does, is passed as it is, as an
+  argument and as a variable alike (so is `/c/Windows/win.ini/x`), and nothing passed
+  through Node's own `spawn` is ever converted. Node on Windows reads `/c/Users/…` as
+  `C:\c\Users\…`, and a folder made there is made, where through the real `package.json` it
+  could not be. Give anything that must reach Node as a Windows path `C:/Users/…`. (M8 left
+  an empty `C:\c\Users\Robert\Desktop\Nexus Table\package.json\rooms` that way, checking the
+  relay's words for a rooms' folder it cannot make; the empty folders were deleted before
+  the commit.)
+- **`command | grep -q` fails under `pipefail` when the line is found.** grep stops reading
+  at its first match, and a command still writing into the pipe dies of SIGPIPE, which
+  `pipefail` — on in every workflow step here — reports as the pipeline's failure (141):
+  `( echo hit; sleep 0.2; echo more ) | grep -q hit` gave 141 (M8's review). Read the output
+  whole first (`logs=$(docker logs …)`, then `grep -q … <<<"$logs"`), or let grep read to
+  the end (`grep … >/dev/null`). `printf` of one value is safe, being written before grep
+  reads; `tests/image.test.js` holds every workflow to that.
+- **Every browser spec is given the suite's preview address.** `scripts/browser-suite.mjs`
+  and the chain pass it to all of them, so a spec that takes an address to mean something
+  else — `hosted.spec.mjs` runs against a relay there — must tell the two apart: it asks
+  `/health`, runs against a relay that answers it, starts its own where the address
+  answers as something else, and fails where nothing answers at all. And it refuses an
+  address not on the machine it runs on, before asking it anything: a run leaves two
+  tables the engine holds, each with a JVM, for a week, on whatever relay it is given.
+- **A build the browser suite drives must carry no relay address it did not ask for.** Specs
+  that open `#/game` without setting one of their own ask the built address's `/health`,
+  and those that count console errors fail where it does not answer: built with a
+  relay at an address where nothing listened, `unknownformat.spec.mjs` failed "no console
+  errors throughout" (M8's review). `deploy.yml` builds the suite's app with none, and the
+  Pages copy with `RELAY_URL` only after the suite, into `dist-pages`.
+- **A shared CPU on Fly runs at 6.25% once its burst is spent,** and a new Machine starts
+  with 5 s of burst: about 12.5 s of CPU in the relay's 120 s for an engine's first answer,
+  against 27–32 s one corpus load took of a desktop CPU (Fly's CPU page, read 2026-09-26;
+  arithmetic, not a run). Hence the Fly example's performance CPU (`deploy/HOSTING.md` §4).
 
 ---
 
@@ -1493,7 +1592,47 @@ names), and leave it out of the lobby's copy, per the owner's rule.
   can say, and the app's reading is only the floor its Game Changers set; whether a
   player should be able to declare one, the floor then a check on it, is the owner's.
 - M8: which provider, once `HOSTING.md` has verified notes for three. Asked
-  2026-09-26: the owner chooses after reading the notes (§3 item 27).
+  2026-09-26: the owner chooses after reading the notes (§3 item 27). Built the same day
+  (PLAN.md, "M8: hosting, prepared"), reviewed the same day, and these left the owner's,
+  each a question:
+  - *Which provider, and what size?* `deploy/HOSTING.md` §7 sets the three side by side.
+    The memory: about 60 MB for the relay and 690–810 MB for each engine JVM — one per room
+    the engine holds, one for checking decks for ten minutes after a check, and every kept
+    room's at once when the relay comes back (§3 item 21); §2 there counts what fits in 1,
+    2, 4 and 8 GB. On Fly, the CPU too: the example asks for a performance CPU
+    (`performance-1x`, $31.00 a month at `iad` with 2 GB, computed from Fly's page), since
+    by Fly's own numbers a shared CPU's quota would not load a corpus inside the relay's
+    120 s on a new Machine; shared ($10.70) is the owner's to try, knowing that.
+  - *Should an engine room nobody is in let its JVM go?* Today a room keeps its engine for
+    the seven days it is kept, game over or not, so a host is sized by the engine rooms
+    opened in the last week, not the games being played; M7's snapshot could take the game
+    back when somebody sits. And should a relay coming back start the kept rooms' engines
+    only as people sit, rather than all at once (§3 item 21)?
+  - *Should a room the engine holds be endable over the wire* — a concede, or a relay route
+    that drops a room? Nothing ends one now but seven idle days, which is why
+    `hosted.spec.mjs` refuses any relay not on its own machine: each run leaves two behind.
+  - *Set `RELAY_URL`* (Settings, Secrets and variables, Actions, Variables), the deployed
+    relay's https address, once there is one. Only the Pages copy is built with it, after
+    the browser suite; the suite's build has no address, so a relay that is down holds back
+    no deploy (`HOSTING.md` §9).
+  - *Base images.* The engine stage's JDK is pinned by digest (the tag's index on
+    2026-09-26), since it never ships and a moved tag only compiled it cold; it moves when
+    the owner moves it. Should something move it — a bot's pull request, as §3 item 12's
+    workflow does for the engine — and should the bases that ship (`node:22-trixie-slim`,
+    `eclipse-temurin:21-jre-noble`) be pinned too, trading each Debian and Temurin fix
+    arriving by itself for builds that do not change under an unchanged commit?
+  - Class-data sharing, measured and not adopted (a JVM's corpus loaded 34 % faster, but no
+    memory was saved on this machine and the image would grow by 246 MB). And whether the
+    launcher's own `-Xmx2g`, which the image overrides, should come down everywhere.
+
+  Settled by the review rather than asked: a volume a host mounts as root's needs nothing
+  of the owner. The entrypoint starts as root, gives the rooms' folder to `node` (uid 1000)
+  and runs the relay as `node`, and `image.yml` proves it on every run on a folder root
+  owns; `RAILWAY_RUN_UID` is not needed. Only a host that started the container as another
+  user would leave the folder as it came, and the relay would then say in words that it
+  cannot keep rooms there, and stop. The empty folders M8 left at
+  `C:\c\Users\Robert\Desktop\Nexus Table\package.json\rooms` (§5) were deleted before the
+  commit, only the empty folders and nothing else.
 - M9: nothing asked, but four things found that are the owner's. `gradle/actions`
   is at v6, whose caching is a proprietary component under Gradle's terms of use;
   the workflow stays on v4 (MIT, and on the cache service GitHub runs now) until

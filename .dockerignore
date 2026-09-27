@@ -1,0 +1,15 @@
+# The image (deploy/Dockerfile) is built from these and nothing else: everything
+# is left out, then what the build reads is let back in. A list of what to keep
+# rather than of what to leave out, so that nothing new in the repository — a
+# .env file, a folder of rooms, a local build — reaches the build context, let
+# alone the image, without somebody deciding it should.
+*
+!package.json
+!package-lock.json
+!index.html
+!vite.config.js
+!src/
+!public/
+!scripts/
+!engine/
+!deploy/

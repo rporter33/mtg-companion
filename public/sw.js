@@ -5,6 +5,13 @@
 // through IndexedDB in the app, which understands pinning and staleness in a
 // way a blind HTTP cache cannot. Card *images* are cached opportunistically,
 // since they are immutable once published.
+//
+// Only the app's own files are this worker's to keep (`isAppFile`). Served from
+// the relay (HANDOFF.md, M8), the app shares its origin with everything the relay
+// answers — /health, /rooms, /rooms/<code> — and those answers change from one
+// second to the next. Cached like a file, the first answer would have been the
+// only one this browser ever saw again: a room's seats frozen, a relay that has
+// since started an engine still saying it has none.
 
 const VERSION = 'v1'
 const SHELL = `shell-${VERSION}`
@@ -14,6 +21,25 @@ const MAX_IMAGES = 400
 // ones, so the shell cache grew by one build's worth of assets per release.
 // Insertion order is oldest first, so trimming drops previous builds.
 const MAX_SHELL = 80
+
+// What the build writes, every one of it named with one of these endings: the
+// page, its hashed chunks under assets/, the icons, the manifest, and the fonts
+// and season art under mtg-assets/. Nothing the relay answers has an ending at
+// all. JSON is left out on purpose: the only JSON the app fetches from its own
+// origin is version.json, which exists to be fetched fresh.
+const APP_FILE = /\.(?:html|js|css|svg|png|webp|jpg|jpeg|gif|ico|webmanifest|woff2)$/i
+
+/**
+ * Whether a request is for one of the app's own files: this origin, inside this
+ * worker's scope (the folder the app is served from — the root on the relay, a
+ * sub-folder on GitHub Pages), and named as a file of the build is.
+ */
+function isAppFile(url, scope = self.registration?.scope ?? self.location.href) {
+  const home = new URL('./', scope)
+  if (url.origin !== home.origin || !url.pathname.startsWith(home.pathname)) return false
+  if (url.pathname.endsWith('/version.json')) return false
+  return APP_FILE.test(url.pathname)
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -50,20 +76,18 @@ self.addEventListener('fetch', (event) => {
 
   if (url.origin !== self.location.origin) return
 
-  // The version file exists to be fetched fresh; the app asks for it with
-  // no-store and this worker must not answer from a cache.
-  if (url.pathname.endsWith('/version.json')) return
-
   // Navigations go to the network with revalidation — GitHub Pages sends the
   // page with a ten-minute cache, and honouring it meant a reload straight
   // after a deploy brought back the previous build — and a fresh copy replaces
   // the cached shell, so offline serves the newest build this browser has
-  // seen. Only with no network at all does the cached shell answer.
+  // seen. Only with no network at all does the cached shell answer. Only a page
+  // replaces it: opened in a tab, the relay's /health is a navigation too, and
+  // its JSON kept as the shell would be what the app opened as offline.
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request, { cache: 'no-cache' })
         .then((response) => {
-          if (response.ok) {
+          if (response.ok && /^text\/html\b/i.test(response.headers.get('content-type') ?? '')) {
             const copy = response.clone()
             caches.open(SHELL).then((cache) => cache.put('./index.html', copy))
           }
@@ -73,6 +97,11 @@ self.addEventListener('fetch', (event) => {
     )
     return
   }
+
+  // Anything of this origin that is not the app's own — the relay's answers,
+  // and version.json — goes to the network untouched, never to or from a cache:
+  // not even an answer an older worker kept is given back.
+  if (!isAppFile(url)) return
 
   event.respondWith(
     caches.match(request).then((cached) => cached ?? fetch(request).then((response) => {
