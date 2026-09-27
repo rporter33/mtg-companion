@@ -557,6 +557,15 @@ These are settled. Do not reopen them; build on them.
     the B4+ deck; a tile read as no plan says "No plan", and one not read "Not read"; the
     line above the shelf names the Bracket filter only where there is one; and how each
     filter was read is behind "How this is read" under its chips.
+27. **Decided by the owner 2026-09-26, before M8 and M10 are built.** M8: no
+    provider yet — build the image and the verified notes for all three
+    (Fly.io, Railway, Render) and the owner chooses with them in hand. M10:
+    **Windows first**, the owner's own platform, built and tested on this
+    machine; and **signed from the start** — the build is set up for code
+    signing, and the owner buys and supplies the certificate (M10 says in
+    words what is needed, the kinds on offer and how the build takes one,
+    and never commits a certificate, a password or a key; an unsigned build
+    must still be possible for development, and say that it is unsigned).
 
 ---
 
@@ -1483,7 +1492,8 @@ names), and leave it out of the lobby's copy, per the owner's rule.
   Wizards calls a bracket's intent its most important part, which only a deck's builder
   can say, and the app's reading is only the floor its Game Changers set; whether a
   player should be able to declare one, the floor then a check on it, is the owner's.
-- M8: which provider, once `HOSTING.md` has verified notes for three.
+- M8: which provider, once `HOSTING.md` has verified notes for three. Asked
+  2026-09-26: the owner chooses after reading the notes (§3 item 27).
 - M9: nothing asked, but four things found that are the owner's. `gradle/actions`
   is at v6, whose caching is a proprietary component under Gradle's terms of use;
   the workflow stays on v4 (MIT, and on the cache service GitHub runs now) until
@@ -1518,7 +1528,8 @@ names), and leave it out of the lobby's copy, per the owner's rule.
   nothing, and the merge is the owner's. `engine-pin-try/` is the workflow's own: a
   branch given that name by hand is deleted by its next run.
 - M10: which desktop platform first (the owner's own), and whether a
-  signed build matters yet.
+  signed build matters yet. Answered 2026-09-26: Windows first, signed from
+  the start, with the owner's certificate (§3 item 27).
 
 ---
 
