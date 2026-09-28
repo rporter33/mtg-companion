@@ -18,7 +18,7 @@ repo=${ENGINE_REPO:-https://github.com/ronoccc/engine-choo-choo.git}
 # main moves daily, and a build that follows it can change under a test that
 # passed yesterday. Moving the pin is a deliberate commit, with the compile time
 # and a game measured again (engine/README.md).
-rev=${ENGINE_REV:-70d525c69845c4a8c14516a5c7214444096e1018}
+rev=${ENGINE_REV:-7cc9af83865aa8b25511089361eb896069e34b00}
 # CI keys its cache of the built engine on this (.github/workflows/deploy.yml),
 # and asks here rather than keep a copy of the pin that could drift from it. The
 # weekly offer to move the pin (.github/workflows/engine-pin.yml) asks for both,
